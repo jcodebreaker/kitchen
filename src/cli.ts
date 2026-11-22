@@ -81,7 +81,7 @@ async function main(argv: string[]): Promise<number> {
         for (const l of (await import("./bench/run.ts")).benchReport(repo)) out(l);
         return 0;
       }
-      return cmd.report(repo, out);
+      return cmd.report(repo, out, { json: flags.has("--json") });
     case "dismiss":
       if (!pos[1]) throw new Error('kitchen dismiss needs <job> <finding-id> [--reason "<why>"]');
       return cmd.dismiss(repo, need("<job>"), pos[1], reason, out);

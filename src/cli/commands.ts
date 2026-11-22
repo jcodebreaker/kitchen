@@ -15,6 +15,7 @@ import { findJob, jobDirOf, kitchenDir, scanJobs, writeAtomic } from "../engine/
 import { runView } from "../engine/views.ts";
 import { changedFiles, headOf } from "../engine/worktree.ts";
 import { appendLedger, readLedger } from "../ledger/append.ts";
+import { formatMeasures, measures } from "../ledger/measures.ts";
 import { formatCounts, summarize } from "../ledger/report.ts";
 import { prove } from "../proof/prove.ts";
 import { PromptSource } from "../sources/prompt.ts";
@@ -127,8 +128,17 @@ export async function reject(repo: string, ref: string, out: Out): Promise<numbe
   return human(repo, ref, "rejected", { operator: "reject" }, "kitchen reject", out);
 }
 
-export function report(repo: string, out: Out): number {
-  out(formatCounts(summarize(readLedger(repo))));
+/** `kitchen report`: every §0 measure from the ledger (measures.ts), then the raw counts per stage and event. */
+export function report(repo: string, out: Out, o: { json?: boolean } = {}): number {
+  const lines = readLedger(repo);
+  const m = measures(lines);
+  if (o.json) {
+    out(JSON.stringify(m, null, 2));
+    return 0;
+  }
+  for (const l of formatMeasures(m)) out(l);
+  out("");
+  out(formatCounts(summarize(lines)));
   return 0;
 }
 
