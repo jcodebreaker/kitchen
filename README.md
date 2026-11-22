@@ -160,6 +160,7 @@ Every key, with its default:
 | `round_limit` | `3` | rounds before a human is asked |
 | `checks` | `[]` | commands Gate runs in the job's worktree: strings, or `{ name, run, timeout_sec }` |
 | `checks_network` | `false` | let checks reach the network (a package install) |
+| `checks_prepare` | none | readies a job worktree before the checks and `test` proofs, in the same sandbox (`npm ci`; needs `checks_network: true` to download). Runs once per worktree, again when a lockfile changes |
 | `test_cmd` | `npm test -- {file}` | how a `test <file>` proof runs |
 | `paths` | low / medium / high | per risk: `spec` (inline, full), `verify` (short, full, related-features), `review` lenses, `human: always` |
 | `surfaces` | `{ ui: [ux, ui], security: [security] }` | extra review lenses when a ticket touches a surface |
@@ -191,10 +192,15 @@ Every key, with its default:
 
 - **Linux runs unsandboxed.** On macOS, Toolkit code the setup agent just wrote (and any Toolkit not yet merged) and every `cmd`/`test` proof run under `sandbox-exec`, away from your SSH keys, cloud and GitHub credentials, agent logins and Kitchen's key. Linux has no sandbox yet: those run as you, and Kitchen logs `UNSANDBOXED` when they start. Review `kitchen/setup` before you merge it either way. Details: `docs/adr/0008-setup-bridge.md` in the source repository.
 - **Your app and a merged Toolkit run unsandboxed.** They get no credentials through the environment, but they run as you, like `npm run dev` would. App code from a job branch is code an agent wrote; it is reviewed only after it ran.
-- **Docker bind mounts are not policed.** A Toolkit can start a container that mounts your home folder; the macOS sandbox doesn't see inside Docker. Planned: refuse bind mounts outside the repo.
+- **Docker is guarded only for an unmerged Toolkit, on macOS.** Toolkit code not yet merged talks to Docker through Kitchen's guard: no bind mounts outside the repo and temp, no privileged or host-namespace containers, and no requests on containers it didn't create (another project's database can't be exec'd into or stopped). A merged Toolkit, and Linux, talk to Docker directly.
+- **Ports are shared per machine.** Every Kitchen on the machine (each with its own `KITCHEN_HOME`) hands out slots from one registry, `~/.kitchen-slots/slots.json`, and skips ports something else listens on or a container publishes.
 - **Codex parity is owed.** Every part of Kitchen was built and proven on Claude Code first. Codex runs the same roles and passed setup on three of four fixtures, but its full proof runs (end to end, review, the benchmark subset) are still to do.
 - One machine, one repo per `kitchen run`. No hosted runner, no GitLab or Linear, no Windows, no mobile apps.
 - The real-GitHub path (PRs, evidence branch, issue tickets) is built and tested against a `gh` stand-in; its first run on a real repository is still owed.
+
+## Developing Kitchen
+
+`npm test`, `npm run typecheck` and `npm run lint` (Biome). The scripts under `spikes/` prove whole paths against copies of the fixtures; each one's README says what it needs. On macOS with Docker Desktop, give a Docker-using spike a scratch folder under `$HOME` (the default `spikes/<wave>/.work/` is), not `/tmp` or `/private/tmp`: Docker Desktop shares only some host folders with its VM, and a bind mount from an unshared one comes up empty in the container.
 
 ## Credits
 
