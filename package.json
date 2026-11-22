@@ -31,7 +31,6 @@
     "toolkit-template/",
     "!toolkit-template/node_modules/",
     "dashboard/dashboard.html",
-    "dashboard/fonts/",
     "README.md",
     "LICENSE",
     "NOTICE"

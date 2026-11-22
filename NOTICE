@@ -38,9 +38,8 @@ Some ideas (a factory of agent stages with a ledger) come from zazencodes'
 software factory, which is GPL-licensed. Ideas only: no code, prompt or other
 text from it is in Kitchen, so its license does not apply to Kitchen.
 
-Geist and Geist Mono (the dashboard's fonts)
---------------------------------------------
-dashboard/fonts/Geist-Variable.woff2 and GeistMono-Variable.woff2 are from the
-`geist` npm package 1.9.2, Copyright (c) 2023 Vercel, in collaboration with
-basement.studio, licensed under the SIL Open Font License 1.1: see
-dashboard/fonts/OFL.txt.
+super-board (credit only, no code)
+----------------------------------
+The dashboard's Board layout (lanes by stage, Needs you as a lane, compact cards)
+follows super-board's public board demo, MIT, Copyright (c) 2026 Eric Tech. The
+layout only: no code, text or branding from it is in Kitchen.
