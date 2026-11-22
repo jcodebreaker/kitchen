@@ -31,3 +31,5 @@ The forge is `forge: { kind: fake }`: a JSON file (`.kitchen/fake-forge.json`) h
 - `fake-script.ts`, `scenarios.ts`: the scripted roles.
 - `stub-agent.ts`: the `claude` stand-in for `kill.ts` parts 2 and 4 (with `<repo>/bridge-kill`, the builder starts the bridge, runs `checks`, and SIGKILLs its own group).
 - `paths.ts`, `kill.ts`, `faults.ts`, `detach.ts`, `bridge-checks.ts`, `smoke.ts`: the exit checks.
+
+**After W3a.** The guards these scripts stubbed are real now: repro runs `kitchen drive --repro` on the base, drives resolves and checks every named drive (and runs no agent when nothing is missing), and Verify runs every proof through the Toolkit before any agent. This fake Toolkit has no real primitives, so the `paths.ts` scenarios that pass through repro, drives or Verify (bug, gap, inconclusive) and `kill.ts` part 1 (which waits for a verifier hanging in drives) no longer reach their old ends; `spikes/w3a/` proves those stages on fixture A instead (kill -9 mid-Verify included). `faults.ts` (27/27), `detach.ts` (8/8) and `bridge-checks.ts` (7/7) still pass unchanged.

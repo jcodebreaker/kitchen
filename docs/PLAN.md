@@ -712,3 +712,17 @@ History: all of these are now part of §2 and §3, which are the current contrac
 | An older `job.json` + manifest pair (both signed) could be restored | Per-job counter `$KITCHEN_HOME/heads/<uid>`; a lower head is refused as a rollback |
 | Network denial was only seen through push failures | The integrity probe checks `curl` and a direct `nc` to an IP on both tools |
 | A stamp's tree vs the running app | A stamp records the worktree tree at drive time; the fresh `up` before Verify makes the running app match it |
+
+## Changes from Wave 3a (spikes/w3a/results.md)
+
+| Finding | Change |
+|---|---|
+| A repro whose `wait` for the expected state times out is the bug showing, but the strict rule called it "not reproduced" | Failed as expected = every step ran and the mechanical expect is false, **or** a `wait` timed out after every earlier step ran |
+| A repro agent rewrote a shared feature drive to make its proof pass | No job (repro or drives) may change an existing drive block; it may add new ones. The repro's drive files are the builder's no-go list |
+| Builders can't self-check new server code against an app started earlier | Bridge tool `restart_app` (builder only): down + up from the worktree, prepare when needed |
+| Builders want to know whether a criterion holds | Bridge `drive` with only `criterion` runs that criterion's proof and its expect (the same path as `kitchen drive <job> <C>`) |
+| Claude's Read tool can't open the job folder's screenshots | Verify copies the judged criteria's evidence into the worktree outbox; citations are still checked against the signed manifest |
+| `GAP: none` read as a gap | Header values like none, n/a, - name nothing |
+| Slot ids from job ids were too long for `--id` and collided across repos | `slotId` = `<n>-<10 hex of the job uid>` |
+| `test <file>` proofs need a command | `kitchen.yaml` `test_cmd` (default `npm test -- {file}`) |
+| The verifier agent cost a run even when nothing is judged | Verify starts the agent only when there are `judged` criteria and every mechanical proof passed; drives starts it only when a drive is missing or failed the check |
