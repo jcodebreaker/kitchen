@@ -255,3 +255,24 @@ One entry per wave: what was built, review rounds and scores, what is proven, an
 - The ledger measures and the newcomer test: met.
 
 **Open:** dogfood findings 1–2 (spec-lint on unchanged-behaviour requirements; repro of non-zero-exit CLI bugs) before the next dogfood round; one machine-wide slot registry; Codex (all of W5); the real GitHub run (draft issues, PR replies); publishing (the user's step).
+
+## W5 follow-ups: dogfooding findings and the W3b round-2 guard items (branch `w5-followups`, built, not reviewed)
+
+Based on the W5 review fixes, with main's W3b review fixes merged in (the Docker guard and the base check live there).
+
+**Built**
+- **One slot registry per machine** (finding 6): `~/.kitchen-slots/slots.json` whatever `KITCHEN_HOME` is (`KITCHEN_SLOTS` only for tests), same lock; a block is handed out only when every port binds on 127.0.0.1 and 0.0.0.0 and no container publishes it (`docker ps --format '{{.Ports}}'`).
+- **`(unchanged)` requirements** (finding 1): intake marks a regression guard apart from a true `(negative)`; rule 7 asks an absence assertion only of a negative, a mechanical criterion (positive is fine) of a guard; a criterion covering only guards isn't counted as non-discriminating by the base check.
+- **`cli` reports the exit** (finding 2): the template's `cli` (and the b-cli bench Toolkit's) is ok whenever the command ran, `{exit, stdout, stderr}`; `prove()` takes the last command step's exit, so `expect: exit 1 and contains "unknown command"` reproduces a wrong-exit bug; with no `exit` in the expect, exit 0 is required (as for `cmd`). `expect_exit` still pins a step (setup steps that must succeed).
+- **`checks_prepare`** (finding 5): kitchen.yaml's `npm ci` runs in the worktree under the checks' sandbox before Gate's checks, the builder's `checks` tool and every `cmd`/`test` proof, stamped, cached by lockfiles. Chosen over the Toolkit's `prepare` (which may install into a container).
+- **Test layout** (finding 3): `src/checks/test-layout.ts` reads the runner's globs; intake, spec, builder and the verifier's repro/drives prompts get them with existing tests; spec-lint rule 8 refuses a `test` proof outside them; the builder policy refuses test-runner config and a changed package.json `jest`.
+- **Low risk with tests or config gets the code lens** (finding 4), like a drive diff.
+- **Docker guard, existing containers** (W3b round 2): exec, archive, attach, logs, kill, stop, start, restart, rm, update, export, inspect, commit and network connect only for containers created through the guard (ids recorded per repo, names resolved through the daemon); prune and host-network builds refused. ADR 0008.
+- **Base-check flakes** (W3b round 2): a drive that fails on the base runs once more after a reset; passing then, it is `flaky`, not cached as known.
+- README: `checks_prepare`, the guard and machine-wide slots in the limitations, scratch dirs under `$HOME` for Docker-using spikes with Docker Desktop.
+
+**Proven** (no agent calls, $0): `spikes/w5/slots-machine.ts` (two processes with different `KITCHEN_HOME`s, one registry, no overlapping blocks, a block with a port held by a node listener on 127.0.0.1 skipped) 4/4; `spikes/w5/checks-prepare.ts` on a clone of Kitchen's own repo (Gate FAIL without `checks_prepare`, PASS with `npm ci` in the sandbox, cached on the next Gate and for a `test` proof, again after a lockfile change) 7/7, 16 s; `src/proof/prove-cli.test.ts` (the real template primitive in a fake Toolkit: "unknown command exits 0 instead of 1" is assert-fail on the buggy base, pass once fixed; a base exiting 2 is reproduced); `src/toolkit/docker-proxy.test.ts` (the proxy process against a fake daemon socket: its own container exec'd and removed by a second proxy, `supabase_db_offstage` exec/kill/archive refused and never forwarded). `npm test` 415/415, typecheck and lint clean.
+
+**Not run** (the orchestrator's benchmark was using Docker; `docker ps` showed `kitchen-a-web-001-…`): `spikes/w3b/docker-guard.ts` against real Docker with the ownership rule; a Toolkit `up` on the machine-wide registry; a dogfood round on the fixed engine.
+
+**Open:** the Docker proofs above; a Toolkit's containers created before the guard recorded them can't be stopped by an unmerged `down` (one-time cleanup); `checks_prepare` trusts its marker if a builder deletes `node_modules`; the next dogfood round (§0.5).

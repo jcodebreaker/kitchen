@@ -123,3 +123,22 @@ What dogfooding found (product, not fixed here):
 | W5 exit: newcomer from a fresh clone of fixture B to a ready PR with only the README | met ($0.73) |
 
 So W5's own build is done and proven; v0.1 is **not** done: §0.1/§0.3 wait for Codex, §0.2's traps wait for the final benchmark, §0.5 needs one more own ticket to a PR without help (after fixing dogfood findings 1–2) and the superchat-lite ticket on a bigger machine.
+
+## W5 follow-ups (branch `w5-followups`, 2026-11-22)
+
+The dogfooding findings 1–6 and two W3b round-2 review items, each proven without an agent ($0). The orchestrator's full benchmark was running from the main checkout (`kitchen-a-web-001-…` in `docker ps`), so nothing here started Docker.
+
+| Finding | Fix | Proof | Result |
+|---|---|---|---|
+| 6 slots per `KITCHEN_HOME` | one registry `~/.kitchen-slots/slots.json`; bind probe on 127.0.0.1 and 0.0.0.0; Docker-published ports skipped | `node spikes/w5/slots-machine.ts <scratch>`: two processes, different `KITCHEN_HOME`s, same `HOME`, 3 slots each from block 80; a node listener on 32600 (127.0.0.1) | 4/4: one registry, blocks 81–86 with no overlap, block 80 skipped; unit tests for the path, `docker ps` parsing, the start block |
+| 1 "X stays unchanged" deadlock | `(unchanged)` vs `(negative)` in intake.md; rule 7; guards not counted by the base check | `src/checks/spec-lint.test.ts` | a positive guard criterion passes the lint; a judged one doesn't; a negative still needs its absence; `guardCriteria` |
+| 2 non-zero base exit can't be reproduced | `cli` ok whenever it ran, exit in the output; `exit N` on toolkit proofs; implicit exit 0 | `src/proof/prove-cli.test.ts`: the template's primitive in a fake Toolkit, a fake `tasks` app | unknown command exits 0 → `assert-fail` (reproduced), exits 1 → `pass`; exit 2 on the base → `assert-fail`, not `step-failed`; pinned `expect_exit` and a missing binary still fail the step |
+| 5 Gate without `node_modules` | `checks_prepare` (sandboxed, `checks_network`), cached by lockfiles | `node spikes/w5/checks-prepare.ts <scratch>` on a clone of this repo, Gate run as the stage runs it | 7/7 in 16 s: FAIL without, PASS with `npm ci` stamped, cached on the next Gate and for a `test` proof, again after a lockfile change |
+| 3 test layout | runner globs in prompts; spec-lint rule 8; builder policy on test-runner config | `src/checks/test-layout.test.ts`, `src/engine/contract.test.ts` | Kitchen → `src/**/*.test.ts` (dogfood's `tests/`, `test/` refused); vitest/jest/pytest/mocha configs; bench fixtures b-cli (unittest), a-web and d-api (`node --test`) keep their layouts; `vitest.config.ts` edits refused |
+| 4 low risk unreviewed | code lens on tests or test/build config | `src/engine/stages/review-report.test.ts` | a test file, `vitest.config.ts`, `package.json` each add `code` |
+| W3b r2: guard only on create | ownership of existing containers, per repo; prune and host-network build refused | `src/toolkit/docker-guard.test.ts`, `src/toolkit/docker-proxy.test.ts` (proxy process, fake daemon socket) | `POST /containers/supabase_db_offstage/exec`, `PUT /containers/<other>/archive`, kill on another project's: 403 and never forwarded; the proxy's own container: exec, kill, rm (from a second proxy) allowed |
+| W3b r2: base flake cached as known | failing base drive run again after a reset; `flaky`, not tolerated | `src/engine/stages/toolkit.test.ts` (`settleFailedDrive`) | pass on the re-run → flaky; fail again → known |
+
+**Skipped because the benchmark was running:** `spikes/w3b/docker-guard.ts` (real Docker through the wrapper, now with the ownership rule), any `toolkit up`/check on the new registry, and the next dogfood round.
+
+`npm test` 415/415, typecheck and lint clean.
