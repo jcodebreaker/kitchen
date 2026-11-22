@@ -234,4 +234,44 @@ async function killMidStage(r: ReturnType<typeof makeRepo>, label: string, pidFi
   check("nothing is left in that process group", leftover === "", leftover);
   check("the job finishes", jobOf(rc, idc).stage === "done", stagesOf(rc, idc).join(" → "));
 }
+
+// ---- Part 4: a check started through the bridge; the agent's group (agent + bridge) is SIGKILLed.
+// The bridge dies without its exit handler, so its check (its own group) lives on. runRole reaps the
+// job's records whose owner is dead once the agent returns: the check is dead before the stage retries.
+{
+  const rb = makeRepo(root, "kill-bridge");
+  const wrapper = path.join(root, "stub-claude");
+  const pidFile = path.join(rb.dir, "check-pid");
+  const trigger = path.join(rb.dir, "hang-check");
+  const hang = `if [ -f ${trigger} ]; then rm ${trigger}; echo $$ > ${pidFile}; sleep 600; fi`;
+  fs.writeFileSync(
+    path.join(rb.dir, "kitchen.yaml"),
+    yaml(`{ tool: claude, command: [${JSON.stringify(wrapper)}] }`, `${GATE_CHECK}\n  - { name: slow, run: ${JSON.stringify(hang)} }`),
+  );
+  fs.writeFileSync(trigger, "");
+  fs.writeFileSync(path.join(rb.dir, "bridge-kill"), "");
+  const idb = ticket(rb, "A bridge check outlives its agent\nscenario: chore");
+  const out = kitchen(rb, "run");
+  fs.writeFileSync(path.join(root, "kill-bridge-run.log"), out.out);
+  const sh = Number(fs.readFileSync(pidFile, "utf8").trim());
+  const bridgePid = Number(/^bridge-kill (\d+)$/m.exec(fs.readFileSync(path.join(rb.dir, ".kitchen", "stub-agents.log"), "utf8"))?.[1]);
+  check("the check ran in its own process group, started by the bridge", sh > 0 && bridgePid > 0, `check ${sh}, bridge ${bridgePid}`);
+  const killedAt = out.out.indexOf(`killed check slow left running by pid ${bridgePid} (process group ${sh})`);
+  const retryAt = out.out.indexOf("build: builder:", out.out.indexOf("build: builder:") + 1);
+  check(
+    "after the agent returns, runRole kills the check the dead bridge left (before the builder runs again)",
+    killedAt >= 0 && retryAt > killedAt && /build: killed check slow/.test(out.out),
+    out.out
+      .split("\n")
+      .filter((l) => /killed|builder:|error/.test(l))
+      .join(" | "),
+  );
+  check("the check is dead and nothing is left in its group", !alive(sh) && spawnSync("pgrep", ["-g", String(sh)], { encoding: "utf8" }).stdout.trim() === "");
+  const procs = path.join(jobDir(rb, idb), "procs");
+  check(
+    "the job finishes; no procs records are left",
+    jobOf(rb, idb).stage === "done" && (!fs.existsSync(procs) || fs.readdirSync(procs).length === 0),
+    stagesOf(rb, idb).join(" → "),
+  );
+}
 finish("w1 kill");
