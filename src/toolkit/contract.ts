@@ -5,13 +5,24 @@
 // (base-change re-proof) and which args `toolkit check` drives it with.
 // Pure: no I/O here.
 import { z } from "zod";
-import { DriveFormatError, extractDriveBlocks, parseDrive, parseFlow, stripComment, type Value } from "../proof/drive-format.ts";
+import {
+  type Drive,
+  DriveFormatError,
+  extractDriveBlocks,
+  parseDrive,
+  parseFlow,
+  stripComment,
+  substitute,
+  type Value,
+  varsIn,
+} from "../proof/drive-format.ts";
 
 /** Bumped when a command's shape changes; `kitchen migrate` upgrades Toolkits across it. */
 export const CONTRACT_VERSION = 1;
 
 /** The generic primitives every Toolkit with a UI has, so drives stay portable (PLAN §2). */
 export const WEB_PRIMITIVES = ["read", "open", "reload", "press", "type", "screenshot", "login", "http"] as const;
+export const SURFACES = ["web", "cli", "api"] as const;
 export const LIFECYCLE = ["prepare", "up", "doctor", "reset", "down", "describe"] as const;
 /** A slot reserves this many ports; `ports.needs` must fit in it. */
 export const SLOT_PORTS = 20;
@@ -26,8 +37,8 @@ export const Describe = z
     status: z.literal("ok").optional(),
     contract: z.literal(CONTRACT_VERSION),
     toolkit: z.string().optional(),
-    /** web | cli | api | … : `web` must carry the generic WEB_PRIMITIVES. */
-    surface: z.string().optional(),
+    /** web | cli | api: `web` must carry the generic WEB_PRIMITIVES; web and api `up` give an http(s) url. */
+    surface: z.enum(SURFACES),
     lifecycle: z.array(z.string()).optional(),
     primitives: z.array(Primitive).min(1),
     /** Feature files, relative to the Toolkit folder (`features/x.md`), read from `--src`. */
@@ -56,7 +67,7 @@ export type DescribeOut = z.infer<typeof Describe>;
 export const Prepare = z.object({ status: z.literal("ok"), secs: z.number().nonnegative() });
 export const Up = z.union([z.object({ status: z.literal("ready"), url: z.string().min(1) }), z.object({ status: z.literal("fail"), why: z.string() })]);
 export const Check = z.object({ name: z.string(), ok: z.boolean(), why: z.string().optional() });
-export const Doctor = z.object({ status: z.enum(["ok", "fail"]), checks: z.array(Check) });
+export const Doctor = z.object({ status: z.enum(["ok", "fail"]), checks: z.array(Check).min(1, "doctor must run at least one check") });
 export const Reset = z.object({ status: z.enum(["ok", "fail"]), why: z.string().optional() });
 export const Down = z.object({ status: z.enum(["ok", "fail"]), why: z.string().optional() });
 export const PrimitiveOut = z.object({ ok: z.boolean(), out: z.unknown(), files: z.array(z.string()) });
@@ -73,6 +84,109 @@ export function validate<C extends Command>(cmd: C, json: unknown): { ok: true; 
 }
 
 export const primitiveNames = (d: DescribeOut) => d.primitives.map((p) => (typeof p === "string" ? p : p.name));
+
+/**
+ * Pure: the contract's "exactly one JSON line on stdout" (logs go to stderr).
+ * Returns the parsed object, or why the output breaks the rule.
+ */
+export function oneJsonLine(stdout: string): { ok: true; json: Record<string, unknown> } | { ok: false; why: string } {
+  const lines = stdout.split("\n").filter((l) => l.trim());
+  if (!lines.length) return { ok: false, why: "printed nothing on stdout (one JSON line expected)" };
+  if (lines.length > 1)
+    return {
+      ok: false,
+      why: `printed ${lines.length} lines on stdout (exactly one JSON line; logs go to stderr), first: ${JSON.stringify(lines[0].slice(0, 80))}`,
+    };
+  try {
+    const j = JSON.parse(lines[0]) as unknown;
+    if (j && typeof j === "object" && !Array.isArray(j)) return { ok: true, json: j as Record<string, unknown> };
+  } catch {}
+  return { ok: false, why: `stdout is not one JSON object: ${JSON.stringify(lines[0].slice(0, 120))}` };
+}
+
+/** Pure: `up`'s url for a surface. web and api: an http(s) URL; cli: any absolute URL (a CLI's is often file://…). */
+export function upUrlProblem(surface: string, url: string): string | null {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return `url ${JSON.stringify(url)} is not an absolute URL`;
+  }
+  if (surface !== "cli" && u.protocol !== "http:" && u.protocol !== "https:") return `a ${surface} Toolkit's url must be http(s), got ${JSON.stringify(url)}`;
+  return null;
+}
+
+// ---------- the contract probe (`toolkit check`, after the drives) ----------
+
+/** One call of the probe: a primitive with args, and what the contract says it must answer. */
+export type Probe = {
+  primitive: string;
+  args: Record<string, Value>;
+  /** ok: must answer ok:true; refuse: must not answer ok:true; shape: one valid JSON line is enough. */
+  expect: "ok" | "refuse" | "shape";
+  why: string;
+  /** Append a second --id (a duplicated engine flag): the call must be refused. */
+  dupFlag?: boolean;
+};
+
+/** Safe positive args for the generic primitives. `ok` is required only where every Toolkit of that surface can answer it. */
+const PROBE_TABLE: Record<string, { args: Record<string, Value>; okOn: readonly string[] }> = {
+  read: { args: { target: "body" }, okOn: ["web"] },
+  open: { args: { path: "/" }, okOn: ["web"] },
+  reload: { args: {}, okOn: ["web"] },
+  screenshot: { args: {}, okOn: ["web"] },
+  http: { args: { method: "GET", path: "/" }, okOn: [] },
+};
+const FOREIGN = ["http://example.invalid/kitchen-probe", "//example.invalid/kitchen-probe"];
+export const MISSING_TARGET = "#kitchen-probe-missing-element";
+
+/**
+ * Pure: the probe calls for a Toolkit. Every primitive in describe once (args
+ * from the table, else from the first feature-drive step that calls it with
+ * its check line's args substituted, else none), then the negative probes:
+ * `read` of a missing target is ok:false, `open`/`http` of another origin are
+ * refused, a duplicated flag is refused.
+ */
+export function planProbes(d: DescribeOut, drives: { drive: Drive; args: Record<string, string> }[]): Probe[] {
+  const names = primitiveNames(d);
+  const probes: Probe[] = [];
+  const fromDrives = (name: string): Record<string, Value> | null => {
+    for (const { drive, args } of drives)
+      for (const s of drive.steps) {
+        if (s.kind !== "prim" || s.name !== name) continue;
+        const a = substitute(s.args, args);
+        if (!varsIn(a).length) return a;
+      }
+    return null;
+  };
+  for (const name of names) {
+    const t = PROBE_TABLE[name];
+    if (t) probes.push({ primitive: name, args: t.args, expect: t.okOn.includes(d.surface) ? "ok" : "shape", why: `${name} answers` });
+    else if (name === "login" && d.seed_users[0]) probes.push({ primitive: name, args: { as: d.seed_users[0] }, expect: "shape", why: "login answers" });
+    else probes.push({ primitive: name, args: fromDrives(name) ?? {}, expect: "shape", why: `${name} answers` });
+  }
+  if (names.includes("read")) probes.push({ primitive: "read", args: { target: MISSING_TARGET }, expect: "refuse", why: "read of a missing target is ok:false" });
+  for (const p of ["open", "http"] as const)
+    if (names.includes(p))
+      for (const url of FOREIGN)
+        probes.push({
+          primitive: p,
+          args: p === "open" ? { path: url } : { method: "GET", path: url },
+          expect: "refuse",
+          why: `${p} of another origin (${url}) is refused`,
+        });
+  const dupOn = names.includes("read") ? "read" : names[0];
+  probes.push({ primitive: dupOn, args: PROBE_TABLE[dupOn]?.args ?? {}, expect: "refuse", dupFlag: true, why: "a flag given twice (--id) is refused" });
+  return probes;
+}
+
+/** Pure: the globs (feature `paths`) that match none of `files`: a typo, or a path that doesn't exist at the base. */
+export function unmatchedGlobs(globs: string[], files: string[]): string[] {
+  return globs.filter((g) => {
+    const re = globRe(g);
+    return !files.some((f) => re.test(f));
+  });
+}
 
 // ---------- the ```kitchen block of a feature file ----------
 
@@ -130,6 +244,8 @@ export function parseFeature(file: string, markdown: string): Feature {
     }
     if (i >= lines.length) throw new DriveFormatError(`${file}: unclosed kitchen block`);
   }
+  if (!meta.paths.length)
+    throw new DriveFormatError(`${file}: no paths: the kitchen block must map the feature to its source (paths: [globs]), so a change there re-proves it`);
   // A drive without args needs no check line: it is checked as it is.
   for (const d of drives) if (!d.args.length && !meta.checks.some((c) => c.drive === d.name)) meta.checks.push({ drive: d.name, args: {} });
   return {

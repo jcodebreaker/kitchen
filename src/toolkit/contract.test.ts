@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { globRe, parseFeature, touched, validate } from "./contract.ts";
+import { loadDrive } from "../proof/drive-format.ts";
+import { globRe, MISSING_TARGET, oneJsonLine, parseFeature, planProbes, touched, unmatchedGlobs, upUrlProblem, validate } from "./contract.ts";
 
 const describeOk = {
   contract: 1,
@@ -69,6 +70,43 @@ describe("feature files", () => {
   });
 });
 
+describe("the contract, held harder (W2 review)", () => {
+  it("stdout is exactly one JSON object line", () => {
+    expect(oneJsonLine('{"ok":true}\n').ok).toBe(true);
+    const two = oneJsonLine('[dev] hi\n{"ok":true}\n');
+    expect(two.ok).toBe(false);
+    if (!two.ok) expect(two.why).toMatch(/2 lines/);
+    expect(oneJsonLine("").ok).toBe(false);
+    expect(oneJsonLine("[1]").ok).toBe(false);
+  });
+  it("up's url: http(s) for web and api, any absolute URL for cli", () => {
+    expect(upUrlProblem("web", "http://127.0.0.1:31000")).toBeNull();
+    expect(upUrlProblem("web", "x")).toMatch(/not an absolute URL/);
+    expect(upUrlProblem("api", "file:///tmp/db")).toMatch(/must be http/);
+    expect(upUrlProblem("cli", "file:///tmp/db")).toBeNull();
+  });
+  it("doctor needs a check; describe needs a known surface", () => {
+    expect(validate("doctor", { status: "ok", checks: [] }).ok).toBe(false);
+    expect(validate("describe", { ...describeOk, surface: undefined }).ok).toBe(false);
+    expect(validate("describe", { ...describeOk, surface: "desktop" }).ok).toBe(false);
+  });
+  it("a feature without paths is refused", () =>
+    expect(() => parseFeature("f", feature.replace('paths: [server.js, "views/settings/**"]   # comment\n', ""))).toThrow(/no paths/));
+  it("probes every primitive once, then the refusals", () => {
+    const d = validate("describe", { ...describeOk, primitives: [...describeOk.primitives, "toggle"] });
+    if (!d.ok) throw new Error(d.why);
+    const withToggle = feature.replace("  - login: { as: $user }", "  - login: { as: $user }\n  - toggle: { who: $user }");
+    const p = planProbes(d.value, [{ drive: loadDrive(withToggle, "settings.toggle"), args: { user: "bob" } }]);
+    const names = describeOk.primitives.map((x) => (typeof x === "string" ? x : x.name));
+    expect(p.filter((x) => x.expect !== "refuse").map((x) => x.primitive)).toEqual([...names, "toggle"]);
+    expect(p.find((x) => x.primitive === "toggle")?.args).toEqual({ who: "bob" });
+    expect(p.find((x) => x.primitive === "login")?.args).toEqual({ as: "alice" });
+    expect(p.find((x) => x.primitive === "read" && x.expect === "refuse")?.args).toEqual({ target: MISSING_TARGET });
+    expect(p.filter((x) => x.expect === "refuse" && (x.primitive === "open" || x.primitive === "http"))).toHaveLength(4);
+    expect(p.find((x) => x.dupFlag)?.primitive).toBe("read");
+  });
+});
+
 describe("globs", () => {
   it("matches files, folders and ** across segments", () => {
     expect(globRe("server.js").test("server.js")).toBe(true);
@@ -79,6 +117,8 @@ describe("globs", () => {
     expect(globRe(".kitchen/toolkit/**").test(".kitchen/toolkit/bin/dev")).toBe(true);
     expect(globRe("a.b").test("axb")).toBe(false);
   });
+  it("names the globs that match no file", () =>
+    expect(unmatchedGlobs(["server.js", "srver.js", "views/**"], ["server.js", "views/a.html"])).toEqual(["srver.js"]));
   it("lists the changed files a Toolkit depends on", () => {
     expect(touched(["README.md", "server.js", ".kitchen/toolkit/bin/dev"], [".kitchen/toolkit/**", "server.js"])).toEqual([
       "server.js",
