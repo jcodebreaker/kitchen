@@ -28,6 +28,8 @@ export type AgentRequest = {
   bridge?: BridgeServer;
   /** Engine-owned folders the agent may not even read. Default: $KITCHEN_HOME (the engine key). */
   denyRead?: string[];
+  /** Reasoning effort (Claude `--effort`, Codex `model_reasoning_effort`). Default: the tool's own (Claude) / low (Codex). */
+  effort?: "low" | "medium" | "high";
 };
 
 export type AgentResult = {

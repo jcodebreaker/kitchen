@@ -80,6 +80,9 @@ describe("globs", () => {
     expect(globRe("a.b").test("axb")).toBe(false);
   });
   it("lists the changed files a Toolkit depends on", () => {
-    expect(touched(["README.md", "server.js", ".kitchen/toolkit/bin/dev"], [".kitchen/toolkit/**", "server.js"])).toEqual(["server.js", ".kitchen/toolkit/bin/dev"]);
+    expect(touched(["README.md", "server.js", ".kitchen/toolkit/bin/dev"], [".kitchen/toolkit/**", "server.js"])).toEqual([
+      "server.js",
+      ".kitchen/toolkit/bin/dev",
+    ]);
   });
 });

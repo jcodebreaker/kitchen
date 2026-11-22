@@ -45,7 +45,8 @@ export const Describe = z
     if (dup.length) ctx.addIssue({ code: "custom", path: ["primitives"], message: `listed twice: ${dup.join(", ")}` });
     if (d.surface === "web") {
       const missing = WEB_PRIMITIVES.filter((p) => !names.includes(p));
-      if (missing.length) ctx.addIssue({ code: "custom", path: ["primitives"], message: `a web Toolkit needs the generic primitives; missing ${missing.join(", ")}` });
+      if (missing.length)
+        ctx.addIssue({ code: "custom", path: ["primitives"], message: `a web Toolkit needs the generic primitives; missing ${missing.join(", ")}` });
     }
     if (d.ports.order && d.ports.order.length !== d.ports.needs)
       ctx.addIssue({ code: "custom", path: ["ports", "order"], message: `names ${d.ports.order.length} ports but needs is ${d.ports.needs}` });

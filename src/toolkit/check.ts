@@ -44,6 +44,8 @@ export type CheckOpts = {
   feature?: string;
   /** Skip `prepare` (the caller just ran it). Default: run it, timed. */
   prepare?: boolean;
+  /** The light re-proof: only the first check line's drive, no reset round, no second slot. */
+  smoke?: boolean;
   print?: (line: string) => void;
   timeouts?: { prepareMs?: number; upMs?: number };
 };
@@ -143,11 +145,19 @@ export async function runToolkitCheck(o: CheckOpts): Promise<CheckReport> {
       for (const d of f.drives)
         for (const p of d.primitives) if (!prims.includes(p)) problems.push(`${f.file}: drive ${d.name} uses ${p}, which describe doesn't list`);
     let checks = report.features.flatMap((f) => f.checks.map((c) => ({ ...c, file: path.join(fdir, f.file) })));
+    if (o.smoke) checks = checks.slice(0, 1);
     if (o.feature) {
       checks = checks.filter((c) => c.drive === o.feature || path.basename(c.file, ".md") === o.feature);
       if (!checks.length) problems.push(`no drive or feature named ${o.feature}`);
     }
-    if (!step("features", !problems.length, (Date.now() - t) / 1000, problems.length ? problems.join("; ") : `${report.features.length} files, ${checks.length} drives`))
+    if (
+      !step(
+        "features",
+        !problems.length,
+        (Date.now() - t) / 1000,
+        problems.length ? problems.join("; ") : `${report.features.length} files, ${checks.length} drives`,
+      )
+    )
       return fail("features");
 
     // 2. prepare (timed)
@@ -173,11 +183,18 @@ export async function runToolkitCheck(o: CheckOpts): Promise<CheckReport> {
       try {
         const r = await runDrive({ jobDir, request: { feature: c.drive, file: c.file, args: c.args }, criterion: `check:${c.drive}`, role: "engine" });
         const at = r.failedAt;
-        const why = r.gap ? `primitive ${r.gap} is missing` : at ? `step ${at.step} (line ${at.line}) failed: ${JSON.stringify(at.out).slice(0, 400)}` : undefined;
+        const why = r.gap
+          ? `primitive ${r.gap} is missing`
+          : at
+            ? `step ${at.step} (line ${at.line}) failed: ${JSON.stringify(at.out).slice(0, 400)}`
+            : undefined;
         let t2: string | undefined;
         if (at?.evidence[0]) {
           try {
-            const call = JSON.parse(fs.readFileSync(path.join(evidenceDir(jobDir), at.evidence[0], "call.json"), "utf8")) as { stderr?: string; last?: { stderr?: string } };
+            const call = JSON.parse(fs.readFileSync(path.join(evidenceDir(jobDir), at.evidence[0], "call.json"), "utf8")) as {
+              stderr?: string;
+              last?: { stderr?: string };
+            };
             t2 = (call.stderr ?? call.last?.stderr ?? "").slice(-TAIL);
           } catch {}
         }
@@ -190,14 +207,20 @@ export async function runToolkitCheck(o: CheckOpts): Promise<CheckReport> {
     for (const c of checks) if (!(await drive(c, `drive ${c.drive}`))) return fail(`drive ${c.drive}`);
 
     // 5. reset, then the drives again (a drive that changes data passes twice only if reset restores the seed)
-    if (!(await cmd("reset", [`--id=${a.id}`], `reset ${a.id}`, 120_000, okStatus)).ok) return fail("reset");
-    for (const c of checks) if (!(await drive(c, `drive ${c.drive} after reset`))) return fail(`drive ${c.drive} after reset`);
+    if (!o.smoke && !(await cmd("reset", [`--id=${a.id}`], `reset ${a.id}`, 120_000, okStatus)).ok) return fail("reset");
+    if (!o.smoke) for (const c of checks) if (!(await drive(c, `drive ${c.drive} after reset`))) return fail(`drive ${c.drive} after reset`);
 
     // 6. two slots at once, unless the Toolkit says it can't
-    if (!o.feature) {
+    if (!o.feature && !o.smoke) {
       if (desc.parallel) {
         const b = await slot("b");
-        const upB = await cmd("up", [`--id=${b.id}`, `--src=${src}`, `--ports=${b.ports.join(",")}`], `up ${b.id} (second slot)`, o.timeouts?.upMs ?? 10 * 60_000, ready);
+        const upB = await cmd(
+          "up",
+          [`--id=${b.id}`, `--src=${src}`, `--ports=${b.ports.join(",")}`],
+          `up ${b.id} (second slot)`,
+          o.timeouts?.upMs ?? 10 * 60_000,
+          ready,
+        );
         up.add(b.id);
         if (!upB.ok) return fail("parallel up");
         if (!(await cmd("doctor", [`--id=${b.id}`], `doctor ${b.id}`, 120_000, okStatus)).ok) return fail("parallel doctor");

@@ -11,6 +11,7 @@ import { mainHead } from "../engine/worktree.ts";
 import { readLedger } from "../ledger/append.ts";
 import { formatCounts, summarize } from "../ledger/report.ts";
 import { PromptSource } from "../sources/prompt.ts";
+import { queueLine } from "../toolkit/reproof.ts";
 
 export type Out = (line: string) => void;
 
@@ -77,6 +78,8 @@ export function status(repo: string, out: Out): number {
         : `runner: pid ${l.info?.pid}, heartbeat ${ago(l.info?.heartbeat ?? "")}${l.info?.log ? `, log ${l.info.log}` : ""}`,
     );
   }
+  const q = queueLine(repo);
+  if (q) out(q);
   const jobs = listJobs(repo);
   if (!jobs.length) out("no jobs");
   for (const j of jobs) out(statusLine(j, jobDirOf(repo, j.id)));
