@@ -5,11 +5,14 @@
 //   - an engine failure (not the agent's) escalates as engine-error, after one retry
 //   - an empty run.lock is not taken over until it has stayed unreadable for 2 s
 //   - a torn last ledger line doesn't swallow the next line
+//   - a run lock lost mid-stage: no move is made after it, the next owner finishes the job
+//   - a torn or start-less procs record kills nothing, and is removed
 //   node spikes/w1/faults.ts <scratch dir>
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { check, finish, jobDir, jobOf, kitchen, makeRepo, stagesOf, stepUntil, ticket } from "./lib.ts";
+import { processStart } from "../../src/lock.ts";
+import { CLI, check, finish, forge, jobDir, jobOf, kitchen, makeRepo, sleep, stagesOf, stepUntil, ticket } from "./lib.ts";
 
 const root = path.resolve(process.argv[2] ?? path.join(import.meta.dirname, ".work"));
 fs.mkdirSync(root, { recursive: true });
@@ -156,6 +159,115 @@ const jobJson = (r: { dir: string }, id: string) => path.join(r.dir, ".kitchen",
     lines.length >= 3 && parsed.every(Boolean) && parsed.some((l) => l?.event === "run-start"),
     `${lines.length} lines`,
   );
+}
+
+// 7. The run lock is lost mid-stage (rewritten to name another live runner): no move is made after
+//    that, the runner stops, and the lock is left to its new owner. The next owner finishes the job.
+{
+  const r = makeRepo(root, "lost-lock");
+  const id = ticket(r, "Lost lock\nscenario: slow");
+  const log = path.join(root, "lost-lock-run1.log");
+  const fd = fs.openSync(log, "w");
+  const runner = spawn(process.execPath, [CLI, "run", "--repo", r.dir], { env: r.env, stdio: ["ignore", fd, fd] });
+  const read = () => (fs.existsSync(log) ? fs.readFileSync(log, "utf8") : "");
+  for (let i = 0; i < 300 && !/build: builder:/.test(read()); i++) await sleep(100);
+  const lock = path.join(r.dir, ".kitchen", "run.lock");
+  const other = spawn("sleep", ["60"], { stdio: "ignore" });
+  await sleep(200);
+  const theirs = JSON.stringify({
+    pid: other.pid,
+    start: processStart(other.pid as number),
+    startedAt: new Date().toISOString(),
+    heartbeat: new Date().toISOString(),
+  });
+  const movesBefore = moveKeys(r);
+  fs.writeFileSync(lock, theirs); // another runner took it over while the builder runs
+  await new Promise((res) => runner.once("exit", res));
+  fs.closeSync(fd);
+  const out = read();
+  const j = jobOf(r, id);
+  check(
+    "the builder was mid-run when the lock was rewritten",
+    /build: builder:/.test(out) && movesBefore.at(-1)?.endsWith("intake>build") === true,
+    movesBefore.at(-1),
+  );
+  check(
+    "after the agent returns: no move made, the runner says why and stops",
+    new RegExp(`${id}  build: run lock lost, left for the runner that holds it`).test(out) && /run: lost the run lock to another runner, stopping/.test(out),
+    out
+      .split("\n")
+      .filter((l) => /lock/.test(l))
+      .join(" | "),
+  );
+  check(
+    "job.json and the ledger have no move past the one before the lock was lost",
+    j.stage === "build" && JSON.stringify(moveKeys(r)) === JSON.stringify(movesBefore),
+    `${j.stage}; ${moveKeys(r).length} moves (was ${movesBefore.length})`,
+  );
+  check("the lock still names its new owner (not released by the old one)", fs.readFileSync(lock, "utf8") === theirs);
+  check(
+    "the old runner published nothing after the builder returned (no PR, no push), but kept build.md for the next owner",
+    forge(r).prs.length === 0 && j.agentRuns.some((a) => a.role === "builder" && a.ok && !!a.file && fs.existsSync(path.join(jobDir(r, id), a.file))),
+    JSON.stringify(forge(r).prs),
+  );
+  other.kill();
+  await sleep(200);
+  const again = kitchen(r, "run");
+  check(
+    "the next runner takes the lock over and finishes the job",
+    /took over the run lock \(owner pid \d+ is gone\)/.test(again.out) && jobOf(r, id).stage === "done",
+    stagesOf(r, id).join(" → "),
+  );
+  const after = jobOf(r, id);
+  check(
+    "it reused the builder's file (one builder run) and published once (1 PR, 1 push)",
+    after.agentRuns.filter((a) => a.role === "builder").length === 1 &&
+      forge(r).prs.length === 1 &&
+      forge(r).prs[0].pushes === 1 &&
+      forge(r).prs[0].creates === 1,
+    JSON.stringify(forge(r).prs[0]),
+  );
+}
+
+// 8. A torn procs record (crash mid-write, from before records were written atomically) or one with no
+//    start time names only a pgid: a group that now has it may be another one. It is removed, nothing killed.
+{
+  const r = makeRepo(root, "torn-procs");
+  const id = ticket(r, "Torn procs record\nscenario: chore");
+  const procs = path.join(jobDir(r, id), "procs");
+  fs.mkdirSync(procs, { recursive: true });
+  const a = spawn("sleep", ["60"], { stdio: "ignore", detached: true });
+  const b = spawn("sleep", ["60"], { stdio: "ignore", detached: true });
+  await sleep(200);
+  fs.writeFileSync(path.join(procs, `${a.pid}.json`), `{"pgid":${a.pid},"sta`);
+  fs.writeFileSync(path.join(procs, `${b.pid}.json`), JSON.stringify({ pgid: b.pid, start: null, what: "check x", by: 1, at: new Date().toISOString() }));
+  const out = kitchen(r, "run").out;
+  const alive = (pid: number) => {
+    try {
+      process.kill(-pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  check(
+    "the groups those pgids name now are left alone; the records are removed",
+    alive(a.pid as number) && alive(b.pid as number) && !/killed/.test(out) && fs.readdirSync(procs).length === 0,
+    `${a.pid} ${alive(a.pid as number) ? "alive" : "dead"}, ${b.pid} ${alive(b.pid as number) ? "alive" : "dead"}; ${fs.readdirSync(procs).join(",")}`,
+  );
+  check("the job runs to done", jobOf(r, id).stage === "done", stagesOf(r, id).join(" → "));
+  a.kill();
+  b.kill();
+}
+
+function moveKeys(r: { dir: string }): string[] {
+  return fs
+    .readFileSync(path.join(r.dir, ".kitchen", "ledger.jsonl"), "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.parse(l) as { event: string; key: string })
+    .filter((l) => l.event === "move")
+    .map((l) => l.key);
 }
 
 finish("w1 faults");
