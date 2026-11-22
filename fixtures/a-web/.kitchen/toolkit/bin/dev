@@ -45,7 +45,14 @@ const LIFECYCLE = ["prepare", "up", "doctor", "reset", "down", "describe"];
 
 const t0 = Date.now();
 const secs = () => Math.round((Date.now() - t0) / 100) / 10;
-const { flags, pos } = parseArgs(process.argv.slice(2));
+let parsed;
+try {
+  parsed = parseArgs(process.argv.slice(2));
+} catch (e) {
+  // e.g. a flag given twice: refuse the whole call, never pick one of the values
+  out({ ok: false, status: "fail", out: e.message, why: e.message, files: [] }, 2);
+}
+const { flags, pos } = parsed;
 const cmd = pos[0];
 
 function srcOf(f) {
