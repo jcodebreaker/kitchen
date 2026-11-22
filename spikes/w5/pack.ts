@@ -22,16 +22,26 @@ const npm = (args: string[], cwd: string, env: NodeJS.ProcessEnv = process.env) 
 const dry = npm(["pack", "--dry-run", "--json"], ROOT);
 const files = (JSON.parse(dry.stdout) as { files: { path: string }[] }[])[0].files.map((f) => f.path);
 const allowed = (f: string) =>
-  /^dist\/.+\.js$/.test(f) ||
-  /^(roles|skills|toolkit-template)\//.test(f) ||
-  ["dashboard/dashboard.html", "README.md", "LICENSE", "package.json"].includes(f);
+  /^dist\/.+\.js$/.test(f) || /^(roles|skills|toolkit-template)\//.test(f) || ["dashboard/dashboard.html", "README.md", "LICENSE", "package.json"].includes(f);
 const stray = files.filter((f) => !allowed(f));
-check("npm pack --dry-run lists only the package's files", stray.length === 0 && files.length > 50, `${files.length} files${stray.length ? `; stray: ${stray.join(", ")}` : ""}`);
+check(
+  "npm pack --dry-run lists only the package's files",
+  stray.length === 0 && files.length > 50,
+  `${files.length} files${stray.length ? `; stray: ${stray.join(", ")}` : ""}`,
+);
 check(
   "no fixtures, spikes, bench, src, tests, maps, env files or node_modules",
   !files.some((f) => /(^|\/)(fixtures|spikes|bench\/|src\/|node_modules)|\.test\.js$|\.map$|(^|\/)\.env/.test(f) && !f.startsWith("dist/bench/")),
 );
-for (const need of ["dist/cli.js", "roles/retro.md", "roles/setup.md", "skills/kitchen/SKILL.md", "toolkit-template/bin/dev", "dashboard/dashboard.html", "LICENSE"])
+for (const need of [
+  "dist/cli.js",
+  "roles/retro.md",
+  "roles/setup.md",
+  "skills/kitchen/SKILL.md",
+  "toolkit-template/bin/dev",
+  "dashboard/dashboard.html",
+  "LICENSE",
+])
   check(`the package has ${need}`, files.includes(need));
 
 const tgzName = npm(["pack", "--pack-destination", root], ROOT).stdout.trim().split("\n").pop() ?? "";
@@ -40,7 +50,8 @@ check("npm pack built the tarball", tgzName === "devkitchen-0.1.0.tgz" && fs.exi
 const unpacked = path.join(root, "unpacked");
 fs.mkdirSync(unpacked);
 execFileSync("tar", ["-xzf", tgz, "-C", unpacked]);
-const SECRET = /(sk-ant-[A-Za-z0-9_-]{20,}|sk-proj-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|AKIA[0-9A-Z]{16}|xox[bp]-[A-Za-z0-9-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)/;
+const SECRET =
+  /(sk-ant-[A-Za-z0-9_-]{20,}|sk-proj-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|AKIA[0-9A-Z]{16}|xox[bp]-[A-Za-z0-9-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)/;
 const hits: string[] = [];
 const walk = (d: string) => {
   for (const e of fs.readdirSync(d, { withFileTypes: true })) {
@@ -52,7 +63,10 @@ const walk = (d: string) => {
 walk(unpacked);
 check("no secret-shaped string in the tarball", hits.length === 0, hits.join(", "));
 const pkg = JSON.parse(fs.readFileSync(path.join(unpacked, "package", "package.json"), "utf8")) as Record<string, unknown>;
-check("package.json: MIT, bin kitchen → dist/cli.js, engines node", pkg.license === "MIT" && (pkg.bin as Record<string, string>).kitchen === "dist/cli.js" && !!(pkg.engines as Record<string, string>).node);
+check(
+  "package.json: MIT, bin kitchen → dist/cli.js, engines node",
+  pkg.license === "MIT" && (pkg.bin as Record<string, string>).kitchen === "dist/cli.js" && !!(pkg.engines as Record<string, string>).node,
+);
 
 // From an empty temp dir, through npx.
 const empty = path.join(root, "empty");
@@ -61,7 +75,11 @@ fs.copyFileSync(tgz, path.join(empty, tgzName)); // npx takes a tarball as `./x.
 const cache = path.join(root, "npm-cache");
 const env = { ...process.env, npm_config_cache: cache, npm_config_update_notifier: "false" };
 const help = spawnSync("npx", ["--yes", `./${tgzName}`, "--help"], { cwd: empty, env, encoding: "utf8", timeout: 300_000 });
-check("npx ./devkitchen-0.1.0.tgz --help works from an empty dir", help.status === 0 && help.stdout.includes("kitchen ticket"), (help.stdout + help.stderr).split("\n")[0]);
+check(
+  "npx ./devkitchen-0.1.0.tgz --help works from an empty dir",
+  help.status === 0 && help.stdout.includes("kitchen ticket"),
+  (help.stdout + help.stderr).split("\n")[0],
+);
 const ver = spawnSync("npx", ["--yes", `./${tgzName}`, "--version"], { cwd: empty, env, encoding: "utf8", timeout: 300_000 });
 check("npx … --version says 0.1.0", ver.stdout.trim() === "0.1.0", ver.stdout.trim());
 
@@ -82,7 +100,11 @@ check("installed: kitchen migrate --dry-run shows the version stamp", mig.status
 const rep = k("report");
 check("installed: kitchen report runs on an empty ledger", rep.status === 0 && rep.stdout.includes("merge-ready rate"), rep.stdout.split("\n")[0]);
 const sk = k("init", "--skill");
-check("installed: kitchen init --skill writes the skill from the package", sk.status === 0 && fs.existsSync(path.join(repo, ".claude", "skills", "kitchen", "SKILL.md")), sk.stdout.trim().split("\n")[0]);
+check(
+  "installed: kitchen init --skill writes the skill from the package",
+  sk.status === 0 && fs.existsSync(path.join(repo, ".claude", "skills", "kitchen", "SKILL.md")),
+  sk.stdout.trim().split("\n")[0],
+);
 const tk = k("ticket", "show the open count");
 check("installed: kitchen ticket makes a job", tk.status === 0 && /ticket 001-/.test(tk.stdout), tk.stdout.trim());
 const dash = spawn(bin, ["dashboard", "--port", "7394"], { cwd: repo, env: { ...env, KITCHEN_HOME: path.join(root, "home") }, stdio: "ignore" });
