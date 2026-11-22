@@ -1,0 +1,112 @@
+{
+  "fixture": "c-adopt",
+  "tool": "codex",
+  "model": "gpt-6-luna",
+  "effort": "medium",
+  "at": "2026-11-22T07:06:53.264Z",
+  "init": {
+    "exit": 0,
+    "secs": 526.835,
+    "questions": null
+  },
+  "agent": {
+    "runs": [
+      {
+        "mode": "survey",
+        "ok": true,
+        "secs": 67.128,
+        "inTok": 243563,
+        "outTok": 3057,
+        "model": "gpt-6-luna",
+        "tool": "codex",
+        "sessionId": "01a2020b-d6a2-7921-9c98-89a9ad4da31c",
+        "line": "Survey written to `.kitchen-out/survey.md`; no Toolkit files were changed."
+      },
+      {
+        "mode": "build",
+        "ok": true,
+        "secs": 430.844,
+        "inTok": 2618358,
+        "outTok": 17931,
+        "model": "gpt-6-luna",
+        "tool": "codex",
+        "sessionId": "01a2020b-d6a2-7921-9c98-89a9ad4da31c",
+        "line": "READY: Toolkit built and `toolkit_check` passed all four features, reset, and parallel instance checks. Setup report: `.kitchen-out/setup.md`."
+      }
+    ],
+    "secs": 497.972,
+    "usd": null,
+    "inTok": 2861921,
+    "outTok": 20988
+  },
+  "fixes": 0,
+  "baseCheck": {
+    "code": 0,
+    "secs": 27.494
+  },
+  "proven": {
+    "sha": "aa7f58141b6c08f749936fbbddc881de7efa604f",
+    "at": "2026-11-22T07:06:53.222Z",
+    "parallel": true,
+    "features": [
+      {
+        "file": "features/authentication.md",
+        "paths": [
+          "server.js",
+          "db/001_schema.sql",
+          "db/002_seed.sql"
+        ]
+      },
+      {
+        "file": "features/invites.md",
+        "paths": [
+          "server.js",
+          "db/001_schema.sql"
+        ]
+      },
+      {
+        "file": "features/projects.md",
+        "paths": [
+          "server.js",
+          "db/001_schema.sql",
+          "db/002_seed.sql"
+        ]
+      },
+      {
+        "file": "features/settings.md",
+        "paths": [
+          "server.js",
+          "db/001_schema.sql"
+        ]
+      }
+    ],
+    "prepareSecs": 0.841,
+    "secs": 27.214
+  },
+  "commits": [
+    "aa7f581 kitchen setup: Toolkit (bin/dev, SKILL.md, features, .env.kitchen)",
+    "6cdec15 fixture c-adopt"
+  ],
+  "toolkitFiles": [
+    ".gitignore",
+    "SKILL.md",
+    "TEMPLATE.md",
+    "app.mjs",
+    "bin",
+    "features",
+    "lib",
+    "package-lock.json",
+    "package.json",
+    "bin/dev",
+    "features/README.md",
+    "features/authentication.md",
+    "features/invites.md",
+    "features/projects.md",
+    "features/settings.md",
+    "lib/browser-daemon.mjs",
+    "lib/browser.mjs",
+    "lib/common.mjs",
+    "lib/terminal.mjs"
+  ],
+  "log": "/private/tmp/claude-501/-Users-simo-pttx/58ffbf3c-d628-41d8-aabb-4f73bfb4d366/scratchpad/runs/c-codex2/init.log"
+}
