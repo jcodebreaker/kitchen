@@ -20,6 +20,41 @@ describe("secret scan", () => {
     const f = scanText(".env.kitchen", text);
     expect(f.map((x) => x.key)).toEqual(["STRIPE_LIVE", "AWS_ACCESS_KEY_ID", "GH", "GHO", "SLACK"]);
   });
+  it("names AI-provider, GitHub fine-grained, Google, GitLab and npm keys", () => {
+    const alnum = (n: number) => "aB3dE5gH7jK9".repeat(8).slice(0, n);
+    const text = [
+      `ANTHROPIC_API_KEY=${live("sk-ant-", `api03-${alnum(40)}`)}`,
+      `OPENAI_PROJECT=${live("sk-proj-", alnum(40))}`,
+      `OPENAI_LEGACY=${live("sk-", alnum(48))}`,
+      `GH_PAT=${live("github_pat_", `11ABCDEFG0_${alnum(40)}`)}`,
+      `GOOGLE=${live("AIza", alnum(35))}`,
+      `GITLAB=${live("glpat-", alnum(20))}`,
+      `NPM=${live("npm_", alnum(36))}`,
+    ].join("\n");
+    const f = scanText(".env.kitchen", text);
+    expect(f.map((x) => `${x.key}: ${x.why}`)).toEqual([
+      "ANTHROPIC_API_KEY: an Anthropic API key (sk-ant-…)",
+      "OPENAI_PROJECT: an OpenAI API key (sk-proj-…)",
+      "OPENAI_LEGACY: an OpenAI API key (sk-…)",
+      "GH_PAT: a GitHub fine-grained token (github_pat_…)",
+      "GOOGLE: a Google API key (AIza…)",
+      "GITLAB: a GitLab token (glpat-…)",
+      "NPM: an npm token (npm_…)",
+    ]);
+  });
+  it("leaves fake sk- values alone (short, dashed, digits only, all letters)", () => {
+    const text = [
+      "OPENAI_API_KEY=sk-test",
+      "OPENAI_API_KEY=sk-kitchen-fake-key-for-the-mock-0000",
+      `OPENAI_API_KEY=sk-${"0".repeat(48)}`,
+      `OPENAI_API_KEY=sk-${"fake".repeat(10)}`,
+      "OPENAI_API_KEY=sk-abc123",
+      "ANTHROPIC_API_KEY=sk-ant-fake",
+      "NPM_CONFIG=npm_config_cache",
+      "TASK=disk-a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6", // sk- inside a word is not a key
+    ].join("\n");
+    expect(scanText(".env.kitchen", text)).toEqual([]);
+  });
   it("finds a private key block in any file", () => {
     const f = scanText(".kitchen/toolkit/app.mjs", `const k = \`${live("-----BEGIN RSA ", "PRIVATE KEY-----")}\nMIIE…\`;`);
     expect(f).toHaveLength(1);

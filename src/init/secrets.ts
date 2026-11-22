@@ -2,8 +2,10 @@
 // Toolkit, any dev-environment files). The contract says `.env.kitchen` holds
 // fake or sandbox values only; this is the engine holding the setup agent to it.
 // A commit is refused, naming the file and key, when a staged file holds:
-//   - a known live-credential shape: sk_live_ (Stripe), AKIA… (AWS), ghp_/gho_
-//     (GitHub), xox[baprs]- (Slack), a PEM private key block;
+//   - a known live-credential shape: sk_live_ (Stripe), AKIA… (AWS), ghp_/gho_/
+//     github_pat_ (GitHub), xox[baprs]- (Slack), sk-ant- (Anthropic), sk-proj-
+//     and long bare sk- (OpenAI), AIza (Google), glpat- (GitLab), npm_ (npm),
+//     a PEM private key block;
 //   - a value from the developer's own untracked .env* files (their real config),
 //     when that value looks like a secret (not a port, a boolean, a bare URL).
 // Pure apart from `devEnvValues`, which reads the repo's untracked .env* files.
@@ -19,7 +21,15 @@ const PATTERNS: { re: RegExp; why: string }[] = [
   { re: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/, why: "an AWS access key id (AKIA…)" },
   { re: /\bgh[po]_[A-Za-z0-9]{20,}/, why: "a GitHub token (ghp_/gho_…)" },
   { re: /\bgh[usr]_[A-Za-z0-9]{20,}/, why: "a GitHub token (ghu_/ghs_/ghr_…)" },
+  { re: /\bgithub_pat_[A-Za-z0-9_]{22,}/, why: "a GitHub fine-grained token (github_pat_…)" },
   { re: /\bxox[baprs]-[A-Za-z0-9-]{10,}/, why: "a Slack token (xox?-…)" },
+  { re: /\bsk-ant-[A-Za-z0-9_-]{20,}/, why: "an Anthropic API key (sk-ant-…)" },
+  { re: /\bsk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{20,}/, why: "an OpenAI API key (sk-proj-…)" },
+  // A bare sk- key: 32+ letters and digits, both present (a fake like sk-test-key or sk-000… doesn't match).
+  { re: /\bsk-(?=[A-Za-z0-9]*\d)(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{32,}(?![A-Za-z0-9_-])/, why: "an OpenAI API key (sk-…)" },
+  { re: /\bAIza[0-9A-Za-z_-]{35}(?![0-9A-Za-z_-])/, why: "a Google API key (AIza…)" },
+  { re: /\bglpat-[A-Za-z0-9_-]{20,}/, why: "a GitLab token (glpat-…)" },
+  { re: /\bnpm_[A-Za-z0-9]{36}(?![A-Za-z0-9])/, why: "an npm token (npm_…)" },
   { re: /-----BEGIN (?:[A-Z]+ )*PRIVATE KEY-----/, why: "a private key block" },
 ];
 
