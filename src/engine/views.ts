@@ -9,6 +9,7 @@
 //   settings.toggle-dark [--user alice]…      a feature drive with its args, then a screenshot
 //   toolkit login --as alice ; toolkit open --path /x ; …   proof segments as in a spec (a screenshot is added if none is taken)
 
+import { withJobLock } from "../proof/job.ts";
 import { parseProof, words } from "../proof/proof-line.ts";
 import { prove } from "../proof/prove.ts";
 import type { InstanceJob } from "./instance.ts";
@@ -61,7 +62,9 @@ export type ViewResult = { view: string; ok: boolean; why?: string; evidence: st
 
 /**
  * Run one view in the job's slot, from seed state, stamped `criterion: view:<lens>` with the
- * lens's role (no Verdict cites it: only engine and verifier entries are proof).
+ * lens's role (no Verdict cites it: only engine and verifier entries are proof). The whole view
+ * holds the job's drive lock (it resets the app): the review stage's views and `kitchen drive --view`
+ * never run while another drive of the job does.
  */
 export async function runView(o: {
   job: InstanceJob;
@@ -74,16 +77,19 @@ export async function runView(o: {
 }): Promise<ViewResult> {
   const p = viewProof(o.view, `view-${o.lens}-${o.n}`);
   if ("refused" in p) return { view: o.view, ok: false, why: p.refused, evidence: [] };
-  // The app Verify left running may have died since (a wedged browser driver): one fresh start before giving up.
-  await ensureUp(o.job, o.jobDir, o.log).catch(() => freshUp(o.job, o.jobDir, o.log));
-  await resetUp(o.job, o.jobDir);
-  const r = await prove({
-    jobDir: o.jobDir,
-    criterion: { id: "VIEW", proof: p.proof, expect: "judged" },
-    role: `reviewer-${o.lens}`,
-    stampAs: `view:${o.lens}`,
-    testCmd: o.testCmd,
-    log: o.log,
+  const proof = p.proof;
+  return withJobLock(o.jobDir, async () => {
+    // The app Verify left running may have died since (a wedged browser driver): one fresh start before giving up.
+    await ensureUp(o.job, o.jobDir, o.log).catch(() => freshUp(o.job, o.jobDir, o.log));
+    await resetUp(o.job, o.jobDir);
+    const r = await prove({
+      jobDir: o.jobDir,
+      criterion: { id: "VIEW", proof, expect: "judged" },
+      role: `reviewer-${o.lens}`,
+      stampAs: `view:${o.lens}`,
+      testCmd: o.testCmd,
+      log: o.log,
+    });
+    return { view: o.view, ok: r.status === "pass", ...(r.why ? { why: r.why } : {}), evidence: r.evidence, proof };
   });
-  return { view: o.view, ok: r.status === "pass", ...(r.why ? { why: r.why } : {}), evidence: r.evidence, proof: p.proof };
 }

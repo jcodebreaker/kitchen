@@ -12,14 +12,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { prComment, type ReportEntry, type ReportFacts, renderReport, shortCmd } from "../../checks/report-render.ts";
 import { parseRequirements } from "../../checks/spec-lint.ts";
-import { readLedger } from "../../ledger/append.ts";
+import { appendLedger, readLedger } from "../../ledger/append.ts";
 import { stageCosts } from "../../ledger/report.ts";
 import { evidenceDir, sealOf } from "../../proof/job.ts";
 import { verifyManifest } from "../../proof/manifest.ts";
 import { redact, redactTextFiles } from "../../proof/redact.ts";
 import { contractOf } from "../contract.ts";
 import { effectiveRisk, type Job } from "../machine.ts";
-import { once, roundDir, writeAtomic } from "../store.ts";
+import { listJobs, once, roundDir, writeAtomic } from "../store.ts";
 import { commitLog, diffPatch, diffStat, headOf } from "../worktree.ts";
 import { nonDiscriminating } from "./base-check.ts";
 import { prompt } from "./prompts.ts";
@@ -70,6 +70,7 @@ type ReviewJson = {
     title: string;
     why: string;
     downgraded?: string;
+    members?: { id: string; lens: string; title: string; why: string }[];
   }[];
   lenses: string[];
 };
@@ -93,8 +94,8 @@ async function factsOf(repoDir: string, jobDir: string, job: Job, head: string, 
   const dismissed = new Map(
     (fs.existsSync(path.join(jobDir, "dismissed.jsonl")) ? fs.readFileSync(path.join(jobDir, "dismissed.jsonl"), "utf8").split("\n").filter(Boolean) : []).map(
       (l) => {
-        const d = JSON.parse(l) as { finding: string; reason?: string };
-        return [d.finding, d.reason ?? "dismissed"] as const;
+        const d = JSON.parse(l) as { finding: string; reason?: string | null; by?: string };
+        return [d.finding, `${d.by ? `by ${d.by}` : ""}${d.by && d.reason ? ": " : ""}${d.reason ?? (d.by ? "" : "dismissed")}`] as const;
       },
     ),
   );
@@ -135,6 +136,7 @@ async function factsOf(repoDir: string, jobDir: string, job: Job, head: string, 
         why: x.why,
         ...(x.downgraded ? { downgraded: x.downgraded } : {}),
         ...(dismissed.has(x.id) ? { dismissed: dismissed.get(x.id) } : {}),
+        ...(x.members?.length ? { members: x.members.map((m) => ({ id: m.id, lens: m.lens, title: m.title, why: m.why })) } : {}),
       })),
     },
     seeds: seedFiles.length ? { files: seedFiles, patch: patchOf(await diffPatch(job), seedFiles) } : null,
@@ -265,6 +267,7 @@ export const report: StageHandler = async (ctx) => {
     src,
     facts,
     entries,
+    citable: citable.map((e) => e.id),
     file: (rel) => {
       const p = path.join(evidenceDir(ctx.jobDir), rel);
       return p.startsWith(evidenceDir(ctx.jobDir) + path.sep) && fs.existsSync(p) ? fs.readFileSync(p) : null;
@@ -275,6 +278,18 @@ export const report: StageHandler = async (ctx) => {
   writeAtomic(path.join(ctx.jobDir, "report.html"), html);
   writeAtomic(path.join(ctx.jobDir, "report.src.html"), src);
   ctx.log(`report.html rendered: ${out.cited.length} evidence entries inlined (${out.cited.join(" ")})`);
+  for (const w of out.warnings) {
+    ctx.log(`citation warning: ${w}`);
+    appendLedger(ctx.repo, {
+      job: job.id,
+      stage: "report",
+      round: job.round,
+      event: "report-citation-warning",
+      key: `${job.id}/report/${head}/${w.split(" ")[0]}`,
+      role: "report",
+      detail: { warning: w },
+    });
+  }
 
   // Publish, once per HEAD: the folder on the evidence branch, then the PR comment that links it.
   const bundle = path.join(ctx.jobDir, "publish", job.id);
@@ -285,7 +300,11 @@ export const report: StageHandler = async (ctx) => {
     fs.cpSync(evidenceDir(ctx.jobDir), path.join(bundle, "evidence"), { recursive: true });
     fs.writeFileSync(path.join(bundle, "published.json"), `${JSON.stringify({ job: job.id, head, pr: job.pr, at: ctx.now().toISOString() }, null, 2)}\n`);
     redactTextFiles(bundle);
-    return ctx.forge.publishEvidence({ key: `${job.id}/evidence/${head}`, job: job.id, bundle, keepDays: ctx.config.evidence_keep_days });
+    // Only finished jobs' folders may be pruned: one that isn't done still links its report from the PR.
+    const keep = listJobs(ctx.repo)
+      .filter((j) => j.stage !== "done" && j.stage !== "rejected")
+      .map((j) => j.id);
+    return ctx.forge.publishEvidence({ key: `${job.id}/evidence/${head}`, job: job.id, bundle, keepDays: ctx.config.evidence_keep_days, keep });
   });
   fs.rmSync(path.join(ctx.jobDir, "publish"), { recursive: true, force: true });
   const url = pub.value?.url ?? "";

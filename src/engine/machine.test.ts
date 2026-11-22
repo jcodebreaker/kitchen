@@ -611,6 +611,14 @@ const cases: Case[] = [
   { row: "*>needs-human", job: { stage: "spec" }, to: "needs-human", facts: f({ escalate: "engine-error" }), refused: /first engine-error/ },
   { row: "*>needs-human", job: { stage: "drives", attempts: { ...baseJob().attempts, refused: 1 } }, to: "needs-human", facts: f({ escalate: "refused" }) },
   { row: "*>needs-human", job: { stage: "done" }, to: "needs-human", facts: f({ escalate: "round-limit" }), refused: /done is not an active stage/ },
+  {
+    row: "*>needs-human",
+    job: { stage: "review" },
+    to: "needs-human",
+    facts: f({ escalate: "review-unparseable", why: "code: no finding" }),
+    expect: (j) => assert.match(j.pausedReason ?? "", /^review-unparseable: code/),
+  },
+  { row: "*>needs-human", job: { stage: "build" }, to: "needs-human", facts: f({ escalate: "review-unparseable" }), refused: /comes from review/ },
   // needs-human
   {
     row: "needs-human>build",

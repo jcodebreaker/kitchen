@@ -14,6 +14,7 @@ import type { AgentAdapter } from "../agents/adapter.ts";
 import { ClaudeAdapter } from "../agents/claude.ts";
 import { CodexAdapter } from "../agents/codex.ts";
 import { FakeAdapter, type FakeScript } from "../agents/fake.ts";
+import { KITCHEN_MARKER } from "../checks/report-render.ts";
 import { type Config, loadConfig } from "../config.ts";
 import { type Forge, forgeFor, isTrusted } from "../forge/forge.ts";
 import { appendLedger } from "../ledger/append.ts";
@@ -31,6 +32,7 @@ import { HANDLERS } from "./stages/index.ts";
 import { hasToolkit } from "./stages/toolkit-info.ts";
 import { LockLost, type Proposal, RoleFailure, type StageContext } from "./stages/types.ts";
 import { jobDirOf, listJobs, readJobAt, repairManifest, scanJobs, updateJob, writeAtomic } from "./store.ts";
+import { headTime } from "./worktree.ts";
 
 export type RunOpts = { repo: string; once?: boolean; job?: string; tickMs?: number; print?: (line: string) => void; logFile?: string };
 type Deps = { config: Config; agent: AgentAdapter; forge: Forge; source: TicketSource; holdsLock: () => boolean };
@@ -235,14 +237,32 @@ async function checkWaits(repo: string, d: Deps, print: (l: string) => void, wan
 
 /**
  * done → build from review comments on the PR (PLAN §2). Comments are read through the
- * forge; only a trusted person's count (forge.ts isTrusted: kitchen.yaml `feedback`).
- * The new trusted ones become one feedback file for the builder (quoted, with the
- * author) and the job goes back to build; an untrusted one is logged and ignored.
- * Each comment is handled once (`pr-comment/<id>` in `filed`).
+ * forge; only a trusted person's count (forge.ts isTrusted: kitchen.yaml `feedback`),
+ * and only those written after the job entered done (and after its HEAD): a comment on
+ * an earlier round was already that round's business. Kitchen's own comments (they
+ * carry KITCHEN_MARKER) never count. The new trusted ones become one feedback file for
+ * the builder (quoted, with the author) and the job goes back to build; an untrusted one
+ * is logged and ignored. Each comment is handled once (`pr-comment/<id>` in `filed`),
+ * recorded in the same job.json write as the move, so a crash can't replay one.
  */
 async function prCommentsBack(repo: string, job: Job, d: Deps, print: (l: string) => void) {
-  const fresh = (await d.forge.reviewComments(job.pr)).filter((c) => !job.filed.includes(`pr-comment/${c.id}`));
-  if (!fresh.length) return;
+  const unseen = (await d.forge.reviewComments(job.pr)).filter((c) => !job.filed.includes(`pr-comment/${c.id}`) && !c.body.includes(KITCHEN_MARKER));
+  if (!unseen.length) return;
+  const head = await headTime(job).catch(() => "");
+  const since = [job.updatedAt, head].filter((t) => Number.isFinite(Date.parse(t))).reduce((a, t) => (Date.parse(t) > Date.parse(a) ? t : a), job.updatedAt);
+  const before = unseen.filter((c) => !(Date.parse(c.at) > Date.parse(since)));
+  const fresh = unseen.filter((c) => !before.includes(c));
+  for (const c of before) {
+    print(`${job.id}  PR comment ${c.id} by ${c.author} ignored: written ${c.at}, before the job was done (${since})`);
+    appendLedger(repo, {
+      job: job.id,
+      stage: job.stage,
+      round: job.round,
+      event: "pr-comment-ignored",
+      key: `${job.id}/pr-comment/${c.id}`,
+      detail: { author: c.author, association: c.association, why: "before done", at: c.at, since },
+    });
+  }
   const trusted = fresh.filter((c) => isTrusted(c, d.config.feedback));
   const ignored = fresh.filter((c) => !trusted.includes(c));
   for (const c of ignored) {
@@ -262,11 +282,12 @@ async function prCommentsBack(repo: string, job: Job, d: Deps, print: (l: string
       return j;
     });
   if (!trusted.length) {
-    await mark(ignored.map((c) => `pr-comment/${c.id}`));
+    await mark([...before, ...ignored].map((c) => `pr-comment/${c.id}`));
     return;
   }
   const lead = trusted[0];
-  const file = path.join(jobDirOf(repo, job.id), "feedback", `${new Date().toISOString().replace(/[:.]/g, "-")}-pr-${lead.id}.md`);
+  // A name fixed by the comment (its time, so feedback stays in order): a crash before the move rewrites the same file, never a second one.
+  const file = path.join(jobDirOf(repo, job.id), "feedback", `${lead.at.replace(/[:.]/g, "-")}-pr-${lead.id.replace(/[^\w-]/g, "_")}.md`);
   writeAtomic(
     file,
     `${trusted.map((c) => `Review comment on PR #${c.pr} by ${c.author} (${c.association}), ${c.at}. It is a person's request, quoted:\n\n${c.body.trim().replace(/^/gm, "> ")}`).join("\n\n")}\n`,
@@ -281,9 +302,9 @@ async function prCommentsBack(repo: string, job: Job, d: Deps, print: (l: string
     },
     print,
     "human",
+    [...before, ...fresh].map((c) => `pr-comment/${c.id}`),
   );
-  if (r === "moved") await mark(fresh.map((c) => `pr-comment/${c.id}`));
-  else fs.rmSync(file, { force: true });
+  if (r !== "moved") fs.rmSync(file, { force: true });
 }
 
 function backoffUntil(cfg: Config, job: Job): string {
@@ -373,6 +394,8 @@ export async function moveJob(
   p: Proposal,
   print: (l: string) => void,
   by: "runner" | "human" = "runner",
+  /** `filed` keys recorded in the same job.json write as the move (handled-once markers: a crash can't split them). */
+  filed: string[] = [],
 ): Promise<"moved" | "refused" | "stale"> {
   let outcome: "moved" | "refused" | "stale" = "stale";
   const lines: string[] = [];
@@ -396,6 +419,7 @@ export async function moveJob(
     if ("job" in r) {
       log(fresh, p.to, r.row, p.note ?? reasonOf(r.job));
       outcome = "moved";
+      for (const k of filed) if (!r.job.filed.includes(k)) r.job.filed.push(k);
       after = r.job;
       return r.job;
     }

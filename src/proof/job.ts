@@ -1,5 +1,6 @@
 // The slice of job.json that proofs need (the full Job type lands in W1, PLAN §2).
 // .kitchen/jobs/<id>/job.json is engine-owned: outside every agent's writable root.
+import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -92,12 +93,18 @@ export function createJob(jobDir: string, o: Omit<ProofJob, "uid" | "manifestHea
   return job;
 }
 
+/** The job folders whose lock this async context already holds (the lock is re-entrant within one holder). */
+const held = new AsyncLocalStorage<ReadonlySet<string>>();
+
 /**
  * One drive at a time per job, across processes (the CLI and the MCP bridge) and
  * within one: the next evidence id is read from the head under this lock, so
- * two drives can never predict the same e<N>.
+ * two drives can never predict the same e<N>. Re-entrant: a caller that holds it
+ * (a view: app reset, segments, screenshot) runs its inner drives under the same hold.
  */
 export function withJobLock<T>(jobDir: string, fn: () => Promise<T>): Promise<T> {
   const abs = path.resolve(jobDir);
-  return serialize(abs, () => withFileLock(path.join(abs, "drive.lock"), fn, { timeoutMs: 15 * 60_000 }));
+  const mine = held.getStore();
+  if (mine?.has(abs)) return fn();
+  return serialize(abs, () => withFileLock(path.join(abs, "drive.lock"), () => held.run(new Set([...(mine ?? []), abs]), fn), { timeoutMs: 15 * 60_000 }));
 }

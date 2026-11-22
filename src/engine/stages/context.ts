@@ -3,6 +3,7 @@
 // folder and the Toolkit, never from what an agent said about itself.
 import fs from "node:fs";
 import path from "node:path";
+import type { Dismissal, Member } from "../../checks/findings.ts";
 import { contractOf } from "../contract.ts";
 import type { Job } from "../machine.ts";
 import { roundDir } from "../store.ts";
@@ -56,6 +57,17 @@ export function earlierRoundsBlock(jobDir: string, job: Job): PromptBlock[] {
       if (/DRIVES:\s*UNREACHABLE/.test(t)) out.push(`## Round ${r}: the verifier could not reach the feature\n${t}`);
     }
   }
+  // A finding a person dismissed (`kitchen dismiss`) is not the builder's to fix, even when it blocked.
+  const dismissed = dismissalsOf(jobDir);
+  if (dismissed.length)
+    out.push(
+      `## Dismissed review findings (a person said these are not to be fixed)\n${dismissed
+        .map(
+          (d) =>
+            `- ignore: ${d.finding}${d.title ? ` "${d.title}"` : ""}${d.at ? ` (${d.at.file}:${d.at.line})` : d.requirement ? ` (${d.requirement})` : ""}: dismissed by ${d.by}${d.reason ? `: ${d.reason}` : ""}`,
+        )
+        .join("\n")}`,
+    );
   return out.length ? [{ title: "Earlier rounds (fix these first)", body: out.join("\n\n") }] : [];
 }
 
@@ -67,4 +79,71 @@ export function humanFeedback(jobDir: string): string[] {
     .readdirSync(d)
     .sort()
     .map((f) => fs.readFileSync(path.join(d, f), "utf8").trim());
+}
+
+/** A finding as review.json keeps it (older files have no members). */
+export type StoredFinding = {
+  id: string;
+  lens: string;
+  also: string[];
+  title: string;
+  why?: string;
+  blocks: boolean;
+  at?: { file: string; line: number };
+  requirement?: string;
+  members?: Member[];
+};
+
+/** Exported for the CLI (`kitchen dismiss`): every finding of a job's reviews, newest round last. */
+export function findingsOf(jobDir: string): { round: number; findings: StoredFinding[] }[] {
+  const d = path.join(jobDir, "rounds");
+  if (!fs.existsSync(d)) return [];
+  return fs
+    .readdirSync(d)
+    .map(Number)
+    .filter((n) => Number.isInteger(n))
+    .sort((a, b) => a - b)
+    .flatMap((n) => {
+      const f = path.join(d, String(n), "review.json");
+      if (!fs.existsSync(f)) return [];
+      return [{ round: n, findings: (JSON.parse(fs.readFileSync(f, "utf8")) as { findings: StoredFinding[] }).findings }];
+    });
+}
+
+/** The finding a dismissal names (a merged one, or a member of one), with its own lens and title and the merged row's anchor. */
+export function findingById(jobDir: string, id: string): (StoredFinding & { round: number; blockedRow: boolean }) | null {
+  for (const r of findingsOf(jobDir))
+    for (const x of r.findings) {
+      if (x.id === id) return { ...x, round: r.round, blockedRow: x.blocks };
+      const m = x.members?.find((y) => y.id === id) ?? (x.also.includes(id) ? { id, lens: id.split("-")[0], title: x.title, why: "", blocks: false } : null);
+      if (m) return { ...x, id: m.id, lens: m.lens, title: m.title, why: m.why, blocks: m.blocks, round: r.round, blockedRow: x.blocks };
+    }
+  return null;
+}
+
+/** A job's dismissals (`kitchen dismiss`, dismissed.jsonl), each with the lens and anchor of the finding it names. */
+export function dismissalsOf(jobDir: string): Dismissal[] {
+  const f = path.join(jobDir, "dismissed.jsonl");
+  if (!fs.existsSync(f)) return [];
+  return fs
+    .readFileSync(f, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => {
+      const d = JSON.parse(l) as Partial<Dismissal> & { finding: string };
+      const k = d.at || d.requirement ? null : findingById(jobDir, d.finding);
+      const at = d.at ?? k?.at;
+      const requirement = d.requirement ?? k?.requirement;
+      const title = d.title ?? k?.title;
+      return {
+        finding: d.finding,
+        lens: d.lens ?? k?.lens ?? d.finding.split("-")[0],
+        round: d.round ?? 0,
+        by: d.by ?? "a person",
+        reason: d.reason ?? null,
+        ...(title ? { title } : {}),
+        ...(at ? { at } : {}),
+        ...(requirement ? { requirement } : {}),
+      };
+    });
 }

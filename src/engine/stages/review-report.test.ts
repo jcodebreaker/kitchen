@@ -101,6 +101,7 @@ test("cost and time per stage from the ledger; evidence folders past keep days; 
     ),
     ["001-a"],
   );
+  assert.deepEqual(expired(new Map([["001-a", "2026-10-01T00:00:00Z"]]), now, 30, ["001-a"]), [], "a job that isn't done keeps its folder");
   assert.deepEqual(verdictRows("| C1 | engine | PASS | e1 e2 | NON-DISCRIMINATING (held on the base too) |\n| C2 | verifier | FAIL |  | a \\| b |\n"), [
     { id: "C1", decidedBy: "engine", result: "PASS", evidence: ["e1", "e2"], why: "NON-DISCRIMINATING (held on the base too)" },
     { id: "C2", decidedBy: "verifier", result: "FAIL", evidence: [], why: "a | b" },

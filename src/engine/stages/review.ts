@@ -11,12 +11,30 @@
 // lens once more with the new evidence.
 //
 // The engine decides what blocks (checks/findings.ts): a finding blocks only when
-// it is demonstrable (a line at HEAD, a requirement in scope, evidence in the
-// manifest) and not low confidence; the rest are notes. Findings about the same
-// line or requirement are merged across lenses. Per-lens counts go to the ledger.
+// it is demonstrable (a line in this change, evidence stamped for HEAD, or a
+// requirement whose criteria are all NON-DISCRIMINATING) and not low confidence,
+// and isn't one a person dismissed; the rest are notes. A lens whose file says
+// BLOCKING with no readable blocking finding, or whose blocking finding has an
+// anchor it could fix (not file:line, no such file, past the end), is asked once
+// to fix it; BLOCKING still unreadable after that goes to needs-human
+// (review-unparseable), never a silent PASS. Findings on the same file and line
+// (±1) are merged across lenses. Per-lens counts go to the ledger.
 import fs from "node:fs";
 import path from "node:path";
-import { type Anchors, dedupe, judge, type LensStats, lensStats, parseFindings, renderReview, verdictOf, viewsOf } from "../../checks/findings.ts";
+import {
+  type Anchors,
+  changedLines,
+  dedupe,
+  fixableAnchors,
+  judge,
+  type LensStats,
+  lensStats,
+  parseFindings,
+  renderReview,
+  unparseable,
+  verdictOf,
+  viewsOf,
+} from "../../checks/findings.ts";
 import { seedTouched } from "../../checks/risk-floor.ts";
 import { parseRequirements } from "../../checks/spec-lint.ts";
 import type { Config } from "../../config.ts";
@@ -29,7 +47,7 @@ import { once, roundDir, writeAtomic } from "../store.ts";
 import { MAX_VIEWS, runView, type ViewResult } from "../views.ts";
 import { commitLog, diffPatch, diffStat, fileAtHead, headOf } from "../worktree.ts";
 import { nonDiscriminating } from "./base-check.ts";
-import { contractBlock, fileBlock, toolkitBlock } from "./context.ts";
+import { contractBlock, dismissalsOf, fileBlock, toolkitBlock } from "./context.ts";
 import { type PromptBlock, prompt } from "./prompts.ts";
 import { runRole } from "./role.ts";
 import { hasToolkit } from "./toolkit-info.ts";
@@ -183,6 +201,23 @@ export const review: StageHandler = async (ctx) => {
       },
       ...(hasToolkit(job) ? [await toolkitBlock(job, job.worktree)] : []),
     ];
+    const dismissed = dismissalsOf(ctx.jobDir);
+    const dismissedBlock = (lens: string): PromptBlock[] => {
+      const mine = dismissed.filter((d) => d.lens === lens);
+      return mine.length
+        ? [
+            {
+              title: "Dismissed by a person (do not re-raise these; one raised again on the same anchor is kept as a note)",
+              body: mine
+                .map(
+                  (d) =>
+                    `- do not re-raise: ${d.finding}${d.title ? ` "${d.title}"` : ""} at ${d.at ? `${d.at.file}:${d.at.line}` : (d.requirement ?? "?")}: dismissed by ${d.by}${d.reason ? `: ${d.reason}` : ""}`,
+                )
+                .join("\n"),
+            },
+          ]
+        : [];
+    };
     const extra = [
       `Lens worktree (read only): ${job.worktree}`,
       ...(seeds.length ? [`Seed data or migrations changed (check nothing seeds the answer a proof reads): ${seeds.join(", ")}`] : []),
@@ -201,7 +236,7 @@ export const review: StageHandler = async (ctx) => {
           role: `reviewer-${lens}`,
           job,
           jobDir: ctx.jobDir,
-          blocks: [...common, ...(VISUAL.has(lens) ? await visualBlocks() : []), ...more],
+          blocks: [...common, ...(VISUAL.has(lens) ? await visualBlocks() : []), ...dismissedBlock(lens), ...more],
           extra: [`Lens: ${lens}`, `Write: ${file}`, ...extra],
         }),
         dest: path.join(round, file),
@@ -276,20 +311,87 @@ export const review: StageHandler = async (ctx) => {
       });
     }
 
-    // The engine's call: what blocks, merged across lenses.
+    // What anchors are checked against: the files at HEAD, the lines this change touched, the requirements
+    // (those whose every criterion is NON-DISCRIMINATING are unproven), this job's evidence for HEAD.
     const files = new Map<string, number | null>();
-    const all = lenses.flatMap((l) => parseFindings(texts.get(l) ?? "", l, job.round));
-    for (const f of all)
-      if (f.at && !files.has(f.at.file)) {
-        const t = await fileAtHead(job, f.at.file);
-        files.set(f.at.file, t === null ? null : t.split("\n").length - (t.endsWith("\n") ? 1 : 0));
-      }
+    const changed = changedLines(patch);
+    const inScope = reqs.filter((r) => !r.outOfScope).map((r) => r.id);
     const anchors: Anchors = {
       lines: (f) => files.get(f) ?? null,
-      requirements: reqs.filter((r) => !r.outOfScope).map((r) => r.id),
-      evidence: entries.map((e) => e.id),
+      changed: (f) => changed.get(f) ?? [],
+      requirements: inScope,
+      unproven: inScope.filter((id) => {
+        const cs = (contract?.criteria ?? []).filter((c) => c.covers.includes(id));
+        return !!contract && cs.every((c) => weak.includes(c.id));
+      }),
+      evidence: entries,
+      head,
     };
-    const judged = judge(all, anchors);
+    const findingsOfLens = async (lens: string) => {
+      const found = parseFindings(texts.get(lens) ?? "", lens, job.round);
+      for (const f of found)
+        if (f.at && !files.has(f.at.file)) {
+          const t = await fileAtHead(job, f.at.file);
+          files.set(f.at.file, t === null ? null : t.split("\n").length - (t.endsWith("\n") ? 1 : 0));
+        }
+      return found;
+    };
+
+    // A lens whose file the engine can't use (BLOCKING with no readable blocking finding, or a blocking finding
+    // whose anchor is not file:line / no such file / past the end) is asked once to fix it.
+    const problems = new Map<string, string>();
+    for (const lens of lenses) {
+      const found = await findingsOfLens(lens);
+      const why = [
+        ...(unparseable(texts.get(lens) ?? "", found)
+          ? [`${unparseable(texts.get(lens) ?? "", found)}. Write each blocking finding as a ### F<n> block with kind: blocking.`]
+          : []),
+        ...fixableAnchors(found, anchors).map(
+          (x) =>
+            `"${x.finding.title}": ${x.why}. Fix the anchor: \`at: <file>:<line>\` of a file this change touched, at the line that is wrong; or drop \`at:\` and keep it as a note if you can't point at one.`,
+        ),
+      ];
+      if (why.length) problems.set(lens, why.join("\n"));
+    }
+    if (problems.size) {
+      const touched = [...changed].map(([f, ls]) => `- ${f}: lines ${[...new Set(ls)].sort((a, b) => a - b).join(", ") || "(removed)"}`).join("\n");
+      await pool([...problems.keys()], ctx.config.concurrency, async (lens) => {
+        ctx.log(`${lens}: review file refused once: ${(problems.get(lens) ?? "").split("\n").join(" | ")}`);
+        appendLedger(ctx.repo, {
+          job: job.id,
+          stage: "review",
+          round: job.round,
+          event: "review-refused",
+          key: `${job.id}/review/${job.round}/m${job.moves}/${lens}/refused`,
+          role: `reviewer-${lens}`,
+          detail: { why: problems.get(lens) },
+        });
+        const r = await runLens(
+          lens,
+          [
+            {
+              title: "Your review file was refused: fix this and write the whole file again (this is your last pass, no VIEW lines)",
+              body: `${problems.get(lens)}\n\nLines this change touched (at HEAD):\n${touched || "none"}\n\nYour review, as you wrote it:\n\n${texts.get(lens) ?? ""}`,
+            },
+          ],
+          `review-${lens}-fix.md`,
+        );
+        texts.set(lens, r.text);
+      });
+    }
+    const all: ReturnType<typeof parseFindings> = [];
+    for (const lens of lenses) all.push(...(await findingsOfLens(lens)));
+    const still = lenses.flatMap((l) => {
+      const why = unparseable(texts.get(l) ?? "", parseFindings(texts.get(l) ?? "", l, job.round));
+      return why ? [`${l}: ${why}`] : [];
+    });
+    if (still.length) {
+      ctx.log(`review unparseable after one refusal: ${still.join("; ")}`);
+      return { to: "needs-human", facts: { escalate: "review-unparseable", why: still.join("; ") } };
+    }
+
+    // The engine's call: what blocks, merged across lenses.
+    const judged = judge(all, anchors, dismissed);
     const merged = dedupe(judged);
     const stats: LensStats[] = lenses.map((l) => lensStats(l, verdictOf(texts.get(l) ?? ""), judged, merged));
     writeAtomic(path.join(round, "review.md"), renderReview({ round: job.round, head, lenses, merged, stats }));
@@ -321,25 +423,3 @@ export const review: StageHandler = async (ctx) => {
     fs.rmSync(packet, { recursive: true, force: true });
   }
 };
-
-/** Exported for the CLI (`kitchen dismiss`): every finding id of a job's reviews, newest round last. */
-export function findingsOf(jobDir: string): { round: number; findings: { id: string; lens: string; also: string[]; title: string; blocks: boolean }[] }[] {
-  const d = path.join(jobDir, "rounds");
-  if (!fs.existsSync(d)) return [];
-  return fs
-    .readdirSync(d)
-    .map(Number)
-    .filter((n) => Number.isInteger(n))
-    .sort((a, b) => a - b)
-    .flatMap((n) => {
-      const f = path.join(d, String(n), "review.json");
-      if (!fs.existsSync(f)) return [];
-      return [
-        {
-          round: n,
-          findings: (JSON.parse(fs.readFileSync(f, "utf8")) as { findings: { id: string; lens: string; also: string[]; title: string; blocks: boolean }[] })
-            .findings,
-        },
-      ];
-    });
-}
