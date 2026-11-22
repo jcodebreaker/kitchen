@@ -117,6 +117,7 @@ export const verify: StageHandler = async (ctx) => {
             title: "Judge these, from this evidence",
             body: evidenceBlock(
               ctx.jobDir,
+              job.worktree,
               judged.map((c) => c.id),
               proofs,
             ),
@@ -126,6 +127,7 @@ export const verify: StageHandler = async (ctx) => {
       dest: path.join(roundDir(ctx.jobDir, job.round), `verify-m${moves}.md`),
     });
     judgedText = r.text;
+    fs.rmSync(path.join(job.worktree, ".kitchen-out", "evidence"), { recursive: true, force: true });
     job = ctx.refresh();
     const left = await commitWith(job, "unused", nothingPolicy);
     if (left.refused.length) ctx.log(`the verifier's worktree edits were thrown away: ${left.refused.map((x) => x.split(":")[0]).join(", ")}`);
@@ -180,16 +182,26 @@ export const verify: StageHandler = async (ctx) => {
   return { to: "paused", facts };
 };
 
-/** For each judged criterion: the engine's evidence ids and their files (absolute paths the verifier can open). */
-function evidenceBlock(jobDir: string, ids: string[], proofs: ProofRecord[]): string {
+/**
+ * For each judged criterion: the engine's evidence ids and their files. The files are
+ * copied into the worktree's outbox (never committed), because a write-tier agent's
+ * file tools may only open files under its working directory (Claude's Read tool
+ * refuses the job folder). A copy proves nothing by itself: the Verdict checks the
+ * cited ids against the signed manifest, not these files.
+ */
+function evidenceBlock(jobDir: string, worktree: string, ids: string[], proofs: ProofRecord[]): string {
   const ev = evidenceDir(jobDir);
+  const view = path.join(worktree, ".kitchen-out", "evidence");
+  fs.rmSync(view, { recursive: true, force: true });
   return ids
     .map((c) => {
       const p = proofs.find((x) => x.criterion === c);
       const lines = (p?.evidence ?? []).map((id) => {
         const d = path.join(ev, id);
-        const files = fs.existsSync(d) ? fs.readdirSync(d).filter((f) => f !== "call.json") : [];
-        return `  - ${id}: ${path.join(d, "call.json")}${files.length ? `; ${files.map((f) => path.join(d, f)).join(", ")}` : ""}`;
+        if (!fs.existsSync(d)) return `  - ${id}: (missing)`;
+        fs.cpSync(d, path.join(view, id), { recursive: true });
+        const files = fs.readdirSync(d).sort();
+        return `  - ${id}: ${files.map((f) => path.join(view, id, f)).join(", ")}`;
       });
       return `- ${c} (stamped for ${c}, this HEAD and round):\n${lines.join("\n")}`;
     })

@@ -189,7 +189,10 @@ export default async function script(req: AgentRequest): Promise<FakeStep> {
     // The ids the engine listed for C3 in this prompt.
     const block = req.prompt.split("- C3 (stamped")[1] ?? "";
     const ids = [...block.split("\n- ")[0].matchAll(/^\s+- (e\d+):/gm)].map((m) => m[1]);
-    const evidenceDir = /: (\/\S+\/evidence)\/e\d+\/call\.json/.exec(req.prompt)?.[1] ?? "";
+    // The engine copies the judged evidence where the agent can open it.
+    if (ids.length && !fs.existsSync(path.join(req.cwd, ".kitchen-out", "evidence", ids[0], "call.json")))
+      return { file: "VERDICT: INCONCLUSIVE\n", line: "no evidence to look at" };
+    const evidenceDir = path.join(/^Repository: (.+)$/m.exec(req.prompt)?.[1] ?? "", ".kitchen", "jobs", job, "evidence");
     let cite = ids.join(" ");
     if (attacks) {
       if (n === 1) {

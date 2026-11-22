@@ -139,7 +139,7 @@ async function attacks() {
   check("the job reached review", j.stage === "review", `${j.stage} ${j.pausedReason ?? ""}`);
   const v = verifyManifestCli(r, id);
   check("the manifest verifies against the signed head", v.ok === true && v.entries === j.manifestHead.n, JSON.stringify(v));
-  check("no kitchen container left running", kitchenContainers().length === 0, kitchenContainers().join(" "));
+  check("no container of this job left running", kitchenContainers(j.slotId).length === 0, kitchenContainers(j.slotId).join(" "));
 }
 
 async function kill() {
@@ -198,7 +198,7 @@ async function kill() {
   const verdict = fs.readdirSync(path.join(jobDir(r, id), "rounds", String(before.round))).filter((f) => f.startsWith("verdict-"));
   const vt = verdict.length ? fs.readFileSync(path.join(jobDir(r, id), "rounds", String(before.round), verdict[0]), "utf8") : "";
   check("verdict PASS after the resume, job at review", /^VERDICT: PASS/m.test(vt) && j.stage === "review", `${j.stage}; ${vt.split("\n")[0]}`);
-  check("no kitchen container left running", kitchenContainers().length === 0, kitchenContainers().join(" "));
+  check("no container of this job left running", kitchenContainers(j.slotId).length === 0, kitchenContainers(j.slotId).join(" "));
 }
 
 if (part === "attacks") await attacks();

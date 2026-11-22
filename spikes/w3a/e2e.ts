@@ -1,8 +1,9 @@
 // W3a exit, real agents: one ticket end to end (intake → … → verify, stopping
 // at review) on a copy of fixture A, with the real Toolkit, Docker and engine.
-//   node spikes/w3a/e2e.ts claude|codex feature|bug <scratch>
+//   node spikes/w3a/e2e.ts claude|codex feature|bug|visual <scratch>
 // feature: "show the signed-in user's display name in the header, editable on /settings"
 // bug:     dark mode doesn't persist after a reload (lib.ts BUG is planted in the copy first)
+// visual:  (extra) a styling ticket, so the spec has a judged criterion and the verifier judges screenshots
 // Claude: sonnet for strong roles, haiku for medium (verifier). Codex: the config's tier map
 // (npx @openai/codex@0.171.0). Writes <scratch>/e2e-<tool>-<kind>.json (per-stage models,
 // time, cost) and .log, prints PASS/FAIL lines.
@@ -28,12 +29,15 @@ import {
 } from "./lib.ts";
 
 const [tool, kind] = process.argv.slice(2);
-if ((tool !== "claude" && tool !== "codex") || (kind !== "feature" && kind !== "bug")) throw new Error("usage: e2e.ts claude|codex feature|bug <scratch>");
+if ((tool !== "claude" && tool !== "codex") || !["feature", "bug", "visual"].includes(kind))
+  throw new Error("usage: e2e.ts claude|codex feature|bug|visual <scratch>");
 const root = path.resolve(process.argv[4] ?? path.join(HERE, ".work"));
 fs.mkdirSync(root, { recursive: true });
 const name = `e2e-${tool}-${kind}`;
 
-const TICKETS = {
+const TICKETS: Record<string, string> = {
+  visual:
+    "The Sign out control in the header looks like a stray button. Make it look like the other header links (same colour and size, no button chrome), in both light and dark mode.",
   feature:
     "Show the signed-in user's display name in the header, and let them change it on /settings. Someone who never set a display name sees their username there instead.",
   bug: "Dark mode doesn't persist. I switch it on in Settings and it says Saved, but when I reload the page the app is light again.",
@@ -166,6 +170,12 @@ if (kind === "bug") {
     (j.reproFiles ?? []).join(", ") || "existing Toolkit drive (builder policy refuses .kitchen/toolkit)",
   );
 }
+if (kind === "visual")
+  check(
+    `${tool} visual: a judged criterion was judged by the verifier, citing evidence the engine accepted`,
+    /\| C\d+ \| verifier \| PASS \| e\d+/.test(lastVerdict),
+    lastVerdict.split("\n").find((l) => l.includes("| verifier |")) ?? "no judged criterion in the contract",
+  );
 check(`${tool} ${kind}: the branch changes app code`, /server\.js/.test(changed), changed.split("\n").at(-1) ?? "");
 check(`${tool} ${kind}: no container of this job left running`, kitchenContainers(j.slotId).length === 0, kitchenContainers(j.slotId).join(" "));
 finish(`w3a e2e ${tool} ${kind}`);
