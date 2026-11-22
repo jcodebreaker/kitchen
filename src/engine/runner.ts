@@ -20,6 +20,7 @@ import { self } from "../lock.ts";
 import { procsDirOf, reapGroups } from "../procs.ts";
 import { PromptSource } from "../sources/prompt.ts";
 import type { TicketSource } from "../sources/source.ts";
+import { effectiveConcurrency, readProven } from "../toolkit/check.ts";
 import { beforeNewWork } from "../toolkit/reproof.ts";
 import { acquireSlot, downSlot, listSlots, reclaimStaleSlots, releaseSlot } from "../toolkit/slots.ts";
 import { acquireRunLock } from "./lock.ts";
@@ -93,6 +94,9 @@ export async function runKitchen(o: RunOpts): Promise<{ steps: number; moves: nu
     await resumeAll(repo, me.pid, print, runKey);
     // Base moved since the Toolkit was proven: re-check it first; a failure pauses the queue (PLAN §2).
     if (!(await beforeNewWork({ repo, forge: deps.forge, print }))) return stats;
+    // A Toolkit proven parallel:false runs one job at a time, whatever kitchen.yaml says.
+    const concurrency = effectiveConcurrency(config.concurrency, readProven(repo));
+    if (concurrency < config.concurrency) print(`run: the Toolkit is proven parallel:false, so one job at a time (kitchen.yaml says ${config.concurrency})`);
 
     const inFlight = new Map<string, Promise<void>>();
     const wanted = (j: Job) => !o.job || j.id === o.job;
@@ -112,7 +116,7 @@ export async function runKitchen(o: RunOpts): Promise<{ steps: number; moves: nu
           print("run: lost the run lock to another runner, dispatching nothing more");
           queue.length = 0;
         }
-        while (queue.length && inFlight.size < config.concurrency) dispatch(queue.shift() as Job);
+        while (queue.length && inFlight.size < concurrency) dispatch(queue.shift() as Job);
         if (inFlight.size) await Promise.race(inFlight.values());
       }
     } else {
@@ -124,7 +128,7 @@ export async function runKitchen(o: RunOpts): Promise<{ steps: number; moves: nu
         await checkWaits(repo, deps, print, wanted);
         const jobs = listJobs(repo).filter(wanted);
         const runnable = jobs.filter((j) => isActive(j.stage) && !inFlight.has(j.id)).sort(byOldest);
-        while (runnable.length && inFlight.size < config.concurrency) dispatch(runnable.shift() as Job);
+        while (runnable.length && inFlight.size < concurrency) dispatch(runnable.shift() as Job);
         const waiting = jobs.filter((j) => j.stage === "paused");
         if (!inFlight.size && !runnable.length && !waiting.length) break;
         await Promise.race([...inFlight.values(), new Promise((r) => setTimeout(r, tickMs))]);

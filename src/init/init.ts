@@ -140,11 +140,12 @@ export function readAnswers(text: string, questions: Question[]): Record<string,
   return out;
 }
 
-const KITCHEN_YAML = (tool: string) => `# Kitchen (https://github.com/…/kitchen). Every key has a default; see docs/PLAN.md §6.
+const KITCHEN_YAML = (tool: string) => `# Kitchen (npm package devkitchen). Every key has a default; unknown keys are refused.
+# The full list with defaults: src/config.ts in the package (ConfigSchema).
 agent: { tool: ${tool} }
-concurrency: 2
+concurrency: 2   # a Toolkit proven parallel:false runs one job at a time regardless
 round_limit: 3
-# models: { builder: strong, verifier: medium }   # tiers map to models per tool
+# models: { builder: strong, verifier: medium, setup: strong }   # tiers map to models per tool
 # checks: ["npm test"]                            # what Gate runs in a job worktree
 `;
 
@@ -232,7 +233,7 @@ export async function initCmd(o: InitOpts, out: Out): Promise<number> {
   const cfg = loadConfig(repo);
   const tool = o.tool ?? cfg.agent.tool;
   const config: Config = { ...cfg, agent: { ...cfg.agent, tool } };
-  const model = o.model ?? modelFor(config, "smith");
+  const model = o.model ?? modelFor(config, "setup");
   const effort = (o.effort ?? "medium") as AgentRequest["effort"];
   let adapter: AgentAdapter | null = null;
   const agent = async () => {
@@ -341,7 +342,12 @@ export async function initCmd(o: InitOpts, out: Out): Promise<number> {
       save();
       fs.rmSync(questionsFile(repo), { force: true });
     }
-    // 8. build: same session, with the answers and the bridge
+    // 8. build: same session, with the answers and the bridge. A build that ended BLOCKED is retried on a re-run.
+    if (st.steps.build && st.steps.build.status !== "READY") {
+      say(`the last build said ${st.steps.build.status}: building again`);
+      delete st.steps.build;
+      save();
+    }
     if (!done("build")) {
       const { r, text } = await runSetup(
         "build",
@@ -360,7 +366,14 @@ export async function initCmd(o: InitOpts, out: Out): Promise<number> {
     }
   }
 
-  // 9. commit + 10. check, with up to maxFix rounds of fixes from the check's report
+  // 9. commit + 10. check, with up to maxFix rounds of fixes from the check's report.
+  // Only a passing full check is done: a failed one, or a static one (--generate-only) on a run without it, is run again.
+  const prior = st.steps.check;
+  if (prior && (!prior.ok || (prior.static && !o.generateOnly))) {
+    say(`the last check ${prior.ok ? "was static only (--generate-only)" : `failed at ${prior.failed}`}: checking again`);
+    delete st.steps.check;
+    save();
+  }
   const maxFix = o.maxFix ?? 2;
   for (;;) {
     if (!done("commit")) {
@@ -410,17 +423,20 @@ export async function initCmd(o: InitOpts, out: Out): Promise<number> {
     break;
   }
 
-  // 11. next steps
+  // 11. next steps: only a passing full check counts as done
   const check = st.steps.check;
-  if (check && !check.parallel) {
-    const f = path.join(repo, "kitchen.yaml");
-    const y = fs.readFileSync(f, "utf8");
-    if (/^concurrency:\s*\d+/m.test(y)) fs.writeFileSync(f, y.replace(/^concurrency:\s*\d+.*$/m, "concurrency: 1   # the Toolkit says parallel: false"));
-    say("the Toolkit can't run two instances at once: concurrency set to 1");
+  if (!check?.ok) {
+    say(`not done: ${check ? `toolkit check failed at ${check.failed}` : "no check ran"}; see .kitchen/init/state.json`);
+    return 1;
   }
+  if (check.static) {
+    say("generated only (--generate-only): describe and the feature files pass; the Toolkit is NOT proven (no toolkit.proven)");
+    return 0;
+  }
+  if (!check.parallel) say("the Toolkit can't run two instances at once (parallel:false): kitchen run takes one job at a time");
   const usd = st.runs.reduce((s, r) => s + (r.usd ?? 0), 0);
   const secs = st.runs.reduce((s, r) => s + r.secs, 0);
-  say(`done: Toolkit proven on ${check?.sha.slice(0, 12)}; agent time ${Math.round(secs)}s${usd ? `, $${usd.toFixed(2)}` : ""} over ${st.runs.length} run(s)`);
+  say(`done: Toolkit proven on ${check.sha.slice(0, 12)}; agent time ${Math.round(secs)}s${usd ? `, $${usd.toFixed(2)}` : ""} over ${st.runs.length} run(s)`);
   out("next:");
   if (!existing) out(`  1. review the branch ${SETUP_BRANCH} (git log -p main..${SETUP_BRANCH}) and merge it`);
   out("  2. commit kitchen.yaml, .gitignore, .claude/skills/kitchen/ and .agents/skills/kitchen/");

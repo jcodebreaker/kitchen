@@ -385,6 +385,9 @@ export type Proven = {
   secs: number;
 };
 
+/** Pure: how many jobs may run at once. A Toolkit proven parallel:false runs one, whatever kitchen.yaml says. */
+export const effectiveConcurrency = (configured: number, proven: Pick<Proven, "parallel"> | null) => (proven && !proven.parallel ? 1 : configured);
+
 export const provenFile = (repo: string) => path.join(kitchenDir(repo), "toolkit.proven");
 
 export function readProven(repo: string): Proven | null {
