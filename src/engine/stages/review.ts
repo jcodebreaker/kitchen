@@ -202,7 +202,8 @@ export const review: StageHandler = async (ctx) => {
       },
     ];
     // What a VIEW line can drive: every lens may ask for one.
-    const tk = hasToolkit(job) ? [await toolkitBlock(job, job.worktree)] : [];
+    let tk: Promise<PromptBlock[]> | undefined;
+    const toolkitBlocks = () => (tk ??= hasToolkit(job) ? toolkitBlock(job, job.worktree).then((b) => [b]) : Promise.resolve([]));
     const dismissed = dismissalsOf(ctx.jobDir);
     const dismissedBlock = (lens: string): PromptBlock[] => {
       const mine = dismissed.filter((d) => d.lens === lens);
@@ -238,7 +239,7 @@ export const review: StageHandler = async (ctx) => {
           role: `reviewer-${lens}`,
           job,
           jobDir: ctx.jobDir,
-          blocks: [...common, ...(VISUAL.has(lens) ? visualBlocks() : []), ...tk, ...dismissedBlock(lens), ...more],
+          blocks: [...common, ...(VISUAL.has(lens) ? visualBlocks() : []), ...(await toolkitBlocks()), ...dismissedBlock(lens), ...more],
           extra: [`Lens: ${lens}`, `Write: ${file}`, ...extra],
         }),
         dest: path.join(round, file),
