@@ -26,7 +26,9 @@ const USAGE =
 const HELP = `kitchen: turns tickets into proven, reviewed pull requests (Claude Code or Codex)
 
 Setup
-  kitchen init [--tool claude|codex]      kitchen.yaml, the /kitchen skill, a proven Toolkit on the branch kitchen/setup
+  kitchen init [--tool claude|codex] [--detach]   kitchen.yaml, the /kitchen skill, a proven Toolkit on the branch kitchen/setup
+  kitchen init --skill                    only the /kitchen skill (then: /kitchen set up Kitchen in Claude Code or Codex)
+  kitchen init --answers <file>           resume setup with answers to its questions (.kitchen/setup-questions.json)
   kitchen init --status [--wait <s>]      how a detached init is doing
   kitchen toolkit check                   prove the Toolkit end to end (up, drives, reset, down)
 

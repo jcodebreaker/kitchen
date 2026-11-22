@@ -4,7 +4,7 @@ Kitchen turns tickets into pull requests that are **proven by driving your real 
 
 - npm package: `devkitchen`, command: `kitchen`
 - Works with Claude Code or Codex, on macOS (Linux runs without the sandbox, see [Known limitations](#known-limitations-v01))
-- Status: v0.1. The build plan is `docs/PLAN.md`; each wave's record is `docs/BUILD-LOG.md`
+- Status: v0.1. The design (build plan, decisions, build log) lives in the source repository's `docs/` folder, not in the npm package
 
 ## Quick start (5 minutes, plus setup time)
 
@@ -35,7 +35,7 @@ agent: { tool: claude, models: { strong: sonnet, medium: sonnet, cheap: haiku } 
 
 ### 2. Set up Kitchen in your repo
 
-Setup writes `kitchen.yaml`, installs the `/kitchen` skill, and has an agent build a **Toolkit** for your app: the commands that start, drive and observe it (see [Concepts](#concepts)). Then Kitchen proves the Toolkit end to end. The Toolkit goes on a branch, `kitchen/setup`, for you to review. It takes 5 to 15 minutes and costs about $0.50 to $1 on Claude with sonnet.
+Setup writes `kitchen.yaml`, installs the `/kitchen` skill, and has an agent build a **Toolkit** for your app: the commands that start, drive and observe it (see [Concepts](#concepts)). Then Kitchen proves the Toolkit end to end. The Toolkit goes on a branch, `kitchen/setup`, for you to review. It takes 3 to 15 minutes and costs about $0.50 to $1 on Claude with sonnet.
 
 Pick one way to run it:
 
@@ -57,16 +57,20 @@ What to approve:
 | Codex | the escalation for `kitchen init --detach` and for `kitchen run --detach` ("run outside the sandbox"), once each | Same reason: inside Codex's sandbox Kitchen can't write `.git`, reach Docker or start its agents |
 | Codex | nothing else | `kitchen init --status`, `kitchen status` and `kitchen ticket` run inside the sandbox |
 
-**B. From a terminal.** `kitchen init` asks its questions right there:
+**B. From a terminal.**
 
 ```sh
 cd your-repo
 kitchen init                     # or: kitchen init --tool codex
 ```
 
-Either way it ends with `init: done: Toolkit proven on <sha>` and the next steps. If it ends with `not done`, the lines above it say which step failed; `kitchen init` again resumes from there.
+It prints a line per step and can be quiet for several minutes while the setup agent works; that is normal. If it has questions (at most three, often none) it asks them right there. Without a terminal (a script, CI, an agent's shell) it writes them to `.kitchen/setup-questions.json` and exits with code 3: answer them in a file `{ "answers": { "q1": "…" } }` and run `kitchen init --answers <file>`. You can also run it in the background, `kitchen init --detach`, and follow it with `kitchen init --status --wait 90` (repeat until it ends).
+
+Either way it ends with `init: done: Toolkit proven on <sha>` and the next steps. If it ends with `not done`, the lines above it say which step failed; `kitchen init` again resumes from there. On a small app it took about 4 minutes and $0.53 (sonnet).
 
 ### 3. Review and merge the Toolkit
+
+Run these on your default branch (`main` below; use yours). The branch `kitchen/setup` is checked out in Kitchen's own worktree (`.worktrees/_setup`), so read it with `git log`/`git diff` rather than checking it out:
 
 ```sh
 git log -p main..kitchen/setup   # what the setup agent wrote: .kitchen/toolkit/
@@ -93,6 +97,8 @@ kitchen status                   # one row per job: stage, round, PR, report
 kitchen dashboard                # the board in your browser: http://127.0.0.1:7357
 ```
 
+For the first second after `run --detach`, `kitchen status` may still say `runner: not running`; run it again. `status` doesn't wait: run it whenever you want to look (or keep the dashboard open, it refreshes itself). Without GitHub every job shows `no PR`; that is normal.
+
 A ticket goes through intake (is it clear, how risky), spec (acceptance criteria, each with a proof), build, gate (your checks), verify (Kitchen drives the app and runs every proof), review, and report. A small ticket takes a few minutes and costs cents to a few tens of cents.
 
 If a job needs you, `kitchen status` says `needs-info` or `needs-human` with the reason. Answer with `kitchen feedback <id> "<your answer>"`, or drop it with `kitchen reject <id>`.
@@ -101,10 +107,12 @@ If a job needs you, `kitchen status` says `needs-info` or `needs-human` with the
 
 When the job is `done`, `kitchen status` prints the path of its Report (`.kitchen/jobs/<id>/report.html`; the dashboard links it). It opens with what a person must check, then each requirement, the criteria that prove it, who decided each verdict, and the evidence (screenshots, command output), then the review findings and the cost.
 
-- Local (no GitHub): the work is on the branch `kitchen/<id>`. Review it and merge it: `git merge kitchen/<id>`.
+- Local (no GitHub): the work is on the branch `kitchen/<id>`, where `<id>` is the full job id from `kitchen status` (for example `kitchen/001-add-a-version-flag`). Review it and merge it: `git merge kitchen/001-add-a-version-flag`. The Report and its evidence are also committed, one folder per job, on a local branch `kitchen-evidence` (you never merge that one).
 - GitHub: the pull request is marked ready for review, with a comment listing each criterion's verdict and a link to the Report on the `kitchen-evidence` branch. Merge it on GitHub as usual. Kitchen never merges.
 
 A review comment on the PR from a trusted person sends the job back to build with your comment.
+
+Cleaning up: Kitchen removes nothing you might still want. After merging, you may delete the job branch (`git branch -d kitchen/<id>`) and `kitchen/setup`; `.worktrees/` holds Kitchen's working copies (ignored by git) and can be removed when no `kitchen run` is going (`git worktree prune` afterwards). Keep `kitchen-evidence`: it is where the Reports live.
 
 ## Concepts
 
@@ -141,7 +149,34 @@ source: { kind: github, label: kitchen }       # take labelled issues as tickets
 retro: { every_jobs: 5, mute_after: 3, max_tickets: 3 }
 ```
 
-The full schema with every default is `src/config.ts` (`ConfigSchema`) in this repository. `kitchen migrate --dry-run` shows what an upgrade of Kitchen would change in `kitchen.yaml` and in the Toolkit's template files; `kitchen migrate` writes it (you commit it).
+Every key, with its default:
+
+| key | default | what |
+|---|---|---|
+| `version` | `1` | schema version (`kitchen migrate` raises it) |
+| `agent` | `{ tool: claude, timeout_sec: 1800, max_turns: 80 }` | `tool` claude or codex; `models: { strong, medium, cheap }` maps tiers to model names; `command: [argv]` to start the tool another way |
+| `models` | intake, spec, builder, smith, setup: `strong`; verifier, reviewer, report, maintain: `medium`; retro: `cheap` | the tier (or a literal model name) per role |
+| `concurrency` | `2` | jobs at once |
+| `round_limit` | `3` | rounds before a human is asked |
+| `checks` | `[]` | commands Gate runs in the job's worktree: strings, or `{ name, run, timeout_sec }` |
+| `checks_network` | `false` | let checks reach the network (a package install) |
+| `test_cmd` | `npm test -- {file}` | how a `test <file>` proof runs |
+| `paths` | low / medium / high | per risk: `spec` (inline, full), `verify` (short, full, related-features), `review` lenses, `human: always` |
+| `surfaces` | `{ ui: [ux, ui], security: [security] }` | extra review lenses when a ticket touches a surface |
+| `high_paths` | migrations, auth, payment, infra, .github | files that make a diff high risk |
+| `seed_paths` | migrations, seeds, fixtures, `db/**`, `*.sql`… | seed or schema files: a diff touching them is high risk |
+| `risk_floor` | `{ diff_lines_medium: 300, diff_lines_high: 1000 }` | diff size that raises risk |
+| `automerge` | `off` | reserved: v0.1 never merges, whatever this says |
+| `protected` | `[kitchen.yaml]` | files no builder may change |
+| `retro` | `{ every_jobs: 5, mute_after: 3, max_tickets: 3, never_mute: [security] }` | see Retro above |
+| `backoff` | `{ base_sec: 60, max_sec: 3600 }` | waits after a rate limit |
+| `evidence_keep_days` | `30` | Reports older than this are pruned from `kitchen-evidence` |
+| `maintain_churn_lines` | `300` | changed lines in feature code that start `kitchen toolkit maintain` |
+| `feedback` | `{ trusted: [], trust_associations: [OWNER, MEMBER, COLLABORATOR] }` | whose PR comments count |
+| `forge` | `{ kind: local, base: main }` | `github` with `repo: owner/name` (and optional `url`) for PRs |
+| `source` | `{ kind: prompt, label: kitchen, operators: [] }` | `github`: labelled issues are tickets |
+
+`kitchen migrate --dry-run` shows what an upgrade of Kitchen would change in `kitchen.yaml` and in the Toolkit's template files; `kitchen migrate` writes it (you commit it).
 
 ## Safety model
 
@@ -154,7 +189,7 @@ The full schema with every default is `src/config.ts` (`ConfigSchema`) in this r
 
 ## Known limitations (v0.1)
 
-- **Linux runs unsandboxed.** On macOS, Toolkit code the setup agent just wrote (and any Toolkit not yet merged) and every `cmd`/`test` proof run under `sandbox-exec`, away from your SSH keys, cloud and GitHub credentials, agent logins and Kitchen's key. Linux has no sandbox yet: those run as you, and Kitchen logs `UNSANDBOXED` when they start. Review `kitchen/setup` before you merge it either way. Details: `docs/adr/0008-setup-bridge.md`.
+- **Linux runs unsandboxed.** On macOS, Toolkit code the setup agent just wrote (and any Toolkit not yet merged) and every `cmd`/`test` proof run under `sandbox-exec`, away from your SSH keys, cloud and GitHub credentials, agent logins and Kitchen's key. Linux has no sandbox yet: those run as you, and Kitchen logs `UNSANDBOXED` when they start. Review `kitchen/setup` before you merge it either way. Details: `docs/adr/0008-setup-bridge.md` in the source repository.
 - **Your app and a merged Toolkit run unsandboxed.** They get no credentials through the environment, but they run as you, like `npm run dev` would. App code from a job branch is code an agent wrote; it is reviewed only after it ran.
 - **Docker bind mounts are not policed.** A Toolkit can start a container that mounts your home folder; the macOS sandbox doesn't see inside Docker. Planned: refuse bind mounts outside the repo.
 - **Codex parity is owed.** Every part of Kitchen was built and proven on Claude Code first. Codex runs the same roles and passed setup on three of four fixtures, but its full proof runs (end to end, review, the benchmark subset) are still to do.
