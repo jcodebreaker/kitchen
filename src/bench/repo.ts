@@ -15,6 +15,7 @@ export const FIXTURES: Record<BenchTicket["fixture"], FixtureSpec> = {
   "b-cli": { docker: false, checks: ["python3 -m compileall -q tasks"], testCmd: "python3 -m unittest {file}" },
   "c-adopt": { docker: true, checks: ["node --check server.js"], testCmd: "node --test {file}" },
   "d-api": { docker: false, checks: ["node --check server.js"], testCmd: "node --test {file}" },
+  "e-library": { docker: false, checks: ["node --check server.js"], testCmd: "node --test {file}" },
 };
 
 const IGNORE = [

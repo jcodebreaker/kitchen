@@ -1,0 +1,20 @@
+{
+  "members": [
+    { "id": "ana", "name": "Ana Lima", "role": "member" },
+    { "id": "ben", "name": "Ben Okafor", "role": "member" },
+    { "id": "lena", "name": "Lena Fischer", "role": "librarian" }
+  ],
+  "books": [
+    { "id": 1, "title": "The Hobbit", "author": "J.R.R. Tolkien", "copies": 2 },
+    { "id": 2, "title": "The Fellowship of the Ring", "author": "J.R.R. Tolkien", "copies": 1 },
+    { "id": 3, "title": "Dune", "author": "Frank Herbert", "copies": 1 },
+    { "id": 4, "title": "Kindred", "author": "Octavia E. Butler", "copies": 1 },
+    { "id": 5, "title": "The Left Hand of Darkness", "author": "Ursula K. Le Guin", "copies": 2 },
+    { "id": 6, "title": "Middlemarch", "author": "George Eliot", "copies": 1 }
+  ],
+  "loans": [
+    { "id": 1, "book_id": 3, "member": "ben", "borrowed_at": "2025-01-02", "due_at": "2025-01-16", "returned_at": null },
+    { "id": 2, "book_id": 6, "member": "ana", "borrowed_at": "2025-01-05", "due_at": "2025-01-19", "returned_at": "2025-02-01" },
+    { "id": 3, "book_id": 1, "member": "ana", "borrowed_at": "2025-03-01", "due_at": "2025-03-15", "returned_at": "2025-03-10" }
+  ]
+}
