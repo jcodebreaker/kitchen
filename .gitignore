@@ -11,4 +11,5 @@ dist/
 .env.*
 !.env.kitchen
 spikes/w0/.work/
+spikes/w1/.work/
 .claude/worktrees/

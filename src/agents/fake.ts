@@ -5,7 +5,7 @@ import { type AgentAdapter, type AgentRequest, type AgentResult, outDirOf, outPa
 
 /** What a scripted role does: the file it writes (omit for none) and its one line. */
 export type FakeStep = { file?: string; line: string; ok?: boolean; rateLimited?: boolean };
-export type FakeScript = (req: AgentRequest, call: number) => FakeStep;
+export type FakeScript = (req: AgentRequest, call: number) => FakeStep | Promise<FakeStep>;
 
 export class FakeAdapter implements AgentAdapter {
   readonly name = "fake" as const;
@@ -17,7 +17,7 @@ export class FakeAdapter implements AgentAdapter {
 
   async run(req: AgentRequest): Promise<AgentResult> {
     this.calls.push(req);
-    const step = this.script(req, this.calls.length);
+    const step = await this.script(req, this.calls.length);
     let outPath: string | undefined;
     if (step.file !== undefined) {
       mkdirSync(outDirOf(req), { recursive: true });

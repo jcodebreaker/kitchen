@@ -1,11 +1,21 @@
 #!/usr/bin/env node
-// `kitchen` entry point. W1 brings the rest of PLAN §4; for now:
+// `kitchen` entry point (PLAN §4). Runs in the repo it is started in (or --repo <dir>).
+//   kitchen ticket "<text>"
+//   kitchen run [--once] [--detach] [<job>]
+//   kitchen status
+//   kitchen resume <id|n> · feedback <id> ["<text>"] · reject <id>
+//   kitchen report
 //   kitchen mcp --job <id> --role <role> [--repo <dir>]   the engine bridge (src/bridge/mcp.ts)
+import path from "node:path";
 import { serveBridge } from "./bridge/mcp.ts";
+import * as cmd from "./cli/commands.ts";
 
-async function main(argv: string[]) {
-  const [cmd, ...rest] = argv;
-  if (cmd === "mcp") {
+const USAGE =
+  'usage: kitchen ticket "<text>" | run [--once] [--detach] [<job>] | status | resume <id|n> | feedback <id> ["<text>"] | reject <id> | report | mcp …';
+
+async function main(argv: string[]): Promise<number> {
+  const [name, ...rest] = argv;
+  if (name === "mcp") {
     const flags: Record<string, string> = {};
     for (let i = 0; i < rest.length; i += 2) {
       const k = rest[i]?.replace(/^--/, "");
@@ -13,13 +23,51 @@ async function main(argv: string[]) {
       flags[k] = rest[i + 1];
     }
     if (!flags.job || !flags.role) throw new Error("kitchen mcp needs --job and --role");
-    return serveBridge({ job: flags.job, role: flags.role, repo: flags.repo ?? process.cwd() });
+    await serveBridge({ job: flags.job, role: flags.role, repo: flags.repo ?? process.cwd() });
+    return 0;
   }
-  console.error("kitchen 0.0.0: only `kitchen mcp` exists so far (W1 adds the rest)");
-  process.exitCode = 2;
+  let repo = process.cwd();
+  const pos: string[] = [];
+  const flags = new Set<string>();
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] === "--repo") repo = rest[++i] ?? repo;
+    else if (rest[i].startsWith("--")) flags.add(rest[i]);
+    else pos.push(rest[i]);
+  }
+  repo = path.resolve(repo);
+  const out = (l: string) => console.log(l);
+  const need = (what: string) => {
+    if (!pos[0]) throw new Error(`kitchen ${name} needs ${what}`);
+    return pos[0];
+  };
+  switch (name) {
+    case "ticket":
+      return cmd.ticket(repo, need('"<text>"'), out);
+    case "run":
+      for (const f of flags) if (f !== "--once" && f !== "--detach") throw new Error(`kitchen run: unknown flag ${f}`);
+      return cmd.run(repo, { once: flags.has("--once"), detach: flags.has("--detach"), job: pos[0], cli: import.meta.filename, argv }, out);
+    case "status":
+      return cmd.status(repo, out);
+    case "resume":
+      return cmd.resume(repo, need("<id|n>"), out);
+    case "feedback":
+      return cmd.feedback(repo, need("<id>"), pos.slice(1).join(" "), out);
+    case "reject":
+      return cmd.reject(repo, need("<id>"), out);
+    case "report":
+      return cmd.report(repo, out);
+    default:
+      console.error(USAGE);
+      return 2;
+  }
 }
 
-main(process.argv.slice(2)).catch((e) => {
-  console.error(`kitchen: ${(e as Error).message}`);
-  process.exitCode = 1;
-});
+main(process.argv.slice(2)).then(
+  (code) => {
+    process.exitCode = code;
+  },
+  (e) => {
+    console.error(`kitchen: ${(e as Error).message}`);
+    process.exitCode = 1;
+  },
+);
