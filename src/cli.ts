@@ -10,21 +10,65 @@
 //   kitchen drive <job> <C> [--repro] [--arg k=v]… [--role r]   one criterion's proof (src/proof/prove.ts)
 //   kitchen drive <job> --view "<view>" [--role reviewer-ux]     one extra view for a UX/UI lens (src/engine/views.ts)
 //   kitchen dismiss <job> <finding-id> [--reason "<why>"]        a review finding was not useful (ledger, per lens)
+//   kitchen dashboard [--port 7357]                              the board, on 127.0.0.1, read-only (src/dashboard/server.ts)
 //   kitchen migrate [--dry-run]                                  kitchen.yaml schema + Toolkit template files (src/migrate/migrate.ts)
 //   kitchen retro [status | unmute <lens>/<category> | approve <n>]   mutes and lesson drafts (src/retro/retro.ts)
 //   kitchen toolkit maintain [--force]                           pstack's maintain pass (src/toolkit/maintain.ts)
 //   kitchen mcp --job <id> --role <role> [--repo <dir>]   the engine bridge (src/bridge/mcp.ts)
+import fs from "node:fs";
 import path from "node:path";
 import { serveBridge } from "./bridge/mcp.ts";
 import * as cmd from "./cli/commands.ts";
 
 const USAGE =
-  'usage: kitchen ticket "<text>" | run [--once] [--detach] [<job>] | status | resume <id|n> | feedback <id> [--to <stage>] ["<text>"] | reject <id> | report [--bench] [--json] | retro [status | unmute <lens>/<category> | approve <n>] | migrate [--dry-run] | bench smoke|full|tuned|heldout […] | init [--answers <file>] [--detach] | init --status [--wait <s>] | toolkit check [--feature x] [--src dir] | toolkit up | toolkit down --id <id> | drive <job> <C> [--repro] [--arg k=v]… | drive <job> --view "<view>" | dismiss <job> <finding> [--reason "<why>"] | toolkit maintain [--force] | mcp …';
+  'usage: kitchen ticket "<text>" | run [--once] [--detach] [<job>] | status | resume <id|n> | feedback <id> [--to <stage>] ["<text>"] | reject <id> | report [--bench] [--json] | retro [status | unmute <lens>/<category> | approve <n>] | migrate [--dry-run] | dashboard [--port n] | bench smoke|full|tuned|heldout […] | init [--answers <file>] [--detach] | init --status [--wait <s>] | toolkit check [--feature x] [--src dir] | toolkit up | toolkit down --id <id> | drive <job> <C> [--repro] [--arg k=v]… | drive <job> --view "<view>" | dismiss <job> <finding> [--reason "<why>"] | toolkit maintain [--force] | mcp …';
+
+const HELP = `kitchen: turns tickets into proven, reviewed pull requests (Claude Code or Codex)
+
+Setup
+  kitchen init [--tool claude|codex]      kitchen.yaml, the /kitchen skill, a proven Toolkit on the branch kitchen/setup
+  kitchen init --status [--wait <s>]      how a detached init is doing
+  kitchen toolkit check                   prove the Toolkit end to end (up, drives, reset, down)
+
+Work
+  kitchen ticket "<what you want>"        a ticket from a prompt (or label a GitHub issue: source.kind github)
+  kitchen run [--detach] [--once] [<job>] work the queue (--detach: in the background, log in .kitchen/run.log)
+  kitchen status                          one row per job
+  kitchen dashboard [--port 7357]         the board in a browser, on 127.0.0.1, read-only
+  kitchen feedback <id> ["<text>"] [--to <stage>]   answer a job that needs you, or send a done one back
+  kitchen reject <id> · resume <id>
+  kitchen dismiss <job> <finding> [--reason "<why>"]  a review finding was not useful
+
+Learning
+  kitchen report [--bench] [--json]       the measures from the ledger
+  kitchen retro [status | unmute <lens>/<category> | approve <n>]
+
+Maintenance
+  kitchen migrate [--dry-run]             kitchen.yaml schema + the Toolkit's template files
+  kitchen toolkit maintain | up | down --id <id>
+  kitchen drive <job> <C> [--repro] [--arg k=v]…   run one criterion's proof by hand
+
+kitchen --version · docs: README.md in the package`;
 
 async function main(argv: string[]): Promise<number> {
   const [name, ...rest] = argv;
+  if (name === undefined || name === "help" || name === "--help" || name === "-h") {
+    console.log(HELP);
+    return name === undefined ? 2 : 0;
+  }
+  if (name === "--version" || name === "-v") {
+    console.log((JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "..", "package.json"), "utf8")) as { version: string }).version);
+    return 0;
+  }
   if (name === "toolkit" || name === "init" || name === "setup-mcp") return (await import("./cli/toolkit-commands.ts")).w2(name, rest);
   if (name === "bench") return bench(rest);
+  if (name === "dashboard") {
+    const i = rest.indexOf("--repo");
+    const p = rest.indexOf("--port");
+    const repo = path.resolve(i >= 0 ? (rest[i + 1] ?? ".") : process.cwd());
+    await (await import("./dashboard/server.ts")).serveDashboard(repo, p >= 0 ? Number(rest[p + 1]) : 7357, (l) => console.log(l));
+    return await new Promise<number>(() => {});
+  }
   if (name === "retro") {
     const i = rest.indexOf("--repo");
     const repo = path.resolve(i >= 0 ? (rest[i + 1] ?? ".") : process.cwd());
@@ -104,7 +148,7 @@ async function main(argv: string[]): Promise<number> {
       if (!pos[1]) throw new Error("kitchen drive needs <job> <criterion>");
       return cmd.drive(repo, need("<job>"), pos[1], { repro: flags.has("--repro"), args: driveArgs, role }, out);
     default:
-      console.error(USAGE);
+      console.error(`kitchen: unknown command ${name}\n\n${USAGE}\n\nkitchen --help for the list`);
       return 2;
   }
 }
@@ -124,6 +168,8 @@ async function bench(rest: string[]): Promise<number> {
   if (tool !== "claude" && tool !== "codex") throw new Error("--tool is claude or codex");
   const { runBench } = await import("./bench/run.ts");
   const kitchenRoot = path.resolve(import.meta.dirname, "..");
+  if (!fs.existsSync(path.join(kitchenRoot, "bench", "set.yaml")) || !fs.existsSync(path.join(kitchenRoot, "src", "cli.ts")))
+    throw new Error("kitchen bench runs from a clone of the Kitchen repository (it needs bench/ and the fixtures), not from the npm package");
   const r = await runBench({
     kitchenRoot,
     tier: tier as "smoke" | "full" | "tuned" | "heldout",

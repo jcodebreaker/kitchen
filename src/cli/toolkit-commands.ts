@@ -8,7 +8,7 @@ import { loadConfig } from "../config.ts";
 import { plainCheckout } from "../engine/git.ts";
 import { forgeFor } from "../forge/forge.ts";
 import { serveSetupBridge } from "../init/bridge.ts";
-import { initCmd } from "../init/init.ts";
+import { initCmd, installSkill } from "../init/init.ts";
 import { detachInit, readStatus, statusReport, tracked } from "../init/status.ts";
 import { ownerAlive } from "../lock.ts";
 
@@ -60,9 +60,15 @@ export async function w2(name: string, argv: string[]): Promise<number> {
   if (name === "init") {
     const { flags } = parseFlags(argv, ["repo", "answers", "tool", "model", "effort", "max-fix", "wait"]);
     for (const k of Object.keys(flags))
-      if (!["repo", "answers", "tool", "model", "effort", "max-fix", "generate-only", "detach", "status", "wait"].includes(k))
+      if (!["repo", "answers", "tool", "model", "effort", "max-fix", "generate-only", "detach", "status", "wait", "skill"].includes(k))
         throw new Error(`kitchen init: unknown flag --${k}`);
     const repo = plainCheckout(path.resolve(str(flags.repo) ?? process.cwd())).workTree;
+    // --skill: only the /kitchen skill, so the setup itself can start from inside Claude Code or Codex.
+    if (flags.skill === true) {
+      for (const f of installSkill(repo)) out(`skill installed: ${f}`);
+      out("next: open Claude Code (or Codex) in this repo and type: /kitchen set up Kitchen");
+      return 0;
+    }
     if (flags.status === true) {
       // --wait <secs>: block up to that long (at most 110 s, so one agent tool call stays short) while init runs.
       // Agent tools may refuse a plain `sleep`; this is the way to wait between polls.

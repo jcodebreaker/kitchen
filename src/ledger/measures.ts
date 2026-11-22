@@ -24,6 +24,8 @@ export type JobMeasure = {
   done: boolean;
   rounds: number;
   firstVerdict: string | null;
+  /** Verify verdicts that were INCONCLUSIVE (the free retry, or paused on a Toolkit ticket), whoever decided them. */
+  inconclusive: number;
   gaps: number;
   primitivePrs: number;
   usd: number;
@@ -46,6 +48,8 @@ export type Measures = {
   /** The same counts per proof chain (every drive a proof ran, in order): what the retro proposes fixing. */
   chains: DriveMeasure[];
   proofs: { runs: number; inconclusive: number; flakyGroups: number; groups: number };
+  /** Verify verdicts: how many, and how many INCONCLUSIVE (a judged criterion can be INCONCLUSIVE when no proof run was). */
+  verdicts: { total: number; inconclusive: number };
   perPath: { risk: string; jobs: number; done: number; usd: number; secs: number; medianUsd: number; medianSecs: number }[];
   usd: number;
   secs: number;
@@ -120,6 +124,7 @@ export function measures(all: LedgerLine[]): Measures {
       done: moves.some((m) => m.result === "done"),
       rounds: moves.some((m) => m.stage !== "intake" && m.stage !== "needs-info") ? Math.max(1, ...ls.map((l) => l.round ?? 1)) : 0,
       firstVerdict: firstVerify ? (VERDICT_OF[String(firstVerify.result)] ?? String(firstVerify.result)) : null,
+      inconclusive: moves.filter((m) => m.stage === "verify" && (m.result === "verify" || m.result === "paused")).length,
       gaps: moves.filter((m) => m.result === "toolkit").length,
       primitivePrs: moves.filter((m) => m.stage === "toolkit" && WORK.has(String(m.result))).length,
       usd: round4(ls.filter((l) => l.event === "agent").reduce((n, l) => n + (l.usd ?? 0), 0)),
@@ -218,6 +223,10 @@ export function measures(all: LedgerLine[]): Measures {
     drives: [...drives.values()].sort((a, b) => b.runs - a.runs || a.drive.localeCompare(b.drive)),
     chains: [...chains.values()].sort((a, b) => b.runs - a.runs || a.drive.localeCompare(b.drive)),
     proofs: { runs: proofLines.length, inconclusive: proofLines.filter((p) => p.result === "INCONCLUSIVE").length, flakyGroups, groups: groups.size },
+    verdicts: {
+      total: lines.filter((l) => l.event === "move" && l.stage === "verify").length,
+      inconclusive: jobs.reduce((n, j) => n + j.inconclusive, 0),
+    },
     perPath,
     usd: round4(jobs.reduce((n, j) => n + j.usd, 0)),
     secs: jobs.reduce((n, j) => n + j.secs, 0),
@@ -246,6 +255,9 @@ export function formatMeasures(m: Measures, o: { drivesShown?: number } = {}): s
   out.push("");
   out.push(
     `INCONCLUSIVE and flake per drive  (${m.proofs.runs} proof runs: ${m.proofs.inconclusive} INCONCLUSIVE = ${pct(m.proofs.inconclusive, m.proofs.runs)}; flaky ${m.proofs.flakyGroups}/${m.proofs.groups} = ${pct(m.proofs.flakyGroups, m.proofs.groups)})`,
+  );
+  out.push(
+    `  INCONCLUSIVE Verify verdicts: ${m.verdicts.inconclusive} of ${m.verdicts.total} = ${pct(m.verdicts.inconclusive, m.verdicts.total)} (any criterion, judged ones included)`,
   );
   if (!m.drives.length) out.push("  no proof lines in the ledger yet (Verify writes one per proof)");
   const shown = m.drives.slice(0, o.drivesShown ?? 15);
