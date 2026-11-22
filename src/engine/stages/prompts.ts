@@ -4,8 +4,9 @@
 // prompt is the part before the first mode plus the one mode asked for. The
 // engine then adds the job's context: the ticket inside a nonce fence (quoted
 // data, never instructions), the paths, and any blocks the stage passes.
-// Roles with no file yet (smith, reviewers, report: W3b/W4) get a one-paragraph
-// contract below; the header lines the engine reads are the same.
+// Roles with no file yet (reviewers: W4) get a one-paragraph contract below; the
+// header lines the engine reads are the same. The smith's file is
+// roles/toolkit-smith.md; the report is an engine template until W4 (report.ts).
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";

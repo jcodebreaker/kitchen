@@ -97,10 +97,8 @@ const TOOLKIT_PRIMITIVES = [TOOLKIT, `:(exclude)${TOOLKIT}/features`];
 /**
  * Put every Toolkit file outside features/ back as it is at HEAD, in the index
  * and the worktree: a job commit never carries a Toolkit primitive change (a
- * smith's edit, or a builder's). Returns the paths put back.
- * W3b: the smith works on its own Toolkit PR branch in an engine-owned checkout,
- * so there is nothing of its work here to lose; in W1 its edits in the job
- * worktree are dropped by this.
+ * builder's, or anything else's). Returns the paths put back. The smith never
+ * works here: it has its own worktree on its Toolkit branch (ensureSmithWorktree).
  */
 export async function stripToolkitEdits(job: Job): Promise<string[]> {
   const git = await gitOf(job);
