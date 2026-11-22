@@ -45,6 +45,8 @@ export type BenchOpts = {
   claudeBin?: string;
   /** Per-ticket wall clock cap. */
   ticketMinutes?: number;
+  /** Role skills (ADR 0014) on (default) or off (`--no-skills`: skills.enabled false in every bench repo). */
+  skills?: boolean;
 };
 
 export type RunResult = {
@@ -205,7 +207,7 @@ async function runOne(o: BenchOpts, t: BenchTicket, n: number, home: string, suf
     run: n,
     expected: t.expect.outcome,
   };
-  const repo = makeBenchRepo(o.kitchenRoot, t, dir, agentYaml(o.tool, o.claudeBin ?? claudeBin()));
+  const repo = makeBenchRepo(o.kitchenRoot, t, dir, agentYaml(o.tool, o.claudeBin ?? claudeBin()), o.skills === false ? ["skills: { enabled: false }"] : []);
   const env = { ...process.env, KITCHEN_HOME: home, KITCHEN_TICK_MS: "200" };
   // the ticket
   await new Promise<void>((res) => {
@@ -421,6 +423,8 @@ export function resultsMarkdown(o: {
   results: RunResult[];
   skipped: string[];
   wallSecs: number;
+  /** Role skills on or off (ADR 0014 §7); absent: on. */
+  skills?: boolean;
 }): string {
   const s = summarize(o.results);
   const pct = (a: number, b: number) => (b ? `${Math.round((100 * a) / b)}%` : "n/a");
@@ -428,7 +432,7 @@ export function resultsMarkdown(o: {
   return [
     `# Bench ${o.tier} on ${o.tool}, ${o.date}`,
     "",
-    `Kitchen ${revLabel(o.kitchen)}`,
+    `Kitchen ${revLabel(o.kitchen)}; role skills ${o.skills === false ? "off (--no-skills)" : "on"}`,
     "",
     `${s.correct}/${s.runs} runs correct (${pct(s.correct, s.runs)}). Traps caught ${s.traps.caught}/${s.traps.runs}. False FAILs on controls: ${s.controls.falseFails} over ${s.controls.runs} runs. Tuned ${pct(s.tuned.correct, s.tuned.runs)} (${s.tuned.correct}/${s.tuned.runs}), held-out ${pct(s.heldout.correct, s.heldout.runs)} (${s.heldout.correct}/${s.heldout.runs}). ${proofsLine(s.proofs)}. Agent cost $${s.usd.toFixed(2)}; ticket time ${Math.round(s.secs / 60)} min; wall clock ${Math.round(o.wallSecs / 60)} min.`,
     "",
@@ -473,7 +477,9 @@ export async function runBench(o: BenchOpts): Promise<{ results: RunResult[]; sk
   const queue: { t: BenchTicket; n: number }[] = [];
   for (let n = 1; n <= o.runs; n++) for (const t of all) queue.push({ t, n });
   const date = new Date().toISOString().slice(0, 10);
-  const runId = `${date}-${o.tier}-${o.tool}-${process.pid}`;
+  // The two sides of a skills comparison never share a results file or a run id.
+  const side = o.skills === false ? "-noskills" : "";
+  const runId = `${date}-${o.tier}-${o.tool}${side}-${process.pid}`;
   // Read once, before anything runs: every result says which Kitchen it measured.
   const kitchen = kitchenRev(o.kitchenRoot);
   fs.mkdirSync(o.out, { recursive: true });
@@ -563,11 +569,14 @@ export async function runBench(o: BenchOpts): Promise<{ results: RunResult[]; sk
   results.sort((a, b) => (order.get(a.ticket) ?? 0) - (order.get(b.ticket) ?? 0) || a.run - b.run);
   const resultsDir = path.join(o.kitchenRoot, "bench", "results");
   fs.mkdirSync(resultsDir, { recursive: true });
-  const file = path.join(resultsDir, `${date}-${o.tier}-${o.tool}.md`);
-  fs.writeFileSync(file, resultsMarkdown({ tier: o.tier, tool: o.tool, date, kitchen, results, skipped, wallSecs: (Date.now() - t0) / 1000 }));
+  const file = path.join(resultsDir, `${date}-${o.tier}-${o.tool}${side}.md`);
+  fs.writeFileSync(
+    file,
+    resultsMarkdown({ tier: o.tier, tool: o.tool, date, kitchen, results, skipped, wallSecs: (Date.now() - t0) / 1000, skills: o.skills !== false }),
+  );
   fs.writeFileSync(
     file.replace(/\.md$/, ".json"),
-    `${JSON.stringify({ runId, kitchen, tier: o.tier, tool: o.tool, results, skipped, summary: summarize(results) }, null, 2)}\n`,
+    `${JSON.stringify({ runId, kitchen, tier: o.tier, tool: o.tool, skills: o.skills !== false, results, skipped, summary: summarize(results) }, null, 2)}\n`,
   );
   for (const l of section02Lines(results)) o.print(l);
   o.print(`bench: ${file}`);

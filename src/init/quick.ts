@@ -27,6 +27,7 @@ import { runSandboxed } from "../proof/run-sandboxed.ts";
 import { type Detected, detectChecks } from "./detect-checks.ts";
 import { addGitignore, hasOwnChecks, installSkill, toolFor, writeConfig } from "./files.ts";
 import { dur, phaseLine, usd } from "./say.ts";
+import { skillsReport } from "./skills-report.ts";
 
 export type QuickOpts = {
   repo: string;
@@ -164,6 +165,8 @@ export async function quickInit(o: QuickOpts, out: (l: string) => void): Promise
   );
   installSkill(repo);
   out(phaseLine(true, "Installed the skill", "/kitchen for Claude Code (.claude/skills) and Codex (.agents/skills)"));
+  // Role skills (ADR 0014): a report only, never a failure; `kitchen skills` lists where each comes from.
+  out(phaseLine(true, "Checked role skills", `${skillsReport(repo).summary} (kitchen skills for the list)`));
   const added = addGitignore(repo);
   out(phaseLine(true, "Updated .gitignore", added.length ? `${added.length} Kitchen entries` : "already has Kitchen's entries"));
 

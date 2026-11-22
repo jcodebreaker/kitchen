@@ -6,7 +6,8 @@
 //   kitchen resume <id|n> · feedback <id> [--to <stage>] ["<text>"] · reject <id>
 //   kitchen steer <id> "<text>" · pause <id> · stop <id>       talk to a running job, park it (src/engine/control.ts, ADR 0009)
 //   kitchen report [--bench]
-//   kitchen bench smoke|full|tuned|heldout [--tool claude|codex] [--runs n] [--only a,b] [--concurrency n] [--max-usd x] [--out dir]   (src/bench/run.ts)
+//   kitchen bench smoke|full|tuned|heldout [--tool claude|codex] [--runs n] [--only a,b] [--concurrency n] [--max-usd x] [--out dir] [--no-skills]   (src/bench/run.ts)
+//   kitchen skills                                               which role skills are found for the agent tool (src/skills/, ADR 0014)
 //   kitchen init [--tool claude|codex] [--toolkit] · kitchen toolkit build [--answers <file>] [--detach] [--status] [--verbose] · toolkit check [--feature x] [--src dir] · toolkit up · toolkit down --id <id>   (src/cli/toolkit-commands.ts)
 //   kitchen drive <job> <C> [--repro] [--arg k=v]… [--role r]   one criterion's proof (src/proof/prove.ts)
 //   kitchen drive <job> --view "<view>" [--role reviewer-ux]     one extra view for a UX/UI lens (src/engine/views.ts)
@@ -23,7 +24,7 @@ import * as cmd from "./cli/commands.ts";
 import { quietOnEpipe } from "./cli/epipe.ts";
 
 const USAGE =
-  'usage: kitchen ticket "<text>" | run [--once] [--detach] [<job>] | status | resume <id|n> | feedback <id> [--to <stage>] ["<text>"] | reject <id> | steer <id> "<text>" | pause <id> | stop <id> | report [--bench] [--json] | retro [status | unmute <lens>/<category> | approve <n>] | migrate [--dry-run] | dashboard [--port n] | bench smoke|full|tuned|heldout […] | init [--tool claude|codex] [--toolkit] | toolkit build [--answers <file>] [--detach] [--verbose] | toolkit build --status [--wait <s>] | toolkit check [--feature x] [--src dir] | toolkit up | toolkit down --id <id> | drive <job> <C> [--repro] [--arg k=v]… | drive <job> --view "<view>" | dismiss <job> <finding> [--reason "<why>"] | toolkit maintain [--force] | mcp …';
+  'usage: kitchen ticket "<text>" | run [--once] [--detach] [<job>] | status | resume <id|n> | feedback <id> [--to <stage>] ["<text>"] | reject <id> | steer <id> "<text>" | pause <id> | stop <id> | report [--bench] [--json] | retro [status | unmute <lens>/<category> | approve <n>] | migrate [--dry-run] | dashboard [--port n] | bench smoke|full|tuned|heldout […] | skills | init [--tool claude|codex] [--toolkit] | toolkit build [--answers <file>] [--detach] [--verbose] | toolkit build --status [--wait <s>] | toolkit check [--feature x] [--src dir] | toolkit up | toolkit down --id <id> | drive <job> <C> [--repro] [--arg k=v]… | drive <job> --view "<view>" | dismiss <job> <finding> [--reason "<why>"] | toolkit maintain [--force] | mcp …';
 
 const HELP = `kitchen: turns tickets into proven, reviewed pull requests (Claude Code or Codex)
 
@@ -35,6 +36,7 @@ Setup
   kitchen toolkit build --status [--wait <s>]   how a detached build is doing
   kitchen init --toolkit                  both: quick init, then the Toolkit build
   kitchen toolkit check                   prove the Toolkit end to end (up, drives, reset, down)
+  kitchen skills                          which role skills (skills/registry.json) are installed for the agent tool, and where
 
 Work
   kitchen ticket "<what you want>"        a ticket from a prompt (or label a GitHub issue: source.kind github)
@@ -82,7 +84,9 @@ const COMMAND_HELP: Record<string, string> = {
   dashboard:
     "kitchen dashboard [--port 7357]\n\nThe jobs in a browser, on 127.0.0.1 only: a list or a board, each job's live activity, checks and changes, and the Setup run. From it you answer, steer, pause, resume, stop, reject and follow up: the same engine code as the CLI verbs. Ctrl-C stops it.",
   bench:
-    "kitchen bench smoke|full|tuned|heldout [--tool claude|codex] [--runs n] [--only a,b] [--concurrency n] [--max-usd x] [--out dir]\n\nThe benchmark (from a clone of Kitchen only).",
+    "kitchen bench smoke|full|tuned|heldout [--tool claude|codex] [--runs n] [--only a,b] [--concurrency n] [--max-usd x] [--out dir] [--no-skills]\n\nThe benchmark (from a clone of Kitchen only).\n  --no-skills   every role on its prompt alone (skills.enabled: false in each bench repo), to compare with a run with skills",
+  skills:
+    "kitchen skills\n\nEvery skill in Kitchen's role registry (skills/registry.json): found or not for the repo's agent tool (kitchen.yaml agent.tool), where it comes from, and how to install a missing one. Changes nothing.",
   init: "kitchen init [--tool claude|codex] [--toolkit] | init --skill\n\nQuick init, in seconds: writes kitchen.yaml with the checks it finds (package.json, Makefile, pyproject.toml, go.mod, Cargo.toml; one short agent call only when none are obvious), installs the /kitchen skill, adds Kitchen's .gitignore entries, and runs the checks once. No Toolkit, no app start, no Docker.\n  --tool      claude (default) or codex\n  --skill     only the /kitchen skill\n  --toolkit   then build the Toolkit too (kitchen toolkit build; its flags --answers, --detach, --verbose… pass through)",
   toolkit:
     "kitchen toolkit build [--answers <file>] [--detach] [--status [--wait <s>]] [--verbose] [--tool claude|codex] | check [--feature x] [--src dir] | up | down --id <id> | maintain [--force]\n\n  build      an agent surveys the repo (at most 3 questions), writes the Toolkit and Kitchen proves it, on the branch kitchen/setup; 3-15 min, resumable. One line per phase; every detail in .kitchen/init/init.log (--verbose: on the terminal too)\n  check      prove the Toolkit end to end (up, drives, reset, down), every step shown\n  up/down    start or stop an instance of the app\n  maintain   the maintain pass: re-prove the Toolkit on the base and fix what broke",
@@ -115,6 +119,13 @@ async function main(argv: string[]): Promise<number> {
   }
   if (name === "toolkit" || name === "init" || name === "setup-mcp") return (await import("./cli/toolkit-commands.ts")).w2(name, rest);
   if (name === "bench") return bench(rest);
+  if (name === "skills") {
+    const i = rest.indexOf("--repo");
+    const repo = path.resolve(i >= 0 ? (rest[i + 1] ?? ".") : process.cwd());
+    const r = (await import("./init/skills-report.ts")).skillsReport(repo);
+    for (const l of [`role skills: ${r.summary}`, ...r.lines]) console.log(l);
+    return 0;
+  }
   if (name === "dashboard") {
     const i = rest.indexOf("--repo");
     const p = rest.indexOf("--port");
@@ -211,10 +222,14 @@ async function main(argv: string[]): Promise<number> {
   }
 }
 
-async function bench(rest: string[]): Promise<number> {
+async function bench(argv: string[]): Promise<number> {
+  const noSkills = argv.includes("--no-skills");
+  const rest = argv.filter((a) => a !== "--no-skills");
   const tier = rest[0];
   if (!["smoke", "full", "tuned", "heldout"].includes(tier ?? ""))
-    throw new Error("usage: kitchen bench smoke|full|tuned|heldout [--tool claude|codex] [--runs n] [--only a,b] [--concurrency n] [--max-usd x] [--out dir]");
+    throw new Error(
+      "usage: kitchen bench smoke|full|tuned|heldout [--tool claude|codex] [--runs n] [--only a,b] [--concurrency n] [--max-usd x] [--out dir] [--no-skills]",
+    );
   const f: Record<string, string> = {};
   for (let i = 1; i < rest.length; i += 2) {
     const k = rest[i]?.replace(/^--/, "");
@@ -236,9 +251,12 @@ async function bench(rest: string[]): Promise<number> {
     only: f.only?.split(",").filter(Boolean),
     concurrency: Number(f.concurrency ?? 2),
     maxUsd: Number(f["max-usd"] ?? 25),
-    out: path.resolve(f.out ?? path.join(kitchenRoot, "bench", ".work", `${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}-${tier}`)),
+    out: path.resolve(
+      f.out ?? path.join(kitchenRoot, "bench", ".work", `${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}-${tier}${noSkills ? "-noskills" : ""}`),
+    ),
     ledgerRepo: process.cwd(),
     print: (l) => console.log(l),
+    skills: !noSkills,
   });
   return r.results.every((x) => x.correct) ? 0 : 1;
 }
