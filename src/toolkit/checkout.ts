@@ -10,7 +10,7 @@
 // checkout and removing one happen under one per-repo lock, so a checkout is
 // never removed between its lease and its use. Every git call goes through engine/git.ts.
 
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { type GitRepo, linkedWorktree, openGit, plainCheckout } from "../engine/git.ts";
@@ -119,19 +119,85 @@ function readMarker(repo: string, sha: string): Marker {
   }
 }
 
-export function markPrepared(repo: string, sha: string, src: string, secs: number) {
-  const m = readMarker(repo, sha);
-  m.prepared[path.resolve(src)] = { at: new Date().toISOString(), secs };
-  writeAtomic(markerOf(repo, sha), JSON.stringify(m, null, 2));
+/** Lockfiles whose content decides what `prepare` installs: the app's (at the source root) and the Toolkit's own. */
+const LOCKFILES = [
+  "package-lock.json",
+  "npm-shrinkwrap.json",
+  "yarn.lock",
+  "pnpm-lock.yaml",
+  "bun.lockb",
+  "poetry.lock",
+  "uv.lock",
+  "Pipfile.lock",
+  "requirements.txt",
+  "Gemfile.lock",
+  "go.sum",
+  "Cargo.lock",
+  "composer.lock",
+];
+
+/**
+ * The hash `prepare` is cached by for a source tree: its lockfiles, the
+ * Toolkit's package files (from the checkout that runs it), and the tree's
+ * identity (a worktree removed and made again at the same path is new).
+ * null when the source has no lockfile: then the cache is per Toolkit sha.
+ */
+export function prepareKey(src: string, toolkitDir: string): string | null {
+  const h = createHash("sha256");
+  let any = false;
+  for (const f of LOCKFILES) {
+    const p = path.join(src, f);
+    if (!fs.existsSync(p)) continue;
+    any = true;
+    h.update(`${f}\0`).update(fs.readFileSync(p)).update("\0");
+  }
+  if (!any) return null;
+  for (const f of ["package.json", "package-lock.json"]) {
+    const p = path.join(toolkitDir, f);
+    if (fs.existsSync(p)) h.update(`toolkit/${f}\0`).update(fs.readFileSync(p)).update("\0");
+  }
+  try {
+    h.update(`birth:${fs.statSync(src).birthtimeMs}`);
+  } catch {}
+  return h.digest("hex");
 }
 
-export const isPrepared = (repo: string, sha: string, src: string) => !!readMarker(repo, sha).prepared[path.resolve(src)];
+const preparedIndex = (repo: string) => path.join(kitchenDir(repo), "toolkit-checkouts", "prepared.json");
+type PreparedIndex = Record<string, { key: string; sha: string; at: string; secs: number }>;
+function readIndex(repo: string): PreparedIndex {
+  try {
+    return JSON.parse(fs.readFileSync(preparedIndex(repo), "utf8")) as PreparedIndex;
+  } catch {
+    return {};
+  }
+}
+const toolkitDirOf = (repo: string, sha: string) => path.join(checkoutsRoot(fs.realpathSync(repo)), `${PREFIX}${short(sha)}`, ".kitchen", "toolkit");
+
+export function markPrepared(repo: string, sha: string, src: string, secs: number) {
+  const m = readMarker(repo, sha);
+  const at = new Date().toISOString();
+  m.prepared[path.resolve(src)] = { at, secs };
+  writeAtomic(markerOf(repo, sha), JSON.stringify(m, null, 2));
+  const key = prepareKey(src, toolkitDirOf(repo, sha));
+  if (key) {
+    const idx = readIndex(repo);
+    idx[path.resolve(src)] = { key, sha, at, secs };
+    writeAtomic(preparedIndex(repo), JSON.stringify(idx, null, 2));
+  }
+}
+
+/** Prepared for this Toolkit sha, or (where the source has lockfiles) with the same lockfiles under any Toolkit sha. */
+export function isPrepared(repo: string, sha: string, src: string): boolean {
+  if (readMarker(repo, sha).prepared[path.resolve(src)]) return true;
+  const hit = readIndex(repo)[path.resolve(src)];
+  return !!hit && hit.key === prepareKey(src, toolkitDirOf(repo, sha));
+}
 
 /** `prepare --src` with this checkout's bin/dev, once per sha and source. */
 export async function ensurePrepared(repo: string, co: Checkout, src: string): Promise<{ cached: boolean; secs: number }> {
   if (isPrepared(repo, co.sha, src)) return { cached: true, secs: 0 };
   const t0 = Date.now();
-  const r = await runToolkit(co.bin, ["prepare", `--src=${src}`], { src, timeoutMs: 30 * 60_000 });
+  const r = await runToolkit(co.bin, ["prepare", `--src=${src}`], { src, timeoutMs: 30 * 60_000, stallMs: 5 * 60_000 });
   const v = validate("prepare", r.json);
   if (!v.ok || r.exit !== 0) throw new Error(`prepare failed: ${v.ok ? `exit ${r.exit}` : v.why} ${r.stderr.slice(-400)}`);
   const secs = (Date.now() - t0) / 1000;

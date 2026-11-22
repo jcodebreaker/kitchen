@@ -6,9 +6,10 @@
 //  - feature `paths` empty, or a glob that matches no tracked file, fails;
 //  - the same fake without faults passes (the contract probe doesn't refuse a correct Toolkit).
 //   node spikes/w2/probe.ts [scratch dir]
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { check, finish, git, HERE, kitchen, type Repo } from "./lib.ts";
+import { CLI, check, finish, git, HERE, kitchen, type Repo } from "./lib.ts";
 
 const root = path.resolve(process.argv[2] ?? path.join(HERE, ".work", "probe"));
 fs.rmSync(root, { recursive: true, force: true });
@@ -87,5 +88,38 @@ check(
   "ok-to-everything: every refusal is named (missing read, both foreign origins on open and http, duplicated flag)",
   /missing target/.test(ok.reason) && (ok.reason.match(/another origin/g) ?? []).length === 4 && /flag given twice \(--id\) is refused/.test(ok.reason),
   ok.reason.slice(0, 400),
+);
+
+// `kitchen toolkit up` (foreground, Ctrl-C brings it down) and `toolkit down --id` (a slot left by kill -9).
+const cleanRepo = repo("up-down", []);
+const slots = () => (JSON.parse(fs.readFileSync(path.join(cleanRepo.home, "slots.json"), "utf8")) as { slots: { id: string }[] }).slots.map((s) => s.id);
+const upUntilReady = () =>
+  new Promise<{ p: ReturnType<typeof spawn>; id: string; out: string }>((resolve, reject) => {
+    const p = spawn(process.execPath, [CLI, "toolkit", "up", "--repo", cleanRepo.dir], { env: cleanRepo.env });
+    let out = "";
+    p.stdout?.on("data", (b) => {
+      out += b;
+      const m = /down --id (\S+)\)/.exec(out);
+      if (m) resolve({ p, id: m[1], out });
+    });
+    p.on("exit", () => reject(new Error(out)));
+  });
+const a = await upUntilReady();
+check(
+  "toolkit up: one instance, its url printed, its slot held",
+  /ready at http:\/\/127\.0\.0\.1:\d+/.test(a.out) && slots().includes(a.id),
+  a.out.split("\n")[1],
+);
+a.p.kill("SIGINT");
+const code = await new Promise((r) => a.p.once("exit", (c) => r(c)));
+check("Ctrl-C: down ran, the slot is freed, exit 0", code === 0 && !slots().includes(a.id), `exit ${code}, slots ${slots().join(",") || "none"}`);
+const b = await upUntilReady();
+b.p.kill("SIGKILL");
+await new Promise((r) => b.p.once("exit", r));
+const d = kitchen(cleanRepo, ["toolkit", "down", "--id", b.id]);
+check(
+  "kill -9 leaves the slot; toolkit down --id stops it and frees it",
+  d.code === 0 && /stopped and its slot freed/.test(d.out) && !slots().includes(b.id),
+  d.out.trim(),
 );
 finish("w2 probe");
