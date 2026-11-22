@@ -214,7 +214,10 @@ export function parseDrive(body: string, firstLine = 1): Drive {
     const indent = line.length - line.trimStart().length;
     if (indent === 0) {
       const m = line.match(/^([a-z]+):\s*(.*)$/);
-      if (!m) return err(n, `expected a top-level key, got ${JSON.stringify(line)}`);
+      if (!m) {
+        err(n, `expected a top-level key, got ${JSON.stringify(line)}`);
+        return;
+      }
       const [, key, rest] = m;
       inSteps = false;
       if (key === "drive") {

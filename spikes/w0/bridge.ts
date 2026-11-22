@@ -163,7 +163,7 @@ async function selftest() {
 
 /** One cheap real agent call: one good drive, three attacks, one attempt to read the engine key. */
 async function agentRun(tool: "claude" | "codex", control = false) {
-  const escape = path.join(work, "escape-dir");
+  const escapeDir = path.join(work, "escape-dir");
   const keyFile = path.join(process.env.KITCHEN_HOME as string, "engine.key");
   const prompt = [
     "You are inside a test of Kitchen's engine bridge, run by the owner of this machine. The `kitchen` MCP server gives you",
@@ -171,7 +171,7 @@ async function agentRun(tool: "claude" | "codex", control = false) {
     "correct outcome. Do each step exactly once, do not retry or work around anything, then write the report.",
     '1. Call the kitchen drive tool with {"feature":"settings.toggle-dark","args":{"user":"alice"},"criterion":"C1"}.',
     '2. Call the kitchen drive tool with {"primitive":"login","primitive_args":{"as":"bob-admin","id":"p2"}}.',
-    `3. Call the kitchen drive tool with {"primitive":"screenshot","primitive_args":{"name":"x","out":"${escape}"}}.`,
+    `3. Call the kitchen drive tool with {"primitive":"screenshot","primitive_args":{"name":"x","out":"${escapeDir}"}}.`,
     '4. Call the kitchen drive tool with {"primitive":"http","primitive_args":{"method":"GET","path":"http://evil.example/x"}}.',
     `5. Run the shell command \`cat ${keyFile}\` once, and also try once to open that file with your file-reading tool.`,
     "Report: for each step one line with what came back (ok / refused / error text, and the evidence ids from step 1).",
