@@ -10,7 +10,7 @@ import { parseArgs, readEnvFile } from "./common.mjs";
 
 const { flags } = parseArgs(process.argv.slice(2));
 const PORT = Number(flags.port);
-const BASE = String(flags.base).replace(/\/$/, "");
+const BASE = new URL(String(flags.base));
 const SRC = String(flags.src);
 const ACTION_TIMEOUT = 5000;
 
@@ -30,6 +30,13 @@ const seedPassword = (user) => {
   return env[`SEED_${user.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_PASSWORD`];
 };
 
+/** A path on the app. Anything that resolves to another origin (`//evil`, `@evil/x`, `http://…`) is refused. */
+function appUrl(p) {
+  const u = new URL(String(p ?? "/"), BASE);
+  if (u.origin !== BASE.origin) throw new Error(`${JSON.stringify(p)} leaves the app (${u.origin}): refused`);
+  return u.href;
+}
+
 async function settle() {
   // A press may start a navigation; let it land before the next step reads.
   await page.waitForLoadState("load").catch(() => {});
@@ -47,7 +54,7 @@ const ops = {
     const pw = as && seedPassword(as);
     if (!pw) return { ok: false, out: `no seed user ${JSON.stringify(as)}` };
     await context.clearCookies();
-    await page.goto(`${BASE}/login`);
+    await page.goto(appUrl("/login"));
     await page.getByTestId("login-username").fill(as);
     await page.getByTestId("login-password").fill(pw);
     await page.getByTestId("login-submit").click();
@@ -64,14 +71,28 @@ const ops = {
     return { ok: true, out: page.url() };
   },
   async type({ target, text }) {
-    await page.locator(target).first().fill(String(text ?? ""));
+    await page
+      .locator(target)
+      .first()
+      .fill(String(text ?? ""));
     return { ok: true, out: String(text ?? "") };
   },
   async read({ target = "body", attr }) {
     const el = page.locator(target).first();
     if ((await el.count()) === 0) return { ok: false, out: `no element matches ${target}` };
-    const v = attr ? await el.getAttribute(String(attr)) : await el.innerText();
-    return { ok: true, out: v ?? "" };
+    if (!attr) return { ok: true, out: await el.innerText() };
+    const v = await el.getAttribute(String(attr));
+    return v === null ? { ok: false, out: `${target} has no attribute ${attr}` } : { ok: true, out: v };
+  },
+  async open({ path: p = "/" }) {
+    await page.goto(appUrl(p));
+    await settle();
+    return { ok: true, out: page.url() };
+  },
+  async reload() {
+    await page.reload();
+    await settle();
+    return { ok: true, out: page.url() };
   },
   async screenshot({ name = "screen", out }) {
     fs.mkdirSync(out, { recursive: true });
@@ -81,7 +102,8 @@ const ops = {
   },
   async http({ method = "GET", path: p = "/", body }) {
     // Uses the browser context's cookies, so it acts as the signed-in user.
-    const r = await context.request.fetch(`${BASE}${p}`, {
+    const r = await context.request.fetch(appUrl(p), {
+      maxRedirects: 0,
       method: String(method).toUpperCase(),
       data: body === undefined ? undefined : typeof body === "string" ? JSON.parse(body) : body,
     });
@@ -114,7 +136,7 @@ const server = http.createServer((req, res) => {
     });
   });
 });
-server.listen(PORT, "127.0.0.1", () => console.error(`driver listening on ${PORT}, app ${BASE}`));
+server.listen(PORT, "127.0.0.1", () => console.error(`driver listening on ${PORT}, app ${BASE.origin}`));
 
 async function shutdown() {
   server.close();

@@ -40,7 +40,14 @@ function exec(label, cmd, args) {
       try {
         json = JSON.parse(lines.at(-1));
       } catch {}
-      const row = { label, cmd: [path.basename(cmd), ...args.map((a) => a.replace(work, "<work>").replace(repo, "<repo>"))].join(" "), exit: code, secs, stdoutLines: lines.length, json };
+      const row = {
+        label,
+        cmd: [path.basename(cmd), ...args.map((a) => a.replace(work, "<work>").replace(repo, "<repo>"))].join(" "),
+        exit: code,
+        secs,
+        stdoutLines: lines.length,
+        json,
+      };
       rows.push(row);
       fs.appendFileSync(path.join(work, "spike.log"), `\n### ${label} (${secs}s, exit ${code})\n${err}\n${out}`);
       console.log(`${code === 0 ? "ok  " : "FAIL"} ${secs.toFixed(2).padStart(6)}s  ${label}  ${JSON.stringify(json).slice(0, 220)}`);
@@ -51,7 +58,24 @@ function exec(label, cmd, args) {
 const tk = (label, ...args) => exec(label, dev, args);
 const kc = (label, ...args) => exec(label, process.execPath, [kitchen, ...args]);
 const drive = (label, id, file, evDir, round, criterion, ...args) =>
-  kc(label, "drive", feature(file), "--id", id, "--src", src, "--evidence", evDir, "--sha", sha, "--round", String(round), "--criterion", criterion, ...args.flatMap((a) => ["--arg", a]));
+  kc(
+    label,
+    "drive",
+    feature(file),
+    "--id",
+    id,
+    "--src",
+    src,
+    "--evidence",
+    evDir,
+    "--sha",
+    sha,
+    "--round",
+    String(round),
+    "--criterion",
+    criterion,
+    ...args.flatMap((a) => ["--arg", a]),
+  );
 const threeDrives = async (id, evDir, round) => [
   await drive(`drive settings.toggle-dark [${id} r${round}]`, id, "settings.md", evDir, round, "C1", "user=alice"),
   await drive(`drive projects.create [${id} r${round}]`, id, "projects.md", evDir, round, "C2", "user=alice", "slug=launch-plan"),
@@ -62,7 +86,9 @@ const portsOf = (row) => row.json.slot.ports.slice(0, 3).join(",");
 const started = new Set();
 try {
   if (cold) {
-    const tag = JSON.parse(execFileSync(dev, ["prepare", "--src", path.join(repo, "fixtures/a-web")], { env, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })).snapshot;
+    const tag = JSON.parse(
+      execFileSync(dev, ["prepare", "--src", path.join(repo, "fixtures/a-web")], { env, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }),
+    ).snapshot;
     execFileSync("docker", ["rmi", "-f", tag], { stdio: "ignore" });
   }
   await tk(`prepare${cold ? " (cold snapshot, fresh copy)" : " (fresh copy)"}`, "prepare", "--src", src);
@@ -80,14 +106,49 @@ try {
   await threeDrives("s1", ev("s1"), 2);
   // negative controls: a missing primitive is a gap; an unmeetable wait fails after its retry
   const neg = (f) => path.join(repo, "spikes/w0/negative", f);
-  await kc("drive negative.needs-sql [s1] (expect gap)", "drive", neg("needs-sql.md"), "--id", "s1", "--src", src, "--evidence", ev("s1-negative"), "--sha", sha, "--criterion", "N1");
-  await kc("drive negative.wrong-text [s1] (expect FAIL)", "drive", neg("wrong-text.md"), "--id", "s1", "--src", src, "--evidence", ev("s1-negative"), "--sha", sha, "--criterion", "N2");
+  await kc(
+    "drive negative.needs-sql [s1] (expect gap)",
+    "drive",
+    neg("needs-sql.md"),
+    "--id",
+    "s1",
+    "--src",
+    src,
+    "--evidence",
+    ev("s1-negative"),
+    "--sha",
+    sha,
+    "--criterion",
+    "N1",
+  );
+  await kc(
+    "drive negative.wrong-text [s1] (expect FAIL)",
+    "drive",
+    neg("wrong-text.md"),
+    "--id",
+    "s1",
+    "--src",
+    src,
+    "--evidence",
+    ev("s1-negative"),
+    "--sha",
+    sha,
+    "--criterion",
+    "N2",
+  );
   await tk("down s1", "down", "--id", "s1");
   started.delete("s1");
   await kc("slot release s1", "slot", "release", "--id", "s1");
   await kc("verify manifest s1 (after down)", "verify", "--evidence", ev("s1"));
   const shots = fs.readdirSync(path.join(ev("s1"), "files"), { recursive: true }).filter((f) => f.endsWith(".png"));
-  rows.push({ label: "evidence survives down", files: shots, entries: fs.readFileSync(path.join(ev("s1"), "manifest.jsonl"), "utf8").trim().split("\n").length });
+  rows.push({
+    label: "evidence survives down",
+    files: shots,
+    entries: fs
+      .readFileSync(path.join(ev("s1"), "manifest.jsonl"), "utf8")
+      .trim()
+      .split("\n").length,
+  });
   console.log(`evidence after down: ${shots.join(", ")}`);
 
   // --- two slots at once ---
@@ -95,7 +156,10 @@ try {
   const b = await kc("slot acquire p2", "slot", "acquire", "--id", "p2", "--pid", String(process.pid), "--toolkit", dev);
   started.add("p1");
   started.add("p2");
-  await Promise.all([tk("up p1 (parallel)", "up", "--id", "p1", "--src", src, "--ports", portsOf(a)), tk("up p2 (parallel)", "up", "--id", "p2", "--src", src, "--ports", portsOf(b))]);
+  await Promise.all([
+    tk("up p1 (parallel)", "up", "--id", "p1", "--src", src, "--ports", portsOf(a)),
+    tk("up p2 (parallel)", "up", "--id", "p2", "--src", src, "--ports", portsOf(b)),
+  ]);
   await tk("doctor p1", "doctor", "--id", "p1");
   await tk("doctor p2", "doctor", "--id", "p2");
   const ps = execFileSync("docker", ["ps", "--filter", "label=kitchen.toolkit=a-web", "--format", "{{.Names}} {{.Ports}}"], { encoding: "utf8" }).trim();
@@ -138,7 +202,7 @@ try {
   const idx = i >= 0 ? i : 0;
   lines[idx] = i >= 0 ? lines[idx].replace('"ok":false', '"ok":true') : lines[idx].replace('"round":1', '"round":2');
   fs.writeFileSync(mf, lines.join("\n"));
-  rows.push({ label: "hand edit", line: idx + 1, edit: i >= 0 ? 'ok:false → ok:true' : "round 1 → 2" });
+  rows.push({ label: "hand edit", line: idx + 1, edit: i >= 0 ? "ok:false → ok:true" : "round 1 → 2" });
   await kc("verify after hand edit", "verify", "--evidence", tamper);
 } finally {
   for (const id of started) await tk(`cleanup down ${id}`, "down", "--id", id);

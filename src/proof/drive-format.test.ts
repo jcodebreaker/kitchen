@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { test } from "vitest";
-import { DriveFormatError, extractDriveBlocks, loadDrive, parseDrive, parseFlow, stripComment, substitute } from "./drive-format.ts";
+import { checkPrimArgs, DriveFormatError, extractDriveBlocks, loadDrive, parseDrive, parseFlow, stripComment, substitute } from "./drive-format.ts";
 
 test("flow values: nested mappings, lists, quotes, scalars", () => {
   assert.deepEqual(parseFlow(`{ until: { text: "Appearance" }, timeout: 10s }`), { until: { text: "Appearance" }, timeout: "10s" });
@@ -51,6 +51,23 @@ test("rejects what the format forbids", () => {
   bad(`drive: x\nloop: 3\nsteps:\n  - press: { target: a }`, /unknown top-level key/);
   bad(`drive: x\nsteps:\n  - wait: { until: { text: a } }\n    save: y`, /save: only follows a primitive/);
   bad(`drive: x\nsteps:`, /steps: empty/);
+});
+
+test("engine flags and flag-like names can't be passed by a step", () => {
+  const bad = (step: string, re: RegExp) => assert.throws(() => parseDrive(`drive: x\nsteps:\n  - ${step}`), re);
+  bad(`login: { as: bob-admin, id: p2 }`, /"id" is set by the engine/);
+  bad(`screenshot: { name: s, out: /tmp/elsewhere }`, /"out" is set by the engine/);
+  bad(`press: { target: a, src: /other }`, /"src" is set by the engine/);
+  bad(`press: { target: a, ports: "1,2" }`, /"ports" is set by the engine/);
+  bad(`press: { "--id": p2 }`, /must match/);
+  bad(`press: { "-x": 1 }`, /must match/);
+  bad(`press: { "a=b": 1 }`, /must match/);
+  assert.throws(() => checkPrimArgs("read", { out: "/x" }), /set by the engine/);
+  assert.throws(() => checkPrimArgs("--id=p2", {}), /not a primitive name/);
+});
+
+test("a wait with empty text is refused", () => {
+  assert.throws(() => parseDrive(`drive: x\nsteps:\n  - wait: { until: { text: "" } }`), /non-empty text/);
 });
 
 test("a saved var is usable only after the step that saves it", () => {
