@@ -3,7 +3,48 @@ import { test } from "vitest";
 import { changedExistingDrive, lintFeatureFile } from "./feature-lint.ts";
 import { gateOutcome } from "./gate.ts";
 import { riskFloor, seedTouched } from "./risk-floor.ts";
-import { lintSpec, newDrivesOf } from "./spec-lint.ts";
+import { lintSpec, newDrivesOf, parseRequirements } from "./spec-lint.ts";
+
+test('rule 3: `$x == ""` counts as a negative: an earlier step must make something', () => {
+  const read = 'toolkit login --as alice ; toolkit read --target "[data-testid=owner]" --save owner';
+  assert.match(lint(spec(C("C1", "x", read, '$owner == ""'))).reason ?? "", /never existed/);
+  const made = `${spec(C("C1", "x", `toolkit projects.make --user bob-admin --name "Bob plan" ; ${read}`, '$owner == ""'))}\n## New drives\n- projects.make: create a project\n`;
+  assert.equal(lint(made).reason, undefined);
+});
+
+test("rule 7: criteria cover intake's requirements; a negative one needs a criterion asserting an absence", () => {
+  const intake = [
+    "## Requirements",
+    "- R1: Admins see every user's projects with the owner shown",
+    "- R2 (negative): regular users see no owner",
+    "- R3 (out of scope): export to CSV — the ticket mentions it in passing",
+    "Note: R3 rescoped, see REASON.",
+  ].join("\n");
+  const reqs = parseRequirements(intake);
+  assert.deepEqual(
+    reqs.map((r) => [r.id, r.negative, r.outOfScope]),
+    [
+      ["R1", false, false],
+      ["R2", true, false],
+      ["R3", false, true],
+    ],
+  );
+  const L = (md: string) => lintSpec(md, { kind: "feature", toolkit, protected: [], requirements: reqs });
+  const pos = C("C1", "Admin sees the owner", "toolkit login --as bob ; toolkit read --target owner --save o", '$o == "alice"');
+  const neg = C(
+    "C2",
+    "Alice sees no owner",
+    'toolkit settings.toggle-dark --user bob ; toolkit login --as alice ; toolkit read --target "[data-testid=owner]" --save o',
+    '$o == ""',
+  );
+  assert.match(L(spec(pos, neg)).reason ?? "", /C1 covers no requirement/);
+  assert.match(L(spec(`${pos}\n  covers: R1`, `${neg}\n  covers: R9`)).reason ?? "", /C2 covers R9, which intake.md does not list/);
+  assert.match(L(spec(`${pos}\n  covers: R1`)).reason ?? "", /R2 .* is covered by no criterion/);
+  const posOnly = C("C2", "Alice sees her project", "toolkit login --as alice ; toolkit open --path /projects", 'text "onboarding" visible');
+  assert.match(L(spec(`${pos}\n  covers: R1`, `${posOnly}\n  covers: R2`)).reason ?? "", /R2 says what must not happen/);
+  assert.equal(L(spec(`${pos}\n  covers: R1`, `${neg}\n  covers: R2  # the negative`)).reason, undefined, "R3 is out of scope");
+  assert.match(lintSpec(spec(`${pos}\n  covers: R1`), { kind: "feature", toolkit, requirements: [] }).reason ?? "", /lists no requirements/);
+});
 
 const toolkit = { primitives: ["login", "press", "read", "open", "reload", "screenshot", "http", "type"], drives: { "settings.toggle-dark": ["user"] } };
 const lint = (md: string, kind: string | null = "feature", prot: string[] = ["kitchen.yaml"]) => lintSpec(md, { kind, toolkit, protected: prot });

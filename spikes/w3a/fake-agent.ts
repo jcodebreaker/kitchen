@@ -29,12 +29,15 @@ const SPEC = `## Criteria
   proof: toolkit settings.theme-after-reload --user alice
   expect: $theme == "Dark" and json $me.body.theme == "dark"
   repro: true
+  covers: R1
 - [C2] The theme API reports dark after toggling, starting from light
   proof: toolkit settings.toggle-dark --user alice
   expect: json $me.body.theme == "dark" and $before == "false"
+  covers: R1
 - [C3] The settings page looks right in dark mode
   proof: toolkit settings.dark-screenshot --user alice
   expect: judged
+  covers: R2
 ## New drives
 - settings.theme-after-reload: sign in, Settings, toggle dark mode, wait for Saved, full reload via the nav link, read theme-state as theme, GET /api/me as me
 - settings.dark-screenshot: sign in, Settings, toggle dark mode, wait for Saved, reload, screenshot
@@ -219,7 +222,10 @@ export default async function script(req: AgentRequest): Promise<FakeStep> {
   if (scenario === "replay") return replay(req, mode);
 
   if (req.role === "intake")
-    return { file: "DECISION: ACCEPT\nKIND: bug\nRISK: medium\nSURFACES: ui\nREASON: dark mode is lost on reload\n", line: "ACCEPT bug medium" };
+    return {
+      file: "DECISION: ACCEPT\nKIND: bug\nRISK: medium\nSURFACES: ui\nREASON: dark mode is lost on reload\n\n## Requirements\n- R1: dark mode stays on after a reload\n- R2: the settings page looks right in dark mode\n",
+      line: "ACCEPT bug medium",
+    };
   if (req.role === "spec") return { file: scenario === "gap" && n === 1 ? SPEC_GAP : SPEC, line: "spec: 3 criteria" };
 
   if (req.role === "smith") {

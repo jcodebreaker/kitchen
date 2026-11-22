@@ -5,8 +5,9 @@
 // engine then runs every mechanical criterion on the base (base-check.ts): one
 // that already passes there is sent back to the spec role once to strengthen;
 // if it still passes after that, the job goes on and Verify flags it.
+import fs from "node:fs";
 import path from "node:path";
-import { lintSpec } from "../../checks/spec-lint.ts";
+import { lintSpec, parseRequirements } from "../../checks/spec-lint.ts";
 import { nothingPolicy } from "../contract.ts";
 import { ensureUp } from "../instance.ts";
 import { writeAtomic } from "../store.ts";
@@ -41,7 +42,10 @@ export const spec: StageHandler = async (ctx) => {
   const thrown = await commitWith(job, "unused", nothingPolicy);
   if (thrown.refused.length) ctx.log(`the spec role's worktree edits were thrown away: ${thrown.refused.map((x) => x.split(":")[0]).join(", ")}`);
   const view = hasToolkit(job) ? await toolkitView(job, job.worktree) : { primitives: [], drives: {} };
-  const lint = lintSpec(r.text, { kind: job.kind, toolkit: view, protected: ctx.config.protected });
+  // Rule 7: the criteria must cover the requirements intake read in the ticket.
+  const intakeFile = path.join(ctx.jobDir, "intake.md");
+  const requirements = parseRequirements(fs.existsSync(intakeFile) ? fs.readFileSync(intakeFile, "utf8") : "");
+  const lint = lintSpec(r.text, { kind: job.kind, toolkit: view, protected: ctx.config.protected, requirements });
   if (!lint.ok) {
     ctx.log(`spec-lint: ${lint.reason}`);
     writeAtomic(path.join(ctx.jobDir, "spec-refused.md"), `REASON: ${lint.reason}\n\n${r.text}`);
