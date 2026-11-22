@@ -69,6 +69,10 @@ export const ConfigSchema = z
       .prefault({}),
     surfaces: z.record(z.string(), z.array(z.string())).default({ ui: ["ux", "ui"], security: ["security"] }),
     high_paths: z.array(z.string()).default(["**/migrations/**", "**/auth/**", "**/*payment*", "infra/**", ".github/**"]),
+    /** Seed data and migrations the app every proof drives starts from: a builder diff touching them is high risk and listed for review. */
+    seed_paths: z
+      .array(z.string())
+      .default(["**/migrations/**", "**/migrate/**", "**/seeds/**", "**/*seed*", "**/fixtures/**", "db/**", "**/*.sql", "prisma/**", "**/schema.rb"]),
     risk_floor: z
       .object({ diff_lines_medium: z.number().int().positive().default(300), diff_lines_high: z.number().int().positive().default(1000) })
       .strict()

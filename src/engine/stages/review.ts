@@ -2,6 +2,7 @@
 // (the stricter of intake's rating and the diff floor) plus the job's surfaces.
 // `code-if-diff>N` adds the code lens when the diff is over N lines or touches a feature drive.
 import path from "node:path";
+import { seedTouched } from "../../checks/risk-floor.ts";
 import type { Config } from "../../config.ts";
 import { effectiveRisk, type Job } from "../machine.ts";
 import { roundDir } from "../store.ts";
@@ -26,14 +27,26 @@ export function lensesFor(cfg: Config, job: Pick<Job, "risk" | "riskFloor" | "su
 
 export const review: StageHandler = async (ctx) => {
   const job = ctx.refresh();
-  const lenses = lensesFor(ctx.config, job, await diffStat(job));
+  const diff = await diffStat(job);
+  const lenses = lensesFor(ctx.config, job, diff);
+  const seeds = seedTouched(diff, ctx.config);
   let blocking: string | undefined;
   for (const lens of lenses) {
     const r = await runRole(ctx, {
       role: `reviewer-${lens}`,
       file: `review-${lens}.md`,
       tier: "read",
-      prompt: prompt({ role: `reviewer-${lens}`, job, jobDir: ctx.jobDir, extra: [`Lens: ${lens}`, `Worktree: ${job.worktree}`, `Base: ${job.base}`] }),
+      prompt: prompt({
+        role: `reviewer-${lens}`,
+        job,
+        jobDir: ctx.jobDir,
+        extra: [
+          `Lens: ${lens}`,
+          `Worktree: ${job.worktree}`,
+          `Base: ${job.base}`,
+          ...(seeds.length ? [`Seed data or migrations changed (check nothing seeds the answer a proof reads): ${seeds.join(", ")}`] : []),
+        ],
+      }),
       dest: path.join(roundDir(ctx.jobDir, job.round), `review-${lens}.md`),
     });
     const h = headers(r.text);

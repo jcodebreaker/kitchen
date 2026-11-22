@@ -70,14 +70,20 @@ export async function ensureWorktree(repo: string, job: Job, now = new Date()): 
 
 const gitOf = (job: Job) => openGit({ gitDir: job.gitDir, workTree: job.worktree });
 
-/** A file's text at HEAD, or null when HEAD has no such file. */
-export async function fileAtHead(job: Job, rel: string): Promise<string | null> {
+/** A file's text at a commit (default HEAD), or null when it has no such file. */
+export async function fileAtHead(job: Job, rel: string, ref = "HEAD"): Promise<string | null> {
   try {
-    return (await (await gitOf(job)).run(["show", `HEAD:${rel}`])).stdout;
+    return (await (await gitOf(job)).run(["show", `${ref}:${rel}`])).stdout;
   } catch (e) {
     if (e instanceof GitError) return null;
     throw e;
   }
+}
+
+/** Paths a role left changed in the worktree (tracked or new), outside the outbox. */
+export async function pendingFiles(job: Job): Promise<string[]> {
+  const lines = (await dirtyLines(await gitOf(job))).split("\n").filter(Boolean);
+  return lines.map((l) => l.slice(3).replace(/^"|"$/g, "")).map((p) => (p.includes(" -> ") ? (p.split(" -> ").at(-1) ?? p) : p));
 }
 
 export async function headOf(job: Job): Promise<string> {

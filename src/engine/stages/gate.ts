@@ -5,7 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { runGate } from "../../checks/gate.ts";
-import { riskFloor } from "../../checks/risk-floor.ts";
+import { riskFloor, seedTouched } from "../../checks/risk-floor.ts";
 import type { Job } from "../machine.ts";
 import { roundDir, writeAtomic } from "../store.ts";
 import { changedFiles, diffStat, headOf } from "../worktree.ts";
@@ -46,7 +46,15 @@ export const gate: StageHandler = async (ctx) => {
     g = { head: r.head, result: r.result };
     ctx.log(`gate ${g.result} on ${r.head.slice(0, 8)} (${ctx.config.checkList.length} checks)${r.why ? `: ${r.why}` : ""}`);
   }
-  const floor = riskFloor(await diffStat(job), ctx.config);
+  const diff = await diffStat(job);
+  const floor = riskFloor(diff, ctx.config);
+  const seeds = seedTouched(diff, ctx.config);
+  if (seeds.length) {
+    // The app every proof drives is built from these: risk goes to high and they are listed for review.
+    const f = path.join(roundDir(ctx.jobDir, job.round), "seed-diff.md");
+    writeAtomic(f, `SEED-DIFF: ${seeds.join(", ")}\n\nThe job's diff touches seed data or migrations; review what each proof reads from them.\n`);
+    ctx.log(`gate: seed/migration files changed (risk → high, listed for review): ${seeds.join(", ")}`);
+  }
   return {
     to: g.result === "PASS" ? "drives" : "build",
     facts: { gate: { head: g.head, currentHead: await headOf(job), result: g.result, riskFloor: floor } },

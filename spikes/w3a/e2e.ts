@@ -4,12 +4,18 @@
 // feature: "show the signed-in user's display name in the header, editable on /settings"
 // bug:     dark mode doesn't persist after a reload (lib.ts BUG is planted in the copy first)
 // visual:  (extra) a styling ticket, so the spec has a judged criterion and the verifier judges screenshots
+// admin:   the review's ticket: admins see every user's projects with owner, regular users only their own
+//          (the spec needs a negative criterion backed by a step that makes another user's project;
+//          `wrong.ts` then replays this spec against a builder that leaks every project)
 // Claude: sonnet for strong roles, haiku for medium (verifier). Codex: the config's tier map
 // (npx @openai/codex@0.171.0). Writes <scratch>/e2e-<tool>-<kind>.json (per-stage models,
 // time, cost) and .log, prints PASS/FAIL lines.
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { parseCriteria } from "../../src/checks/spec-lint.ts";
+import { isJudged, negativeClauses, parseExpect } from "../../src/proof/assert.ts";
+import { parseProof } from "../../src/proof/proof-line.ts";
 import {
   CLAUDE_BIN,
   CODEX_CMD,
@@ -29,8 +35,8 @@ import {
 } from "./lib.ts";
 
 const [tool, kind] = process.argv.slice(2);
-if ((tool !== "claude" && tool !== "codex") || !["feature", "bug", "visual"].includes(kind))
-  throw new Error("usage: e2e.ts claude|codex feature|bug|visual <scratch>");
+if ((tool !== "claude" && tool !== "codex") || !["feature", "bug", "visual", "admin"].includes(kind))
+  throw new Error("usage: e2e.ts claude|codex feature|bug|visual|admin <scratch>");
 const root = path.resolve(process.argv[4] ?? path.join(HERE, ".work"));
 fs.mkdirSync(root, { recursive: true });
 const name = `e2e-${tool}-${kind}`;
@@ -41,6 +47,8 @@ const TICKETS: Record<string, string> = {
   feature:
     "Show the signed-in user's display name in the header, and let them change it on /settings. Someone who never set a display name sees their username there instead.",
   bug: "Dark mode doesn't persist. I switch it on in Settings and it says Saved, but when I reload the page the app is light again.",
+  // The W3a reviewer's ticket: the spec must create another user's project before asserting a regular user can't see it.
+  admin: "Admins see every user's projects with owner; regular users still see only their own.",
 };
 const agent =
   tool === "claude"
@@ -179,6 +187,37 @@ if (kind === "visual")
     /\| C\d+ \| verifier \| PASS \| e\d+/.test(lastVerdict),
     lastVerdict.split("\n").find((l) => l.includes("| verifier |")) ?? "no judged criterion in the contract",
   );
+if (kind === "admin") {
+  // A negative criterion (not visible / not contains / !=) whose proof first makes another user's project.
+  const specText = fs.existsSync(path.join(dir, "spec.md")) ? fs.readFileSync(path.join(dir, "spec.md"), "utf8") : "";
+  const negatives = parseCriteria(specText).filter((c) => {
+    try {
+      return !!c.expect && !isJudged(c.expect) && negativeClauses(parseExpect(c.expect)).length > 0;
+    } catch {
+      return false;
+    }
+  });
+  check(
+    `${tool} admin: the spec has a negative criterion`,
+    negatives.length > 0,
+    negatives.map((c) => `${c.id}: ${c.proof} → ${c.expect}`).join(" | ") || "none",
+  );
+  const backed = negatives.filter((c) => {
+    try {
+      const segs = parseProof(c.proof ?? "");
+      return segs.length > 1 && segs.slice(0, -1).some((s) => s.kind === "toolkit" && Object.keys(s.args).some((a) => /^(user|as|owner)$/.test(a)));
+    } catch {
+      return false;
+    }
+  });
+  check(`${tool} admin: …made by an earlier step of its own proof (another user's project first)`, backed.length > 0, backed.map((c) => c.id).join(", "));
+  const base = fs.existsSync(path.join(dir, "base-check.json")) ? fs.readFileSync(path.join(dir, "base-check.json"), "utf8") : "";
+  console.log(`    base check: ${base.replace(/\s+/g, " ").slice(0, 400)}`);
+  for (const c of negatives) {
+    const line = lastVerdict.split("\n").find((l) => l.startsWith(`| ${c.id} |`)) ?? "";
+    check(`${tool} admin: ${c.id} (negative) PASS by the engine on the right build`, /\| engine \| PASS/.test(line), line);
+  }
+}
 check(`${tool} ${kind}: the branch changes app code`, /server\.js/.test(changed), changed.split("\n").at(-1) ?? "");
 check(`${tool} ${kind}: no container of this job left running`, kitchenContainers(j.slotId).length === 0, kitchenContainers(j.slotId).join(" "));
 finish(`w3a e2e ${tool} ${kind}`);

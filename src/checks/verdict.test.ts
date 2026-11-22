@@ -117,4 +117,22 @@ test("verdict: a refused manifest is reported, and --args deltas are carried", (
   assert.equal(v.manifestOk, false);
   assert.equal(v.verdict, "FAIL", "no manifest: nothing to cite");
   assert.equal(v.argsDeltas.length, 1);
+  // Review: a refused manifest with only mechanical criteria was a PASS.
+  const mech = decideVerdict({ criteria: [{ id: "C1", expect: "ok" }], proofs: [proofs[0]], judgedText: null, entries: null, head: H, round: 2 });
+  assert.equal(mech.verdict, "INCONCLUSIVE", "evidence that doesn't verify proves nothing: never a PASS");
+});
+
+test("verdict: a TOOLKIT-GAP must name one missing primitive; free text or a known primitive is no gap", () => {
+  const free = decide("VERDICT: TOOLKIT-GAP\nGAP: the `read` primitive fails on a missing selector\n");
+  assert.equal(free.verdict, "INCONCLUSIVE", "free text names nothing a smith could add");
+  assert.equal(free.gap, undefined);
+  const known = decideVerdict({ criteria, proofs, judgedText: "VERDICT: TOOLKIT-GAP\nGAP: read\n", entries, head: H, round: 2, primitives: ["read"] });
+  assert.equal(known.verdict, "INCONCLUSIVE", "describe lists it: nothing is missing");
+  assert.equal(decide("VERDICT: TOOLKIT-GAP\nGAP: drag (to reorder)\n").gap, "drag");
+});
+
+test("verdict: criteria that already passed on the base are flagged non-discriminating", () => {
+  const v = decideVerdict({ criteria, proofs, judgedText: "JUDGED C2: PASS\nEVIDENCE C2: e2\n", entries, head: H, round: 2, nonDiscriminating: ["C1"] });
+  assert.equal(v.verdict, "PASS", "flagged, not failed");
+  assert.deepEqual(v.nonDiscriminating, ["C1"]);
 });
