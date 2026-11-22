@@ -48,6 +48,8 @@ export type ProveOpts = {
   /** `--args`: concrete values for feature drive args, over the spec's. */
   argsOverride?: Record<string, string>;
   tag?: Record<string, string>;
+  /** Run against this checkout instead of the job worktree (the base check after drives). The manifest and job.json stay the job's. */
+  source?: { worktree: string; gitDir: string };
   /** Stamp the entries for this criterion name instead of the criterion's id (the drives check stamps `drives`). */
   stampAs?: string;
   log?: (m: string) => void;
@@ -81,7 +83,7 @@ export async function prove(o: ProveOpts): Promise<ProveResult> {
   let clauses = judged ? [] : parseExpect(c.expect?.trim() ? c.expect : segs[0].kind === "toolkit" ? "ok" : "exit 0");
   // A cmd or test proof that crashed proves nothing: its expect holds only with exit 0, unless the expect is about the exit code.
   if (segs[0].kind !== "toolkit" && !judged && !clauses.some((x) => x.kind === "exit")) clauses = [...parseExpect("exit 0"), ...clauses];
-  const common = { jobDir: o.jobDir, criterion: o.stampAs ?? c.id, role: o.role, tag: o.tag };
+  const common = { jobDir: o.jobDir, criterion: o.stampAs ?? c.id, role: o.role, tag: o.tag, source: o.source };
   try {
     if (segs[0].kind === "toolkit") {
       for (const s of segs) {
@@ -117,9 +119,10 @@ export async function prove(o: ProveOpts): Promise<ProveResult> {
     } else {
       const s = segs[0];
       const cmd = s.kind === "cmd" ? s.cmd : o.testCmd.replaceAll("{file}", shq(s.kind === "test" ? s.file : ""));
-      // Untrusted env (stampCommand); spec-lint refused paths outside the worktree, $HOME, env dumps and network tools.
-      // W2 sandbox: run this under the W2 sandbox-exec profile (no network, writes only in the worktree) once it is on main.
-      const r = await stampCommand({ ...common, name: `${c.id} ${s.kind}`, cmd, timeoutSec: o.timeoutSec ?? 600 });
+      // spec-lint's denylist (outside paths, $HOME, env dumps, network tools) is the first line; the proof sandbox
+      // (no network, $HOME and $KITCHEN_HOME unreadable, writes only in the worktree) is the boundary. Untrusted env.
+      const r = await stampCommand({ ...common, name: `${c.id} ${s.kind}`, cmd, timeoutSec: o.timeoutSec ?? 600, sandbox: true });
+      if (!r.sandboxed) o.log?.(`${c.id} ${s.kind} proof ran UNSANDBOXED (no sandbox-exec on this platform)`);
       evidence.push(r.id);
       outcome.exit = r.exit;
       outcome.ok = r.exit === 0;

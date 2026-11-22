@@ -11,14 +11,13 @@
 import path from "node:path";
 import { baseTip, toolkitAt } from "../base.ts";
 import { mergeRev } from "../git.ts";
-import { effectiveRisk, type Stage } from "../machine.ts";
+import type { Stage } from "../machine.ts";
 import { once, roundDir, writeAtomic } from "../store.ts";
 import { headOf, jobGitOf } from "../worktree.ts";
 import { gateStillValid } from "./gate.ts";
 import type { StageHandler } from "./types.ts";
 
 export const syncFile = (jobDir: string) => path.join(jobDir, "sync.json");
-export const labelsFor = (risk: string) => (risk === "high" ? ["kitchen:review-required"] : []);
 
 export const ready: StageHandler = async (ctx) => {
   const job = ctx.refresh();
@@ -43,9 +42,7 @@ export const ready: StageHandler = async (ctx) => {
   if (m.merged || job.base !== tip) {
     const toolkitRef = (await toolkitAt(ctx.repo, tip)) ? tip : job.toolkitRef;
     ctx.log(`synced with the base ${tip.slice(0, 12)} → ${m.head.slice(0, 12)}; toolkitRef ${toolkitRef.slice(0, 12)}: Gate, drives and Verify run again`);
-    const pub = await once(ctx.repo, job.id, `publish/${m.head}`, () =>
-      ctx.forge.publish({ branch: job.branch, title: job.title, head: m.head, labels: labelsFor(effectiveRisk(job)) }),
-    );
+    const pub = await once(ctx.repo, job.id, `publish/${m.head}`, () => ctx.forge.publish({ branch: job.branch, title: job.title, head: m.head }));
     if (pub.value?.pr && pub.value.pr !== job.pr) ctx.log(`PR ${pub.value.pr}`);
     return { to: "gate", facts: { ready: { ...none, gatePass: false, baseMoved: true, toolkitPr, newBase: tip, toolkitRef } } };
   }

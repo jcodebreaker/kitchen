@@ -101,11 +101,21 @@ else if (a === "pr" && b === "checks") {
   save(s);
   out(`https://github.com/${repo}/${a === "pr" ? "pull" : "issues"}/${num()}#issuecomment-${t.comments.length}`);
 } else if (a === "api") {
-  const m = /^repos\/[^/]+\/[^/]+\/issues\/(\d+)\/comments$/.exec(b);
+  // conversation comments (issues/N/comments, PRs share it) and inline review comments (pulls/N/comments)
+  const m = /^repos\/[^/]+\/[^/]+\/(issues|pulls)\/(\d+)\/comments$/.exec(b);
   if (!m) fail(`gh-shim: api ${b} not implemented`, 2);
-  const n = Number(m[1]);
-  const t = s.prs.find((p) => p.number === n) ?? issueOf(n);
-  out(t.comments.map((c) => ({ body: c.body, user: { login: c.user }, created_at: c.created_at })));
+  const n = Number(m[2]);
+  const t = m[1] === "pulls" ? prOf(n) : (s.prs.find((p) => p.number === n) ?? issueOf(n));
+  const rows = m[1] === "pulls" ? (t.reviewComments ?? []) : t.comments;
+  out(
+    rows.map((c, i) => ({
+      id: c.id ?? n * 1000 + i,
+      body: c.body,
+      user: { login: c.user },
+      author_association: c.author_association ?? (c.user === "kitchen-bot" ? "NONE" : "CONTRIBUTOR"),
+      created_at: c.created_at,
+    })),
+  );
 } else if (a === "issue" && b === "list") {
   const label = flag("label");
   const st = flag("state") ?? "open";

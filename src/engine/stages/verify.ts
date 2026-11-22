@@ -100,6 +100,7 @@ export const verify: StageHandler = async (ctx) => {
 
   // Step 2: the verifier judges the judged criteria, only once every mechanical proof passed.
   const judged = contract.criteria.filter((c) => isJudged(c.expect));
+  const weak = job.kind === "bug" ? [] : nonDiscriminating(ctx.jobDir, contract.criteria);
   const mechanicalPass = proofs.every((p) => p.result === "PASS");
   let judgedText: string | null = null;
   if (judged.length && mechanicalPass) {
@@ -114,6 +115,14 @@ export const verify: StageHandler = async (ctx) => {
         jobDir: ctx.jobDir,
         blocks: [
           contractBlock(ctx.jobDir),
+          ...(weak.length
+            ? [
+                {
+                  title: "Non-discriminating",
+                  body: `${weak.join(", ")} already held on the base (base-check.json): their PASS says nothing about this change. Say so in verify.md if you judge one of them.`,
+                },
+              ]
+            : []),
           {
             title: "Judge these, from this evidence",
             body: evidenceBlock(
@@ -151,7 +160,7 @@ export const verify: StageHandler = async (ctx) => {
     round: job.round,
     argsDeltas: argsDeltasOf(ctx.jobDir, job.round),
     primitives: prims,
-    nonDiscriminating: job.kind === "bug" ? [] : nonDiscriminating(ctx.jobDir, contract.criteria),
+    nonDiscriminating: weak,
   });
   writeAtomic(path.join(roundDir(ctx.jobDir, job.round), `verdict-m${moves}.md`), renderVerdict(v, head, job.round));
   ctx.log(

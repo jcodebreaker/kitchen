@@ -6,18 +6,23 @@
 // Verify flags it as non-discriminating in its verdict. A bug needs none of this:
 // its repro already must fail on the base.
 // A criterion whose proof needs what doesn't exist yet (a new drive, a new test
-// file) can't run on the base and is skipped: it can't hold there either.
+// file) can't run on the base then, and is skipped. Once the drives stage has
+// written those files (review W3a round 2), the engine runs those criteria on a
+// checkout of the base code plus only the new drive and test files
+// (`<repo>/.worktrees/<id>.base`, same slot, fresh app, stamped `phase: base`):
+// one that already holds there is NON-DISCRIMINATING too (`afterDrives`).
 import fs from "node:fs";
 import path from "node:path";
 import type { Criterion } from "../../checks/spec-lint.ts";
 import { isJudged } from "../../proof/assert.ts";
 import { prove } from "../../proof/prove.ts";
 import { namedDrives, testFilesOf } from "../contract.ts";
+import { linkedWorktree, openGit, plainCheckout } from "../git.ts";
 import { freshUp, resetUp } from "../instance.ts";
 import type { Job } from "../machine.ts";
 import { writeAtomic } from "../store.ts";
-import { headOf } from "../worktree.ts";
-import { featureDrives, hasToolkit } from "./toolkit-info.ts";
+import { changedFiles, headOf } from "../worktree.ts";
+import { FEATURES_DIR, featureDrives, hasToolkit } from "./toolkit-info.ts";
 import type { StageContext } from "./types.ts";
 
 export type BaseResult = { criterion: string; status: string; why?: string; evidence: string[] };
@@ -29,6 +34,8 @@ export type BaseCheck = {
   skipped: { criterion: string; why: string }[];
   /** Criteria whose expect already held on the base. */
   passing: string[];
+  /** After the drives stage: the criteria that needed new drives or tests, run on the base plus those files only. */
+  afterDrives?: { head: string; files: string[]; results: BaseResult[]; passing: string[] };
 };
 
 export const baseCheckFile = (jobDir: string) => path.join(jobDir, "base-check.json");
@@ -45,7 +52,83 @@ export function readBaseCheck(jobDir: string): BaseCheck | null {
 /** Criteria flagged non-discriminating for this contract (the last base check's passes), or []. */
 export function nonDiscriminating(jobDir: string, criteria: Criterion[]): string[] {
   const b = readBaseCheck(jobDir);
-  return b && b.key === keyOf(criteria) ? b.passing : [];
+  return b && b.key === keyOf(criteria) ? [...new Set([...b.passing, ...(b.afterDrives?.passing ?? [])])] : [];
+}
+
+/** Criteria whose proof needs a feature drive or a test file `base` doesn't have. Pure but for reading `base`. */
+function needsNew(criteria: Criterion[], base: string): Criterion[] {
+  const have = featureDrives(base).drives;
+  return criteria.filter(
+    (c) => !isJudged(c.expect) && ([...namedDrives([c]).keys()].some((d) => !have[d]) || testFilesOf(c).some((t) => !fs.existsSync(path.join(base, t)))),
+  );
+}
+
+/**
+ * After the drives stage (features only: a bug's repro already failed on the base): run every
+ * mechanical criterion the first base check skipped for want of a new drive or test file, on a
+ * checkout of the base with only the job's new feature drive files and the contract's test
+ * files copied in, on a fresh app in the job's slot, stamped `phase: base`. One that passes there
+ * is NON-DISCRIMINATING (Verify's verdict, review). Reuses the result for the same HEAD.
+ */
+export async function runBaseCheckAfterDrives(ctx: StageContext, job: Job, criteria: Criterion[], head: string): Promise<BaseCheck["afterDrives"] | null> {
+  if (!hasToolkit(job) || !job.worktree || job.kind === "bug") return null;
+  const key = keyOf(criteria);
+  const prev = readBaseCheck(ctx.jobDir);
+  const b: BaseCheck = prev && prev.key === key ? prev : { head: job.base, key, results: [], skipped: [], passing: [] };
+  if (b.afterDrives?.head === head) return b.afterDrives;
+  const files = [
+    ...(await changedFiles(job, job.base, head)).filter((f) => f.startsWith(`${FEATURES_DIR}/`) && f.endsWith(".md")),
+    ...criteria.flatMap(testFilesOf),
+  ].filter((f, i, a) => a.indexOf(f) === i && fs.existsSync(path.join(job.worktree, f)));
+  const id = `${path.basename(job.worktree)}.base`;
+  const dir = path.join(path.dirname(job.worktree), id);
+  const main = await openGit(plainCheckout(ctx.repo));
+  const remove = async () => {
+    await main.run(["worktree", "remove", "--force", dir]).catch(() => {});
+    fs.rmSync(dir, { recursive: true, force: true });
+    await main.run(["worktree", "prune"]);
+  };
+  await remove(); // a crash may have left one
+  await main.run(["worktree", "add", "--quiet", "--detach", dir, job.base]);
+  const out: NonNullable<BaseCheck["afterDrives"]> = { head, files, results: [], passing: [] };
+  // `prepare` is cached per source folder: keep the job worktree's marker, so Verify doesn't prepare again.
+  const marker = path.join(ctx.jobDir, "prepared.json");
+  const kept = fs.existsSync(marker) ? fs.readFileSync(marker, "utf8") : null;
+  try {
+    const todo = needsNew(criteria, dir);
+    for (const f of files) {
+      fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true });
+      fs.copyFileSync(path.join(job.worktree, f), path.join(dir, f));
+    }
+    if (todo.length) {
+      const source = linkedWorktree(ctx.repo, id, dir);
+      const inst = { ...job, worktree: source.workTree };
+      await freshUp(inst, ctx.jobDir, (m) => ctx.log(`[base after drives] ${m}`));
+      for (const c of todo) {
+        await resetUp(inst, ctx.jobDir);
+        const p = await prove({
+          jobDir: ctx.jobDir,
+          criterion: c,
+          role: "engine",
+          testCmd: ctx.config.test_cmd,
+          tag: { phase: "base" },
+          source: { worktree: source.workTree, gitDir: source.gitDir },
+          log: (m) => ctx.log(`[base after drives] ${m}`),
+        });
+        out.results.push({ criterion: c.id, status: p.status, ...(p.why ? { why: p.why } : {}), evidence: p.evidence });
+        if (p.status === "pass") out.passing.push(c.id);
+      }
+    }
+  } finally {
+    if (kept !== null) fs.writeFileSync(marker, kept);
+    await remove();
+  }
+  b.afterDrives = out;
+  writeAtomic(baseCheckFile(ctx.jobDir), `${JSON.stringify(b, null, 2)}\n`);
+  ctx.log(
+    `base check after drives (base + ${files.join(", ") || "no new files"}): ${out.results.map((r) => `${r.criterion} ${r.status}`).join(", ") || "nothing needed new drives"}${out.passing.length ? `; NON-DISCRIMINATING: ${out.passing.join(", ")}` : ""}`,
+  );
+  return out;
 }
 
 /**

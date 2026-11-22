@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { isText, stale } from "./evidence.ts";
 import { ciOf, marker, numberOf } from "./github.ts";
 
 describe("github forge (pure)", () => {
@@ -17,24 +16,5 @@ describe("github forge (pure)", () => {
   });
   it("marks Kitchen's comments with their key", () => {
     expect(marker("001-x/report-comment")).toBe("<!-- kitchen:001-x/report-comment -->");
-  });
-});
-
-describe("evidence branch (pure)", () => {
-  const now = new Date("2026-11-22T00:00:00Z");
-  it("prunes folders older than the retention, never the one being published or one without a date", () => {
-    const folders = [
-      { name: "001-old", at: "2026-10-01T00:00:00Z" },
-      { name: "002-new", at: "2026-11-20T00:00:00Z" },
-      { name: "003-undated", at: null },
-      { name: "004-me", at: "2026-01-01T00:00:00Z" },
-    ];
-    expect(stale(folders, 30, now, "004-me")).toEqual(["001-old"]);
-  });
-  it("redacts text, not images", () => {
-    expect(isText("call.json", Buffer.from("{}"))).toBe(true);
-    expect(isText("shot.png", Buffer.from("plain"))).toBe(false);
-    expect(isText("stdout", Buffer.from("hello"))).toBe(true);
-    expect(isText("blob", Buffer.from([1, 0, 2]))).toBe(false);
   });
 });

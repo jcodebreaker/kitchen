@@ -10,9 +10,11 @@ import { ensureJobToolkit } from "../engine/job-toolkit.ts";
 import { readRunLock, staleReason } from "../engine/lock.ts";
 import { feedbackTarget, type Job, roundsUsed, STAGES, type Stage } from "../engine/machine.ts";
 import { moveJob, runKitchen } from "../engine/runner.ts";
+import { findingsOf } from "../engine/stages/review.ts";
 import { findJob, jobDirOf, kitchenDir, scanJobs, writeAtomic } from "../engine/store.ts";
+import { runView } from "../engine/views.ts";
 import { changedFiles, headOf } from "../engine/worktree.ts";
-import { readLedger } from "../ledger/append.ts";
+import { appendLedger, readLedger } from "../ledger/append.ts";
 import { formatCounts, summarize } from "../ledger/report.ts";
 import { prove } from "../proof/prove.ts";
 import { PromptSource } from "../sources/prompt.ts";
@@ -195,6 +197,82 @@ export async function drive(
       }),
     );
     return (o.repro ? failedAsExpected : holds) ? 0 : 1;
+  } finally {
+    if (took) {
+      await downSlot(slot);
+      await releaseSlot(job.slotId);
+    }
+  }
+}
+
+/**
+ * `kitchen dismiss <job> <finding-id> [--reason "<why>"]`: a person says a review finding was not
+ * useful. Recorded in the job folder (dismissed.jsonl, shown in the Report) and in the ledger with
+ * its lens, so the dismissals per lens can be counted (W5 retro). An id that no review of the job
+ * has is refused.
+ */
+export function dismiss(repo: string, ref: string, finding: string, reason: string | undefined, out: Out): number {
+  const job = findJob(repo, ref);
+  const jobDir = jobDirOf(repo, job.id);
+  const all = findingsOf(jobDir).flatMap((r) => r.findings.map((f) => ({ ...f, round: r.round })));
+  const f = all.find((x) => x.id === finding || x.also?.includes(finding));
+  if (!f) throw new Error(`${job.id} has no review finding ${finding}${all.length ? ` (it has ${all.map((x) => x.id).join(", ")})` : ""}`);
+  const lens = finding === f.id ? f.lens : (finding.split("-")[0] ?? f.lens);
+  const file = path.join(jobDir, "dismissed.jsonl");
+  const had =
+    fs.existsSync(file) &&
+    fs
+      .readFileSync(file, "utf8")
+      .split("\n")
+      .some((l) => l && (JSON.parse(l) as { finding: string }).finding === finding);
+  if (had) {
+    out(`${job.id}  ${finding} was already dismissed`);
+    return 0;
+  }
+  const at = new Date().toISOString();
+  fs.appendFileSync(file, `${JSON.stringify({ finding, lens, round: f.round, blocked: f.blocks, reason: reason ?? null, at })}\n`);
+  appendLedger(repo, {
+    job: job.id,
+    stage: job.stage,
+    round: f.round,
+    event: "finding-dismissed",
+    key: `${job.id}/dismiss/${finding}`,
+    role: `reviewer-${lens}`,
+    detail: { finding, lens, blocked: f.blocks, reason: reason ?? null, title: f.title },
+  });
+  out(`${job.id}  dismissed ${finding} (${lens}${f.blocks ? ", it had blocked" : ""})${reason ? `: ${reason}` : ""}`);
+  return 0;
+}
+
+/**
+ * `kitchen drive <job> --view "<view>" [--role r]`: one extra view (views.ts) in the job's slot, the way
+ * a UX/UI lens's `VIEW:` line runs: a page, a feature drive or toolkit segments, then a screenshot.
+ * Stamped `criterion: view:<lens>`. Prints one JSON line.
+ */
+export async function view(repo: string, ref: string, v: string, role: string, out: Out): Promise<number> {
+  const cfg = loadConfig(repo);
+  const job = findJob(repo, ref);
+  const jobDir = jobDirOf(repo, job.id);
+  if (!job.worktree) throw new Error(`${job.id} has no worktree yet`);
+  let took = false;
+  let slot = listSlots().find((x) => x.id === job.slotId);
+  if (!slot) {
+    slot = (await acquireSlot({ id: job.slotId, toolkitBin: job.toolkitBin, src: job.worktree, pid: process.pid })).slot;
+    took = true;
+  }
+  const lens = role.startsWith("reviewer-") ? role.slice("reviewer-".length) : role;
+  try {
+    const r = await runView({
+      job: { ...job, slot: { n: slot.n, ports: slot.ports } },
+      jobDir,
+      view: v,
+      lens,
+      n: Date.now() % 100000,
+      testCmd: cfg.test_cmd,
+      log: (m) => console.error(`[kitchen drive --view] ${m}`),
+    });
+    out(JSON.stringify({ job: job.id, ...r }));
+    return r.ok ? 0 : 1;
   } finally {
     if (took) {
       await downSlot(slot);

@@ -62,7 +62,7 @@ export function browserPrimitives({ passwordOf }) {
       run: (ctx, a) => callBrowser(ctx, "screenshot", { ...a, out: ctx.out }),
     },
     http: {
-      args: { method: "GET|POST…", path: "/api/…", body: "optional JSON" },
+      args: { method: "GET|POST…", path: "/api/…", body: "optional JSON", expect_status: "optional: ok only for this status (e.g. 403)" },
       does: "same-origin request with the browser's cookies",
       run: (ctx, a) => callBrowser(ctx, "http", { ...a, body: typeof a.body === "string" ? JSON.parse(a.body) : a.body }),
     },

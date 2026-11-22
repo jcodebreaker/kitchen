@@ -79,10 +79,13 @@ check("not merged", (await forge.prMerged(tpr)) === false);
 const jobDir = path.join(r.dir, ".kitchen", "jobs", `live-${stamp}`);
 fs.mkdirSync(path.join(jobDir, "evidence", "e1"), { recursive: true });
 fs.writeFileSync(path.join(jobDir, "report.html"), "<h1>live</h1>");
-fs.writeFileSync(path.join(jobDir, "evidence", "e1", "call.json"), '{"stdout":"token=ghp_abcdefghijklmnopqrstuvwxyz0123456789"}');
-const folder = await forge.pushEvidence({ key: `live-${stamp}/ev`, job: `live-${stamp}`, dir: jobDir });
+fs.writeFileSync(path.join(jobDir, "evidence", "e1", "call.json"), '{"stdout":"ok"}');
+fs.writeFileSync(path.join(jobDir, "published.json"), JSON.stringify({ job: `live-${stamp}`, at: new Date().toISOString() }));
+// W4 builds the bundle (already redacted); the forge commits it on top of the remote branch and pushes.
+const folder = (await forge.publishEvidence({ key: `live-${stamp}/ev`, job: `live-${stamp}`, bundle: jobDir, keepDays: 30 })).url;
 const blob = await gh(["api", `repos/${slug}/contents/live-${stamp}/evidence/e1/call.json?ref=kitchen-evidence`, "--jq", ".content"]);
-check("evidence branch: folder pushed, redacted", Buffer.from(blob.out.trim(), "base64").toString("utf8").includes("[redacted]"), folder);
+check("evidence branch: folder pushed", Buffer.from(blob.out.trim(), "base64").toString("utf8").includes('"ok"'), folder);
+check("reviewComments: Kitchen's own comment left out", !(await forge.reviewComments(pub.pr)).some((c) => c.body.includes("kitchen:")));
 
 const issue = await gh(["issue", "create", "--repo", slug, "--title", `Kitchen live spike ${stamp}`, "--body", "spike", "--label", "kitchen"], { okExit: [1] });
 if (issue.exit !== 0) await gh(["label", "create", "kitchen", "--repo", slug, "--force"]);

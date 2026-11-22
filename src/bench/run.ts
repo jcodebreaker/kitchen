@@ -15,6 +15,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import type { Job } from "../engine/machine.ts";
+import { readLocalForge } from "../forge/forge.ts";
 import { appendLedger, readLedger } from "../ledger/append.ts";
 import { runOracle } from "./oracle.ts";
 import { agentYaml, FIXTURES, makeBenchRepo, mergeToolkitBranch } from "./repo.ts";
@@ -162,7 +163,9 @@ async function runOne(o: BenchOpts, t: BenchTicket, n: number, home: string): Pr
     }
     if (job.stage === "paused") {
       if (job.waitFor === "toolkit-pr") {
-        const prs = readJson<{ n: number; branch: string }[]>(path.join(repo, ".kitchen", "toolkit-prs.json")) ?? [];
+        const prs = readLocalForge(repo)
+          .filter((x) => x.kind === "toolkit-pr")
+          .map((x) => ({ n: Number(x.n), branch: String(x.branch) }));
         const pr = prs.find((p) => p.n === job.smith.toolkitPr);
         if (!pr || merged) {
           note = "paused on a Toolkit PR the bench can't find";

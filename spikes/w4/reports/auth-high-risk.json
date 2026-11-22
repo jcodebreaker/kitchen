@@ -1,0 +1,400 @@
+{
+  "kind": "auth",
+  "job": "001-permissions-authorization-admins-see-eve",
+  "stage": "done",
+  "path": [
+    "intake",
+    "spec",
+    "build",
+    "gate",
+    "drives",
+    "verify",
+    "review",
+    "ready",
+    "report",
+    "done"
+  ],
+  "risk": "high",
+  "riskFloor": "low",
+  "surfaces": [
+    "ui",
+    "security"
+  ],
+  "rounds": 1,
+  "wallSecs": 279,
+  "usd": 0.3978,
+  "costs": [
+    {
+      "stage": "intake",
+      "round": 1,
+      "secs": 11,
+      "usd": 0.0688,
+      "roles": "intake (sonnet)"
+    },
+    {
+      "stage": "spec",
+      "round": 1,
+      "secs": 64,
+      "usd": 0.2087,
+      "roles": "spec (sonnet)"
+    },
+    {
+      "stage": "build",
+      "round": 1,
+      "secs": 45,
+      "usd": 0.0867,
+      "roles": "builder (sonnet)"
+    },
+    {
+      "stage": "gate",
+      "round": 1,
+      "secs": 1,
+      "usd": 0,
+      "roles": ""
+    },
+    {
+      "stage": "drives",
+      "round": 1,
+      "secs": 2,
+      "usd": 0,
+      "roles": ""
+    },
+    {
+      "stage": "verify",
+      "round": 1,
+      "secs": 19,
+      "usd": 0,
+      "roles": ""
+    },
+    {
+      "stage": "review",
+      "round": 1,
+      "secs": 116,
+      "usd": 0.0288,
+      "roles": "reviewer-security (haiku), reviewer-code (haiku), reviewer-ux (haiku), reviewer-ui (haiku)"
+    },
+    {
+      "stage": "ready",
+      "round": 1,
+      "secs": 1,
+      "usd": 0,
+      "roles": ""
+    },
+    {
+      "stage": "report",
+      "round": 1,
+      "secs": 22,
+      "usd": 0.0047,
+      "roles": "report (haiku)"
+    }
+  ],
+  "agents": [
+    {
+      "role": "intake",
+      "model": "sonnet",
+      "stage": "intake",
+      "round": 1,
+      "secs": 10,
+      "usd": 0.0687913,
+      "result": "ok"
+    },
+    {
+      "role": "spec",
+      "model": "sonnet",
+      "stage": "spec",
+      "round": 1,
+      "secs": 21,
+      "usd": 0.10868230000000001,
+      "result": "ok"
+    },
+    {
+      "role": "spec",
+      "model": "sonnet",
+      "stage": "spec",
+      "round": 1,
+      "secs": 20,
+      "usd": 0.1000057,
+      "result": "ok"
+    },
+    {
+      "role": "builder",
+      "model": "sonnet",
+      "stage": "build",
+      "round": 1,
+      "secs": 43,
+      "usd": 0.08673310000000001,
+      "result": "ok"
+    },
+    {
+      "role": "reviewer-security",
+      "model": "haiku",
+      "stage": "review",
+      "round": 1,
+      "secs": 9,
+      "usd": 0.0036808400000000003,
+      "result": "ok"
+    },
+    {
+      "role": "reviewer-code",
+      "model": "haiku",
+      "stage": "review",
+      "round": 1,
+      "secs": 10,
+      "usd": 0.00368147,
+      "result": "ok"
+    },
+    {
+      "role": "reviewer-ux",
+      "model": "haiku",
+      "stage": "review",
+      "round": 1,
+      "secs": 18,
+      "usd": 0.005461130000000001,
+      "result": "ok"
+    },
+    {
+      "role": "reviewer-ui",
+      "model": "haiku",
+      "stage": "review",
+      "round": 1,
+      "secs": 23,
+      "usd": 0.00669927,
+      "result": "ok"
+    },
+    {
+      "role": "reviewer-ux",
+      "model": "haiku",
+      "stage": "review",
+      "round": 1,
+      "secs": 12,
+      "usd": 0.0039759800000000005,
+      "result": "ok"
+    },
+    {
+      "role": "reviewer-ui",
+      "model": "haiku",
+      "stage": "review",
+      "round": 1,
+      "secs": 17,
+      "usd": 0.00533529,
+      "result": "ok"
+    },
+    {
+      "role": "report",
+      "model": "haiku",
+      "stage": "report",
+      "round": 1,
+      "secs": 16,
+      "usd": 0.00471692,
+      "result": "ok"
+    }
+  ],
+  "review": {
+    "head": "f1d887a51cd12afbc0936c725463c65a15be7b56",
+    "round": 1,
+    "lenses": [
+      "code",
+      "security",
+      "ux",
+      "ui"
+    ],
+    "findings": [
+      {
+        "id": "security-1-1",
+        "lens": "security",
+        "title": "Admin list query and owner display are gated on the server-side session user, not on request input",
+        "kind": "note",
+        "confidence": "high",
+        "at": {
+          "file": "server.js",
+          "line": 263
+        },
+        "requirement": "R1",
+        "evidence": [
+          "e114",
+          "e122"
+        ],
+        "why": "`user` is loaded in server.js:58 from the session token joined to `users`, so `user.is_admin` comes from the database, not from the request. The admin branch (server.js:264) runs the all-projects query and the regular branch (server.js:265) keeps the `owner_id = $1` condition. The owner span (server.js:266) is emitted only when `user.is_admin`, so regular users get no owner text. Owner and slug values pass through `esc` (server.js:16), which escapes `& < > \" '`, so no HTML injection via usernames or slugs.",
+        "blocks": false,
+        "lenses": [
+          "security"
+        ],
+        "also": []
+      },
+      {
+        "id": "security-1-2",
+        "lens": "security",
+        "title": "Admin-only project list has no pagination",
+        "kind": "note",
+        "confidence": "low",
+        "at": {
+          "file": "server.js",
+          "line": 264
+        },
+        "evidence": [],
+        "why": "the admin query has no LIMIT. Fine for seed sizes; a human may want pagination before real use. Not a requirement in the ticket.",
+        "blocks": false,
+        "lenses": [
+          "security"
+        ],
+        "also": []
+      },
+      {
+        "id": "ux-1-1",
+        "lens": "ux",
+        "title": "owner name on the admin's Projects list has no label, so it can read as a stray word",
+        "kind": "note",
+        "confidence": "high",
+        "at": {
+          "file": "server.js",
+          "line": 266
+        },
+        "requirement": "R2",
+        "evidence": [
+          "e187",
+          "e192"
+        ],
+        "why": "The admin row renders `<a>Onboarding</a> <span class=\"muted\">alice</span>` with no \"Owner\" or \"by\" text. A person scanning the list may read \"alice\" as part of the project name or as a tag. The owner text is present, but its meaning is not explicit. A label such as \"by alice\" or \"Owner: alice\" would make R2 read as done to a person. I could not view the admin list: the `VIEW: /projects --as bob-admin` run failed (browser driver timeout), so this rests on the code, not a screenshot.",
+        "blocks": false,
+        "lenses": [
+          "ux",
+          "ui"
+        ],
+        "also": [
+          "ux-1-2",
+          "ui-1-1",
+          "ui-1-3"
+        ]
+      },
+      {
+        "id": "ui-1-2",
+        "lens": "ui",
+        "title": "admin's own project row is not in any screenshot, so the owner label on that row is not seen",
+        "kind": "note",
+        "confidence": "high",
+        "evidence": [
+          "e187",
+          "e192"
+        ],
+        "why": "Both admin screenshots were taken after `login --as bob-admin` with no `projects.create` step, so bob-admin owns nothing and the list shows only \"Onboarding alice\". The owner element for a row owned by the admin (the case where `owner` is `bob-admin`) is therefore not rendered in any screenshot. The code path is the same for every row, so I expect it to look the same, but the rendered row is unverified.",
+        "blocks": false,
+        "lenses": [
+          "ui"
+        ],
+        "also": []
+      }
+    ],
+    "stats": [
+      {
+        "lens": "code",
+        "verdict": "PASS",
+        "findings": 0,
+        "claimedBlocking": 0,
+        "blocks": 0,
+        "lowConfidence": 0,
+        "notDemonstrable": 0,
+        "duplicates": 0
+      },
+      {
+        "lens": "security",
+        "verdict": "PASS",
+        "findings": 2,
+        "claimedBlocking": 0,
+        "blocks": 0,
+        "lowConfidence": 0,
+        "notDemonstrable": 0,
+        "duplicates": 0
+      },
+      {
+        "lens": "ux",
+        "verdict": "PASS",
+        "findings": 2,
+        "claimedBlocking": 0,
+        "blocks": 0,
+        "lowConfidence": 0,
+        "notDemonstrable": 0,
+        "duplicates": 1
+      },
+      {
+        "lens": "ui",
+        "verdict": "PASS",
+        "findings": 3,
+        "claimedBlocking": 0,
+        "blocks": 0,
+        "lowConfidence": 0,
+        "notDemonstrable": 0,
+        "duplicates": 2
+      }
+    ]
+  },
+  "views": [
+    {
+      "lens": "ui",
+      "view": "toolkit login --as bob-admin ; toolkit open --path /projects ; toolkit screenshot --name admin-projects-list",
+      "ok": true,
+      "evidence": [
+        "e185",
+        "e186",
+        "e187"
+      ],
+      "proof": "toolkit login --as bob-admin ; toolkit open --path /projects ; toolkit screenshot --name admin-projects-list"
+    },
+    {
+      "lens": "ui",
+      "view": "toolkit login --as bob-admin ; toolkit open --path /settings ; toolkit press --target \"[aria-label='Dark mode']\" ; toolkit open --path /projects ; toolkit screenshot --name admin-projects-dark",
+      "ok": true,
+      "evidence": [
+        "e188",
+        "e189",
+        "e190",
+        "e191",
+        "e192"
+      ],
+      "proof": "toolkit login --as bob-admin ; toolkit open --path /settings ; toolkit press --target \"[aria-label='Dark mode']\" ; toolkit open --path /projects ; toolkit screenshot --name admin-projects-dark"
+    },
+    {
+      "lens": "ux",
+      "view": "/projects --as bob-admin",
+      "ok": false,
+      "why": "up failed: timed out after 20000ms waiting for browser driver: fetch failed",
+      "evidence": []
+    },
+    {
+      "lens": "ux",
+      "view": "/projects --as alice",
+      "ok": true,
+      "evidence": [
+        "e182",
+        "e183",
+        "e184"
+      ],
+      "proof": "toolkit login --as alice ; toolkit open --path /projects ; toolkit screenshot --name view-ux-2"
+    }
+  ],
+  "forge": {
+    "labels": [
+      {
+        "key": "001-permissions-authorization-admins-see-eve/label/review-required",
+        "pr": 1,
+        "label": "kitchen:review-required",
+        "calls": 1
+      }
+    ],
+    "comments": [
+      {
+        "key": "001-permissions-authorization-admins-see-eve/report-comment/f1d887a51cd12afbc0936c725463c65a15be7b56",
+        "calls": 1,
+        "body": "### Kitchen report: Permissions (authorization): admins see every user's projects with the …\n\n**Verdict PASS** · feature · risk high · round 1 · HEAD `f1d887a51c`\n\n**Human review required** (`kitchen:review-required`): the report opens with what a human must check.\n\n| criterion | covers | decided by | result | evidence |\n|---|---|---|---|---|\n| C1 An admin (bob-admin) who owns a project sees alice's seeded project \"Onboarding\" as well as their own \"Launch plan\" on the Projects list. | R1 | engine | PASS | [e128](fake://kitchen-evidence/001-permissions-authorization-admins-see-eve/evidence/e128/project-ready.png) +16 more |\n| C2 On the admin's Projects list each project shows its owner: the builder must add an element `[data-testid=project-owner-<slug>]` per list row whose text is exactly the owner's username (`alice` for onboarding, `bob-admin` for bob-launch). | R2 | engine | PASS | [e145](fake://kitchen-evidence/001-permissions-authorization-admins-see-eve/evidence/e145/project-ready.png) +17 more |\n| C3 A regular user (alice) still sees only her own project when an admin owns another one (slug bob-launch), and the admin's username is shown nowhere on her list page. (NON-DISCRIMINATING) | R3, R4 | engine | PASS | [e163](fake://kitchen-evidence/001-permissions-authorization-admins-see-eve/evidence/e163/project-ready.png) +16 more |\n| C4 The admin's list page has the owner element for alice's project and the link to the admin's own project. | R1, R2 | engine | PASS | [e180](fake://kitchen-evidence/001-permissions-authorization-admins-see-eve/evidence/e180/project-ready.png) +15 more |\n\nReview (code, security, ux, ui): 0 blocking, 4 note(s).\n\nFull report: fake://kitchen-evidence/001-permissions-authorization-admins-see-eve/report.html"
+      }
+    ],
+    "evidence": [
+      {
+        "key": "001-permissions-authorization-admins-see-eve/evidence/f1d887a51cd12afbc0936c725463c65a15be7b56",
+        "job": "001-permissions-authorization-admins-see-eve",
+        "commit": "26eb9c53e009b6b957d0caad83d24a2b3bbb6964",
+        "calls": 1
+      }
+    ]
+  },
+  "reportRefusals": []
+}

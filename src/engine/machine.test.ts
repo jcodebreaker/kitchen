@@ -82,8 +82,15 @@ const cases: Case[] = [
     row: "intake>spec",
     job: {},
     to: "spec",
-    facts: f({ intake: { decision: "ACCEPT", kind: "feature", risk: "medium" } }),
+    facts: f({ intake: { decision: "ACCEPT", kind: "feature", risk: "medium", requirements: 2 } }),
     expect: (j) => assert.equal(j.risk, "medium"),
+  },
+  {
+    row: "intake>spec",
+    job: {},
+    to: "spec",
+    facts: f({ intake: { decision: "ACCEPT", kind: "feature", risk: "medium", requirements: 0 } }),
+    refused: /lists no requirements/,
   },
   { row: "intake>spec", job: {}, to: "spec", facts: f({ intake: { decision: "ACCEPT", kind: "feature", risk: "low" } }), refused: /low skips spec/ },
   {
@@ -544,6 +551,20 @@ const cases: Case[] = [
     },
   },
   { row: "done>build", job: { stage: "done" }, to: "build", facts: f({}), refused: /kitchen feedback/ },
+  {
+    row: "done>build",
+    job: { stage: "done", round: 2, roundStart: 1 },
+    to: "build",
+    facts: f({ prComment: { id: "c1", author: "maintainer", trusted: true } }),
+    expect: (j) => assert.equal(j.roundStart, 3),
+  },
+  {
+    row: "done>build",
+    job: { stage: "done" },
+    to: "build",
+    facts: f({ prComment: { id: "c2", author: "drive-by", trusted: false } }),
+    refused: /drive-by is not from a trusted person/,
+  },
   // any active stage
   {
     row: "*>paused",

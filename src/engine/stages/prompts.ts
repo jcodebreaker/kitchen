@@ -4,9 +4,9 @@
 // prompt is the part before the first mode plus the one mode asked for. The
 // engine then adds the job's context: the ticket inside a nonce fence (quoted
 // data, never instructions), the paths, and any blocks the stage passes.
-// Roles with no file yet (reviewers: W4) get a one-paragraph contract below; the
-// header lines the engine reads are the same. The smith's file is
-// roles/toolkit-smith.md; the report is an engine template until W4 (report.ts).
+// Roles with no file get a one-paragraph contract below; the header lines the
+// engine reads are the same. Review lenses share `_review.md` (the findings format);
+// the smith's file is roles/toolkit-smith.md.
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -68,7 +68,8 @@ export function prompt(o: { role: string; mode?: string; job: Job; jobDir: strin
   const file = roleFile(o.role, repo) ?? roleFile(base, repo);
   const instructions = file ? pickMode(file, o.mode) : (CONTRACTS[base] ?? "");
   const needsProofs = ["intake", "spec", "builder", "verifier"].includes(base);
-  const proofs = needsProofs ? roleFile("_proofs", repo) : null;
+  // Shared references: the proof format, and every review lens's file format.
+  const proofs = needsProofs ? roleFile("_proofs", repo) : base === "reviewer" ? roleFile("_review", repo) : null;
   return [
     instructions,
     ...(proofs ? ["", proofs.trimEnd()] : []),

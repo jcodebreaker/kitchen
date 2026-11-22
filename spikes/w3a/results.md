@@ -143,3 +143,65 @@ Real-agent total this round: Claude $0.891, Codex 0 tokens.
 ## Spike totals (final code)
 
 `engine.ts attacks` 26/26, `engine.ts kill` 8/8, `paths.ts` 24/24 (repro-retry 5, gap 5, bad-gap 4, inconclusive 7, backoff 3; inconclusive re-run alone after fixing its own round assertion), `wrong.ts claude` 4/4, `e2e.ts claude admin` 8/8, W1 `paths.ts` 34/34 with the stub-bound scenarios removed (ported here).
+
+# Review round 2 fixes (2026-11-22)
+
+Same machine and tools. Claude Code (`sonnet` strong, `haiku` medium). No Codex (usage limit until 2026-12-21). Branch merged with main's W2 round-2 fixes first (`src/toolkit/sandbox.ts`).
+
+## Finding → fix → proof
+
+| # | finding | fix | proof |
+|---|---|---|---|
+| 1 | The spec can leave out part of the ticket: the round-1 admin run dropped "with no owner shown" and every check passed | Structural, no extra agent (ADR 0003): intake writes `## Requirements` (R1..Rn, each a quote or faithful paraphrase; `(negative)` for what must not happen, `(out of scope)` + why for a rescope); every criterion carries `covers: R…`; spec-lint rule 7 refuses a criterion covering nothing or an unknown R, an R in scope covered by nothing, and a negative R that no covering criterion asserts an absence for. An ACCEPT without requirements is refused at intake (machine guard `intake>spec`, inline lint for low risk). `roles/intake.md`, `spec.md`, `_proofs.md` | `e2e.ts claude admin` on the reviewer's ticket, verbatim: 12/12, $0.382 (below). `wrong.ts claude owner`: 5/5. Unit tests (`spec-lint.test.ts`, `machine.test.ts`) |
+| 2 | The base check skipped every criterion whose proof needed a new drive | After the drives stage (features only), those criteria run on `.worktrees/<id>.base`: the base commit plus only the job's new feature drive files and the contract's test files, same slot, fresh app, `phase: base`, then the checkout is removed and the job worktree's prepare marker kept. A pass is NON-DISCRIMINATING (`base-check.json` `afterDrives`): in the verdict's row and footer, the verifier's judging prompt, and the review prompt (`facts.review.nonDiscriminating` for W4's report) | `paths.ts nondisc` 10/10: C1 (new drive, reads the Appearance heading) skipped by the first base check, run after drives on base + `settings-heading.md` only, 5 entries stamped `phase: base` on the base sha, passes → flagged in the verdict row and footer; C2 (needs the build) not flagged |
+| 3 | cmd/test proofs ran unconfined; only bridge replies were redacted | `src/proof/sandbox.ts`: cmd and test proofs run under `sandbox-exec` (loopback only; `$HOME` unreadable except the worktree, toolchains on PATH under home, the npm cache and the `package.json` files above the worktree; writes in the worktree, temp, `/dev`, `~/.npm`; W2's credential list, `$KITCHEN_HOME`, the repo's `.kitchen/jobs` and git config denied). Entries stamped `sandboxed`; Linux logs UNSANDBOXED. stdout, stderr, `call.json` and every primitive text output are redacted before they are hashed into the manifest. The cmd denylist stays as the first line; `_proofs.md` and ADR 0006 say the sandbox is the boundary | `contain.ts` 11/11: `node -e` reading `engine.key` → EPERM, key nowhere in evidence (control: the same command unsandboxed prints it); `node -p process.env` with a fake `sk_test_…` and `ghp_…` in `.env.kitchen` → `[redacted]` on disk; `python3` urllib → URLError, and a raw socket to 1.1.1.1:443 → `PermissionError` (control: connects); `cat .env.kitchen` → redacted; a write outside the worktree and a read of `job.json` → denied; a real `node --test` file still passes. spec-lint passes every one of these attacks: the sandbox is what stops them |
+| 4 | A drive could work only after an earlier segment of a proof, then fail W2's re-proof once merged | The drives stage runs every `check:` line the job added alone from seed (reset, that drive with its check args); a failure sends it back to the drives role, which `roles/verifier.md` now tells to make the check line self-sufficient | `paths.ts nondisc`: drives attempt 1's drive has no login step: C1's whole proof passes twice (the proof logs in first), the check line fails alone (`step "press" failed`); attempt 2 adds the login and passes |
+| 5 | `$o == ""` held whenever the element was missing | The lint treats equality to empty as a negative: it needs an earlier step that makes something (a feature drive or a writing `http`) | unit test |
+| 6 | Builder policy was a ternary chain | `BUILDER_RULES`: a table of (rule, reason), first match wins | `contract.test.ts` |
+| found | `(allow network* (local ip "localhost:*"))` in the profile let an outbound socket to 1.1.1.1 through (the DNS failure had hidden it) | bind/inbound on local localhost, outbound only to remote localhost | `contain.ts` C8 + its control; `sandbox.test.ts` |
+
+## The review ticket, real agents
+
+"Admins see every user's projects with the owner shown; regular users still see only their own, with no owner shown."
+
+**Claude: PASS, 133 s, $0.382.** intake sonnet 14 s $0.080 (high risk, ui+security) wrote:
+
+```
+## Requirements
+- R1: admins see every user's projects (in the Projects list)
+- R2: admins see the owner shown on each project
+- R3 (negative): regular users still see only their own projects
+- R4 (negative): no owner is shown to regular users
+```
+
+spec sonnet ×2 ($0.118 + $0.087): the first spec covered R4 with `not contains "project-owner"` (a test id no step makes) and was refused as an unbacked negative; the second:
+
+```
+- [C4] A regular user sees no owner on their own projects: alice owns a new project, and her project list shows the project but never her username as an owner.
+  proof: toolkit projects.create --user alice --slug adm-noowner ; toolkit login --as alice ; toolkit open --path /projects ; toolkit read --target "[data-testid=project-list]" --save list
+  expect: $list contains "Launch plan" and $list not contains "alice"
+  covers: R4
+```
+
+→ base check (C1, C2 fail on the base; C3 and C4 pass: guards, flagged) → builder sonnet 30 s $0.096 (server.js +4/−2: a role-aware query and the owner span for admins) → gate → drives (no new drives) → verify: C1–C4 PASS by the engine, C3 and C4 flagged NON-DISCRIMINATING → review.
+
+**Against wrong builders** (`wrong.ts`, no model, the real build mutated):
+- `owner`: the regular user's query also joins the owner and the markup's admin check is forced true (regular users still get only their own projects): **C4 FAIL** (`$list not contains "alice": got "Onboarding alice\nLaunch plan alice"`), C3 PASS → verdict FAIL. 5/5.
+- `leak`: every project with its owner for everyone: C3 FAIL and C4 FAIL → verdict FAIL. 4/4.
+
+Real-agent total this round: Claude $0.382, Codex 0.
+
+## Spike totals (final code)
+
+`contain.ts` 11/11, `engine.ts attacks` 26/26, `engine.ts kill` 8/8, `paths.ts` 34/34 (repro-retry 5, gap 5, bad-gap 4, inconclusive 7, backoff 3, nondisc 10), `wrong.ts claude owner` 5/5, `wrong.ts claude leak` 4/4, `e2e.ts claude admin` 12/12. W1 `paths.ts` 34/34. `npm test` 294/294, typecheck and lint clean.
+
+## Round 3: the proof sandbox, tightened (2026-11-22)
+
+| finding | fix | proof |
+|---|---|---|
+| The proof profile allowed writes anywhere under `/private/tmp` and `/private/var/folders`: with the repo there, a proof could write into another job's worktree | Writes only in the job worktree, a temp dir the engine makes fresh for each run (`kitchen-proof-*`, set as its `TMPDIR`, removed after, with that run's profile), `/dev` and `~/.npm` (`src/proof/sandbox.ts`, `stamp-cmd.ts`) | `contain.ts tmp` (repo under `/private/tmp/kitchen-contain-*`) 21/21 and `contain.ts home` 20/20: new C9, `node -e` writing into the sibling job's worktree → EPERM (control: the same command unsandboxed writes it). On the round-2 profile `contain.ts tmp` fails C5 and C9 (19/21): the mode discriminates. `sandbox.test.ts`: the write rule names the run's tmp and neither temp root |
+| Gate's checks and the builder's `checks` bridge tool ran builder-written code unsandboxed | `runChecks` stamps every check with `sandbox: true` under the same profile; kitchen.yaml `checks_network: true` (default false) drops only the network rules; the gate file says UNSANDBOXED where there is no sandbox-exec; the bridge reply carries `sandboxed` | `contain.ts`: Gate on the sibling job (`node --check server.js`, `node --test test/`) PASS, the test's output in the evidence (`pass 1`), every entry `sandboxed: true`; the `checks` tool (fake builder over the real bridge) with a check reading `engine.key` → EPERM, key nowhere in evidence, and `curl https://1.1.1.1` → "Failed to connect"; with `checks_network: true` the curl gets 301 and the key read is still denied (gate FAIL on readkey only). `sandbox.test.ts`: network on leaves the filesystem rules identical |
+
+Still unsandboxed (ADR 0006): the app the Toolkit starts and the primitives of a merged Toolkit sha (they need Docker and the network); everything on Linux.
+
+Totals on this code: `contain.ts home` 20/20, `contain.ts tmp` 21/21, `engine.ts attacks` 26/26 (its gate check `node --check server.js` ran sandboxed in all four gates), `paths.ts` 34/34. `npm test` 295/295, typecheck and lint clean. No agent calls.

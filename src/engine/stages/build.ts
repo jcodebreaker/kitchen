@@ -10,13 +10,12 @@ import path from "node:path";
 import { builderPolicy, contractOf, filesChecksRunThrough, scriptsChanged, testFilesOf } from "../contract.ts";
 import { mergeRev } from "../git.ts";
 import { ensureUp } from "../instance.ts";
-import { effectiveRisk } from "../machine.ts";
 import { once, roundDir, updateJob, writeAtomic } from "../store.ts";
 import { changedFiles, commitWith, ensureWorktree, fileAtHead, jobGitOf, pendingFiles } from "../worktree.ts";
 import { runBaseCheck } from "./base-check.ts";
-import { contractBlock, earlierRoundsBlock, toolkitBlock } from "./context.ts";
+import { contractBlock, earlierRoundsBlock, humanFeedback, toolkitBlock } from "./context.ts";
 import { prompt } from "./prompts.ts";
-import { labelsFor, syncFile } from "./ready.ts";
+import { syncFile } from "./ready.ts";
 import { headers, runRole } from "./role.ts";
 import { hasToolkit } from "./toolkit-info.ts";
 import type { StageHandler } from "./types.ts";
@@ -34,16 +33,6 @@ function readSync(jobDir: string): { base: string; conflicts: string[] } | null 
 function fileBlockIf(dir: string, file: string, title: string) {
   const p = path.join(dir, file);
   return fs.existsSync(p) ? [{ title, body: fs.readFileSync(p, "utf8") }] : [];
-}
-
-/** Human feedback (`kitchen feedback`) the builder must address, newest last. */
-function feedback(jobDir: string): string[] {
-  const d = path.join(jobDir, "feedback");
-  if (!fs.existsSync(d)) return [];
-  return fs
-    .readdirSync(d)
-    .sort()
-    .map((f) => fs.readFileSync(path.join(d, f), "utf8").trim());
 }
 
 export const build: StageHandler = async (ctx) => {
@@ -75,7 +64,7 @@ export const build: StageHandler = async (ctx) => {
       job = ctx.refresh();
     }
   }
-  const fb = feedback(ctx.jobDir);
+  const fb = humanFeedback(ctx.jobDir);
   const repro = job.reproFiles ?? [];
   const proofFiles = (contract?.criteria ?? []).flatMap(testFilesOf).filter((f) => !repro.includes(f));
   const checkFiles = filesChecksRunThrough([...ctx.config.checkList.map((c) => c.run), ctx.config.test_cmd]);
@@ -168,9 +157,7 @@ export const build: StageHandler = async (ctx) => {
   let pushed = false;
   let pr: number | null = job.pr;
   if (c.ahead) {
-    const pub = await once(ctx.repo, job.id, `publish/${c.head}`, () =>
-      ctx.forge.publish({ branch: job.branch, title: job.title, head: c.head, labels: labelsFor(effectiveRisk(job)) }),
-    );
+    const pub = await once(ctx.repo, job.id, `publish/${c.head}`, () => ctx.forge.publish({ branch: job.branch, title: job.title, head: c.head }));
     pushed = !!pub.value?.pushed;
     pr = pub.value?.pr ?? pr;
   }

@@ -251,3 +251,12 @@ export async function removeSmithWorktree(repo: string, job: Job, n: number): Pr
 
 /** The job's worktree as an engine git handle (Ready's sync). */
 export const jobGitOf = (job: Job) => gitOf(job);
+/** The job's whole diff from the base to HEAD, as a patch (for reviewers and the report). */
+export async function diffPatch(job: Job): Promise<string> {
+  return (await (await gitOf(job)).run(["diff", "--no-ext-diff", "--no-textconv", "--no-color", job.base, "HEAD"])).stdout;
+}
+
+/** The job branch's commits since the base, one line each. */
+export async function commitLog(job: Job): Promise<string> {
+  return (await (await gitOf(job)).run(["log", "--no-color", "--format=%h %s", `${job.base}..HEAD`])).stdout.trim();
+}

@@ -16,6 +16,9 @@
 //   scenario: bad-gap       the drives role writes free text in GAP: (a failed write, not a gap)
 //   scenario: inconclusive  the verifier says INCONCLUSIVE four times, then judges right
 //   scenario: backoff       the builder is rate limited once
+//   scenario: nondisc       a feature: C1 uses a new drive and already holds on the base (flagged
+//                           NON-DISCRIMINATING after drives); the drives role's first drive only
+//                           works after the proof's login segment, so its check line fails alone
 // Calls are counted per job, role and mode in $KITCHEN_FAKE_STATE (survives kill -9).
 import { spawn } from "node:child_process";
 import fs from "node:fs";
@@ -29,18 +32,50 @@ const SPEC = `## Criteria
   proof: toolkit settings.theme-after-reload --user alice
   expect: $theme == "Dark" and json $me.body.theme == "dark"
   repro: true
+  covers: R1
 - [C2] The theme API reports dark after toggling, starting from light
   proof: toolkit settings.toggle-dark --user alice
   expect: json $me.body.theme == "dark" and $before == "false"
+  covers: R1
 - [C3] The settings page looks right in dark mode
   proof: toolkit settings.dark-screenshot --user alice
   expect: judged
+  covers: R2
 ## New drives
 - settings.theme-after-reload: sign in, Settings, toggle dark mode, wait for Saved, full reload via the nav link, read theme-state as theme, GET /api/me as me
 - settings.dark-screenshot: sign in, Settings, toggle dark mode, wait for Saved, reload, screenshot
 ## Out of scope
 - anything but the theme
 `;
+
+/** nondisc: C1 reads the Settings heading through a new drive (true before any change); C2 needs the build. */
+const SPEC_NONDISC = `## Criteria
+- [C1] Settings shows the Appearance section
+  proof: toolkit login --as alice ; toolkit settings.appearance-heading --user alice
+  expect: $heading contains "Appearance"
+  covers: R1
+- [C2] The API reports the build marker
+  proof: toolkit login --as alice ; toolkit http --method GET --path /api/me --save me
+  expect: json $me.body.marker == "built"
+  covers: R2
+## New drives
+- settings.appearance-heading: sign in as user, open Settings, read the Appearance heading (#appearance-h) as heading
+`;
+const INTAKE_NONDISC =
+  "DECISION: ACCEPT\nKIND: feature\nRISK: medium\nSURFACES: ui\nREASON: scripted\n\n## Requirements\n- R1: Settings shows Appearance\n- R2: /api/me reports the build marker\n";
+/** nondisc, drives attempt 1: no login step, so it works only after the proof's `login` segment, not alone from seed. */
+const HEADING_DRIVE = (login: boolean) => `# Settings heading
+
+\`\`\`drive
+drive: settings.appearance-heading
+args: [user]
+steps:
+${login ? "  - login: { as: $user }\n" : ""}  - press: { target: "[data-testid=nav-settings]" }
+  - wait:  { until: { text: "Appearance" }, timeout: 10s }
+  - read:  { target: "#appearance-h" }
+    save: heading
+\`\`\`
+${kitchenBlock("settings.appearance-heading")}`;
 
 /** The gap scenario's first spec: C2 starts with a primitive the Toolkit lacks. */
 const SPEC_GAP = SPEC.replace(
@@ -218,8 +253,17 @@ export default async function script(req: AgentRequest): Promise<FakeStep> {
   const attacks = scenario === "attacks";
   if (scenario === "replay") return replay(req, mode);
 
+  if (scenario === "nondisc" && req.role === "intake") return { file: INTAKE_NONDISC, line: "ACCEPT feature medium" };
+  if (scenario === "nondisc" && req.role === "spec") return { file: SPEC_NONDISC, line: "spec: 2 criteria" };
+  if (scenario === "nondisc" && req.role === "verifier" && mode === "drives") {
+    write(req.cwd, ".kitchen/toolkit/features/settings-heading.md", HEADING_DRIVE(n > 1));
+    return { file: "DRIVES: OK\n", line: `DRIVES: OK (login step: ${n > 1})` };
+  }
   if (req.role === "intake")
-    return { file: "DECISION: ACCEPT\nKIND: bug\nRISK: medium\nSURFACES: ui\nREASON: dark mode is lost on reload\n", line: "ACCEPT bug medium" };
+    return {
+      file: "DECISION: ACCEPT\nKIND: bug\nRISK: medium\nSURFACES: ui\nREASON: dark mode is lost on reload\n\n## Requirements\n- R1: dark mode stays on after a reload\n- R2: the settings page looks right in dark mode\n",
+      line: "ACCEPT bug medium",
+    };
   if (req.role === "spec") return { file: scenario === "gap" && n === 1 ? SPEC_GAP : SPEC, line: "spec: 3 criteria" };
 
   if (req.role === "smith") {
@@ -242,6 +286,11 @@ export default async function script(req: AgentRequest): Promise<FakeStep> {
     if (scenario === "backoff" && n === 1) return { ok: false, rateLimited: true, line: "429 rate limit reached" };
     const f = path.join(req.cwd, "server.js");
     fs.writeFileSync(f, fs.readFileSync(f, "utf8").replace(BUG.to, BUG.from));
+    if (scenario === "nondisc")
+      fs.writeFileSync(
+        f,
+        fs.readFileSync(f, "utf8").replace("admin: user.is_admin, theme: user.theme }", 'admin: user.is_admin, theme: user.theme, marker: "built" }'),
+      );
     if (attacks && round === 1) {
       fs.appendFileSync(path.join(req.cwd, ".kitchen/toolkit/bin/dev"), "\n// builder was here: make every primitive say ok\n");
       write(req.cwd, ".kitchen/toolkit/lib/extra.mjs", "export const cheat = true;\n");

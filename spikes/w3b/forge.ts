@@ -13,7 +13,7 @@ import path from "node:path";
 import { parseConfig } from "../../src/config.ts";
 import { baseTip } from "../../src/engine/base.ts";
 import type { Job } from "../../src/engine/machine.ts";
-import { EVIDENCE_BRANCH } from "../../src/forge/evidence.ts";
+import { EVIDENCE_BRANCH } from "../../src/forge/evidence-branch.ts";
 import { GithubForge, REVIEW_REQUIRED } from "../../src/forge/github.ts";
 import { GithubSource } from "../../src/sources/github.ts";
 import { check, finish, makeFixtureRepo } from "../w3a/lib.ts";
@@ -25,7 +25,7 @@ const shim = makeShim(path.join(root, "forge"));
 const r = makeFixtureRepo(path.join(root, "forge"), "repo", { yaml: "" });
 const bare = makeRemote(r);
 Object.assign(process.env, shim.env, { KITCHEN_HOME: r.home });
-const cfg = parseConfig(`forge: { kind: github, repo: ${SLUG}, url: ${JSON.stringify(bare)}, base: main, evidence_keep_days: 30 }
+const cfg = parseConfig(`forge: { kind: github, repo: ${SLUG}, url: ${JSON.stringify(bare)}, base: main }
 source: { kind: github, label: kitchen, operators: [ops-lead] }
 `);
 const forge = new GithubForge(r.dir, cfg);
@@ -127,52 +127,97 @@ editShim(shim, (s) => {
 });
 check("Toolkit ticket: closed on GitHub → closed", (await forge.ticketClosed(k1)) === true);
 
-// --- evidence branch ---
-const jobDir = path.join(r.dir, ".kitchen", "jobs", "001-x");
-fs.mkdirSync(path.join(jobDir, "evidence", "e1"), { recursive: true });
-fs.mkdirSync(path.join(jobDir, "evidence", "e2"), { recursive: true });
-fs.writeFileSync(path.join(jobDir, "report.html"), "<h1>report</h1>");
-fs.writeFileSync(path.join(jobDir, "evidence", "manifest.jsonl"), '{"id":"e1"}\n');
-fs.writeFileSync(
-  path.join(jobDir, "evidence", "e1", "call.json"),
-  JSON.stringify({ stdout: "STRIPE_SECRET_KEY=sk_" + "live_abcdefghijklmnopqrstuvwx token: ghp_abcdefghijklmnopqrstuvwxyz0123456789" }),
-);
+// --- evidence branch (W4 builds the redacted bundle; the GitHub forge fetches, commits on top, pushes) ---
+const bundle = (job: string, at: Date, extra: Record<string, string | Buffer> = {}) => {
+  const d = path.join(root, "forge", "bundles", job);
+  fs.rmSync(d, { recursive: true, force: true });
+  fs.mkdirSync(path.join(d, "evidence", "e1"), { recursive: true });
+  fs.writeFileSync(path.join(d, "report.html"), `<h1>${job}</h1>`);
+  fs.writeFileSync(path.join(d, "published.json"), JSON.stringify({ job, at: at.toISOString() }));
+  for (const [f, v] of Object.entries(extra)) {
+    fs.mkdirSync(path.dirname(path.join(d, f)), { recursive: true });
+    fs.writeFileSync(path.join(d, f), v);
+  }
+  return d;
+};
 const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 1, 2, 3, 0, 255]);
-fs.writeFileSync(path.join(jobDir, "evidence", "e2", "shot.png"), png);
-// an old folder on the branch, published 40 days ago
-const oldDir = path.join(r.dir, ".kitchen", "jobs", "000-old");
-fs.mkdirSync(path.join(oldDir, "evidence"), { recursive: true });
-fs.writeFileSync(path.join(oldDir, "report.html"), "old");
-const { publishEvidence } = await import("../../src/forge/evidence.ts");
-await publishEvidence({ repo: r.dir, url: bare, job: "000-old", jobDir: oldDir, keepDays: 30, now: new Date(Date.now() - 40 * 86_400_000) });
-check("evidence: the first publish creates the orphan branch", git(bare, "ls-tree", "--name-only", EVIDENCE_BRANCH).trim() === "000-old");
-const url = await forge.pushEvidence({ key: "001-x/evidence", job: "001-x", dir: jobDir });
+const old = await forge.publishEvidence({
+  key: "000-old/evidence",
+  job: "000-old",
+  bundle: bundle("000-old", new Date(Date.now() - 40 * 86_400_000)),
+  keepDays: 30,
+});
+check(
+  "evidence: the first publish creates the orphan branch on the remote",
+  git(bare, "ls-tree", "--name-only", EVIDENCE_BRANCH).trim() === "000-old" && git(bare, "rev-parse", EVIDENCE_BRANCH).trim() === old.commit,
+);
+// another machine's publish lands on the remote first: the next one must build on it
+git(r.dir, "update-ref", "-d", `refs/heads/${EVIDENCE_BRANCH}`);
+const b1 = bundle("001-x", new Date(), { "evidence/manifest.jsonl": '{"id":"e1"}\n', "evidence/e1/call.json": "{}", "evidence/e2/shot.png": png });
+const pub = await forge.publishEvidence({ key: "001-x/evidence", job: "001-x", bundle: b1, keepDays: 30 });
 const tree = git(bare, "ls-tree", "-r", "--name-only", EVIDENCE_BRANCH).trim().split("\n");
 check(
-  "evidence: one folder per job with report.html, manifest and every entry folder",
-  ["001-x/report.html", "001-x/evidence/manifest.jsonl", "001-x/evidence/e1/call.json", "001-x/evidence/e2/shot.png", "001-x/meta.json"].every((f) =>
+  "evidence: one folder per job with report.html, published.json, manifest and every entry folder",
+  ["001-x/report.html", "001-x/published.json", "001-x/evidence/manifest.jsonl", "001-x/evidence/e1/call.json", "001-x/evidence/e2/shot.png"].every((f) =>
     tree.includes(f),
   ),
   tree.join(" "),
 );
-check("evidence: the folder older than evidence_keep_days is pruned", !tree.some((f) => f.startsWith("000-old/")), tree.join(" "));
-const call = git(bare, "show", `${EVIDENCE_BRANCH}:001-x/evidence/e1/call.json`);
 check(
-  "evidence: secrets in text evidence are redacted at publish",
-  !call.includes("sk_live_abcdef") && !call.includes("ghp_abcdef") && call.includes("[redacted]"),
-  call,
+  "evidence: built on the remote's branch (fetched first), the folder older than evidence_keep_days pruned",
+  !tree.some((f) => f.startsWith("000-old/")) && pub.pruned.includes("000-old") && git(bare, "rev-parse", `${EVIDENCE_BRANCH}~1`).trim() === old.commit,
+  tree.join(" "),
 );
+check("evidence: a screenshot is published byte for byte", execBuf(bare, `${EVIDENCE_BRANCH}:001-x/evidence/e2/shot.png`).equals(png));
+check("evidence: the URL is a link prefix into the job's folder", pub.url === `https://github.com/${SLUG}/blob/kitchen-evidence/001-x/`, pub.url);
+const again = await forge.publishEvidence({ key: "001-x/evidence", job: "001-x", bundle: b1, keepDays: 30 });
+check("evidence: the same bundle again makes no new commit", again.commit === pub.commit);
+fs.writeFileSync(path.join(b1, "report.html"), "<h1>001-x v2</h1>");
+const v2 = await forge.publishEvidence({ key: "001-x/evidence", job: "001-x", bundle: b1, keepDays: 30 });
 check(
-  "evidence: the job folder keeps the original (hash-chained) file",
-  fs.readFileSync(path.join(jobDir, "evidence", "e1", "call.json"), "utf8").includes("sk_live_abcdef"),
+  "evidence: a changed bundle is a new commit on top (never forced)",
+  git(bare, "rev-parse", `${EVIDENCE_BRANCH}~1`).trim() === pub.commit && git(bare, "rev-parse", EVIDENCE_BRANCH).trim() === v2.commit,
 );
-const shot = execBuf(bare, `${EVIDENCE_BRANCH}:001-x/evidence/e2/shot.png`);
-check("evidence: a screenshot is published byte for byte (screenshots can't be scanned)", shot.equals(png));
-check("evidence: the URL names the folder on kitchen-evidence", url === `https://github.com/${SLUG}/tree/kitchen-evidence/001-x`, url);
-const parents = git(bare, "rev-list", "--count", EVIDENCE_BRANCH).trim();
-await forge.pushEvidence({ key: "001-x/evidence", job: "001-x", dir: jobDir });
-check("evidence: republishing adds a commit on top (never forced)", Number(git(bare, "rev-list", "--count", EVIDENCE_BRANCH).trim()) === Number(parents) + 1);
-check("evidence: main's history is untouched", !git(bare, "log", "--format=%s", "main").includes("kitchen evidence"));
+check("evidence: main's history is untouched", !git(bare, "log", "--format=%s", "main").includes("evidence"));
+
+// --- review comments (done → build from a trusted person, W4) ---
+editShim(shim, (s) => {
+  const p = s.prs.find((x) => x.number === pr);
+  if (!p) return;
+  p.comments.push({
+    body: "Please also handle the empty list.",
+    user: "alice",
+    created_at: new Date(Date.now() + 5000).toISOString(),
+    author_association: "OWNER",
+  } as never);
+  (p as unknown as { reviewComments: unknown[] }).reviewComments = [
+    { id: 900, body: "nit: rename this", user: "carol", created_at: new Date(Date.now() + 6000).toISOString(), author_association: "CONTRIBUTOR" },
+  ];
+});
+const rc = await forge.reviewComments(pr);
+check(
+  "reviewComments: conversation + inline comments, oldest first, with author_association; Kitchen's own left out",
+  rc.length === 2 &&
+    rc[0].author === "alice" &&
+    rc[0].association === "OWNER" &&
+    rc[1].author === "carol" &&
+    rc[1].association === "CONTRIBUTOR" &&
+    rc.every((c) => !c.body.includes("kitchen:")),
+  JSON.stringify(rc.map((c) => [c.author, c.association])),
+);
+await forge.label({ key: "001-x/label", pr, label: "kitchen:review-required" });
+check("label: added to the PR", shimState(shim).prs[0].labels.includes("kitchen:review-required"));
+git(r.dir, "checkout", "-q", "-b", "kitchen/maintain-1", "main");
+fs.appendFileSync(path.join(r.dir, ".kitchen/toolkit/SKILL.md"), "\nmaintain\n");
+git(r.dir, "commit", "-qam", "maintain");
+const mh = git(r.dir, "rev-parse", "HEAD").trim();
+git(r.dir, "checkout", "-q", "main");
+const mp = await forge.openPr({ key: "maintain/1", branch: "kitchen/maintain-1", head: mh, title: "Toolkit maintain", body: "proven" });
+check(
+  "openPr: branch pushed, PR opened, found again by branch",
+  mp === (await forge.openPr({ key: "maintain/1", branch: "kitchen/maintain-1", head: mh, title: "x", body: "x" })) &&
+    git(bare, "rev-parse", "refs/heads/kitchen/maintain-1").trim() === mh,
+);
 
 // --- base ---
 const tip = await baseTip(r.dir, cfg);

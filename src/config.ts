@@ -5,7 +5,7 @@ import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 
-export const ROLES = ["intake", "spec", "builder", "smith", "verifier", "reviewer", "report", "retro", "setup"] as const;
+export const ROLES = ["intake", "spec", "builder", "smith", "verifier", "reviewer", "report", "retro", "setup", "maintain"] as const;
 export type RoleName = (typeof ROLES)[number];
 export const TIERS = ["strong", "medium", "cheap"] as const;
 export type ModelTier = (typeof TIERS)[number];
@@ -56,6 +56,8 @@ export const ConfigSchema = z
         retro: z.string().default("cheap"),
         /** `kitchen init`'s setup role (survey, build, fix rounds). */
         setup: z.string().default("strong"),
+        /** `kitchen toolkit maintain`: the source wave and the fix pass. */
+        maintain: z.string().default("medium"),
       })
       .strict()
       .prefault({}),
@@ -84,6 +86,8 @@ export const ConfigSchema = z
       .strict()
       .prefault({}),
     checks: z.array(Check).default([]),
+    /** Checks run under the proof sandbox; true allows them outbound network (a package install). The filesystem rules stay. */
+    checks_network: z.boolean().default(false),
     /** How a `test <file>` proof runs, in the job worktree with the untrusted env. `{file}` is the test file, shell-quoted. */
     test_cmd: z.string().min(1).default("npm test -- {file}"),
     agent: z
@@ -104,6 +108,21 @@ export const ConfigSchema = z
       .object({ base_sec: z.number().positive().default(60), max_sec: z.number().positive().default(3600) })
       .strict()
       .prefault({}),
+    /** Report publishing: job folders on the `kitchen-evidence` branch older than this are pruned. */
+    evidence_keep_days: z.number().int().positive().default(30),
+    /** `kitchen toolkit maintain` runs by itself when the feature-mapped paths changed by more lines than this since the last maintain. */
+    maintain_churn_lines: z.number().int().positive().default(300),
+    /**
+     * done → build from PR review comments (PLAN §2). A comment counts only from a trusted person: a login listed in
+     * `trusted`, or one whose association with the repo is in `trust_associations`. Everyone else is ignored.
+     */
+    feedback: z
+      .object({
+        trusted: z.array(z.string().min(1)).default([]),
+        trust_associations: z.array(z.string().min(1)).default(["OWNER", "MEMBER", "COLLABORATOR"]),
+      })
+      .strict()
+      .prefault({}),
     /** Where PRs, checks and Toolkit tickets live. `local`: no remote (W1/W3a); `fake`: a JSON file, for engine tests. */
     forge: z
       .object({
@@ -118,8 +137,6 @@ export const ConfigSchema = z
         url: z.string().optional(),
         /** The branch PRs target and Ready syncs with. */
         base: z.string().default("main"),
-        /** Folders on the `kitchen-evidence` branch older than this are pruned at each publish. */
-        evidence_keep_days: z.number().int().positive().default(30),
       })
       .strict()
       .prefault({}),
@@ -173,9 +190,13 @@ export function modelFor(cfg: Config, role: string): string {
     ? (role as RoleName)
     : role.startsWith("review")
       ? "reviewer"
-      : role === "repro"
-        ? "verifier"
-        : "builder";
+      : role === "maintain-fix"
+        ? "smith"
+        : role.startsWith("maintain")
+          ? "maintain"
+          : role === "repro"
+            ? "verifier"
+            : "builder";
   const want = cfg.models[key];
   const tiers = { ...DEFAULT_MODELS[cfg.agent.tool], ...cfg.agent.models };
   return (TIERS as readonly string[]).includes(want) ? tiers[want as ModelTier] : want;

@@ -7,13 +7,14 @@ Every script makes its repos under the scratch dir you give it (default `spikes/
 ```sh
 node spikes/w3a/engine.ts attacks <scratch>   # scripted agent, no model (~6 min): repro, layer rules, code in a drive, forged/stale/self-check citations
 node spikes/w3a/engine.ts kill <scratch>      # scripted agent, no model (~3 min): kill -9 mid-Verify, resume, no proof re-run
-node spikes/w3a/paths.ts [scenario…] <scratch> # scripted agent, no model (~25 min): the W1 paths that needed real stages: repro-retry gap bad-gap inconclusive backoff
+node spikes/w3a/paths.ts [scenario…] <scratch> # scripted agent, no model (~30 min): the W1 paths that needed real stages: repro-retry gap bad-gap inconclusive backoff; and nondisc (review round 2: check line alone, base check after drives)
+node spikes/w3a/contain.ts [home|tmp] [scratch] # no agent, no Docker (~10 s): cmd/test proofs and checks under the proof sandbox, evidence redacted on disk; `tmp` puts the repo under /tmp
 node spikes/w3a/e2e.ts claude feature <scratch>   # REAL agents: one feature ticket end to end (sonnet strong, haiku medium)
 node spikes/w3a/e2e.ts claude bug <scratch>       # REAL agents: the planted bug end to end
 node spikes/w3a/e2e.ts codex feature <scratch>    # REAL agents via npx @openai/codex@0.171.0, the config's tier map
 node spikes/w3a/e2e.ts codex bug <scratch>
 node spikes/w3a/e2e.ts claude|codex admin <scratch>  # REAL agents: the review ticket (admins see all projects; regular users only their own)
-node spikes/w3a/wrong.ts claude|codex <scratch>      # no model: replays that run's spec against a builder that leaks every project; Verify must FAIL
+node spikes/w3a/wrong.ts claude|codex [leak|owner] <scratch>  # no model: replays that run's spec against a builder that leaks every project (leak), or shows the owner to everyone (owner); Verify must FAIL
 ```
 
 `W3A_VERBOSE=1` prints every CLI line. Claude runs `/opt/homebrew/bin/claude` unless `KITCHEN_CLAUDE_BIN` is set. The real runs cost money: see `results.md` for what one run of each took.
@@ -21,7 +22,7 @@ node spikes/w3a/wrong.ts claude|codex <scratch>      # no model: replays that ru
 ## The tickets
 
 - **feature**: "Show the signed-in user's display name in the header, and let them change it on /settings. Someone who never set a display name sees their username there instead." Fixture A has no display name, so this needs a migration, server changes and new feature drives.
-- **admin** (review round 1): "Admins see every user's projects with owner; regular users still see only their own." The spec needs a negative criterion that first makes another user's project (spec-lint refuses one that doesn't); `wrong.ts` proves that criterion discriminates by replaying the spec, drives and tests against the real build mutated to show every project to everyone.
+- **admin** (review round 2, the reviewer's text verbatim): "Admins see every user's projects with the owner shown; regular users still see only their own, with no owner shown." intake lists the requirements (R1..R4, the two negatives marked); spec-lint refuses a spec that leaves one uncovered, so "no owner shown" gets its own criterion. `wrong.ts owner` replays the spec against the real build changed to show every row's owner to everyone (regular users still get only their own projects): that criterion must FAIL. The spec needs a negative criterion that first makes another user's project (spec-lint refuses one that doesn't); `wrong.ts` proves that criterion discriminates by replaying the spec, drives and tests against the real build mutated to show every project to everyone.
 - **bug**: "Dark mode doesn't persist. I switch it on in Settings and it says Saved, but when I reload the page the app is light again." Before the ticket, the copy gets a real bug (`lib.ts` `BUG`): the theme update's `WHERE` names the wrong column, so it answers 200, updates no row, and the page is light after a reload.
 
 ## How the scripted agent works (`fake-agent.ts`)

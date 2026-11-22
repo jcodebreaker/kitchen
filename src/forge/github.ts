@@ -13,9 +13,9 @@
 import { execa } from "execa";
 import type { Config } from "../config.ts";
 import { ghHelper, remoteUrl } from "../engine/base.ts";
-import { openGit, plainCheckout, pushTo } from "../engine/git.ts";
-import { EVIDENCE_BRANCH, publishEvidence } from "./evidence.ts";
-import type { CiState, Forge, ToolkitPrRequest } from "./forge.ts";
+import { fetchFrom, GitError, openGit, plainCheckout, pushTo } from "../engine/git.ts";
+import { commitEvidence, EVIDENCE_BRANCH } from "./evidence-branch.ts";
+import type { CiState, Forge, PrComment, Published, ToolkitPrRequest } from "./forge.ts";
 
 export const REVIEW_REQUIRED = "kitchen:review-required";
 export const TOOLKIT_LABEL = "kitchen-toolkit";
@@ -77,7 +77,7 @@ export class GithubForge implements Forge {
     return rows.find((x) => x.state === "OPEN")?.number ?? rows[0]?.number ?? null;
   }
 
-  private async label(pr: number, label: string, color: string) {
+  private async labelPr(pr: number, label: string, color: string) {
     if (!this.labelsMade.has(label)) {
       await gh(["label", "create", label, ...this.R(), "--force", "--color", color]);
       this.labelsMade.add(label);
@@ -95,7 +95,7 @@ export class GithubForge implements Forge {
       });
       pr = numberOf(r.out.trim().split("\n").pop() ?? "");
     }
-    for (const l of o.labels ?? []) await this.label(pr, l, "B60205");
+    for (const l of o.labels ?? []) await this.labelPr(pr, l, "B60205");
     return { pushed: true, pr };
   }
 
@@ -124,7 +124,7 @@ export class GithubForge implements Forge {
       });
       pr = numberOf(r.out.trim().split("\n").pop() ?? "");
     }
-    await this.label(pr, TOOLKIT_LABEL, "1D76DB");
+    await this.labelPr(pr, TOOLKIT_LABEL, "1D76DB");
     return pr;
   }
 
@@ -171,23 +171,55 @@ export class GithubForge implements Forge {
     await gh(["pr", "comment", String(o.pr), ...this.R(), "--body-file", "-"], { input: `${o.body}\n\n${marker(o.key)}\n` });
   }
 
-  async pushEvidence(o: { key: string; job: string; dir: string }): Promise<string> {
-    await publishEvidence({
-      repo: this.repo,
-      url: remoteUrl(this.cfg),
-      helper: ghHelper(this.cfg),
-      job: o.job,
-      jobDir: o.dir,
-      keepDays: this.cfg.forge.evidence_keep_days,
-    });
-    return this.evidenceUrl(o.job);
+  async label(o: { key: string; pr: number | null; label: string }) {
+    if (o.pr === null) return;
+    await this.labelPr(o.pr, o.label, "B60205");
   }
 
-  /** Where a job's evidence folder is browsable. */
-  evidenceUrl(job: string, file?: string): string {
-    return `https://github.com/${this.repoSlug}/${file ? "blob" : "tree"}/${EVIDENCE_BRANCH}/${job}${file ? `/${file}` : ""}`;
+  /**
+   * The job's folder on `kitchen-evidence` (W4 builds the bundle, already redacted): the remote's
+   * branch is fetched first so the engine's commit (evidence-branch.ts) goes on top of it, then
+   * pushed to the explicit URL, never forced (a concurrent publish that won makes this one fail
+   * and the stage retries).
+   */
+  async publishEvidence(o: { key: string; job: string; bundle: string; keepDays: number }): Promise<Published> {
+    const git = await openGit(plainCheckout(this.repo));
+    const url = remoteUrl(this.cfg);
+    const helper = ghHelper(this.cfg);
+    try {
+      await fetchFrom(git, { url, refspecs: [`+refs/heads/${EVIDENCE_BRANCH}:refs/heads/${EVIDENCE_BRANCH}`], helper });
+    } catch (e) {
+      if (!(e instanceof GitError) || !/couldn't find remote ref|no such ref|not our ref/i.test(e.stderr)) throw e;
+    }
+    const r = await commitEvidence({ repo: this.repo, job: o.job, bundle: o.bundle, keepDays: o.keepDays });
+    await pushTo(git, { url, refspecs: [`${r.commit}:refs/heads/${EVIDENCE_BRANCH}`], helper });
+    return { commit: r.commit, url: `https://github.com/${this.repoSlug}/blob/${EVIDENCE_BRANCH}/${o.job}/`, pruned: r.pruned };
   }
-  rawUrl(job: string, file: string): string {
-    return `https://github.com/${this.repoSlug}/raw/${EVIDENCE_BRANCH}/${job}/${file}`;
+
+  /**
+   * Review comments on a PR, oldest first: the conversation comments and the inline review comments,
+   * with GitHub's author_association. Kitchen's own (they carry its key marker) are left out.
+   */
+  async reviewComments(pr: number | null): Promise<PrComment[]> {
+    if (pr === null) return [];
+    type Row = { id: number; body: string; user?: { login?: string }; author_association?: string; created_at: string };
+    const rows: Row[] = [];
+    for (const ep of [`repos/${this.repoSlug}/issues/${pr}/comments`, `repos/${this.repoSlug}/pulls/${pr}/comments`])
+      rows.push(...(((await gh(["api", ep, "--paginate"], { json: true })).data as Row[]) ?? []));
+    return rows
+      .filter((c) => !c.body.includes("<!-- kitchen:"))
+      .map((c) => ({ id: String(c.id), pr, author: c.user?.login ?? "", association: c.author_association ?? "NONE", body: c.body, at: c.created_at }))
+      .sort((a, b) => a.at.localeCompare(b.at));
+  }
+
+  /** A PR for a branch the engine made (maintain's Toolkit PR): pushed, then found by branch or opened. */
+  async openPr(o: { key: string; branch: string; head: string; title: string; body: string }): Promise<number> {
+    await this.push(o.head, o.branch);
+    const had = await this.prFor(o.branch);
+    if (had !== null) return had;
+    const r = await gh(["pr", "create", ...this.R(), "--head", o.branch, "--base", this.cfg.forge.base, "--title", o.title, "--body-file", "-"], {
+      input: `${o.body}\n\n${marker(o.key)}\n`,
+    });
+    return numberOf(r.out.trim().split("\n").pop() ?? "");
   }
 }

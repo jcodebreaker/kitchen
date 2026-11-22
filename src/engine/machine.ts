@@ -128,7 +128,15 @@ export type Escalation = "round-limit" | "smith-limit" | "adapter-error" | "engi
 /** What guards read. Gathered by the caller (stage handlers, runner, CLI) from files, git and the forge. */
 export type Facts = {
   now: string;
-  intake?: { decision: "ACCEPT" | "NEEDS-INFO" | "REJECT"; kind?: Kind; risk?: Risk; surfaces?: ("ui" | "security")[]; criteria?: Lint };
+  intake?: {
+    decision: "ACCEPT" | "NEEDS-INFO" | "REJECT";
+    kind?: Kind;
+    risk?: Risk;
+    surfaces?: ("ui" | "security")[];
+    criteria?: Lint;
+    /** How many requirements intake.md lists (`## Requirements`): the spec is checked against them (spec-lint rule 7). */
+    requirements?: number;
+  };
   /** needs-info: the source shows an answer from the author or operator. */
   replied?: boolean;
   /** A human command. */
@@ -153,7 +161,11 @@ export type Facts = {
     ticket?: string;
   };
   toolkit?: { checkPassed: boolean; sha: string; pr: number | null };
-  review?: { pass: boolean; blocking?: string };
+  /**
+   * pass: no finding blocks (checks/findings.ts: only a demonstrable, confident one can). blocking: the blocking findings, one line.
+   * nonDiscriminating: criteria that already held on the base (base-check.json). findings/notes: counts after merging across lenses.
+   */
+  review?: { pass: boolean; blocking?: string; nonDiscriminating?: string[]; findings?: number; notes?: number };
   ready?: {
     synced: boolean;
     conflict: boolean;
@@ -168,6 +180,8 @@ export type Facts = {
     toolkitRef?: string;
   };
   report?: { rendered: boolean; idsResolved: boolean; evidencePushed: boolean; commented: boolean; localForge: boolean; refusal?: string };
+  /** done → build: a review comment on the PR from a trusted person (the runner reads it through the forge). */
+  prComment?: { id: string; author: string; trusted: boolean };
   /** paused: the waitFor condition cleared. */
   waitCleared?: boolean;
   adapter?: { rateLimited?: boolean; authFailure?: boolean; until?: string; error?: string };
@@ -224,6 +238,8 @@ const intakeIs =
   (d: "ACCEPT" | "NEEDS-INFO" | "REJECT"): Guard =>
   (_j, f) =>
     need(f.intake, "intake") ?? (f.intake?.decision === d ? null : `intake.md says ${f.intake?.decision}, not ${d}`);
+const hasRequirements: Guard = (_j, f) =>
+  (f.intake?.requirements ?? 0) > 0 ? null : "intake.md lists no requirements (`## Requirements`, R1…): the spec has nothing to cover";
 const criteriaLint: Guard = (_j, f) => (f.intake?.criteria?.ok ? null : `inline criteria fail spec-lint: ${f.intake?.criteria?.reason ?? "no criteria"}`);
 const setIntake = (j: Job, f: Facts) => {
   j.kind = f.intake?.kind ?? j.kind;
@@ -281,13 +297,14 @@ export const TABLE: readonly Row[] = [
     id: "intake>spec",
     from: "intake",
     to: "spec",
-    when: "ACCEPT, risk medium or high (a bug at medium/high goes spec → repro)",
+    when: "ACCEPT, risk medium or high, intake.md lists the requirements (a bug at medium/high goes spec → repro)",
     guard: all(
       intakeIs("ACCEPT"),
       check(
         (j, f) => riskOf(j, f) === "medium" || riskOf(j, f) === "high",
         (j, f) => `risk is ${riskOf(j, f)}: low skips spec`,
       ),
+      hasRequirements,
     ),
     apply: setIntake,
   },
@@ -804,7 +821,11 @@ export const TABLE: readonly Row[] = [
     from: "done",
     to: "build",
     when: "`kitchen feedback` or a trusted review comment on the PR; the round budget resets",
-    guard: operatorIs("feedback"),
+    guard: check(
+      (_j, f) => f.operator === "feedback" || !!f.prComment?.trusted,
+      (_j, f) =>
+        f.prComment ? `PR comment ${f.prComment.id} by ${f.prComment.author} is not from a trusted person` : "needs `kitchen feedback` or a trusted PR comment",
+    ),
     apply: resetBudget,
   },
   // any active stage

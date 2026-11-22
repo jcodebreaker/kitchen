@@ -267,6 +267,7 @@ On a pass it writes `.kitchen/toolkit.proven` with the base sha. **When the base
 - [C1] Signed-in user sees a "Dark mode" toggle on /settings
   proof: toolkit settings.open --as alice
   expect: text "Dark mode" visible
+  covers: R1              # the requirements of intake.md's `## Requirements` this criterion proves
 - [C2] Toggle persists across reload
   proof: toolkit settings.toggle-dark --as alice ; toolkit reload ; toolkit read body.class
   expect: contains "dark"
@@ -289,12 +290,13 @@ On a pass it writes `.kitchen/toolkit.proven` with the base sha. **When the base
 4. Nothing touches a protected path.
 5. A bug has a criterion marked `repro: true` with a mechanical `expect`.
 6. IDs are unique.
+7. The criteria cover the ticket (W3a review round 2, ADR 0003): intake.md lists the ticket's requirements (`## Requirements`, `- R1: …`, `- R3 (negative): …`, `- R5 (out of scope): … — why`); every criterion has a `covers:` line naming the Rs it proves, every R in scope is covered, and a negative R is covered by at least one criterion whose mechanical expect asserts an absence (`not visible`, `not contains`, `!=`, `== ""`). An `ACCEPT` without requirements is refused at intake.
 
 ### Proofs: `kitchen drive` and Verdicts
 
 `kitchen drive <job> <criterion> [--repro]` is the **only** way a proof runs:
 1. Reads the proof lines.
-2. Runs them through the Toolkit, or as a command or test, in the job's slot. Every process that runs worktree code (Toolkit primitives, the app, tests, cmd proofs) gets the untrusted env (§3).
+2. Runs them through the Toolkit, or as a command or test, in the job's slot. Every process that runs worktree code (Toolkit primitives, the app, tests, cmd proofs) gets the untrusted env (§3). `cmd` and `test` proofs also run under the proof sandbox (macOS `sandbox-exec`: no network but loopback, `$HOME` unreadable but the worktree and toolchains, writes only in the worktree and temp; ADR 0006); spec-lint's cmd denylist is only a first line. Text evidence is redacted before it is written.
 3. Writes each call's files into its own entry folder `evidence/e<N>/`, plus `e<N>/call.json` (argv, exit, result, stdout/stderr tails).
 4. Adds one manifest entry per call, stamped `{id, prev, sha, dirty, tree, round, criterion, role, cmd, exit, files: [{path, sha256}], at}`:
    - `sha` is HEAD of the **tested worktree** (never "unknown": no git, no proof), `dirty` whether the working tree differs from it, `tree` the git tree hash of what was on disk.
@@ -794,3 +796,30 @@ History: all of these are now part of §2 and §3, which are the current contrac
 | Held-out set: 6 replays of real superchat-lite PRs | superchat-lite's stack is over this laptop's Docker budget (W2), so the held-out set is 6 tickets on fixture D, which no role prompt was tuned on. **Owed:** the superchat-lite replay set and the superchat-lite end-to-end ticket of the W3b exit, on a machine that can run its stack |
 | §0.2 needs 3 runs per ticket; §0.3 a Codex subset | **Measured:** one run per ticket on Claude (smoke + the full tuned and held-out sets), time and cost per ticket, traps caught, false FAILs on controls, held-out vs tuned. **Not measurable yet:** the 3-run rates (85% of runs, traps in all 3 runs, ≤1 false FAIL over 2×3 control runs) and the §0.3 Codex subset (Codex quota exhausted until 2026-12-21); flake rate per drive needs repeated runs |
 | Not done | The real GitHub run (`spikes/w3b/github-live.ts`, needs the user's approval and a throwaway repo); Docker bind-mount rule (ADR 0008); dogfooding |
+
+## Changes from the Wave 3a review (round 2)
+
+| Finding | Change (proven by `spikes/w3a/`) |
+|---|---|
+| The spec can drop part of the ticket ("with no owner shown") and still pass every check | Structural, no extra agent (ADR 0003): intake writes `## Requirements` (R1..Rn, negative ones marked, rescoped ones `(out of scope)`); each criterion has `covers:`; spec-lint rule 7 refuses an uncovered R, a criterion covering none, or a negative R no covering criterion asserts the absence of. `e2e.ts claude admin` on the verbatim ticket; `wrong.ts claude owner` |
+| The base check skipped every criterion that needed a new drive | After the drives stage, those criteria run on a checkout of the base plus only the new drive and test files (`.worktrees/<id>.base`, same slot, fresh app, `phase: base`); one that passes is NON-DISCRIMINATING (`base-check.json` `afterDrives`), shown in the verdict row and footer, the verifier's prompt and the review prompt (`facts.review.nonDiscriminating` for W4). Features only: a bug's repro covers it. `paths.ts nondisc` |
+| cmd/test proofs ran unconfined; only bridge replies were redacted | cmd and test proofs run under a `sandbox-exec` profile (`src/proof/sandbox.ts`: loopback only, `$HOME` unreadable but the worktree and toolchains, writes in the worktree and temp, W2's credential list + `$KITCHEN_HOME` + `.kitchen/jobs` + git config denied); Linux logs UNSANDBOXED. Evidence files are redacted when written (stamp-cmd, drive). The cmd denylist stays as a first line; `_proofs.md` and ADR 0006 say the sandbox is the boundary. `contain.ts` |
+| A new drive could work only in-chain, then fail W2's base re-proof after merge | The drives stage runs every new `check:` line alone from seed (reset, then that drive with its check args); a failure goes back to the drives role, told to make the check line self-sufficient. `paths.ts nondisc` |
+| `$o == ""` held whenever the element was missing | The lint treats equality to empty as a negative: it needs an earlier step that makes something (a feature drive or a writing `http`) |
+| The builder policy was a ternary chain | A rule table (rule → reason) in `contract.ts` |
+
+## Changes from Wave 4 (spikes/w4/results.md)
+
+| Finding | Change |
+|---|---|
+| "A finding blocks only if the reviewer can show it" was a rule in a prompt | The engine decides (`src/checks/findings.ts`, ADR 0003): a lens writes `### F<n>` blocks with `kind`, `confidence`, and anchors (`at: file:line`, `requirement: R<n>`, `evidence: e<N>`). A finding blocks only when it names an anchor and every anchor holds (the line exists at HEAD, the requirement is in scope, the ids are in the verified manifest) and its confidence isn't low; else it is a note with the reason. Same line (or same requirement) across lenses → one finding. The lens's `VERDICT:` is informational |
+| Precision needs counts | Per-lens `review-lens` ledger lines (findings, claimed blocking, blocked, low confidence, not demonstrable, merged); `kitchen dismiss <job> <finding> [--reason]` writes `dismissed.jsonl` and a `finding-dismissed` ledger line with the lens (W5's retro reads them) |
+| The builder chased notes | Its "earlier rounds" block carries only the findings that blocked |
+| Lenses ran one after another | In parallel, up to `concurrency`; every lens reads one packet (requirements, contract, verdict with NON-DISCRIMINATING flags, verify.md, seed-diff.md, diff) |
+| UX/UI lenses and `VIEW:` | Verify's screenshots for this HEAD (a criterion's own first) are copied where a read-tier agent can open them. `VIEW:` (a page `/path [--as user]`, a feature drive, or toolkit segments; at most 3 per lens) runs through `src/engine/views.ts` (prove.ts, stamped `role: reviewer-<lens>`, `criterion: view:<lens>`), then the lens runs once more. `kitchen drive <job> --view "<view>"` runs one by hand |
+| `human: always` | The review stage labels the PR `kitchen:review-required` (Forge.label, once); the renderer refuses a report without `<section id="human-check">` on that path and puts it first |
+| Report: what the agent writes vs what the engine states | The report role (read tier, medium) writes only prose sections (`human-check`, `summary`, `changes`, `notes`) citing `{{e<N>}}`. `report-render.ts` refuses unknown ids, ids not stamped for the final HEAD and any other `{{…}}`; strips scripts, handlers, frames and remote URLs (plus a CSP meta); inlines screenshots as data: URIs; and adds the engine's own sections from job files: requirement → criteria → decided by → verdict → evidence thumbnails (NON-DISCRIMINATING flagged), review findings (blocking, notes, why kept as a note, dismissed), seed/migration patch, cost and time per stage (ledger), an evidence appendix |
+| Publishing | `Forge.publishEvidence` replaces `pushEvidence`: the engine builds the `kitchen-evidence` commit itself (`src/forge/evidence-branch.ts`: git plumbing on a private index, one folder per job with `report.html`, `evidence/`, `published.json`, folders older than `evidence_keep_days` pruned); local and fake forges keep the branch in the repo, GitHub (W3b) pushes it. The bundle is redacted again before it is committed. Then `Forge.comment` posts the per-criterion table (screenshot links into the folder) and the report link, once per HEAD |
+| done → build from PR comments | `Forge.reviewComments(pr)`; the runner reads them for done jobs; only a trusted person counts (`feedback.trusted` logins or `feedback.trust_associations`, default OWNER/MEMBER/COLLABORATOR); trusted comments become one quoted feedback file for the builder and the move `done → build` (machine fact `prComment`); untrusted ones are logged (`pr-comment-ignored`) and ignored; each comment is handled once (`filed`) |
+| `kitchen toolkit maintain` | `src/toolkit/maintain.ts` + `roles/maintainer.md` (pstack's maintain-verification-skill, MIT, credited): source wave (one read-only reader per feature file, parallel, on the engine-owned checkout), live pass (the full `toolkit check` of the base), fix on `kitchen/maintain-<sha>` (Toolkit files only, the engine commits), the engine's full check of the fix commit (sandboxed: unmerged), one PR via `Forge.openPr`; outcome clean / changed / blocked in `.kitchen/maintain.json` and the ledger. `kitchen run` starts it when the feature-mapped paths changed by more than `maintain_churn_lines` (default 300) since the last maintain, once per base |
+| Forge interface (merge note for W3b's `forge/github.ts`) | New: `label`, `publishEvidence`, `reviewComments` (must exclude Kitchen's own comments and give `author_association`), `openPr`. Removed: `pushEvidence`. `comment` keeps its signature (the fake forge now stores the body) |

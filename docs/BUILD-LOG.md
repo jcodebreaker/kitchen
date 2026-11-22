@@ -111,7 +111,18 @@ One entry per wave: what was built, review rounds and scores, what is proven, an
 - `toolkit up|down|maintain` are not built.
 - `prepare` has no stall detection (a hung download waits for the 30-minute timeout).
 
-## Wave 3a: proof and the core path (in review: round 1 6.5/10)
+## Wave 3a: proof and the core path (done, 9/10: Claude complete, Codex re-proof owed)
+
+**Review rounds:** 6.5 → 7.5 → 8.5 → 9.
+
+**Conditional on Codex:** the 9 is withdrawn if the Codex run of the admin ticket fails to reach review once the quota resets on 2026-12-21.
+
+**Stands on:**
+- a structural check that the spec covers every requirement in the ticket;
+- a base check after drives;
+- builder limits on the files that proofs and checks run through;
+- sandboxed cmd/test proofs and sandboxed gate and builder checks;
+- evidence redacted when it is written.
 
 **Built**
 - `src/proof/assert.ts`: mechanical `expect:` matchers (`ok`, exit code, `text "…" visible`, contains, JSON path into the output or a `$var`, row count, `$var` comparisons, `and`). `src/proof/proof-line.ts`: the `proof:` line parser. `src/proof/prove.ts`: one criterion's proof through `kitchen drive` (toolkit segments via runDrive, cmd/test via stampCommand), then assert. `kitchen drive <job> <C> [--repro] [--arg k=v]…` on the CLI.
@@ -152,3 +163,33 @@ One entry per wave: what was built, review rounds and scores, what is proven, an
 - `spikes/w3a/paths.ts gap` not re-run after its scripted smith moved to its own worktree (one-line change; `toolkit.ts fake` covers the same stage).
 - The Docker bind-mount rule of ADR 0008 (a sandboxed unmerged Toolkit can still `docker run -v $HOME:…`).
 - Dogfooding has not started.
+
+**Review round 2 fixes** (`spikes/w3a/results.md` "Review round 2 fixes", PLAN "Changes from the Wave 3a review (round 2)"):
+- The spec must match the ticket, by structure (ADR 0003): intake writes `## Requirements` (R1..Rn, negatives and rescopes marked), every criterion `covers:` some, and spec-lint rule 7 refuses an uncovered requirement, a criterion covering nothing, or a negative requirement no covering criterion asserts an absence for. The reviewer's ticket, verbatim, on Claude: intake split it into R1–R4 (two negative), the spec's R4 criterion refuses "alice" in alice's own project list, PASS to review ($0.382); `wrong.ts owner` (owner shown to everyone, per-user list kept) FAILs exactly that criterion.
+- Base check after drives: criteria that needed a new drive or test run on a base checkout plus only the new drive/test files (`phase: base`); a pass is NON-DISCRIMINATING in the verdict, the verifier's prompt and the review prompt.
+- cmd/test proofs run under a `sandbox-exec` profile (`src/proof/sandbox.ts`: loopback only, `$HOME` unreadable, worktree-only writes, credentials/`$KITCHEN_HOME`/job folders denied; Linux UNSANDBOXED); evidence is redacted when written. `contain.ts` 11/11 (key read, env dump, urllib, raw socket, `.env.kitchen`, outside write, job.json; controls show each succeeds unsandboxed). Found while proving it: `allow network* (local ip …)` let outbound sockets through.
+- New `check:` lines run alone from seed in the drives stage (`paths.ts nondisc`: a drive that works only after the proof's login is caught, fixed on attempt 2).
+- `$o == ""` is a negative for the lint; the builder policy is a rule table.
+- Spikes: contain 11/11, attacks 26/26, kill 8/8, paths 34/34, wrong owner 5/5 and leak 4/4, e2e claude admin 12/12, W1 paths 34/34. `npm test` 294/294, typecheck and lint clean. Real-agent spend $0.382 (Claude); Codex not run (quota).
+- Merged main's W2 round 2 (sandbox module now `src/toolkit/sandbox.ts`; the proof profile reuses its deny list).
+
+**Open after round 2:** the app the Toolkit starts, the primitives of a merged Toolkit, Gate's checks and the builder's `checks` tool are still unsandboxed; Linux has no proof sandbox; the base check after drives needs a `prepare` of the base checkout (one extra prepare per job with new drives); the coverage rule trusts intake's reading of the ticket (short, quoted, shown to review).
+
+## Wave 4: review, report, feedback, maintain (built, not yet reviewed: Claude only, Codex owed)
+
+**Built**
+- Review lenses `roles/reviewer-code.md`, `reviewer-security.md`, `reviewer-ux.md`, `reviewer-ui.md` and the shared findings format `roles/_review.md` (read tier, medium model). Routing from the risk path and surfaces (`lensesFor`), lenses in parallel up to `concurrency`, one packet for all (requirements, contract, verdict with NON-DISCRIMINATING flags, verify.md, seed-diff.md, diff); a `human: always` path labels the PR `kitchen:review-required`.
+- `src/checks/findings.ts`: the engine decides what blocks. A finding blocks only when it is demonstrable (a line at HEAD, a requirement in scope, evidence in the verified manifest; every anchor it names must hold) and its confidence isn't low; the rest are notes with the reason. Same line or requirement across lenses → one finding. Per-lens counts to the ledger (`review-lens`); `rounds/<N>/review.md` + `review.json`; the builder's next round gets only what blocked. ADR 0003 updated.
+- UX/UI: Verify's screenshots copied where a read-tier agent can open them; `VIEW:` lines run through `src/engine/views.ts` (stamped `reviewer-<lens>`, `view:<lens>`), then the lens runs once more. `kitchen drive <job> --view "<view>"`.
+- `kitchen dismiss <job> <finding> [--reason]` (dismissed.jsonl, `finding-dismissed` ledger line with the lens).
+- `roles/report.md` + `src/checks/report-render.ts`: the role writes prose sections citing `{{e<N>}}`; the renderer refuses unknown ids, ids not stamped for the final HEAD, other placeholders, and a `human: always` report without `human-check` (which it then puts first); strips scripts, handlers, frames, remote URLs (plus a CSP); inlines screenshots; adds the engine's own sections (requirement → criteria → verdict → evidence thumbnails, findings, seed patch, cost and time per stage from the ledger, evidence appendix). Two refusals → needs-human (machine, unchanged).
+- Publishing: `src/forge/evidence-branch.ts` builds the `kitchen-evidence` commit with git plumbing on a private index (one folder per job, pruned after `evidence_keep_days`); `Forge.publishEvidence` (replaces `pushEvidence`), `Forge.comment` with the per-criterion table and link, `Forge.label`, `Forge.reviewComments`, `Forge.openPr`; local and fake forges implement them (the fake forge's evidence branch is real).
+- done → build from PR review comments: the runner reads them for done jobs; trusted (`feedback.trusted` / `feedback.trust_associations`) → one quoted feedback file and the move (machine fact `prComment`); untrusted → logged and ignored; each once.
+- `kitchen toolkit maintain` (`src/toolkit/maintain.ts`, `roles/maintainer.md`, pstack's maintain-verification-skill, MIT, credited): source wave, live pass (full check of the base), Toolkit-only fix on `kitchen/maintain-<sha>`, the engine's full check of the fix commit, one PR via `Forge.openPr`; `.kitchen/maintain.json`. `kitchen run` starts it when feature-mapped paths churned past `maintain_churn_lines` (default 300), once per base.
+- The spec role now sees human feedback (`kitchen feedback --to spec`).
+
+**Proven** (`spikes/w4/results.md`): `scripted.ts` 26/26 (demonstrable finding → build, three kinds of non-demonstrable → notes, VIEW, merge, stats, planted id refused, self-contained report, evidence branch, PR comment, dismiss, untrusted ignored, trusted → build, `drive --view`); `e2e.ts ui` 12/12 ($0.354, medium, code+ux+ui, the UI lens's two views ran); `e2e.ts auth` 12/12 ($0.398, high, code+security+ux+ui, label, "what a human must check" first); `maintain.ts` 14/14 (the stale settings selector found and fixed in one proven PR, 95 s, $0.068; the churn trigger starts it once per base). `npm test` 315/315, typecheck and lint clean. Total spend about $2.25, including three auth tickets that didn't reach done (an intake rating, a lint-blocked absence, and `test` proofs that can't reach the app).
+
+**Merge notes:** W3b's `forge/github.ts` must implement `publishEvidence` (push the branch `commitEvidence` builds), `label`, `reviewComments` (exclude Kitchen's own comments; `author_association`), `openPr`; `pushEvidence` is gone. `report.ts` and `review.ts` are rewritten; `ready.ts` is untouched.
+
+**Open:** Codex (all of W4); `test` proofs have no app URL; `http` can't assert a 4xx; the independent review round.

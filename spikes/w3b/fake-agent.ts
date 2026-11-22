@@ -68,6 +68,12 @@ function primitiveScenario(req: AgentRequest): FakeStep | null {
 
 export default async function script(req: AgentRequest): Promise<FakeStep> {
   if (req.role.startsWith("reviewer")) return { file: "VERDICT: PASS\n\nNothing blocking.\n", line: "VERDICT: PASS" };
+  if (req.role === "report") {
+    // W4's report role: cite what the engine listed (like spikes/w4/fake-agent.ts, without its planted bad id).
+    const listed = [...(/# Evidence you may cite[\s\S]*?(?=\n# |$)/.exec(req.prompt)?.[0] ?? "").matchAll(/^- (e\d+):/gm)].map((m) => m[1]);
+    const cite = [listed[0], listed.at(-1)].filter(Boolean).map((id) => `{{${id}}}`);
+    return { file: `<section id="summary"><p>Done as the ticket asked. ${cite.join(" ")}</p></section>\n`, line: `report: cites ${cite.join(" ")}` };
+  }
   if (/scenario: primitive/.test(req.prompt)) {
     const r = req.role === "smith" ? null : primitiveScenario(req);
     if (r) return r;

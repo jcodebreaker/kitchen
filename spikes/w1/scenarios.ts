@@ -20,14 +20,15 @@ export type Step =
       stamp?: string;
     };
 
-const intake = (kind: string, risk: string, criteria = "") => `DECISION: ACCEPT\nKIND: ${kind}\nRISK: ${risk}\nREASON: scripted\n${criteria}`;
-const CRITERIA = "## Criteria\n- [C1] the work file exists\n  proof: cmd test -d work\n  expect: exit 0\n";
-const CRITERIA_BUG = "## Criteria\n- [C1] the regression test passes\n  proof: test test/regression\n  expect: exit 0\n  repro: true\n";
-const CRITERIA_SQL = "## Criteria\n- [C1] the row is stored\n  proof: toolkit sql --q 'select 1'\n  expect: rows 1\n";
+const intake = (kind: string, risk: string, criteria = "") =>
+  `DECISION: ACCEPT\nKIND: ${kind}\nRISK: ${risk}\nREASON: scripted\n\n## Requirements\n- R1: the work is done\n\n${criteria}`;
+const CRITERIA = "## Criteria\n- [C1] the work file exists\n  proof: cmd test -d work\n  expect: exit 0\n  covers: R1\n";
+const CRITERIA_BUG = "## Criteria\n- [C1] the regression test passes\n  proof: test test/regression\n  expect: exit 0\n  repro: true\n  covers: R1\n";
+const CRITERIA_SQL = "## Criteria\n- [C1] the row is stored\n  proof: toolkit sql --q 'select 1'\n  expect: rows 1\n  covers: R1\n";
 const BUILD = "STATUS: READY\n\nDid the work.";
 const DRIVES_OK = "DRIVES: OK\n";
 const PASS = "VERDICT: PASS\n";
-const CRITERIA_JUDGED = `${CRITERIA}- [C2] the work file reads well\n  proof: cmd ls work\n  expect: judged\n`;
+const CRITERIA_JUDGED = `${CRITERIA}- [C2] the work file reads well\n  proof: cmd ls work\n  expect: judged\n  covers: R1\n`;
 const REVIEW_PASS = "VERDICT: PASS\n";
 const REPORT = "<h1>Report</h1><p>Gate passed: {{eLAST}}</p>\n";
 
