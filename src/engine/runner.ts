@@ -231,7 +231,9 @@ async function step(repo: string, start: Job, d: Deps, print: (l: string) => voi
   if (!handler) return;
   const jobDir = jobDirOf(repo, job.id);
   const log = (m: string) => print(`${short(job)}  ${job.stage}: ${m}`);
-  if (hasToolkit(job) && !job.slot) {
+  // Also when job.json still names a slot: a runner killed mid-stage leaves it there while its
+  // registry entry was reclaimed at start-up, and this runner must own the slot to free it on exit.
+  if (hasToolkit(job) && (!job.slot || !listSlots().some((s) => s.id === job.slotId))) {
     const { slot } = await acquireSlot({ id: job.slotId, toolkitBin: job.toolkitBin, src: job.worktree || repo, pid: me.pid });
     job = await updateJob(repo, job.id, (j) => {
       j.slot = { n: slot.n, ports: slot.ports };
