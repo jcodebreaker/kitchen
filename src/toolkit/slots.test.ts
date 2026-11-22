@@ -4,7 +4,50 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "vitest";
 import type { Owner } from "../lock.ts";
-import { acquireSlot, blockCount, partitionStale, pickBlock, portsOf, releaseSlot, type Slot } from "./slots.ts";
+import {
+  acquireSlot,
+  BLOCK,
+  blockCount,
+  PORT_HI,
+  PORT_LO,
+  parseDockerPorts,
+  partitionStale,
+  pickBlock,
+  portsOf,
+  releaseSlot,
+  type Slot,
+  slotsHome,
+} from "./slots.ts";
+
+test("the registry is machine-wide: KITCHEN_HOME doesn't move it, only KITCHEN_SLOTS does", () => {
+  const saved = { KITCHEN_HOME: process.env.KITCHEN_HOME, KITCHEN_SLOTS: process.env.KITCHEN_SLOTS };
+  try {
+    delete process.env.KITCHEN_SLOTS;
+    process.env.KITCHEN_HOME = "/tmp/dogfood-home";
+    const a = slotsHome();
+    process.env.KITCHEN_HOME = "/tmp/bench-home";
+    assert.equal(slotsHome(), a);
+    assert.equal(a, path.join(os.homedir(), ".kitchen-slots"));
+    process.env.KITCHEN_SLOTS = "/tmp/test-slots";
+    assert.equal(slotsHome(), "/tmp/test-slots");
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+});
+
+test("Docker-published host ports are read from `docker ps` output, ranges and IPv6 included", () => {
+  const out = "0.0.0.0:31000->3000/tcp, [::]:31000->3000/tcp\n\n127.0.0.1:31041-31043->5432-5434/tcp\n:::31060->80/tcp\n5432/tcp\n";
+  assert.deepEqual([...parseDockerPorts(out)].sort(), [31000, 31041, 31042, 31043, 31060]);
+  assert.equal(parseDockerPorts("").size, 0);
+});
+
+test("pickBlock can start past the low blocks", async () => {
+  assert.equal(await pickBlock(new Set([80]), async () => true, PORT_LO, PORT_HI, BLOCK, 79), 79);
+  assert.equal(await pickBlock(new Set([79]), async () => true, PORT_LO, PORT_HI, BLOCK, 79), 80);
+});
 
 test("blocks of 20 fit inside 31000–32767", () => {
   assert.equal(blockCount(), 88);

@@ -1,19 +1,27 @@
 // Slot pool: each slot owns a block of 20 ports in 31000–32767 (below the
-// Linux ephemeral range), checked free by probing. The pool lives in
-// $KITCHEN_HOME/slots.json, shared across repos, so each slot records which
+// Linux ephemeral range), checked free by probing 127.0.0.1 and 0.0.0.0 and
+// against the ports running containers publish. Ports are machine-wide, so the
+// pool is too: ~/.kitchen-slots/slots.json whatever KITCHEN_HOME is (a dogfood
+// run and a benchmark with homes of their own share it); only KITCHEN_SLOTS
+// moves it (tests). It is shared across repos, so each slot records which
 // Toolkit started it and from which source: reclaiming a stale slot runs *that*
 // Toolkit's `down`. A slot is stale when its owner process is gone: the pid is
 // dead, or it now belongs to another process (start time differs).
+import { execFile } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
-import { ensureHome, kitchenHome } from "../home.ts";
+import { ensureHome } from "../home.ts";
 import { type Owner, ownerAlive, processStart, withFileLock } from "../lock.ts";
 import { runToolkit } from "./run.ts";
 
 export const PORT_LO = 31000;
 export const PORT_HI = 32767;
 export const BLOCK = 20;
+
+/** The registry's folder: one per machine (per user), never per KITCHEN_HOME. */
+export const slotsHome = (): string => process.env.KITCHEN_SLOTS || path.join(os.homedir(), ".kitchen-slots");
 
 export type Slot = {
   n: number;
@@ -32,15 +40,16 @@ type Registry = { slots: Slot[] };
 export const blockCount = (lo = PORT_LO, hi = PORT_HI, size = BLOCK) => Math.floor((hi - lo + 1) / size);
 export const portsOf = (n: number, lo = PORT_LO, size = BLOCK) => Array.from({ length: size }, (_, i) => lo + n * size + i);
 
-/** First block not taken by the registry whose every port probes free. Pure apart from the probe. */
+/** First block (from `first`) not taken by the registry whose every port probes free. Pure apart from the probe. */
 export async function pickBlock(
   taken: Set<number>,
   isFree: (port: number) => Promise<boolean>,
   lo = PORT_LO,
   hi = PORT_HI,
   size = BLOCK,
+  first = 0,
 ): Promise<number | null> {
-  for (let n = 0; n < blockCount(lo, hi, size); n++) {
+  for (let n = first; n < blockCount(lo, hi, size); n++) {
     if (taken.has(n)) continue;
     let ok = true;
     for (const p of portsOf(n, lo, size)) {
@@ -76,6 +85,33 @@ export async function probePort(port: number): Promise<boolean> {
   return (await on("127.0.0.1")) && (await on("0.0.0.0"));
 }
 
+/**
+ * Host ports in `docker ps --format '{{.Ports}}'` output ("0.0.0.0:31000->3000/tcp, [::]:31000->3000/tcp",
+ * a range "0.0.0.0:31000-31002->3000-3002/tcp"). Pure.
+ */
+export function parseDockerPorts(text: string): Set<number> {
+  const out = new Set<number>();
+  for (const m of text.matchAll(/:(\d+)(?:-(\d+))?->/g)) {
+    const a = Number(m[1]);
+    const b = m[2] ? Number(m[2]) : a;
+    for (let p = a; p <= b && p <= 65535; p++) out.add(p);
+  }
+  return out;
+}
+
+/** Ports running containers publish (none when Docker isn't there): Docker Desktop binds them in its VM, where a probe may not see them. */
+export function dockerPublishedPorts(): Promise<Set<number>> {
+  return new Promise((resolve) => {
+    execFile("docker", ["ps", "--format", "{{.Ports}}"], { timeout: 10_000 }, (err, stdout) => resolve(err ? new Set() : parseDockerPorts(String(stdout))));
+  });
+}
+
+/** The default probe: no container publishes the port, and it binds on 127.0.0.1 and 0.0.0.0. */
+export async function portProbe(): Promise<(port: number) => Promise<boolean>> {
+  const docker = await dockerPublishedPorts();
+  return async (p) => !docker.has(p) && (await probePort(p));
+}
+
 function load(home: string): Registry {
   try {
     return JSON.parse(fs.readFileSync(path.join(home, "slots.json"), "utf8")) as Registry;
@@ -105,10 +141,12 @@ export type AcquireOpts = {
   onStale?: (s: Slot) => Promise<void>;
   isFree?: (port: number) => Promise<boolean>;
   isAlive?: (o: Owner) => boolean;
+  /** Start the search at this block (a spike keeps clear of the low blocks a running benchmark uses). */
+  firstBlock?: number;
 };
 
 export async function acquireSlot(o: AcquireOpts): Promise<{ slot: Slot; reclaimed: Slot[] }> {
-  const home = ensureHome(o.home ?? kitchenHome());
+  const home = ensureHome(o.home ?? slotsHome());
   const isAlive = o.isAlive ?? ((x: Owner) => ownerAlive(x));
   return withFileLock(path.join(home, "slots.lock"), async () => {
     const reg = load(home);
@@ -119,7 +157,7 @@ export async function acquireSlot(o: AcquireOpts): Promise<{ slot: Slot; reclaim
       save(home, { slots: live });
       return { slot: mine, reclaimed: stale };
     }
-    const n = await pickBlock(new Set(live.map((s) => s.n)), o.isFree ?? probePort);
+    const n = await pickBlock(new Set(live.map((s) => s.n)), o.isFree ?? (await portProbe()), PORT_LO, PORT_HI, BLOCK, o.firstBlock ?? 0);
     if (n === null) throw new Error("no free block of 20 ports in 31000–32767");
     const pid = o.pid ?? process.pid;
     const slot: Slot = {
@@ -139,7 +177,7 @@ export async function acquireSlot(o: AcquireOpts): Promise<{ slot: Slot; reclaim
 
 /** Drop every slot whose owner process is gone, running each one's own `down` first. Returns them. */
 export async function reclaimStaleSlots(o: Pick<AcquireOpts, "home" | "onStale" | "isAlive"> = {}): Promise<Slot[]> {
-  const home = ensureHome(o.home ?? kitchenHome());
+  const home = ensureHome(o.home ?? slotsHome());
   const isAlive = o.isAlive ?? ((x: Owner) => ownerAlive(x));
   return withFileLock(path.join(home, "slots.lock"), async () => {
     const { live, stale } = partitionStale(load(home).slots, isAlive);
@@ -149,7 +187,7 @@ export async function reclaimStaleSlots(o: Pick<AcquireOpts, "home" | "onStale" 
   });
 }
 
-export async function releaseSlot(id: string, home = kitchenHome()): Promise<Slot | null> {
+export async function releaseSlot(id: string, home = slotsHome()): Promise<Slot | null> {
   return withFileLock(path.join(ensureHome(home), "slots.lock"), async () => {
     const reg = load(home);
     const s = reg.slots.find((x) => x.id === id) ?? null;
@@ -158,6 +196,6 @@ export async function releaseSlot(id: string, home = kitchenHome()): Promise<Slo
   });
 }
 
-export function listSlots(home = kitchenHome()): Slot[] {
+export function listSlots(home = slotsHome()): Slot[] {
   return load(home).slots;
 }

@@ -44,12 +44,12 @@ const CLI = path.resolve(import.meta.dirname, "..", `cli${path.extname(import.me
  * explicitly, from the engine's own env: the agent tool would otherwise hand the
  * server its scrubbed env (Claude) or a handful of variables (Codex), and the
  * bridge needs Docker (DOCKER_HOST/DOCKER_CONTEXT, or the default context under
- * HOME) and KITCHEN_HOME (engine key, slots). None of it reaches the agent:
+ * HOME), KITCHEN_HOME (engine key) and the slot registry (HOME, or KITCHEN_SLOTS). None of it reaches the agent:
  * the agent only sees the tools' results.
  */
 export function bridgeServer(o: BridgeOpts, parent: NodeJS.ProcessEnv = process.env): BridgeServer {
   const env: Record<string, string> = { KITCHEN_HOME: kitchenHome() };
-  for (const k of ["PATH", "HOME", "USER", "LANG", "TMPDIR", "TZ", ...CONTROL_PLANE, "KITCHEN_TOOLKIT_STATE"]) {
+  for (const k of ["PATH", "HOME", "USER", "LANG", "TMPDIR", "TZ", ...CONTROL_PLANE, "KITCHEN_TOOLKIT_STATE", "KITCHEN_SLOTS"]) {
     const v = parent[k];
     if (v) env[k] = v;
   }

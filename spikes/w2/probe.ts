@@ -11,6 +11,7 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { slotsHome } from "../../src/toolkit/slots.ts";
 import { CLI, check, finish, git, HERE, kitchen, type Repo } from "./lib.ts";
 
 const root = path.resolve(process.argv[2] ?? path.join(HERE, ".work", "probe"));
@@ -106,7 +107,7 @@ check(
 
 // `kitchen toolkit up` (foreground, Ctrl-C brings it down) and `toolkit down --id` (a slot left by kill -9).
 const cleanRepo = repo("up-down", []);
-const slots = () => (JSON.parse(fs.readFileSync(path.join(cleanRepo.home, "slots.json"), "utf8")) as { slots: { id: string }[] }).slots.map((s) => s.id);
+const slots = () => (JSON.parse(fs.readFileSync(path.join(slotsHome(), "slots.json"), "utf8")) as { slots: { id: string }[] }).slots.map((s) => s.id);
 const upUntilReady = () =>
   new Promise<{ p: ReturnType<typeof spawn>; id: string; out: string }>((resolve, reject) => {
     const p = spawn(process.execPath, [CLI, "toolkit", "up", "--repo", cleanRepo.dir], { env: cleanRepo.env });

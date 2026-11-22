@@ -239,7 +239,7 @@ Every command prints exactly one JSON line on stdout and logs to stderr. Kitchen
 
 **Externals.** `describe` lists `externals: [{name, mode: "mock"|"sandbox"}]`, for example Stripe sandbox, mail catcher or OAuth mock. Seed users are local fake credentials, never real ones. Mobile is out of scope for v0.1.
 
-**Slots and ports.** The engine keeps a pool of `concurrency` slots for each machine, in `~/.kitchen/slots.json`, shared across repos.
+**Slots and ports.** The engine keeps a pool of `concurrency` slots for each machine, in `~/.kitchen-slots/slots.json`, shared across repos and across `KITCHEN_HOME`s (ports are machine-wide; only `KITCHEN_SLOTS` moves it, for tests). A block is handed out only when no container publishes any of its ports and each binds on 127.0.0.1 and 0.0.0.0.
 - **Ports:** each slot reserves a block of 20 free ports, checked with a probe in the range 31000–32767 (below the Linux ephemeral range).
 - **What a slot records:** its id, ports, owner pid **and that process's start time**, and the `bin/dev` and `--src` it was started with (the registry is shared across repos, so reclaiming must run the right Toolkit).
 - **Stale slots:** a slot whose owner process is gone (dead pid, or a live pid with another start time: the pid was reused) is reclaimed. Its own Toolkit's `down` runs first, with the untrusted env.

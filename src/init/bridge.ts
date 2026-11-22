@@ -29,7 +29,7 @@ export type SetupBridgeOpts = { repo: string; worktree: string; staticOnly?: boo
 
 export function setupBridgeServer(o: SetupBridgeOpts, parent: NodeJS.ProcessEnv = process.env): BridgeServer {
   const env: Record<string, string> = { KITCHEN_HOME: kitchenHome() };
-  for (const k of ["PATH", "HOME", "USER", "LANG", "TMPDIR", "TZ", ...CONTROL_PLANE, "KITCHEN_TOOLKIT_STATE"]) {
+  for (const k of ["PATH", "HOME", "USER", "LANG", "TMPDIR", "TZ", ...CONTROL_PLANE, "KITCHEN_TOOLKIT_STATE", "KITCHEN_SLOTS"]) {
     const v = parent[k];
     if (v) env[k] = v;
   }

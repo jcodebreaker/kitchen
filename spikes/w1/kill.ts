@@ -9,6 +9,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { processStart } from "../../src/lock.ts";
+import { slotsHome } from "../../src/toolkit/slots.ts";
 import { CLI, check, finish, forge, HERE, jobDir, jobOf, kitchen, makeRepo, ROOT, sleep, stagesOf, ticket } from "./lib.ts";
 
 const root = path.resolve(process.argv[2] ?? path.join(import.meta.dirname, ".work"));
@@ -25,7 +26,7 @@ for (let i = 0; i < 300 && !fs.existsSync(marker); i++) await sleep(100);
 check("runner reached drives and the verifier is mid-run", fs.existsSync(marker));
 
 const before = jobOf(r, id);
-const slots = JSON.parse(fs.readFileSync(path.join(r.home, "slots.json"), "utf8")) as { slots: { id: string; pid: number; n: number }[] };
+const slots = JSON.parse(fs.readFileSync(path.join(slotsHome(), "slots.json"), "utf8")) as { slots: { id: string; pid: number; n: number }[] };
 check(
   "before the kill: stage drives, marked running, build committed + published, gate stamped",
   before.stage === "drives" && before.running?.pid === child.pid && before.filed.some((k) => k.startsWith("publish/")) && before.manifestHead.n === 1,

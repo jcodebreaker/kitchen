@@ -1,6 +1,7 @@
 // $KITCHEN_HOME (default ~/.kitchen): engine-owned, per machine, shared across repos.
-// Holds slots.json, the scrubbed git/gh config for untrusted processes, and the
-// engine key that signs manifest heads. Mode 700; the key file is mode 600.
+// Holds the scrubbed git/gh config for untrusted processes and the engine key
+// that signs manifest heads. Mode 700; the key file is mode 600. Not the slot
+// registry: ports are machine-wide, so it is ~/.kitchen-slots (toolkit/slots.ts).
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";

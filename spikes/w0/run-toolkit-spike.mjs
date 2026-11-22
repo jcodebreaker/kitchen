@@ -8,6 +8,7 @@
 // Postgres containers run at once. Everything started is torn down in `finally`.
 import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 const repo = path.resolve(import.meta.dirname, "../..");
@@ -427,7 +428,7 @@ try {
   await new Promise((r) => setTimeout(r, 300));
   const o = await upSlot("orphan", src, deadPid);
   expect("orphan up (owner pid already dead)", o.u.json?.status === "ready");
-  const reg = path.join(env.KITCHEN_HOME, "slots.json");
+  const reg = path.join(env.KITCHEN_SLOTS || path.join(os.homedir(), ".kitchen-slots"), "slots.json");
   const fresh = await kc(
     "slot acquire fresh (reclaims orphan)",
     "slot",
