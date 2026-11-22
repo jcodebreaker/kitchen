@@ -12,7 +12,7 @@ not on PATH, use `npx devkitchen` in its place.
 
 | the user says | run |
 |---|---|
-| set up Kitchen, "make a Toolkit", first use | `kitchen init --detach`, then `kitchen init --status` (see Setup) |
+| set up Kitchen, "make a Toolkit", first use | `kitchen init --status`, then `kitchen init --detach` and `kitchen init --status --wait 90` (see Setup) |
 | "do X", "fix Y", "add Z" (a request for work) | `kitchen ticket "<their words, verbatim>"` then offer to start the queue |
 | start, run, "go", work the queue | `kitchen run --detach` (see Running), then `kitchen status` |
 | what's happening, status, progress | `kitchen status` |
@@ -45,6 +45,8 @@ Toolkit with Kitchen's setup agent on a branch (`kitchen/setup`) and proves it
 with `kitchen toolkit check`. It takes 5–15 minutes and starts its own agent,
 Docker containers and network calls, so, like a queue drain:
 
+0. First run `kitchen init --status`. If it says `running`, go to step 2; if
+   `questions`, go to Questions; if `done`, relay it. Otherwise start it:
 1. Start it **detached and outside your sandbox**: `kitchen init --detach`.
    - Claude Code: a normal Bash command (if Bash runs sandboxed, run this one
      with the sandbox off). The user approves `kitchen init` once.
@@ -52,11 +54,12 @@ Docker containers and network calls, so, like a queue drain:
      outside the sandbox"); the user approves it once. Inside the sandbox it
      can't write `.git`, reach Docker or start the setup agent.
    It prints `init detached: pid <n>, log <file>` and returns at once.
-2. **Poll** with `kitchen init --status` (read-only: no escalation needed).
-   Each poll is one short call: wait about 60 seconds between polls (e.g.
-   `sleep 60 && kitchen init --status`), never one call that waits for the
-   whole setup, and never more than 2 minutes in one call. Relay the status
-   line to the user now and then, not every poll. It ends in one of:
+2. **Poll** with `kitchen init --status --wait 90` (read-only: no escalation
+   needed). It returns as soon as init stops running, or after 90 seconds with
+   the latest lines; don't use `sleep` (agent tools may refuse it), and never
+   one call that waits for the whole setup. Keep polling until it ends, in this
+   same turn: setup is what the user asked for. Relay a short progress line
+   now and then, not every poll. It ends in one of:
    - `init: done` (exit 0): relay the last lines (the next steps).
    - `init: questions` (exit 3): see Questions.
    - `init: failed …` (exit 1): show its lines and stop. Don't retry in a loop;

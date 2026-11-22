@@ -56,14 +56,27 @@ export async function w2(name: string, argv: string[]): Promise<number> {
     return 0;
   }
   if (name === "init") {
-    const { flags } = parseFlags(argv, ["repo", "answers", "tool", "model", "effort", "max-fix"]);
+    const { flags } = parseFlags(argv, ["repo", "answers", "tool", "model", "effort", "max-fix", "wait"]);
     for (const k of Object.keys(flags))
-      if (!["repo", "answers", "tool", "model", "effort", "max-fix", "generate-only", "detach", "status"].includes(k))
+      if (!["repo", "answers", "tool", "model", "effort", "max-fix", "generate-only", "detach", "status", "wait"].includes(k))
         throw new Error(`kitchen init: unknown flag --${k}`);
     const repo = plainCheckout(path.resolve(str(flags.repo) ?? process.cwd())).workTree;
     if (flags.status === true) {
-      const s = readStatus(repo);
-      const r = statusReport(s, !!s && ownerAlive({ pid: s.pid, start: s.pidStart }));
+      // --wait <secs>: block up to that long (at most 110 s, so one agent tool call stays short) while init runs.
+      // Agent tools may refuse a plain `sleep`; this is the way to wait between polls.
+      const wait = Math.min(110, Math.max(0, Number(str(flags.wait) ?? 0) || 0)) * 1000;
+      const end = Date.now() + wait;
+      const live = () => {
+        const s = readStatus(repo);
+        return { s, alive: !!s && ownerAlive({ pid: s.pid, start: s.pidStart }) };
+      };
+      let cur = live();
+      while (cur.s?.state === "running" && cur.alive && Date.now() < end) {
+        await new Promise((res) => setTimeout(res, 2000));
+        cur = live();
+      }
+      const s = cur.s;
+      const r = statusReport(s, cur.alive);
       for (const l of r.lines) out(l);
       return r.code;
     }

@@ -5,14 +5,14 @@
 //   kitchen status
 //   kitchen resume <id|n> · feedback <id> [--to <stage>] ["<text>"] · reject <id>
 //   kitchen report
-//   kitchen init [--answers <file>] [--tool claude|codex]  ·  kitchen toolkit check [--feature x] [--src dir]   (src/cli/toolkit-commands.ts)
+//   kitchen init [--answers <file>] [--tool claude|codex] [--detach] · init --status  ·  kitchen toolkit check [--feature x] [--src dir] · toolkit up · toolkit down --id <id>   (src/cli/toolkit-commands.ts)
 //   kitchen mcp --job <id> --role <role> [--repo <dir>]   the engine bridge (src/bridge/mcp.ts)
 import path from "node:path";
 import { serveBridge } from "./bridge/mcp.ts";
 import * as cmd from "./cli/commands.ts";
 
 const USAGE =
-  'usage: kitchen ticket "<text>" | run [--once] [--detach] [<job>] | status | resume <id|n> | feedback <id> [--to <stage>] ["<text>"] | reject <id> | report | init [--answers <file>] | toolkit check [--feature x] [--src dir] | mcp …';
+  'usage: kitchen ticket "<text>" | run [--once] [--detach] [<job>] | status | resume <id|n> | feedback <id> [--to <stage>] ["<text>"] | reject <id> | report | init [--answers <file>] [--detach] | init --status | toolkit check [--feature x] [--src dir] | toolkit up [--rev r] | toolkit down --id <id> | mcp …';
 
 async function main(argv: string[]): Promise<number> {
   const [name, ...rest] = argv;
