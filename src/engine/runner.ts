@@ -19,7 +19,7 @@ import { appendLedger } from "../ledger/append.ts";
 import { self } from "../lock.ts";
 import { PromptSource } from "../sources/prompt.ts";
 import type { TicketSource } from "../sources/source.ts";
-import { acquireSlot, downSlot, reclaimStaleSlots, releaseSlot } from "../toolkit/slots.ts";
+import { acquireSlot, downSlot, listSlots, reclaimStaleSlots, releaseSlot } from "../toolkit/slots.ts";
 import { acquireRunLock } from "./lock.ts";
 import { type Facts, isActive, type Job, move, type Stage } from "./machine.ts";
 import { HANDLERS } from "./stages/index.ts";
@@ -117,6 +117,11 @@ export async function runKitchen(o: RunOpts): Promise<{ steps: number; moves: nu
       }
     }
   } finally {
+    // Leaving: give back the slots this runner holds (the next run takes new ones).
+    for (const s of listSlots().filter((x) => x.pid === me.pid)) {
+      const job = listJobs(repo).find((j) => j.slotId === s.id);
+      if (job) await freeSlot(repo, job, print);
+    }
     appendLedger(repo, { job: "-", stage: "-", round: 0, event: "run-end", key: `${runKey}/end`, detail: stats });
     lock.release();
   }
@@ -289,14 +294,20 @@ export async function moveJob(repo: string, seen: Job, p: Proposal, print: (l: s
   });
   for (const l of lines) print(l);
   const moved = after as Job | null;
-  if (moved?.slot && !isActive(moved.stage)) {
-    await releaseSlot(moved.slotId);
-    await updateJob(repo, moved.id, (j) => {
-      j.slot = null;
-      return j;
-    });
-  }
+  if (moved?.slot && !isActive(moved.stage)) await freeSlot(repo, moved, print);
   return outcome;
+}
+
+/** A paused or finished job gives its slot back: its Toolkit's `down`, then the registry entry. */
+async function freeSlot(repo: string, job: Job, print: (l: string) => void) {
+  const s = listSlots().find((x) => x.id === job.slotId);
+  if (s) await downSlot(s);
+  await releaseSlot(job.slotId);
+  await updateJob(repo, job.id, (j) => {
+    j.slot = null;
+    return j;
+  });
+  print(`${job.id}  slot ${job.slot?.n} released (${job.stage})`);
 }
 
 const reasonOf = (j: Job) => (j.stage === "paused" ? `waitFor ${j.waitFor}${j.until ? ` until ${j.until}` : ""}` : j.pausedReason);

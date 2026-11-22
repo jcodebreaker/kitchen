@@ -5,13 +5,11 @@
 // --feature` is not run yet (W2 / W3a make both engine checks).
 import path from "node:path";
 import { roundDir } from "../store.ts";
-import { changedFiles, commitAll } from "../worktree.ts";
-import { readGate } from "./gate.ts";
+import { commitAll } from "../worktree.ts";
+import { gateStillValid } from "./gate.ts";
 import { prompt } from "./prompts.ts";
 import { headers, runRole } from "./role.ts";
 import type { StageHandler } from "./types.ts";
-
-const FEATURE_DRIVE = /^\.kitchen\/toolkit\/features\/[^/]+\.md$/;
 
 export const drives: StageHandler = async (ctx) => {
   const r = await runRole(ctx, {
@@ -24,9 +22,7 @@ export const drives: StageHandler = async (ctx) => {
   const h = headers(r.text);
   const job = ctx.refresh();
   await commitAll(job, `kitchen(${job.id}): feature drives`);
-  const g = readGate(ctx.jobDir, job.round);
-  const since = g ? await changedFiles(job, g.head) : null;
-  const gateValid = !!since && since.every((f) => FEATURE_DRIVE.test(f));
+  const gateValid = await gateStillValid(ctx.jobDir, job);
   const status = h.DRIVES ?? "";
   const facts = {
     drives: {

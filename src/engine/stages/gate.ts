@@ -6,10 +6,20 @@ import fs from "node:fs";
 import path from "node:path";
 import { riskFloor } from "../../checks/risk-floor.ts";
 import { runChecks } from "../../checks/run-checks.ts";
+import type { Job } from "../machine.ts";
 import { roundDir, writeAtomic } from "../store.ts";
-import { diffStat, headOf } from "../worktree.ts";
+import { changedFiles, diffStat, headOf } from "../worktree.ts";
 import { headers } from "./role.ts";
 import type { StageHandler } from "./types.ts";
+
+const FEATURE_DRIVE = /^\.kitchen\/toolkit\/features\/[^/]+\.md$/;
+
+/** This round's gate PASSed, and the commits since its HEAD touch nothing but feature drives (PLAN §2, drives → verify). */
+export async function gateStillValid(jobDir: string, job: Job): Promise<boolean> {
+  const g = readGate(jobDir, job.round);
+  if (g?.result !== "PASS") return false;
+  return (await changedFiles(job, g.head)).every((f) => FEATURE_DRIVE.test(f));
+}
 
 export const gateFileOf = (jobDir: string, round: number) => path.join(roundDir(jobDir, round), "gate.md");
 

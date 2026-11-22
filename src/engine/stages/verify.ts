@@ -55,7 +55,7 @@ export const verify: StageHandler = async (ctx) => {
   if (verdict === "FAIL") return { to: "build", facts };
   if (verdict === "TOOLKIT-GAP") return { to: "toolkit", facts };
   // INCONCLUSIVE
-  if (job.attempts.inconclusive === 0) return { to: "verify", facts };
+  if (job.attempts.inconclusive === 0) return { to: "verify", facts, note: "INCONCLUSIVE: free retry on a fresh instance" };
   if (job.attempts.toolkitTicket > 0) return { to: "needs-human", facts };
   const n = job.attempts.toolkitTicket + 1;
   const t = await once(ctx.repo, job.id, `toolkit-ticket/${n}`, () =>

@@ -36,7 +36,7 @@ export const report: StageHandler = async (ctx) => {
   const localForge = ctx.forge.kind === "local";
   if ("refusal" in out) {
     const facts = { report: { rendered: false, idsResolved: false, evidencePushed: false, commented: false, localForge, refusal: out.refusal } };
-    return { to: job.attempts.render + 1 < 2 ? "report" : "needs-human", facts };
+    return { to: job.attempts.render + 1 < 2 ? "report" : "needs-human", facts, note: `render refused: ${out.refusal}` };
   }
   writeAtomic(path.join(ctx.jobDir, "report.html"), out.html);
   fs.copyFileSync(path.join(ctx.jobDir, `report.src-${job.attempts.render + 1}.html`), path.join(ctx.jobDir, "report.src.html"));

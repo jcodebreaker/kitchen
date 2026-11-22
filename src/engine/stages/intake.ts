@@ -16,7 +16,7 @@ export const intake: StageHandler = async (ctx) => {
     role: "intake",
     file: "intake.md",
     tier: "read",
-    prompt: prompt({ role: "intake", job: ctx.job, jobDir: ctx.jobDir }),
+    prompt: prompt({ role: "intake", job: ctx.job, jobDir: ctx.jobDir, extra: [`The repository (read only): ${ctx.repo}`] }),
     dest: path.join(ctx.jobDir, "intake.md"),
   });
   const h = headers(r.text);
