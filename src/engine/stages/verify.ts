@@ -1,111 +1,170 @@
-// verify: step 1 (W3a) the engine runs every mechanical proof alone; step 2 the
-// verifier judges the `judged` criteria from stamped evidence, citing it per
-// criterion (`EVIDENCE C2: e5 e7`). The engine checks the manifest against
-// job.json, that every `judged` criterion of the spec has at least one
-// citation, and that every cited id is stamped for this HEAD, this round and
-// the criterion it is cited for. INCONCLUSIVE gets one free retry, then a
-// Toolkit ticket.
-// W1: the verdict is read from verify.md; verdict.ts (W3a) decides it.
+// verify (PLAN §2, verify → review/build/verify/paused/toolkit):
+// 0. The engine brings the app up fresh (down + up) from the worktree at HEAD,
+//    so the builder's leftover state never reaches a proof and the running app
+//    matches the tree every Verify stamp records.
+// 1. The engine runs every criterion's proof alone, through `kitchen drive`
+//    (prove.ts, role engine), each from seed state (`reset`), and decides every
+//    mechanical expect. A judged criterion's proof runs too, so there is
+//    evidence to judge. Each result is recorded as soon as it is known
+//    (rounds/<N>/proofs-m<moves>.json): a restart after kill -9 re-runs only the
+//    proofs that had not finished, never one that had.
+// 2. Only if every mechanical proof passed and there are judged criteria, the
+//    verifier agent judges those, citing stamped evidence per criterion.
+// 3. verdict.ts decides: the manifest must verify against job.json, and a
+//    citation not stamped for this HEAD, round and criterion (by the engine or
+//    the verifier) counts as FAIL.
+// INCONCLUSIVE (a step failed while doctor says the app is unwell, or the
+// verifier says so) gets one free retry on a fresh instance, then a Toolkit ticket.
 import fs from "node:fs";
 import path from "node:path";
-import { parseCriteria } from "../../checks/spec-lint.ts";
+import { type ArgsDelta, decideVerdict, type ProofRecord, renderVerdict } from "../../checks/verdict.ts";
+import { isJudged } from "../../proof/assert.ts";
 import { evidenceDir, sealOf } from "../../proof/job.ts";
 import { type Entry, verifyManifest } from "../../proof/manifest.ts";
-import { once, roundDir } from "../store.ts";
-import { headOf } from "../worktree.ts";
+import { prove } from "../../proof/prove.ts";
+import { contractOf, nothingPolicy } from "../contract.ts";
+import { doctorOk, freshUp, resetUp } from "../instance.ts";
+import { once, roundDir, writeAtomic } from "../store.ts";
+import { commitWith, headOf } from "../worktree.ts";
+import { contractBlock } from "./context.ts";
 import { prompt } from "./prompts.ts";
 import { headers, runRole } from "./role.ts";
-import { doctorOk } from "./toolkit-info.ts";
+import { hasToolkit } from "./toolkit-info.ts";
 import type { StageHandler } from "./types.ts";
 
-const VERDICTS = ["PASS", "FAIL", "INCONCLUSIVE", "TOOLKIT-GAP"] as const;
+export { citationProblem, citationsOf } from "../../checks/verdict.ts";
 
-/** Pure: `EVIDENCE C<n>: e<N> …` lines of verify.md, as criterion → cited ids. */
-export function citationsOf(text: string): Map<string, string[]> {
-  const out = new Map<string, string[]>();
-  for (const line of text.split("\n")) {
-    const m = /^\s*EVIDENCE\s+(C\d+)\s*:\s*(.*)$/.exec(line);
-    if (m) out.set(m[1], [...(out.get(m[1]) ?? []), ...(m[2].match(/\be\d+\b/g) ?? [])]);
+type Progress = { head: string; round: number; moves: number; proofs: ProofRecord[] };
+const progressFile = (jobDir: string, round: number, moves: number) => path.join(roundDir(jobDir, round), `proofs-m${moves}.json`);
+
+function readProgress(f: string, head: string, round: number, moves: number, n: number): ProofRecord[] {
+  try {
+    const p = JSON.parse(fs.readFileSync(f, "utf8")) as Progress;
+    if (p.head !== head || p.round !== round || p.moves !== moves) return [];
+    // A record whose evidence is past the signed head (cut by repairManifest) is not trusted.
+    return p.proofs.filter((r) => r.evidence.every((id) => Number(id.slice(1)) <= n));
+  } catch {
+    return [];
   }
-  return out;
 }
 
-/**
- * Pure: why the citations don't hold, or null. Every `judged` criterion needs at
- * least one citation; every cited id must be an entry stamped for `head`,
- * `round` and the criterion it is cited for.
- */
-export function citationProblem(
-  judged: string[],
-  cited: Map<string, string[]>,
-  entries: Pick<Entry, "id" | "sha" | "round" | "criterion">[],
-  head: string,
-  round: number,
-): string | null {
-  for (const c of judged) if (!cited.get(c)?.length) return `${c} is judged and cites no evidence`;
-  for (const [c, ids] of cited) {
-    for (const id of ids) {
-      const e = entries.find((x) => x.id === id);
-      if (!e) return `${c} cites ${id}, which is not in the manifest`;
-      if (e.sha !== head) return `${c} cites ${id}, stamped for ${e.sha.slice(0, 8)}, not HEAD ${head.slice(0, 8)}`;
-      if (e.round !== round) return `${c} cites ${id}, stamped in round ${e.round}, not ${round}`;
-      if (e.criterion !== c) return `${c} cites ${id}, stamped for ${e.criterion}`;
-    }
-  }
-  return null;
-}
-
-/** The job's criteria: spec.md, or intake.md's inline criteria on the low-risk path. */
-function judgedCriteria(jobDir: string): string[] {
-  for (const f of ["spec.md", "intake.md"]) {
-    const p = path.join(jobDir, f);
-    if (fs.existsSync(p)) {
-      const cs = parseCriteria(fs.readFileSync(p, "utf8"));
-      if (cs.length) return cs.filter((c) => c.expect === "judged").map((c) => c.id);
-    }
-  }
-  return [];
+export function argsDeltasOf(jobDir: string, round: number): ArgsDelta[] {
+  const f = path.join(roundDir(jobDir, round), "args-deltas.jsonl");
+  if (!fs.existsSync(f)) return [];
+  return fs
+    .readFileSync(f, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .flatMap((l) => {
+      try {
+        return [JSON.parse(l) as ArgsDelta];
+      } catch {
+        return [];
+      }
+    });
 }
 
 export const verify: StageHandler = async (ctx) => {
-  const r = await runRole(ctx, {
-    role: "verifier",
-    file: "verify.md",
-    tier: "write",
-    prompt: prompt({ role: "verifier", job: ctx.job, jobDir: ctx.jobDir }),
-    dest: path.join(roundDir(ctx.jobDir, ctx.job.round), `verify-${ctx.job.moves}.md`),
-  });
-  const h = headers(r.text);
-  const job = ctx.refresh();
-  const verdict = VERDICTS.find((v) => v === h.VERDICT);
-  let entries: Entry[] = [];
-  let manifestOk = true;
+  let job = ctx.refresh();
+  const contract = contractOf(ctx.jobDir);
+  if (!contract) return { to: "verify", facts: { why: "no criteria (spec.md or intake.md) to verify" } };
+  // Leftovers from an earlier role run never count: verify proves the committed HEAD.
+  const stray = await commitWith(job, "unused", nothingPolicy);
+  if (stray.refused.length) ctx.log(`uncommitted changes thrown away before Verify: ${stray.refused.map((x) => x.split(":")[0]).join(", ")}`);
+  const head = await headOf(job);
+  const moves = job.moves;
+  const pf = progressFile(ctx.jobDir, job.round, moves);
+  const proofs = readProgress(pf, head, job.round, moves, job.manifestHead.n);
+  const save = () => writeAtomic(pf, `${JSON.stringify({ head, round: job.round, moves, proofs } satisfies Progress, null, 2)}\n`);
+  const todo = contract.criteria.filter((c) => !proofs.some((p) => p.criterion === c.id));
+  if (proofs.length) ctx.log(`proofs already decided before a restart, not run again: ${proofs.map((p) => `${p.criterion} ${p.result}`).join(", ")}`);
+
+  // Step 0 + 1: fresh instance, then every proof, engine only.
+  if (todo.length) {
+    if (hasToolkit(job)) await freshUp(job, ctx.jobDir, ctx.log);
+    for (const c of todo) {
+      if (hasToolkit(job)) await resetUp(job, ctx.jobDir);
+      const p = await prove({ jobDir: ctx.jobDir, criterion: c, role: "engine", testCmd: ctx.config.test_cmd, log: (m) => ctx.log(`[drive] ${m}`) });
+      let result: ProofRecord["result"];
+      if (p.status === "pass") result = "PASS";
+      else if (p.status === "gap") result = "TOOLKIT-GAP";
+      else if (p.status === "step-failed") result = hasToolkit(job) && !(await doctorOk(job, ctx.jobDir)) ? "INCONCLUSIVE" : "FAIL";
+      else result = "FAIL";
+      proofs.push({ criterion: c.id, result, ...(p.why ? { why: p.why } : {}), ...(p.gap ? { gap: p.gap } : {}), evidence: p.evidence });
+      save();
+      ctx.log(`${c.id} ${isJudged(c.expect) ? "(judged: evidence) " : ""}${result}${p.why ? `: ${p.why}` : ""}`);
+      job = ctx.refresh();
+    }
+  }
+
+  // Step 2: the verifier judges the judged criteria, only once every mechanical proof passed.
+  const judged = contract.criteria.filter((c) => isJudged(c.expect));
+  const mechanicalPass = proofs.every((p) => p.result === "PASS");
+  let judgedText: string | null = null;
+  if (judged.length && mechanicalPass) {
+    const r = await runRole(ctx, {
+      role: "verifier",
+      file: "verify.md",
+      tier: "write",
+      prompt: prompt({
+        role: "verifier",
+        mode: "verify",
+        job,
+        jobDir: ctx.jobDir,
+        blocks: [
+          contractBlock(ctx.jobDir),
+          {
+            title: "Judge these, from this evidence",
+            body: evidenceBlock(
+              ctx.jobDir,
+              judged.map((c) => c.id),
+              proofs,
+            ),
+          },
+        ],
+      }),
+      dest: path.join(roundDir(ctx.jobDir, job.round), `verify-m${moves}.md`),
+    });
+    judgedText = r.text;
+    job = ctx.refresh();
+    const left = await commitWith(job, "unused", nothingPolicy);
+    if (left.refused.length) ctx.log(`the verifier's worktree edits were thrown away: ${left.refused.map((x) => x.split(":")[0]).join(", ")}`);
+  }
+
+  // Step 3: the engine's verdict.
+  let entries: Entry[] | null = null;
   try {
     entries = verifyManifest(evidenceDir(ctx.jobDir), job.manifestHead, sealOf(job));
   } catch (e) {
-    manifestOk = false;
     ctx.log(`manifest refused: ${(e as Error).message}`);
   }
-  const head = await headOf(job);
-  const problem = citationProblem(judgedCriteria(ctx.jobDir), citationsOf(r.text), entries, head, job.round);
-  const gapPrimitive = h.GAP || undefined;
+  const v = decideVerdict({
+    criteria: contract.criteria,
+    proofs,
+    judgedText,
+    entries,
+    head,
+    round: job.round,
+    argsDeltas: argsDeltasOf(ctx.jobDir, job.round),
+  });
+  writeAtomic(path.join(roundDir(ctx.jobDir, job.round), `verdict-m${moves}.md`), renderVerdict(v, head, job.round));
+  ctx.log(`verdict ${v.verdict}: ${v.criteria.map((c) => `${c.id} ${c.result}`).join(", ")}${v.citationProblem ? ` (${v.citationProblem})` : ""}`);
+  const agentGap = judgedText ? headers(judgedText).GAP : undefined;
   const facts = {
     verify: {
-      verdict: verdict ?? ("FAIL" as const),
+      verdict: v.verdict,
       mechanicalFirst: true,
-      citationsOk: !problem,
-      citationProblem: problem ?? undefined,
-      manifestOk,
-      doctorOk: await doctorOk(job, ctx.jobDir),
-      gapPrimitive,
+      citationsOk: v.citationsOk,
+      citationProblem: v.citationProblem,
+      manifestOk: v.manifestOk,
+      doctorOk: hasToolkit(job) ? await doctorOk(job, ctx.jobDir) : false,
+      gapPrimitive: v.gap ?? agentGap,
       ticket: undefined as string | undefined,
     },
   };
-  // No verdict line: no facts, so the move is refused and the verifier runs again.
-  if (!verdict) return { to: "review", facts: { why: `verify.md has no VERDICT (${h.VERDICT ?? "missing"})` } };
-  if (verdict === "PASS") return { to: "review", facts };
-  if (verdict === "FAIL") return { to: "build", facts };
-  if (verdict === "TOOLKIT-GAP") return { to: "toolkit", facts };
+  if (v.verdict === "PASS") return { to: "review", facts };
+  if (v.verdict === "FAIL") return { to: "build", facts };
+  if (v.verdict === "TOOLKIT-GAP") return { to: "toolkit", facts };
   // INCONCLUSIVE
   if (job.attempts.inconclusive === 0) return { to: "verify", facts, note: "INCONCLUSIVE: free retry on a fresh instance" };
   if (job.attempts.toolkitTicket > 0) return { to: "needs-human", facts };
@@ -114,9 +173,25 @@ export const verify: StageHandler = async (ctx) => {
     ctx.forge.fileTicket({
       key: `${job.id}/toolkit-ticket/${n}`,
       title: `Toolkit: INCONCLUSIVE twice on ${job.id}`,
-      body: `Verify came back INCONCLUSIVE twice for ${job.id} (${job.title}) in round ${job.round}.\n\n${r.text}`,
+      body: `Verify came back INCONCLUSIVE twice for ${job.id} (${job.title}) in round ${job.round}.\n\n${renderVerdict(v, head, job.round)}`,
     }),
   );
   facts.verify.ticket = t.value;
   return { to: "paused", facts };
 };
+
+/** For each judged criterion: the engine's evidence ids and their files (absolute paths the verifier can open). */
+function evidenceBlock(jobDir: string, ids: string[], proofs: ProofRecord[]): string {
+  const ev = evidenceDir(jobDir);
+  return ids
+    .map((c) => {
+      const p = proofs.find((x) => x.criterion === c);
+      const lines = (p?.evidence ?? []).map((id) => {
+        const d = path.join(ev, id);
+        const files = fs.existsSync(d) ? fs.readdirSync(d).filter((f) => f !== "call.json") : [];
+        return `  - ${id}: ${path.join(d, "call.json")}${files.length ? `; ${files.map((f) => path.join(d, f)).join(", ")}` : ""}`;
+      });
+      return `- ${c} (stamped for ${c}, this HEAD and round):\n${lines.join("\n")}`;
+    })
+    .join("\n");
+}

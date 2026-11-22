@@ -242,7 +242,8 @@ export async function createJob(repo: string, o: NewJob): Promise<{ job: Job; cr
       uid,
       gitDir: "",
       toolkitBin: o.toolkitBin,
-      slotId: id,
+      // The id the Toolkit gets (`--id`): short and unique across repos, since the slot pool and Docker names are machine-wide.
+      slotId: `${id.slice(0, id.indexOf("-"))}-${uid.replace(/-/g, "").slice(0, 10)}`,
       manifestHead: emptyHead(sealOf({ uid })),
     };
     writeAtomic(jobFile(dir), `${JSON.stringify(job, null, 2)}\n`);

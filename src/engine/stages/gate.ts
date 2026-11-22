@@ -1,11 +1,11 @@
 // gate: engine only, no agent. Runs the kitchen.yaml checks on the job HEAD
-// (each stamped in the manifest, role engine) and writes rounds/<N>/gate.md
-// with the HEAD it ran on. A gate.md for the current HEAD is reused, so a
+// (checks/gate.ts: stamped, role engine, pinned to HEAD) and writes
+// rounds/<N>/gate.md with the HEAD it ran on. A gate.md for the current HEAD is reused, so a
 // resumed gate doesn't run the checks again. Then the risk floor from the diff.
 import fs from "node:fs";
 import path from "node:path";
+import { runGate } from "../../checks/gate.ts";
 import { riskFloor } from "../../checks/risk-floor.ts";
-import { runChecks } from "../../checks/run-checks.ts";
 import type { Job } from "../machine.ts";
 import { roundDir, writeAtomic } from "../store.ts";
 import { changedFiles, diffStat, headOf } from "../worktree.ts";
@@ -41,20 +41,10 @@ export const gate: StageHandler = async (ctx) => {
   const head = await headOf(job);
   let g = readGate(ctx.jobDir, job.round);
   if (!g || g.head !== head) {
-    const checks = ctx.config.checkList;
-    const r = await runChecks({ jobDir: ctx.jobDir, checks, role: "engine", criterion: "gate" });
-    const ranOn = r.sha ?? head;
-    const lines = [
-      `HEAD: ${ranOn}`,
-      `RESULT: ${r.ok ? "PASS" : "FAIL"}`,
-      "",
-      ...(checks.length
-        ? r.results.map((c) => `- ${c.ok ? "PASS" : "FAIL"} ${c.name} (exit ${c.exit}, ${c.secs.toFixed(1)}s) {{${c.id}}}: \`${c.cmd}\``)
-        : ["- no checks in kitchen.yaml"]),
-    ];
-    writeAtomic(gateFileOf(ctx.jobDir, job.round), `${lines.join("\n")}\n`);
-    g = { head: ranOn, result: r.ok ? "PASS" : "FAIL" };
-    ctx.log(`gate ${g.result} on ${ranOn.slice(0, 8)} (${checks.length} checks)`);
+    const r = await runGate({ jobDir: ctx.jobDir, checks: ctx.config.checkList, headOf: () => headOf(job) });
+    writeAtomic(gateFileOf(ctx.jobDir, job.round), `${r.lines.join("\n")}\n`);
+    g = { head: r.head, result: r.result };
+    ctx.log(`gate ${g.result} on ${r.head.slice(0, 8)} (${ctx.config.checkList.length} checks)${r.why ? `: ${r.why}` : ""}`);
   }
   const floor = riskFloor(await diffStat(job), ctx.config);
   return {

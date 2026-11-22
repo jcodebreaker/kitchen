@@ -84,6 +84,8 @@ export type Job = {
   returnTo: Stage | null;
   /** The primitive a Toolkit gap named. */
   gap: string | null;
+  /** Files the repro stage committed (the regression test or feature drive): the builder may not edit them. */
+  reproFiles?: string[];
   attempts: {
     drives: number;
     render: number;

@@ -5,13 +5,14 @@
 //   kitchen status
 //   kitchen resume <id|n> · feedback <id> [--to <stage>] ["<text>"] · reject <id>
 //   kitchen report
+//   kitchen drive <job> <C> [--repro] [--arg k=v]… [--role r]   one criterion's proof (src/proof/prove.ts)
 //   kitchen mcp --job <id> --role <role> [--repo <dir>]   the engine bridge (src/bridge/mcp.ts)
 import path from "node:path";
 import { serveBridge } from "./bridge/mcp.ts";
 import * as cmd from "./cli/commands.ts";
 
 const USAGE =
-  'usage: kitchen ticket "<text>" | run [--once] [--detach] [<job>] | status | resume <id|n> | feedback <id> [--to <stage>] ["<text>"] | reject <id> | report | mcp …';
+  'usage: kitchen ticket "<text>" | run [--once] [--detach] [<job>] | status | resume <id|n> | feedback <id> [--to <stage>] ["<text>"] | reject <id> | report | drive <job> <C> [--repro] [--arg k=v]… | mcp …';
 
 async function main(argv: string[]): Promise<number> {
   const [name, ...rest] = argv;
@@ -28,11 +29,19 @@ async function main(argv: string[]): Promise<number> {
   }
   let repo = process.cwd();
   let to: string | undefined;
+  const driveArgs: Record<string, string> = {};
+  let role = "operator";
   const pos: string[] = [];
   const flags = new Set<string>();
   for (let i = 0; i < rest.length; i++) {
     if (rest[i] === "--repo") repo = rest[++i] ?? repo;
     else if (rest[i] === "--to" && name === "feedback") to = rest[++i];
+    else if (rest[i] === "--arg" && name === "drive") {
+      const kv = rest[++i] ?? "";
+      const eq = kv.indexOf("=");
+      if (eq < 1) throw new Error(`--arg takes name=value, got ${kv}`);
+      driveArgs[kv.slice(0, eq)] = kv.slice(eq + 1);
+    } else if (rest[i] === "--role" && name === "drive") role = rest[++i] ?? role;
     else if (rest[i].startsWith("--")) flags.add(rest[i]);
     else pos.push(rest[i]);
   }
@@ -58,6 +67,10 @@ async function main(argv: string[]): Promise<number> {
       return cmd.reject(repo, need("<id>"), out);
     case "report":
       return cmd.report(repo, out);
+    case "drive":
+      for (const f of flags) if (f !== "--repro") throw new Error(`kitchen drive: unknown flag ${f}`);
+      if (!pos[1]) throw new Error("kitchen drive needs <job> <criterion>");
+      return cmd.drive(repo, need("<job>"), pos[1], { repro: flags.has("--repro"), args: driveArgs, role }, out);
     default:
       console.error(USAGE);
       return 2;
