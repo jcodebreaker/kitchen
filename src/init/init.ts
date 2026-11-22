@@ -16,10 +16,11 @@ import { adapterFor } from "../engine/runner.ts";
 import { writeAtomic } from "../engine/store.ts";
 import { kitchenHome } from "../home.ts";
 import { appendLedger } from "../ledger/append.ts";
-import { checkAtRef, runToolkitCheck } from "../toolkit/check.ts";
+import { checkAtRef, runToolkitCheck, trackedAt } from "../toolkit/check.ts";
 import { toolkitCheckout } from "../toolkit/checkout.ts";
 import { reclaimStaleSlots } from "../toolkit/slots.ts";
 import { setupBridgeServer } from "./bridge.ts";
+import { devEnvValues, refusal, scanText } from "./secrets.ts";
 
 const PKG = path.resolve(import.meta.dirname, "..", "..");
 const TEMPLATE = path.join(PKG, "toolkit-template");
@@ -377,7 +378,7 @@ export async function initCmd(o: InitOpts, out: Out): Promise<number> {
   const maxFix = o.maxFix ?? 2;
   for (;;) {
     if (!done("commit")) {
-      const c = existing ? { sha: base, commits: [] } : await commitSetup(wtGit, base);
+      const c = existing ? { sha: base, commits: [] } : await commitSetup(wtGit, base, devEnvValues(repo, new Set(await trackedAt(repo, "HEAD"))));
       st.steps.commit = c;
       save();
       say(c.commits.length ? `committed on ${SETUP_BRANCH}: ${c.commits.join(", ")}` : "nothing new to commit");
@@ -454,13 +455,36 @@ async function tracked(git: Awaited<ReturnType<typeof openGit>>, file: string): 
 }
 
 /** Engine commits on kitchen/setup: the dev environment the build path added, then the Toolkit, each reviewable alone. */
-async function commitSetup(wt: { gitDir: string; workTree: string }, base: string): Promise<{ sha: string; commits: string[] }> {
+async function commitSetup(
+  wt: { gitDir: string; workTree: string },
+  base: string,
+  devValues: Map<string, string>,
+): Promise<{ sha: string; commits: string[] }> {
   // The agents' outbox is never committed (its file was copied already); an exclude pathspec for it trips git when the repo ignores it.
   fs.rmSync(path.join(wt.workTree, ".kitchen-out"), { recursive: true, force: true });
   const git = await openGit(wt);
   const commits: string[] = [];
   const commit = async (paths: string[], message: string) => {
     await git.run(["add", "-A", "--", ...paths, ...NOT_COMMITTED]);
+    // Secret scan of everything staged: refuse the commit, name the file and key.
+    const staged = (await git.run(["diff", "--cached", "--name-only", "-z", "--no-renames", "--diff-filter=d", "--no-ext-diff"])).stdout
+      .split("\0")
+      .filter(Boolean);
+    const findings = staged.flatMap((f) => {
+      const file = path.join(wt.workTree, f);
+      try {
+        const st = fs.statSync(file);
+        if (!st.isFile() || st.size > 2 << 20) return [];
+        const text = fs.readFileSync(file, "utf8");
+        return text.includes("\0") ? [] : scanText(f, text, devValues);
+      } catch {
+        return [];
+      }
+    });
+    if (findings.length) {
+      await git.run(["reset", "-q"]);
+      throw new Error(refusal(findings, wt.workTree));
+    }
     try {
       await git.run(["diff", "--cached", "--quiet", "--no-ext-diff"]);
       return;
