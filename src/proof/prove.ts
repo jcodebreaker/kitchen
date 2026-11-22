@@ -84,6 +84,7 @@ export async function prove(o: ProveOpts): Promise<ProveResult> {
   // A cmd or test proof that crashed proves nothing: its expect holds only with exit 0, unless the expect is about the exit code.
   if (segs[0].kind !== "toolkit" && !judged && !clauses.some((x) => x.kind === "exit")) clauses = [...parseExpect("exit 0"), ...clauses];
   const common = { jobDir: o.jobDir, criterion: o.stampAs ?? c.id, role: o.role, tag: o.tag, source: o.source };
+  let lastExit: number | null = null;
   try {
     if (segs[0].kind === "toolkit") {
       for (const s of segs) {
@@ -95,6 +96,7 @@ export async function prove(o: ProveOpts): Promise<ProveResult> {
         evidence.push(...r.steps.flatMap((x) => x.evidence));
         Object.assign(outcome.vars, r.vars);
         outcome.output = text(r.steps.at(-1)?.out);
+        for (const st of r.steps) if (exitOf(st.out) !== null) lastExit = exitOf(st.out);
         if (r.gap) return res("gap", { gap: r.gap, why: `the Toolkit has no primitive ${r.gap}` });
         if (!r.ok) {
           outcome.output = text(r.failedAt?.out);
@@ -109,7 +111,10 @@ export async function prove(o: ProveOpts): Promise<ProveResult> {
         if (s.save) outcome.vars[s.save] = outcome.output;
       }
       outcome.ok = true;
-      outcome.exit = 0;
+      // A command step (the cli primitive) is ok whatever its exit code: the last one's exit is the proof's,
+      // and, as for a cmd proof, an expect that says nothing about `exit` also requires exit 0.
+      outcome.exit = lastExit ?? 0;
+      if (lastExit !== null && !judged && !clauses.some((x) => x.kind === "exit")) clauses = [...parseExpect("exit 0"), ...clauses];
       if (needsPage(clauses)) {
         const r = await runDrive({ ...common, request: { primitive: "read", args: { target: "body" } }, log: o.log });
         evidence.push(...r.steps.flatMap((x) => x.evidence));
@@ -137,6 +142,13 @@ export async function prove(o: ProveOpts): Promise<ProveResult> {
   if (judged) return res("pass");
   const a = evaluate(clauses, outcome);
   return res(a.pass ? "pass" : "assert-fail", { assert: a, ...(a.why ? { why: a.why } : {}) });
+}
+
+/** The exit code a command step reported (`{exit, stdout, stderr}`, the cli primitive), or null. */
+export function exitOf(out: unknown): number | null {
+  if (!out || typeof out !== "object" || Array.isArray(out)) return null;
+  const e = (out as { exit?: unknown }).exit;
+  return typeof e === "number" && Number.isInteger(e) ? e : null;
 }
 
 function pick(o: Record<string, string> | undefined, keys: string[]): Record<string, string> {

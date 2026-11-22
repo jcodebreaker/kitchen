@@ -35,7 +35,7 @@ One clause, or several joined with ` and `:
 | expect | holds when |
 |---|---|
 | `ok` | every step ran (toolkit), or exit 0 (cmd/test) |
-| `exit 0` · `exit != 0` | the cmd/test exit code |
+| `exit 0` · `exit != 0` · `exit 1` | the cmd/test exit code; for a toolkit proof, the exit code of its last command step (a cli Toolkit's `cli`) |
 | `text "Saved" visible` · `text "Bob plan" not visible` | the page's body text (read after the proof) contains / lacks it |
 | `contains "dark"` · `not contains "x"` | the proof's last output contains / lacks it |
 | `json .theme == "dark"` · `json $me.body.theme == "dark"` | a JSON path into the last output, or into a saved var |
@@ -44,6 +44,8 @@ One clause, or several joined with ` and `:
 | `judged` | NOT mechanical: only for layout, appearance, visual style, tone or copy quality ("looks right in dark mode", "the error copy is friendly"), never whether a message, label or value is there. An agent judges it from screenshots, citing evidence. Its proof must take a `screenshot` (a step, or a drive that takes one) |
 
 Strings are double-quoted. Prefer mechanical expects: they are cheaper and can't be argued with.
+
+**Command steps (a cli Toolkit).** The `cli` primitive runs the command and is a step that ran whatever its exit code: its output is `{exit, stdout, stderr}`, and the expect decides. Assert the exit code with `exit …` (`expect: exit 1 and contains "unknown command"`); an expect that says nothing about `exit` also requires exit 0, as for a `cmd` proof. So a bug whose current code exits with the wrong code (an unknown command that exits 0, a command that crashes with 2) is reproduced by an expect that is false there. The step fails only when the command can't run at all, or when the drive pins `expect_exit: N` and the exit differs: pin `expect_exit: 0` on a setup step that must succeed (one that creates what a negative expect is about).
 
 **Negative expects** (`not visible`, `not contains`, `!=`, and `== ""`, an empty read) hold whenever the thing never existed, so the engine accepts one only when an earlier step of the same proof creates what must not show, with that text as an arg: `toolkit notes.create --user bob --title "Bob plan" ; toolkit login --as alice ; toolkit open --path /notes` then `expect: text "Bob plan" not visible`. Make sure what you read would show it if it leaked: the page's text shows that very field (a list of names won't show a slug; `http --method GET --path /list` returns the page's HTML, links and ids included), for someone allowed to see it; pair the negative with a positive criterion that reads the same thing as someone who should see it. A negative also fails on an error or not-found page, a failed response, or an empty read: if an error is the expected outcome, assert the error itself (`text "Not found" visible`). `$x == ""` names nothing that must not show, so it needs at least an earlier step that makes something (a feature drive, or an `http` POST/PUT/PATCH/DELETE); prefer naming the text that must not show (`not contains "bob-admin"`) on a read that would show it.
 

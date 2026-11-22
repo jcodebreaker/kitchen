@@ -110,6 +110,8 @@ process writing to stdout) fails the check.
   origins.
 - A **cli** Toolkit: the terminal module's `cli { argv, stdin?, expect_exit? }`
   and `read { target: stdout|stderr|exit }` (the engine's `wait` polls `read`).
+  `cli` is ok whenever the command ran, whatever its exit code (the output
+  carries `exit`; the expect asserts it), unless `expect_exit` pins one.
 - An **api** Toolkit: an `http { method, path, body?, as? }` primitive against
   the app's URL (same origin only; sign requests the way a real client does,
   e.g. the seed API key), plus primitives that read what the externals'

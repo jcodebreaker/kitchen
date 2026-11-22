@@ -33,7 +33,7 @@ Kitchen sets `--id`, `--src` and `--out` itself; a flag given twice is refused.
 
 | primitive | flags | does |
 |---|---|---|
-| cli | argv (list), stdin?, expect_exit? | run one `tasks` command; out is {exit, stdout, stderr} |
+| cli | argv (list), stdin?, expect_exit? | run one `tasks` command; out is {exit, stdout, stderr}; ok whatever the exit code unless expect_exit pins one |
 | seed | | restore the DB to the seed snapshot (drives start with it) |
 | read | target: stdout/stderr/exit | the last cli call's output (what `wait` polls) |
 

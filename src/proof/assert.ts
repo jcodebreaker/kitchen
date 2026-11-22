@@ -3,7 +3,7 @@
 //
 // An expect line is one clause, or several joined by ` and `:
 //   ok                                every step ran (toolkit) / exit 0 (cmd, test)
-//   exit 0 · exit != 0 · exit code 1  the cmd/test exit code
+//   exit 0 · exit != 0 · exit code 1  the cmd/test exit code, or the last command step's (the cli primitive)
 //   text "Saved" visible              the page's body text contains it (the engine reads `body` after the proof)
 //   text "Error" not visible
 //   contains "dark" · not contains "x" the proof's last output contains it

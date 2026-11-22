@@ -8,6 +8,12 @@
 //
 // Drive step: `- cli: { argv: [add, "Buy milk", --tag, home] }`, optionally `stdin: "y"`.
 // Each call writes cmd.txt, stdout.txt, stderr.txt into --out (stamped evidence).
+// A command that ran is a step that ran, whatever its exit code: out is
+// {exit, stdout, stderr} and the criterion's expect decides (`exit 1`,
+// `contains "…"`), so a bug whose current code exits non-zero can be reproduced.
+// The step fails only when the command could not run (not found, timed out), or
+// when the drive pins `expect_exit` and the exit differs (a setup step that must
+// succeed: `expect_exit: 0`).
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -49,9 +55,9 @@ export function terminalPrimitives({ command, env = () => ({}), cwd = (ctx) => c
       args: {
         argv: "arguments after the command: a list, or one string split like a shell line (\"done 1 2\")",
         stdin: "optional text typed on stdin",
-        expect_exit: "optional exit code that counts as ok (default 0)",
+        expect_exit: "optional: fail the step unless the exit code is this one (default: any exit code is ok; assert it in the expect)",
       },
-      does: "run the app's command once; out is {exit, stdout, stderr}; ok when the exit code is the expected one",
+      does: "run the app's command once; out is {exit, stdout, stderr}; ok whenever it ran (any exit code), unless expect_exit is given and differs",
       run(ctx, a) {
         const [bin, ...pre] = command(ctx);
         const argv = [...pre, ...asArgv(a.argv)];
@@ -62,7 +68,9 @@ export function terminalPrimitives({ command, env = () => ({}), cwd = (ctx) => c
           encoding: "utf8",
           timeout: timeoutMs,
         });
-        const exit = r.status ?? 1;
+        // The Toolkit could not run it at all: that is a failed step, not an exit code.
+        if (r.error) return { ok: false, out: { error: r.error.code === "ETIMEDOUT" ? `timed out after ${timeoutMs} ms` : String(r.error.message) } };
+        const exit = r.status ?? (r.signal ? 128 : 1);
         const files = [];
         if (ctx.out) {
           for (const [f, text] of [
@@ -75,8 +83,8 @@ export function terminalPrimitives({ command, env = () => ({}), cwd = (ctx) => c
           }
         }
         ctx.state.last = { argv, exit, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
-        const want = a.expect_exit === undefined ? 0 : Number(a.expect_exit);
-        return { ok: exit === want, out: { exit, stdout: (r.stdout ?? "").trim(), stderr: (r.stderr ?? "").trim() }, files };
+        const ok = a.expect_exit === undefined || a.expect_exit === "" || exit === Number(a.expect_exit);
+        return { ok, out: { exit, stdout: (r.stdout ?? "").trim(), stderr: (r.stderr ?? "").trim() }, files };
       },
     },
     read: {
