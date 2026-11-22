@@ -348,6 +348,12 @@ kbd{font:500 11px var(--sans);color:var(--mute);border:1px solid var(--line2);bo
 .qbox input{display:block;width:100%;border:0;outline:0;background:none;padding:7px 10px;line-height:1.45}
 .qbox input::placeholder{color:var(--faint)}
 .foot2 .mono{font-size:11.5px}
+.row .tm.wt{grid-column:6/8;white-space:nowrap}
+.tm i{font:400 12px var(--sans);font-style:normal;color:var(--faint);margin-right:3px}
+.rbar{display:flex;align-items:center;gap:8px 10px;flex-wrap:wrap;padding:9px 16px 9px 20px;border-bottom:1px solid var(--line);background:var(--band);color:var(--fg2);font-size:13px}
+.rbar code{font:12px var(--mono);background:var(--raise);border:1px solid var(--line2);border-radius:6px;padding:1px 8px;color:var(--fg)}
+.meta .age{color:var(--faint)}
+@container main (max-width:680px){ .row .tm.wt{grid-column:3} .rbar{padding:9px 12px 9px 16px} }
 </style>
 </head>
 <body>
@@ -420,8 +426,6 @@ const S={
 S.rejected=S.skip; S.done=S.ok;
 
 /* ───────── model ───────── */
-const STAGES=[{k:"intake",nm:"Intake"},{k:"build",nm:"Build"},{k:"gate",nm:"Gate"},{k:"verify",nm:"Verify"},{k:"review",nm:"Review"},{k:"report",nm:"Report"}];
-const NAMES={intake:"Intake",spec:"Spec",repro:"Repro",build:"Build",gate:"Gate",drives:"Drives",verify:"Verify",toolkit:"Toolkit",review:"Review",ready:"Ready",report:"Report","needs-info":"Needs you","needs-human":"Needs you",paused:"Paused",rejected:"Rejected",done:"Done"};
 let snap=null, setup=null, jobs=[], details={}, tick0=performance.now();
 const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
@@ -431,14 +435,19 @@ const clock=s=>{s=Math.max(0,Math.floor(s));return s>=3600?Math.floor(s/3600)+":
 const fmtL=s=>{s=Math.round(s);return s>=3600?Math.floor(s/3600)+"h "+String(Math.floor(s%3600/60)).padStart(2,"0")+"m":s>=60?Math.floor(s/60)+"m "+String(s%60).padStart(2,"0")+"s":s+"s"};
 const hhmm=iso=>iso?new Date(iso).toTimeString().slice(0,8):"";
 const num=id=>(/^(\d+)-/.exec(id)||[])[1]||id;
-const steps=j=>j.kind==="setup"?(setup?setup.steps:[]):STAGES;
-const sidx=j=>j.kind==="setup"?(setup?setup.idx:0):Math.max(0,STAGES.findIndex(s=>s.k===j.phase));
+const steps=j=>j.kind==="setup"?(setup?setup.steps:[]):(snap?snap.phases:[]);
+const sidx=j=>j.kind==="setup"?(setup?setup.idx:0):Math.max(0,steps(j).findIndex(s=>s.k===j.phase));
 const stp=j=>steps(j)[sidx(j)]||{nm:""};
 const group=j=>j.state==="you"?"you":j.state==="run"||j.state==="paused"?"run":"done";
 const ended=j=>group(j)==="done";
 const agent=j=>j.kind==="setup"?"the setup agent":j.agent?"the "+j.agent:"Kitchen";
 const Agent=j=>{const a=agent(j);return a[0].toUpperCase()+a.slice(1)};
 const secsOf=j=>j.secs0+(ended(j)?0:(performance.now()-j.at0)/1000);
+const since=iso=>Math.max(0,(Date.now()-Date.parse(iso))/1000);
+const short=s=>s<60?Math.floor(s)+"s":s<3600?Math.floor(s/60)+"m":s<86400?Math.floor(s/3600)+"h":Math.floor(s/86400)+"d";
+/* Running: time in this stage. Needs you: how long it has waited. Paused: frozen at the time it ran before the pause. */
+function timerHTML(j){if(j.kind==="setup")return clock(secsOf(j));if(j.state==="you")return `<i>waiting</i>${short(since(j.movedAt))}`;if(j.state==="paused")return clock(j.pausedSecs||0);return clock(since(j.movedAt))}
+function timerTitle(j){return j.state==="you"?"Waiting for you since "+hhmm(j.movedAt):j.state==="paused"?"Ran this long in the stage before it was paused":"Time in this stage"}
 let view="list";try{view=localStorage.getItem("kitchen.view")==="board"?"board":"list"}catch(e){}
 try{const t=localStorage.getItem("kitchen.theme");if(t)document.documentElement.dataset.theme=t}catch(e){}
 let drafts={},answersDraft={},expanded=null,open=null,tab="activity",openSegs=new Set(),sel=null,fresh=new Set(),just=new Set(),pending={},sigs={},typing=new Map();
@@ -480,11 +489,12 @@ async function pollDetail(){
   }
   setTimeout(pollDetail,1500);
 }
-function sigOf(j){return [j.state,j.phase,j.stage,j.round,j.q,j.pausedBy,j.title,j.report,j.files.length,j.runnerOn,j.unread,j.failed,fresh.has(j.id),expanded===j.id].join("|")}
+function sigOf(j){return [j.state,j.phase,j.stage,j.round,j.q,j.pausedBy,j.title,j.report,j.files.length,j.runnerOn,j.movedAt,j.failed,fresh.has(j.id),expanded===j.id].join("|")}
 function paint(before){
   const order0=[...before.keys()].join(),order1=jobs.map(j=>j.id).join();
   const groups=j=>j?group(j)+(view==="board"?j.phase:""):"";
-  const moved=order0!==order1||jobs.some(j=>!before.has(j.id)||groups(before.get(j.id))!==groups(j));
+  const runner=!!(snap&&snap.runner.running),runnerChanged=paint.runner!==runner;paint.runner=runner; // the runner bar comes and goes with it
+  const moved=runnerChanged||order0!==order1||jobs.some(j=>!before.has(j.id)||groups(before.get(j.id))!==groups(j));
   if(moved){structural(()=>{});}
   else{
     let openChanged=false;
@@ -540,19 +550,19 @@ function trackHTML(j){
     if(k===i-1&&just.has(j.id))c+=" just"; return `<i class="seg ${c}"></i>`}).join("")}</span>`;
 }
 function chgHTML(j,bump){const A=j.files.reduce((a,f)=>a+f.a,0),D=j.files.reduce((a,f)=>a+f.d,0);
-  return `<span class="chg${bump?" bump":""}" id="chg-${j.id}">${j.files.length&&group(j)==="run"?`${j.files.length} file${j.files.length>1?"s":""}${dfHTML(A,D)}`:""}</span>`}
+  return `<span class="chg${bump?" bump":""}" id="chg-${esc(j.id)}">${j.files.length&&group(j)==="run"?`${j.files.length} file${j.files.length>1?"s":""}${dfHTML(A,D)}`:""}</span>`}
 function finLabel(j){return j.state==="done"?(j.kind==="setup"?"Proven":"Ready to merge"):j.kind==="setup"?"Failed":"Rejected"}
 function icon(j){return S[j.state==="done"?"ok":j.state==="rejected"?"skip":j.state==="run"&&!j.runnerOn?"paused":j.state]}
 function rowHTML(j){
   const g=group(j),ex=expanded===j.id;
   let sub="",mid="",tm="",acts="";
-  if(g==="you"){sub=`<div class="sub q">${esc(j.q)}</div>`;mid=`<button class="btn act sm rep" onclick="event.stopPropagation();message('${j.id}')">${ex?"Close":"Reply"}</button>`;tm=`<span class="tm mono num" id="t-${j.id}">${clock(secsOf(j))}</span>`}
-  else if(g==="run"){sub=`<div class="sub" id="lv-${j.id}">${liveHTML(j)}</div>`;mid=chgHTML(j)+trackHTML(j);tm=`<span class="tm mono num" id="t-${j.id}">${clock(secsOf(j))}</span>`;
-    acts=`<span class="acts"><button class="ib" title="Message ${esc(agent(j))} (R)" aria-label="Message agent" onclick="event.stopPropagation();message('${j.id}')">${I.msg}</button></span>`}
+  if(g==="you"){sub=`<div class="sub q">${esc(j.q)}</div>`;mid=`<button class="btn act sm rep" data-act="message" data-id="${esc(j.id)}">${ex?"Close":"Reply"}</button>`;tm=`<span class="tm wt mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`}
+  else if(g==="run"){sub=`<div class="sub" id="lv-${esc(j.id)}">${liveHTML(j)}</div>`;mid=chgHTML(j)+trackHTML(j);tm=`<span class="tm mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`;
+    acts=`<span class="acts"><button class="ib" title="Message ${esc(agent(j))} (R)" aria-label="Message agent" data-act="message" data-id="${esc(j.id)}">${I.msg}</button></span>`}
   else{mid=`<span class="fin ${fresh.has(j.id)?"new":""}">${fresh.has(j.id)?"Just finished · ":""}${finLabel(j)}</span>`;tm=`<span class="tm mono num">$${j.cost.toFixed(2)}</span>`;
-    if(j.state==="done"&&j.kind!=="setup")acts=`<span class="acts"><button class="ib" title="Follow up (R)" aria-label="Follow up" onclick="event.stopPropagation();message('${j.id}')">${I.msg}</button></span>`}
-  return `<div class="rw ${g} ${g==="done"?"end":""} ${j.state==="rejected"?"gone":""} ${open===j.id?"open":""} ${sel===j.id?"sel":""} ${just.has(j.id)?"flash":""}" id="rw-${j.id}" style="view-transition-name:r-${j.id}">
-    <div class="row" tabindex="0" role="button" data-row="${j.id}" onclick="openJob('${j.id}')">
+    if(j.state==="done"&&j.kind!=="setup")acts=`<span class="acts"><button class="ib" title="Follow up (R)" aria-label="Follow up" data-act="message" data-id="${esc(j.id)}">${I.msg}</button></span>`}
+  return `<div class="rw ${g} ${g==="done"?"end":""} ${j.state==="rejected"?"gone":""} ${open===j.id?"open":""} ${sel===j.id?"sel":""} ${just.has(j.id)?"flash":""}" id="rw-${esc(j.id)}" style="view-transition-name:r-${esc(j.id)}">
+    <div class="row" tabindex="0" role="button" data-row="${esc(j.id)}">
       <span class="ic">${icon(j)}</span><span class="id mono">${esc(j.num)}</span>
       <div class="mn"><div class="ttl"><span class="idn mono">${esc(j.num)}</span>${esc(j.title)}</div>${sub}</div>${mid}${tm}${acts}
     </div>${ex?`<div class="inl">${composerHTML(j)}</div>`:""}</div>`;
@@ -561,11 +571,11 @@ const COLS=[["Intake",["intake"]],["Build",["build"]],["Check",["gate","verify"]
 const colOf=j=>j.kind==="setup"?(sidx(j)<4?"intake":sidx(j)<5?"build":"gate"):j.phase;
 function cardHTML(j){
   const g=group(j),cls=`${open===j.id?"open":""} ${sel===j.id?"sel":""} ${just.has(j.id)?"flash":""}`;
-  const head=`id="rw-${j.id}" style="view-transition-name:r-${j.id}" tabindex="0" role="button" data-row="${j.id}" onclick="openJob('${j.id}')"`;
+  const head=`id="rw-${esc(j.id)}" style="view-transition-name:r-${esc(j.id)}" tabindex="0" role="button" data-row="${esc(j.id)}"`;
   if(g==="done") return `<div class="rw card end ${j.state==="done"?"":"gone"} ${cls}" ${head}><div class="ctop">${S[j.state==="done"?"ok":"skip"]}<span class="id mono">${esc(j.num)}</span><span class="sp"></span><span class="mono num">$${j.cost.toFixed(2)}</span></div><div class="ctt">${esc(j.title)}</div><div class="fin ${fresh.has(j.id)?"new":""}">${fresh.has(j.id)?"Just finished · ":""}${finLabel(j)}</div></div>`;
-  return `<div class="rw card ${cls}" ${head}><div class="ctop">${icon(j)}<span class="id mono">${esc(j.num)}</span><span class="sp"></span><span class="mono num" id="t-${j.id}">${clock(secsOf(j))}</span></div>
-    <div class="ctt">${esc(j.title)}</div><div class="sub" id="lv-${j.id}">${liveHTML(j)}</div>${trackHTML(j)}
-    <div class="cbot">${chgHTML(j)}<span class="sp"></span><button class="ib" title="Message ${esc(agent(j))} (R)" aria-label="Message agent" onclick="event.stopPropagation();message('${j.id}')">${I.msg}</button></div></div>`;
+  return `<div class="rw card ${cls}" ${head}><div class="ctop">${icon(j)}<span class="id mono">${esc(j.num)}</span><span class="sp"></span><span class="mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span></div>
+    <div class="ctt">${esc(j.title)}</div><div class="sub" id="lv-${esc(j.id)}">${liveHTML(j)}</div>${trackHTML(j)}
+    <div class="cbot">${chgHTML(j)}<span class="sp"></span><button class="ib" title="Message ${esc(agent(j))} (R)" aria-label="Message agent" data-act="message" data-id="${esc(j.id)}">${I.msg}</button></div></div>`;
 }
 function boardHTML(run,done){
   return `<div class="board" id="g-run">${COLS.map(([nm,ks])=>{const cs=run.filter(j=>ks.includes(colOf(j)));
@@ -578,7 +588,8 @@ function order(){const t=j=>Date.parse(j.doneAt||j.updatedAt||0)||0;
 function renderList(){
   keepFocus(()=>{
     const o=order(),you=o.filter(j=>group(j)==="you"),run=o.filter(j=>group(j)==="run"),done=o.filter(j=>group(j)==="done");
-    $("#list").innerHTML=
+    const idle=snap&&!snap.runner.running&&jobs.some(j=>j.kind!=="setup"&&(j.state==="run"||j.state==="paused"));
+    $("#list").innerHTML=(idle?`<div class="rbar" role="status">${S.paused}<span>Kitchen isn't working the queue: jobs move only while it runs.</span><code>kitchen run --detach</code><button type="button" class="btn sm" data-act="copy">Copy</button></div>`:"")+
      `<section id="g-you"><div class="ghead ${you.length?"act":""}">${you.length?S.you:S.wait} Needs you <span class="n num">${you.length}</span></div>${you.map(rowHTML).join("")||'<div class="empty">Nothing needs you.</div>'}</section>
       ${view==="board"?boardHTML(run,done):`<section id="g-run"><div class="ghead">${run.length?S.run:S.wait} Running <span class="n num">${run.length}</span><span class="hint">Message any agent while it works</span></div>${run.map(rowHTML).join("")||'<div class="empty">Nothing running. Start one with New ticket.</div>'}</section>
       <section id="g-done"><div class="ghead">${S.ok} Done <span class="n num">${done.length}</span></div>${done.map(rowHTML).join("")||'<div class="empty">Nothing done yet.</div>'}</section>`}`;
@@ -595,7 +606,7 @@ function renderCounts(){
   $("#wsName").textContent=snap.repo;document.title=(you.length?`(${you.length}) `:"")+"Kitchen · "+snap.repo;
   $("#sSetup").textContent=!setup||setup.state==="none"?"not run":setup.state==="done"?"proven":setup.state==="failed"?"failed":"step "+(setup.idx+1)+"/"+setup.steps.length;
   $("#sTk").textContent=snap.toolkitProven?"proven":"not proven";
-  $("#tCost").textContent="$"+snap.usdToday.toFixed(2)+" today";$("#sCost").textContent="$"+snap.summary.usd.toFixed(2);
+  $("#tCost").textContent="$"+snap.usdToday.toFixed(2)+" today";$("#tCost").title="Spent today on every agent run, setup and retro included";$("#sCost").textContent="$"+snap.usdTotal.toFixed(2);$("#sCost").parentElement.title="Spent in all on every agent run, setup and retro included";
   $("#foot").innerHTML=`Runner: ${esc(snap.runner.text)}${snap.runner.running?"":`. Jobs move only while <span class="mono">kitchen run</span> works the queue.`}${snap.corrupt.length?` · Unreadable job folders: ${esc(snap.corrupt.join(", "))}`:""}`;
 }
 function replaceRow(j){if(!j)return;const n=$("#rw-"+CSS.escape(j.id));if(n)keepFocus(()=>{n.outerHTML=view==="board"&&group(j)!=="you"?cardHTML(j):rowHTML(j);just.delete(j.id);sigs[j.id]=sigOf(j);grow()})}
@@ -616,11 +627,11 @@ function composerHTML(j,where="row"){
   const chips=g==="run"&&j.state!=="paused"?["What are you doing right now?","Add a test for this","Keep the diff minimal"]:[];
   const qs=j.kind==="setup"&&g==="you"?j.setup.questions:[];
   const ch=qs.map(q=>`<div class="choice qa"><b>${esc(q.id)}</b><span class="qq">${esc(q.question)}${q.why?`<i>${esc(q.why)}</i>`:""}</span><div class="box qbox"><input data-draft="setup-${esc(q.id)}" data-where="${where}" data-q="${esc(q.id)}" placeholder="${esc(q.default?"Default: "+q.default:"Your answer")}" value="${esc(answersDraft[q.id]||"")}" aria-label="${esc(q.question)}"></div></div>`).join("");
-  const ctl=g==="run"&&where==="panel"?"":g==="run"?`<button type="button" class="btn ghost sm" onclick="${j.state==="paused"?"resume":"pause"}('${j.id}')">${j.state==="paused"?I.play+"Resume":I.pause+"Pause"}</button>${j.state==="paused"?"":`<button type="button" class="btn ghost sm" onclick="stopJob('${j.id}')">${I.stop}Stop</button>`}`
-    :g==="you"&&j.kind!=="setup"?`<button type="button" class="btn ghost sm" onclick="reject('${j.id}')">Reject</button>`:"";
-  return `<form class="cmp ${g==="you"?"you":""} ${qs.length?"ready":""}" data-cmp="${j.id}" onsubmit="send('${j.id}');return false">${ch}
-    ${chips.length?`<div class="chips">${chips.map(c=>`<button type="button" class="chip" onclick="useChip('${j.id}',this)">${esc(c)}</button>`).join("")}</div>`:""}
-    <div class="box"><textarea rows="1" data-draft="${j.id}" data-where="${where}" placeholder="${esc(ph)}" aria-label="${esc(ph)}" maxlength="4000">${esc(drafts[j.id]||"")}</textarea>
+  const ctl=g==="run"&&where==="panel"?"":g==="run"?`<button type="button" class="btn ghost sm" data-act="${j.state==="paused"?"resume":"pause"}" data-id="${esc(j.id)}">${j.state==="paused"?I.play+"Resume":I.pause+"Pause"}</button>${j.state==="paused"?"":`<button type="button" class="btn ghost sm" data-act="stop" data-id="${esc(j.id)}">${I.stop}Stop</button>`}`
+    :g==="you"&&j.kind!=="setup"?`<button type="button" class="btn ghost sm" data-act="reject" data-id="${esc(j.id)}">Reject</button>`:"";
+  return `<form class="cmp ${g==="you"?"you":""} ${qs.length?"ready":""}" data-cmp="${esc(j.id)}">${ch}
+    ${chips.length?`<div class="chips">${chips.map(c=>`<button type="button" class="chip" data-act="chip" data-id="${esc(j.id)}">${esc(c)}</button>`).join("")}</div>`:""}
+    <div class="box"><textarea rows="1" data-draft="${esc(j.id)}" data-where="${where}" placeholder="${esc(ph)}" aria-label="${esc(ph)}" maxlength="4000">${esc(drafts[j.id]||"")}</textarea>
     <div class="cbar"><span class="hint">${esc(hint)}</span><span class="sp"></span>${ctl}<button class="send" type="submit" aria-label="Send" title="Send (Enter)">${I.up}</button></div></div></form>`;
 }
 function grow(){$$(".box textarea").forEach(t=>{t.style.height="auto";t.style.height=Math.min(160,t.scrollHeight)+"px"})}
@@ -678,14 +689,13 @@ function reject(id){const j=J(id);let undone=false;
   setTimeout(async()=>{if(undone)return;const r=await post("reject",{id:j.id});if(!r.ok)toast(said(r.lines)||"Reject refused");refreshSoon()},5000)}
 
 /* ───────── panel ───────── */
-const segTitle=s=>NAMES[s.stage]||s.stage;
 function segHTML(j,s,i,n){
-  const last=i===n-1,can=s.evs.length>0&&!last,isOpen=last||openSegs.has(j.id+":"+i);
+  const last=i===n-1,can=s.evs.length>0&&!last,isOpen=last||openSegs.has(j.id+":"+i)||s.evs.some(e=>e.c==="you"&&e.sent);
   const state=s.st==="run"&&!j.runnerOn?"paused":s.st;
   const who=[s.who||(s.st==="you"?"you":"Kitchen"),s.round>1?"round "+s.round:"",can&&s.calls?s.calls+(s.calls===1?" call":" calls"):""].filter(Boolean).join(" · ");
   const dur=s.end?fmtL((Date.parse(s.end)-Date.parse(s.start))/1000):"";
   const liveT=last&&s.st==="run";
-  return `<button class="sg ${can?"exp":""}" ${can?`onclick="togSeg(${i})"`:"tabindex=-1"}>${S[state]||S.wait}<b>${esc(segTitle(s))}</b><span class="who">${esc(who)}</span><span class="du mono num" ${liveT?`id="segt" data-start="${esc(s.start)}"`:""}>${liveT?clock(elapsed(s.start)):dur}</span></button>
+  return `<button class="sg ${can?"exp":""}" ${can?`onclick="togSeg(${i})"`:"tabindex=-1"}>${S[state]||S.wait}<b>${esc(s.nm)}</b><span class="who">${esc(who)}</span><span class="du mono num" ${liveT?`id="segt" data-start="${esc(s.start)}"`:""}>${liveT?clock(elapsed(s.start)):dur}</span></button>
     ${s.sum?`<div class="sgsum ${s.st==="bad"?"bad":""}">${esc(s.sum)}</div>`:""}
     ${isOpen&&(s.evs.length||last)?`<div class="evs" ${last?'id="evs"':""}>${s.evs.map(e=>evHTML(e)).join("")}</div>`:""}`;
 }
@@ -727,12 +737,12 @@ function renderPanel(scrollEnd){
   const p=$("#panel"); const j=open&&J(open); if(!j){if(open&&!J(open))open=null;p.classList.remove("on");return}
   const g=group(j),sc0=$("#pscroll"),keep=sc0&&!scrollEnd?sc0.scrollTop:null,atEnd=sc0?sc0.scrollHeight-sc0.scrollTop-sc0.clientHeight<90:true;
   const ss=steps(j),i=sidx(j);
-  const ctl=g==="run"&&j.kind!=="setup"?`<button class="btn ghost sm" onclick="${j.state==="paused"?"resume":"pause"}('${j.id}')">${j.state==="paused"?I.play+"Resume":I.pause+"Pause"}</button>${j.state==="paused"?"":`<button class="btn ghost sm" onclick="stopJob('${j.id}')">${I.stop}Stop</button>`}`:"";
+  const ctl=g==="run"&&j.kind!=="setup"?`<button type="button" class="btn ghost sm" data-act="${j.state==="paused"?"resume":"pause"}" data-id="${esc(j.id)}">${j.state==="paused"?I.play+"Resume":I.pause+"Pause"}</button>${j.state==="paused"?"":`<button type="button" class="btn ghost sm" data-act="stop" data-id="${esc(j.id)}">${I.stop}Stop</button>`}`:"";
   const sub=j.kind==="setup"?(snap?snap.repo:"setup"):[j.kind,j.risk?j.risk+" risk":""].filter(Boolean).join(" · ");
   keepFocus(()=>{$("#pin").innerHTML=`
     <div class="ph"><button class="ib back" onclick="closePanel()" aria-label="Back">${I.back}</button><span class="mono">${esc(j.num)}</span><span>·</span><span>${esc(sub)}</span><span class="sp"></span>${ctl}<button class="ib" onclick="closePanel()" aria-label="Close" title="Close (Esc)">${I.x}</button></div>
     <div class="pscroll" id="pscroll"><h1>${esc(j.title)}</h1>
-      <div class="meta"><span class="st ${j.state==="you"?"you":""}" id="pst">${icon(j)}${esc(statusOf(j))}</span><span class="mono num" id="pt">${clock(secsOf(j))}</span><span class="mono num" id="pc">$${j.cost.toFixed(2)}</span>${j.report?`<a href="/${esc(j.report)}" target="_blank" rel="noopener">Open report</a>`:""}${j.pr?`<span>PR #${j.pr}</span>`:""}</div>
+      <div class="meta"><span class="st ${j.state==="you"?"you":""}" id="pst">${icon(j)}${esc(statusOf(j))}</span><span class="mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span><span class="age" title="Since the ticket came in">age <span class="mono num" id="pt">${clock(secsOf(j))}</span></span><span class="mono num" id="pc">$${j.cost.toFixed(2)}</span>${j.report?`<a href="/${esc(j.report)}" target="_blank" rel="noopener">Open report</a>`:""}${j.pr?`<span>PR #${j.pr}</span>`:""}</div>
       <div class="ptrk ${ss.length>6?"many":""}">${trackHTML(j)}<div class="lbls">${ss.length>6?`<span class="cur ${j.state==="you"?"you":""}">${ended(j)&&j.state==="done"?"All "+ss.length+" steps done":"Step "+(i+1)+" of "+ss.length+" · "+esc(ss[i]?ss[i].nm:"")}</span>`:ss.map((s,k)=>`<span class="${k===i&&!ended(j)?"cur "+(j.state==="you"?"you":""):""}">${esc(s.nm)}</span>`).join("")}</div></div>
       <div class="tabs" id="tabs">${tabsHTML(j)}</div><div id="tabbody">${tabBody(j)}</div></div>
     <div class="pcmp" ${composerHTML(j,"panel")?"":'style="display:none"'}>${composerHTML(j,"panel")}</div>`});
@@ -745,7 +755,7 @@ function setTab(t){tab=t;renderPanel()}
 function togSeg(i){const k=open+":"+i;openSegs.has(k)?openSegs.delete(k):openSegs.add(k);renderPanel()}
 
 /* ───────── clocks: timers every second, typing and live call timers every frame ───────── */
-setInterval(()=>{for(const j of jobs){if(ended(j))continue;const n=$("#t-"+CSS.escape(j.id));if(n)n.textContent=clock(secsOf(j));if(open===j.id){const a=$("#pt");if(a)a.textContent=clock(secsOf(j))}}
+setInterval(()=>{for(const j of jobs){if(ended(j))continue;$$(`[data-tm="${CSS.escape(j.id)}"]`).forEach(n=>n.innerHTML=timerHTML(j));if(open===j.id){const a=$("#pt");if(a)a.textContent=clock(secsOf(j))}}
   const st=$("#segt");if(st&&st.dataset.start)st.textContent=clock(elapsed(st.dataset.start))},1000);
 setInterval(()=>{
   for(const [k,{j}] of typing){const full=evText(j.live||{t:""});j.liveShown=Math.min(full.length,(j.liveShown||0)+3);
@@ -756,6 +766,7 @@ setInterval(()=>{
 /* ───────── misc ───────── */
 let toastT;function toast(msg,label,fn){const t=$("#toast");t.innerHTML=`<span>${esc(msg)}</span>${label?`<button>${esc(label)}</button>`:""}`;if(label)t.querySelector("button").onclick=()=>{fn();t.classList.remove("on")};t.classList.add("on");clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove("on"),5000)}
 function newTicket(){palette(true,"ticket")}
+async function copyRun(){try{await navigator.clipboard.writeText("kitchen run --detach");toast("Copied: kitchen run --detach. Run it in the repo")}catch(e){toast("Run this in the repo: kitchen run --detach")}}
 function jump(id){const n=$("#"+id);if(n)n.scrollIntoView({behavior:RM?"auto":"smooth",block:"start"})}
 function toggleTheme(){const r=document.documentElement,dark=r.dataset.theme?r.dataset.theme==="dark":matchMedia("(prefers-color-scheme: dark)").matches;r.dataset.theme=dark?"light":"dark";try{localStorage.setItem("kitchen.theme",r.dataset.theme)}catch(e){}}
 let palI=0,palItems=[],palMode="cmd";
@@ -793,6 +804,16 @@ document.addEventListener("keydown",e=>{
   else if(e.key==="r"&&(sel||open)){e.preventDefault();message(open||sel)}
   else if(e.key==="Escape"){if(expanded){expanded=null;renderList()}else if(open)closePanel()}
 });
+
+/* ───────── one listener for every job action: the id travels in data-id, never inside a handler ───────── */
+document.addEventListener("click",e=>{
+  const b=e.target.closest("[data-act]");
+  if(b){const id=b.dataset.id,a=b.dataset.act;e.stopPropagation();
+    if(a==="message")message(id);else if(a==="pause")pause(id);else if(a==="resume")resume(id);else if(a==="stop")stopJob(id);else if(a==="reject")reject(id);else if(a==="chip")useChip(id,b);else if(a==="copy")copyRun();
+    return}
+  const r=e.target.closest("[data-row]");if(r)openJob(r.dataset.row);
+});
+document.addEventListener("submit",e=>{const f=e.target.closest("form[data-cmp]");if(f){e.preventDefault();send(f.dataset.cmp)}});
 
 /* ───────── boot ───────── */
 $("#nJobI").innerHTML=I.list;$("#vList").innerHTML=sv('<path d="M2.5 4h11M2.5 8h11M2.5 12h11"/>',14)+"<span>List</span>";$("#vBoard").innerHTML=I.board+"<span>Board</span>";$("#nYouI").innerHTML=S.you;$("#nRunI").innerHTML=S.run.replace('class="spin"','');$("#nDoneI").innerHTML=S.ok;$("#nSetI").innerHTML=I.gear;$("#nTkI").innerHTML=I.box;$("#nCoI").innerHTML=I.coin;$("#nThI").innerHTML=I.sun;$("#kI").innerHTML=I.search;

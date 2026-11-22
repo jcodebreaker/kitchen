@@ -61,15 +61,18 @@ const ago = (iso: string) => {
   return s < 90 ? `${s}s ago` : s < 5400 ? `${Math.round(s / 60)}m ago` : `${Math.round(s / 3600)}h ago`;
 };
 
+/** The stage column: why a waiting job waits, beside its stage. Pure. */
+function stageLabel(j: Job): string {
+  if (j.stage === "paused") {
+    const why = !j.waitFor ? (j.pausedReason ?? "?") : `${j.waitFor}${j.until && j.waitFor === "backoff" ? ` until ${j.until.slice(11, 19)}` : ""}`;
+    return `paused(${why}, from ${j.pausedFrom})`;
+  }
+  if (j.pausedReason && ["needs-info", "needs-human", "rejected"].includes(j.stage)) return `${j.stage}(${j.pausedReason})`;
+  return j.stage;
+}
+
 export function statusLine(j: Job, jobDir: string): string {
-  const stage =
-    j.stage === "paused" && !j.waitFor
-      ? `paused(${j.pausedReason ?? "?"}, from ${j.pausedFrom})`
-      : j.stage === "paused"
-        ? `paused(${j.waitFor}${j.until && j.waitFor === "backoff" ? ` until ${j.until.slice(11, 19)}` : ""}, from ${j.pausedFrom})`
-        : j.pausedReason && ["needs-info", "needs-human", "rejected"].includes(j.stage)
-          ? `${j.stage}(${j.pausedReason})`
-          : j.stage;
+  const stage = stageLabel(j);
   const report = fs.existsSync(path.join(jobDir, "report.html")) ? `  ${path.join(jobDir, "report.html")}` : "";
   return `${j.id.padEnd(28)} ${j.title.slice(0, 34).padEnd(34)} ${stage.padEnd(16)} round ${roundsUsed(j)}/${j.roundLimit}  moved ${ago(j.updatedAt)}  ${j.pr ? `PR #${j.pr}` : "no PR"}${report}`;
 }

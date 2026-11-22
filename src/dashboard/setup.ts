@@ -31,7 +31,6 @@ export type SetupView = {
   at: string | null;
   usd: number;
   secs: number;
-  sha: string | null;
   evs: Ev[];
 };
 
@@ -79,7 +78,6 @@ export function setupView(repo: string, now = Date.now()): SetupView {
     at: s?.at ?? null,
     usd: (st?.runs ?? []).reduce((a, r) => a + (r.usd ?? 0), 0),
     secs: start ? Math.max(0, Math.round(((state === "running" ? now : Date.parse(s?.at ?? start)) - Date.parse(start)) / 1000)) : 0,
-    sha: st?.steps.check?.ok ? st.steps.check.sha : null,
     evs: t ? activityOf(t, [wt, repo]).slice(-200) : [],
   };
 }

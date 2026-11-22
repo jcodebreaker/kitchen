@@ -139,7 +139,7 @@ Risk decides how heavy the path is: low-risk tickets get inline criteria and a l
 | `kitchen steer <id> "<text>"` | a message for a running job: add context, redirect it, ask what it is doing. A Claude agent reads it after the tool call it is in, without stopping. Codex, a step with no agent (Gate, Verify's engine part, Ready) and a paused job get it at the start of the next agent role, quoted as operator notes |
 | `kitchen pause <id>` | lets the current step finish, then parks the job (`paused(by-you)`) |
 | `kitchen stop <id>` | kills the job's agent (and the checks it started) now, then parks it; resume runs that stage again |
-| `kitchen resume <id>` | wakes a paused job where it stopped; it reads the messages sent while it was paused |
+| `kitchen resume <id>` | wakes a paused job where it stopped; it reads the messages sent while it was paused. A job you paused keeps no `kitchen run` waiting for it (like one that needs you), so start `kitchen run --detach` again if it has ended: `kitchen status` and the dashboard say when it isn't running |
 | `kitchen reject <id>` | closes a job without a PR |
 | `kitchen dismiss <job> [<finding>] [--reason "…"]` | lists a job's review findings, or says one was not useful |
 | `kitchen report [--json]` | the measures from the ledger |
@@ -152,7 +152,7 @@ A job's steering thread is `.kitchen/jobs/<id>/messages.jsonl`: each message wit
 `kitchen dashboard` serves every job on http://127.0.0.1:7357 (this machine only), and refreshes itself while jobs run:
 
 - **List** (the default) groups the jobs into Needs you, Running and Done; **Board** puts the running ones in stage columns. The page remembers which you chose.
-- Each running job shows a live line (the call its agent is making right now, with a shimmer while it runs), a timer, its changed files and a six-step stage track: Intake, Build, Gate, Verify, Review, Report.
+- Each running job shows a live line (the call its agent is making right now, with a shimmer while it runs), the time in its current stage (frozen while paused; a job that needs you shows how long it has waited; the job's total age is in its panel), its changed files and a six-step stage track: Intake, Build, Gate, Verify, Review, Report.
 - Click a job for its panel: the stage track, then **Activity** (every stage with what its agents did: their reasoning lines, each tool call with its time, file edits with +/− counts, your messages and whether they were read), **Checks** (each criterion and its last verdict) and **Changes** (files and line counts from the base). The Report link is there once it exists.
 - **One composer per job**, in its panel or under its row: answer a job that needs you, steer a running one, leave a note on a paused one, follow up on a done one (another Build round). Pause, Resume, Stop and Reject sit beside it. **New ticket** files a ticket.
 - **Setup** shows `kitchen init`'s steps; its questions can be answered right there (the same as `kitchen init --answers <file> --detach`).

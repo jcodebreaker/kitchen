@@ -4,15 +4,16 @@
 import fs from "node:fs";
 import path from "node:path";
 import { contractOf } from "../engine/contract.ts";
-import type { Job, Stage } from "../engine/machine.ts";
+import { isActive, type Job, STAGES, type Stage } from "../engine/machine.ts";
 import { type Message, readMessages } from "../engine/messages.ts";
 import { findJob, jobDirOf } from "../engine/store.ts";
 import { type LedgerLine, readLedger } from "../ledger/append.ts";
 import { activityOf, claudeTranscript, type Ev } from "./activity.ts";
-import { agentOf, liveStreams, questionOf, stateOf } from "./data.ts";
+import { agentOf, liveStreams, questionOf, STAGE_NAMES, stateOf } from "./data.ts";
 
 export type Seg = {
   stage: Stage;
+  nm: string;
   /** ok, bad (sent back or escalated), run (the agent works now), you, paused, wait. */
   st: "ok" | "bad" | "run" | "you" | "paused" | "skip";
   round: number;
@@ -24,36 +25,19 @@ export type Seg = {
   evs: (Ev | MsgEv)[];
   calls: number;
 };
-export type MsgEv = { c: "you"; t: string; at: string; kind: Message["kind"]; status: string } | { c: "ask"; t: string; at: string; who: string };
+export type MsgEv =
+  | { c: "you"; t: string; at: string; kind: Message["kind"]; status: string; sent: boolean }
+  | { c: "ask"; t: string; at: string; who: string };
 export type Detail = {
   id: string;
   tl: Seg[];
   crit: { id: string; text: string; st: "ok" | "bad" | "wait"; e: string }[];
-  messages: Message[];
 };
 
-const NAMES: Record<string, string> = {
-  intake: "Intake",
-  spec: "Spec",
-  repro: "Repro",
-  build: "Build",
-  gate: "Gate",
-  drives: "Drives",
-  verify: "Verify",
-  toolkit: "Toolkit",
-  review: "Review",
-  ready: "Ready",
-  report: "Report",
-  "needs-info": "Needs you",
-  "needs-human": "Needs you",
-  paused: "Paused",
-  rejected: "Rejected",
-  done: "Done",
-};
-export const stageName = (s: string) => NAMES[s] ?? s;
 const EVENTS_PER_SEG = 160;
-/** A move that sends a job back (a failed check) or to a person. */
-const BACK: Partial<Record<string, Stage[]>> = { gate: ["build"], drives: ["build"], verify: ["build"], review: ["build"], ready: ["build"] };
+/** A move that sends a job back: to a person who must decide, or to an earlier stage (a failed check, a contract sent back). */
+const sentBack = (from: Stage, to: string) =>
+  to === "needs-human" || to === "rejected" || (isActive(from) && isActive(to as Stage) && STAGES.indexOf(to as Stage) < STAGES.indexOf(from));
 
 /** The latest verdict table of the job: criterion → result, evidence and why. */
 function verdictRows(dir: string): Map<string, { result: string; e: string }> {
@@ -132,13 +116,14 @@ export async function detail(repo: string, ref: string): Promise<Detail> {
     const waited = stage === "needs-human" || stage === "needs-info" || (stage === "paused" && byYou(moves[m - 1]));
     const who = waited ? "you" : [...new Set(runs.length ? runs.map((r) => `${r.role} · ${r.model}`) : roles)].join(", ");
     if (stage === "paused") {
-      tl.push({ stage, st: "paused", round: l?.round ?? j.round, who, start, end, sum: "", evs: [], calls: 0 });
+      tl.push({ stage, nm: STAGE_NAMES[stage], st: "paused", round: l?.round ?? j.round, who, start, end, sum: "", evs: [], calls: 0 });
       return;
     }
     if (to === "paused" && byYou(l)) {
       const stopped = l?.detail?.note === "kitchen stop";
       tl.push({
         stage,
+        nm: STAGE_NAMES[stage],
         st: stopped ? "skip" : "ok",
         round: l?.round ?? j.round,
         who,
@@ -150,11 +135,12 @@ export async function detail(repo: string, ref: string): Promise<Detail> {
       });
       return;
     }
-    const bad = to !== null && (["needs-human", "rejected"].includes(to) || !!BACK[stage]?.includes(to as Stage));
+    const bad = to !== null && sentBack(stage, to);
     const round = l?.round ?? j.round;
     const note = (stage === "verify" ? verdictSum(dir, round, m) : "") || (typeof l?.detail?.note === "string" ? l.detail.note : "");
     tl.push({
       stage,
+      nm: STAGE_NAMES[stage],
       st: end === null ? "run" : bad ? "bad" : "ok",
       round,
       who,
@@ -175,10 +161,16 @@ export async function detail(repo: string, ref: string): Promise<Detail> {
     close(moves.length, null, null);
     const last = tl[tl.length - 1];
     last.stage = j.stage;
+    last.nm = STAGE_NAMES[j.stage];
     const state = stateOf(j);
     if (state === "you") {
       last.st = "you";
-      last.evs.push({ c: "ask", t: questionOf(j, dir) ?? "", at: j.updatedAt, who: agentOf(j.escalatedFrom ?? "intake") ?? "Kitchen" });
+      last.evs.push({
+        c: "ask",
+        t: questionOf(j, dir) ?? "",
+        at: j.updatedAt,
+        who: agentOf(j.stage === "needs-human" ? (j.escalatedFrom ?? "intake") : (tl.at(-2)?.stage ?? "intake")) ?? "Kitchen",
+      });
     } else if (state === "paused") {
       last.st = "paused";
       last.sum = j.pausedReason?.startsWith("by-you")
@@ -193,7 +185,14 @@ export async function detail(repo: string, ref: string): Promise<Detail> {
     const seg = [...tl].reverse().find((s) => s.start <= m.at) ?? tl[0];
     if (!seg) continue;
     const i = seg.evs.findIndex((e) => !!e.at && e.at > m.at);
-    seg.evs.splice(i < 0 ? seg.evs.length : i, 0, { c: "you", t: m.text, at: m.at, kind: m.kind, status: msgStatus(m) });
+    seg.evs.splice(i < 0 ? seg.evs.length : i, 0, {
+      c: "you",
+      t: m.text,
+      at: m.at,
+      kind: m.kind,
+      status: msgStatus(m),
+      sent: m.kind === "steer" && m.status === "sent",
+    });
   }
   const rows = verdictRows(dir);
   const crit = (contractOf(dir)?.criteria ?? []).map((c) => {
@@ -205,5 +204,5 @@ export async function detail(repo: string, ref: string): Promise<Detail> {
       e: r ? `${r.result}${r.e ? ` · ${r.e}` : ""}` : "",
     };
   });
-  return { id: j.id, tl, crit, messages: msgs };
+  return { id: j.id, tl, crit };
 }

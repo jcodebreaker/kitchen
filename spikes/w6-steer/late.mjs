@@ -43,11 +43,13 @@ p.stdout.on("data", (d) => {
       e.type === "result" ? JSON.stringify({ cost: e.total_cost_usd, turns: e.num_turns, result_end: String(e.result).slice(-60) }) : "",
     );
     // Once: every turn starts with its own `system init` (the first run of this spike wrote one per turn and looped).
-    if (e.type === "system" && e.subtype === "init" && !sent && (sent = true))
+    if (e.type === "system" && e.subtype === "init" && !sent) {
+      sent = true;
       setTimeout(() => {
         console.log(ms(), ">>> writing steer");
         p.stdin.write(user("Operator note: end your answer with the word PINEAPPLE."));
       }, 1500);
+    }
     clearTimeout(quiet);
     if (e.type === "result")
       quiet = setTimeout(() => {

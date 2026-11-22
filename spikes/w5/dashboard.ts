@@ -10,7 +10,7 @@
 //     spike closes it, as a person would)
 // `kitchen run --detach` drains them while `kitchen dashboard` serves the board; the spike
 // screenshots it mid-run and at the end (headless Chrome, ?theme=light|dark) into
-// spikes/w5/screens/, and checks the server: read-only, localhost only, reports served.
+// spikes/w5/screens/, and checks the server: token-guarded POSTs, localhost only, reports served.
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -68,7 +68,7 @@ try {
   const t0 = Date.now();
   while (running && Date.now() - t0 < 15 * 60_000) {
     const d = await data().catch(() => null);
-    if (d?.jobs.some((j) => j.criteria.length) && d.jobs.some((j) => j.active && j.column !== "done")) {
+    if (d?.jobs.some((j) => j.criteria.length) && d.jobs.some((j) => j.active && j.state !== "done")) {
       if (!mid) {
         mid = shot("running", "light") && shot("running", "dark");
         check("mid-run screenshots (light, dark)", mid, d.jobs.map((j) => `${j.id.slice(0, 3)} ${j.stage}`).join(", "));
@@ -86,8 +86,8 @@ try {
   const d = await data();
   check("the run ended", !running, d.jobs.map((j) => `${j.id.slice(0, 3)} ${j.stage}`).join(", "));
   check(
-    "every board column is one of the dashboard's",
-    d.jobs.every((j) => d.columns.some((c) => c.id === j.column)),
+    "every job sits on one of the stage track's steps",
+    d.jobs.every((j) => d.phases.some((p) => p.k === j.phase)),
   );
   const done = d.jobs.filter((j) => j.stage === "done");
   check(
@@ -122,8 +122,8 @@ try {
     /frame-ancestors 'none'/.test(csp) && /default-src 'none'/.test(csp) && page.headers.get("x-frame-options") === "DENY",
     `${csp} | ${page.headers.get("x-frame-options")}`,
   );
-  const post = await fetch(`${base}/data.json`, { method: "POST" });
-  check("read-only: POST is refused", post.status === 405);
+  const post = await fetch(`${base}/api/steer`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+  check("a POST without the page's token is refused (ADR 0009)", post.status === 403);
   const host = spawnSync("curl", ["-s", "-o", "/dev/null", "-w", "%{http_code}", "-H", "Host: attacker.example", `${base}/data.json`], {
     encoding: "utf8",
   }).stdout;
