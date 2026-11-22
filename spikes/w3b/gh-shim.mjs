@@ -29,7 +29,13 @@ const flag = (name) => {
   return i >= 0 ? argv[i + 1] : undefined;
 };
 const has = (name) => argv.includes(`--${name}`);
-const pick = (o, fields) => Object.fromEntries((fields ?? "").split(",").filter(Boolean).map((f) => [f, o[f]]));
+const pick = (o, fields) =>
+  Object.fromEntries(
+    (fields ?? "")
+      .split(",")
+      .filter(Boolean)
+      .map((f) => [f, o[f]]),
+  );
 const out = (x) => process.stdout.write(typeof x === "string" ? `${x}\n` : `${JSON.stringify(x)}\n`);
 const fail = (msg, code = 1) => {
   process.stderr.write(`${msg}\n`);
@@ -126,7 +132,15 @@ else if (a === "pr" && b === "checks") {
   );
 } else if (a === "issue" && b === "create") {
   const n = s.next++;
-  s.issues.push({ number: n, title: flag("title"), body: stdin, state: "OPEN", author: "kitchen-bot", labels: flag("label") ? [flag("label")] : [], comments: [] });
+  s.issues.push({
+    number: n,
+    title: flag("title"),
+    body: stdin,
+    state: "OPEN",
+    author: "kitchen-bot",
+    labels: flag("label") ? [flag("label")] : [],
+    comments: [],
+  });
   save(s);
   out(`https://github.com/${repo}/issues/${n}`);
 } else fail(`gh-shim: ${argv.slice(0, 2).join(" ")} not implemented`, 2);

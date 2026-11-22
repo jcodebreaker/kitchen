@@ -47,7 +47,15 @@ export type ShimState = {
     checks: { name: string; bucket: string }[];
     comments: { body: string; user: string; created_at: string }[];
   }[];
-  issues: { number: number; title: string; body: string; state: string; author: string; labels: string[]; comments: { body: string; user: string; created_at: string }[] }[];
+  issues: {
+    number: number;
+    title: string;
+    body: string;
+    state: string;
+    author: string;
+    labels: string[];
+    comments: { body: string; user: string; created_at: string }[];
+  }[];
   labels: string[];
   defaultChecks: { name: string; bucket: string }[];
 };

@@ -101,8 +101,12 @@ export function commentBody(o: {
   thumb: (id: string) => string | null;
 }): string {
   const t = o.rows.map((r) => {
-    const ev = r.evidence.map((id) => (o.link(id) ? `[${id}](${o.link(id)})` : id)).join(" ");
-    const th = r.evidence.map((id) => o.thumb(id)).find(Boolean);
+    const shown = r.evidence.slice(-3);
+    const ev = `${r.evidence.length > 3 ? `${r.evidence.length - 3} more, ` : ""}${shown.map((id) => (o.link(id) ? `[${id}](${o.link(id)})` : id)).join(" ")}`;
+    const th = [...r.evidence]
+      .reverse()
+      .map((id) => o.thumb(id))
+      .find(Boolean);
     return `| ${r.id} | ${r.result} | ${r.by} | ${ev} | ${th ? `<img src="${th}" width="160">` : ""} |`;
   });
   return [
@@ -148,7 +152,7 @@ export const report: StageHandler = async (ctx) => {
     link: (id) => fileUrl(id, "call.json"),
     thumb: (id) => {
       const png = (files.get(id) ?? []).find((f) => /\.png$/i.test(f));
-      return png && folder ? `${folder.replace("/tree/", "/raw/")}/evidence/${id}/${png}` : null;
+      return png && folder ? `${folder.replace("/tree/", "/raw/")}/evidence/${png.startsWith(`${id}/`) ? png : `${id}/${png}`}` : null;
     },
   });
   await once(ctx.repo, job.id, "report-comment", () => ctx.forge.comment({ key: `${job.id}/report-comment`, pr: job.pr, body }));

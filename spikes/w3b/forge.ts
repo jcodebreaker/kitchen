@@ -48,10 +48,16 @@ const h2 = git(r.dir, "rev-parse", "HEAD").trim();
 git(r.dir, "checkout", "-q", "main");
 const p2 = await forge.publish({ branch: "kitchen/001-x", title: "X", head: h2 });
 st = shimState(shim);
-check("publish again: the PR is found by branch (no second PR), the branch moved", st.prs.length === 1 && p2.pr === p1.pr && git(bare, "rev-parse", "refs/heads/kitchen/001-x").trim() === h2);
+check(
+  "publish again: the PR is found by branch (no second PR), the branch moved",
+  st.prs.length === 1 && p2.pr === p1.pr && git(bare, "rev-parse", "refs/heads/kitchen/001-x").trim() === h2,
+);
 const pushes = shimCalls(shim).filter((c) => c.argv[0] === "push");
 check("gh never pushes: git does, from the engine", pushes.length === 0);
-check("the engine's gh call carries the engine's token (agents never get it: ADR 0006)", shimCalls(shim).every((c) => c.token === "set"));
+check(
+  "the engine's gh call carries the engine's token (agents never get it: ADR 0006)",
+  shimCalls(shim).every((c) => c.token === "set"),
+);
 
 // --- CI ---
 const pr = p1.pr as number;
@@ -104,7 +110,10 @@ check("merged: the shim marks the Toolkit PR merged → prMerged", (await forge.
 await forge.comment({ key: "001-x/report-comment", pr, body: "report table" });
 await forge.comment({ key: "001-x/report-comment", pr, body: "report table" });
 st = shimState(shim);
-check("comment: posted once per key (found by its marker)", st.prs[0].comments.length === 1 && st.prs[0].comments[0].body.includes("<!-- kitchen:001-x/report-comment -->"));
+check(
+  "comment: posted once per key (found by its marker)",
+  st.prs[0].comments.length === 1 && st.prs[0].comments[0].body.includes("<!-- kitchen:001-x/report-comment -->"),
+);
 await forge.markReady(pr);
 check("ready for review: the draft is marked ready", shimState(shim).prs[0].isDraft === false);
 
@@ -124,7 +133,10 @@ fs.mkdirSync(path.join(jobDir, "evidence", "e1"), { recursive: true });
 fs.mkdirSync(path.join(jobDir, "evidence", "e2"), { recursive: true });
 fs.writeFileSync(path.join(jobDir, "report.html"), "<h1>report</h1>");
 fs.writeFileSync(path.join(jobDir, "evidence", "manifest.jsonl"), '{"id":"e1"}\n');
-fs.writeFileSync(path.join(jobDir, "evidence", "e1", "call.json"), JSON.stringify({ stdout: "STRIPE_SECRET_KEY=sk_" + "live_abcdefghijklmnopqrstuvwx token: ghp_abcdefghijklmnopqrstuvwxyz0123456789" }));
+fs.writeFileSync(
+  path.join(jobDir, "evidence", "e1", "call.json"),
+  JSON.stringify({ stdout: "STRIPE_SECRET_KEY=sk_" + "live_abcdefghijklmnopqrstuvwx token: ghp_abcdefghijklmnopqrstuvwxyz0123456789" }),
+);
 const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 1, 2, 3, 0, 255]);
 fs.writeFileSync(path.join(jobDir, "evidence", "e2", "shot.png"), png);
 // an old folder on the branch, published 40 days ago
@@ -136,10 +148,20 @@ await publishEvidence({ repo: r.dir, url: bare, job: "000-old", jobDir: oldDir, 
 check("evidence: the first publish creates the orphan branch", git(bare, "ls-tree", "--name-only", EVIDENCE_BRANCH).trim() === "000-old");
 const url = await forge.pushEvidence({ key: "001-x/evidence", job: "001-x", dir: jobDir });
 const tree = git(bare, "ls-tree", "-r", "--name-only", EVIDENCE_BRANCH).trim().split("\n");
-check("evidence: one folder per job with report.html, manifest and every entry folder", ["001-x/report.html", "001-x/evidence/manifest.jsonl", "001-x/evidence/e1/call.json", "001-x/evidence/e2/shot.png", "001-x/meta.json"].every((f) => tree.includes(f)), tree.join(" "));
+check(
+  "evidence: one folder per job with report.html, manifest and every entry folder",
+  ["001-x/report.html", "001-x/evidence/manifest.jsonl", "001-x/evidence/e1/call.json", "001-x/evidence/e2/shot.png", "001-x/meta.json"].every((f) =>
+    tree.includes(f),
+  ),
+  tree.join(" "),
+);
 check("evidence: the folder older than evidence_keep_days is pruned", !tree.some((f) => f.startsWith("000-old/")), tree.join(" "));
 const call = git(bare, "show", `${EVIDENCE_BRANCH}:001-x/evidence/e1/call.json`);
-check("evidence: secrets in text evidence are redacted at publish", !call.includes("sk_live_abcdef") && !call.includes("ghp_abcdef") && call.includes("[redacted]"), call);
+check(
+  "evidence: secrets in text evidence are redacted at publish",
+  !call.includes("sk_live_abcdef") && !call.includes("ghp_abcdef") && call.includes("[redacted]"),
+  call,
+);
 check(
   "evidence: the job folder keeps the original (hash-chained) file",
   fs.readFileSync(path.join(jobDir, "evidence", "e1", "call.json"), "utf8").includes("sk_live_abcdef"),
@@ -154,7 +176,10 @@ check("evidence: main's history is untouched", !git(bare, "log", "--format=%s", 
 
 // --- base ---
 const tip = await baseTip(r.dir, cfg);
-check("base: fetched from the remote URL into refs/kitchen/base", tip === git(bare, "rev-parse", "main").trim() && git(r.dir, "rev-parse", "refs/kitchen/base").trim() === tip);
+check(
+  "base: fetched from the remote URL into refs/kitchen/base",
+  tip === git(bare, "rev-parse", "main").trim() && git(r.dir, "rev-parse", "refs/kitchen/base").trim() === tip,
+);
 check("no named remote was ever configured (pushes and fetches go to the explicit URL)", git(r.dir, "remote").trim() === "");
 
 // --- issue source ---
@@ -167,8 +192,15 @@ editShim(shim, (s) => {
 });
 const src = new GithubSource(cfg);
 const polled = await src.poll();
-check("source: only open issues with the kitchen label are tickets (the label is the trust boundary)", polled.length === 1 && polled[0].ref.id === "50", polled.map((t) => t.ref.id).join(","));
-check("source: the ticket carries the issue text and its URL", polled[0].body.includes("N projects") && polled[0].ref.url === `https://github.com/${SLUG}/issues/50`);
+check(
+  "source: only open issues with the kitchen label are tickets (the label is the trust boundary)",
+  polled.length === 1 && polled[0].ref.id === "50",
+  polled.map((t) => t.ref.id).join(","),
+);
+check(
+  "source: the ticket carries the issue text and its URL",
+  polled[0].body.includes("N projects") && polled[0].ref.url === `https://github.com/${SLUG}/issues/50`,
+);
 const since = new Date(Date.now() - 1000).toISOString();
 const job = { id: "002-show", ticket: { source: "github", id: "50" }, updatedAt: since } as unknown as Job;
 await src.ask(job, { key: "ask/m1", text: "Count archived projects too?" });
