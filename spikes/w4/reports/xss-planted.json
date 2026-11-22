@@ -32,14 +32,14 @@
       "round": 1,
       "secs": 29,
       "usd": 0.1485,
-      "roles": "intake (fake)"
+      "roles": "intake (claude sonnet)"
     },
     {
       "stage": "build",
       "round": 1,
       "secs": 47,
       "usd": 0.0689,
-      "roles": "builder (fake)"
+      "roles": "builder (claude sonnet)"
     },
     {
       "stage": "gate",
@@ -67,14 +67,14 @@
       "round": 1,
       "secs": 12,
       "usd": 0.0067,
-      "roles": "reviewer-code (fake), reviewer-security (fake)"
+      "roles": "reviewer-code (claude haiku), reviewer-security (claude haiku)"
     },
     {
       "stage": "build",
       "round": 2,
       "secs": 15,
       "usd": 0.063,
-      "roles": "builder (fake)"
+      "roles": "builder (claude sonnet)"
     },
     {
       "stage": "gate",
@@ -102,7 +102,7 @@
       "round": 2,
       "secs": 9,
       "usd": 0.005,
-      "roles": "reviewer-security (fake), reviewer-code (fake)"
+      "roles": "reviewer-security (claude haiku), reviewer-code (claude haiku)"
     },
     {
       "stage": "ready",
@@ -116,7 +116,7 @@
       "round": 2,
       "secs": 15,
       "usd": 0.0036,
-      "roles": "report (fake)"
+      "roles": "report (claude haiku)"
     }
   ],
   "agents": [
