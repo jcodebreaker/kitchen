@@ -45,7 +45,8 @@ says what the user can do. Then these sections, in order:
    ````
 
    `paths`: the source paths the feature lives in (a change there makes
-   `kitchen run` re-prove the Toolkit). `check`: one line per drive that
+   `kitchen run` re-prove the Toolkit). Required; every glob must match a
+   tracked file, or the check fails. `check`: one line per drive that
    `kitchen toolkit check` runs, with concrete args (seed users, fresh values).
    Every drive the check runs must pass twice: once on a fresh instance, once
    after `reset`.
