@@ -3,6 +3,7 @@ import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { type RunResult, section02Lines } from "../bench/run.ts";
 import { checksPrepareOf } from "../checks/run-checks.ts";
 import { loadConfig } from "../config.ts";
 import { takeTicket } from "../engine/base.ts";
@@ -169,6 +170,15 @@ export function report(repo: string, out: Out, o: { json?: boolean } = {}): numb
   for (const l of formatMeasures(m)) out(l);
   out("");
   out(formatCounts(summarize(lines)));
+  // PLAN §0.2, judged by code on the latest benchmark run in this ledger (all of them: `kitchen report --bench`).
+  const bench = lines.filter((l) => l.event === "bench");
+  if (bench.length) {
+    const last = (bench.at(-1)?.detail as { runId?: string } | undefined)?.runId;
+    const rs = bench.map((l) => l.detail as unknown as RunResult & { runId?: string }).filter((d) => d.runId === last);
+    out("");
+    out(`Benchmark ${last} (${rs.length} runs):`);
+    for (const l of section02Lines(rs)) out(`  ${l}`);
+  }
   return 0;
 }
 
