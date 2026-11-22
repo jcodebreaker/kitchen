@@ -101,8 +101,14 @@ export type Job = {
   agentRuns: AgentRunRef[];
   /** Number of moves made; the sequence for ledger keys and per-entry role runs. */
   moves: number;
-  /** Set while a runner works on the job; left behind by a crash. */
-  running: { pid: number; stage: Stage; at: string } | null;
+  /**
+   * Set while a runner works on the job; left behind by a crash. Names the runner
+   * (pid + process start time). The process groups the runner started for the job
+   * (agents, checks, Toolkit calls) are recorded beside it in jobs/<id>/procs/ (src/procs.ts).
+   */
+  running: { pid: number; start?: string | null; stage: Stage; at: string } | null;
+  /** The stage a job went to needs-human from; `kitchen feedback` returns there (ADR 0007). */
+  escalatedFrom?: Stage;
   startedAt: string;
   updatedAt: string;
   // proof fields (src/proof/job.ts)
@@ -115,7 +121,7 @@ export type Job = {
 
 export type Lint = { ok: boolean; reason?: string; missingPrimitive?: string };
 export type Verdict = "PASS" | "FAIL" | "INCONCLUSIVE" | "TOOLKIT-GAP";
-export type Escalation = "round-limit" | "smith-limit" | "adapter-error" | "refused";
+export type Escalation = "round-limit" | "smith-limit" | "adapter-error" | "engine-error" | "refused";
 
 /** What guards read. Gathered by the caller (stage handlers, runner, CLI) from files, git and the forge. */
 export type Facts = {
@@ -125,6 +131,8 @@ export type Facts = {
   replied?: boolean;
   /** A human command. */
   operator?: "feedback" | "reject" | "resume";
+  /** `kitchen feedback --to <stage>`: where a needs-human job goes instead of the stage it escalated from. */
+  feedbackTo?: Stage;
   spec?: Lint;
   repro?: { failedAsExpected: boolean; onBase: boolean; committed: boolean; missingPrimitive?: string };
   build?: { status: "READY" | "BLOCKED"; committed: boolean; pushed: boolean; pr: number | null; localForge: boolean };
@@ -134,6 +142,8 @@ export type Facts = {
     verdict: Verdict;
     mechanicalFirst: boolean;
     citationsOk: boolean;
+    /** Why the citations fail, when they do. */
+    citationProblem?: string;
     manifestOk: boolean;
     doctorOk?: boolean;
     gapPrimitive?: string;
@@ -223,6 +233,8 @@ const isBug = check(
   (j) => `kind is ${j.kind}, not bug`,
 );
 const notBug = check((j) => j.kind !== "bug", "kind is bug: bugs go through repro");
+/** Where `kitchen feedback` sends a needs-human job: `--to`, else the stage it escalated from, else build. */
+export const feedbackTarget = (j: Pick<Job, "escalatedFrom">, f: Pick<Facts, "feedbackTo">): Stage => f.feedbackTo ?? j.escalatedFrom ?? "build";
 const resetBudget = (j: Job) => {
   j.round += 1;
   j.roundStart = j.round;
@@ -545,7 +557,7 @@ export const TABLE: readonly Row[] = [
       !f.verify?.mechanicalFirst
         ? "mechanical proofs did not run first"
         : !f.verify.citationsOk
-          ? "a cited id is not stamped for this HEAD, round and criterion"
+          ? `a cited id is not stamped for this HEAD, round and criterion${f.verify.citationProblem ? ` (${f.verify.citationProblem})` : ""}`
           : !f.verify.manifestOk
             ? "manifest does not match job.json"
             : null,
@@ -664,6 +676,13 @@ export const TABLE: readonly Row[] = [
       if (!r.gatePass) return "gate is not PASS on this HEAD";
       return null;
     },
+  },
+  {
+    id: "ready>gate",
+    from: "ready",
+    to: "gate",
+    when: "gate is not PASS on this HEAD (commits since gate.md touch more than features/*.md): Gate runs again",
+    guard: check((_j, f) => !!f.ready && !f.ready.gatePass && !f.ready.conflict, "gate is PASS on this HEAD"),
   },
   {
     id: "ready>drives",
@@ -802,7 +821,8 @@ export const TABLE: readonly Row[] = [
           case "smith-limit":
             return j.smith.attempts >= 2 ? null : `smith attempts left: ${j.smith.attempts} of 2`;
           case "adapter-error":
-            return j.attempts.errors + 1 >= 2 ? null : "first adapter error is retried";
+          case "engine-error":
+            return j.attempts.errors + 1 >= 2 ? null : `first ${f.escalate} is retried`;
           case "refused":
             return j.attempts.refused + 1 >= 2 ? null : "first refused move is retried";
           default:
@@ -814,15 +834,23 @@ export const TABLE: readonly Row[] = [
       j.pausedReason = `${f.escalate}${f.why ? `: ${f.why}` : ""}`;
     },
   },
-  // needs-human
-  {
-    id: "needs-human>build",
-    from: "needs-human",
-    to: "build",
-    when: "`kitchen feedback`; the round budget resets",
-    guard: operatorIs("feedback"),
-    apply: resetBudget,
-  },
+  // needs-human: feedback goes back to the stage the job escalated from (ADR 0007), or where `--to` says
+  ...ACTIVE.map(
+    (to): Row => ({
+      id: `needs-human>${to}`,
+      from: "needs-human",
+      to,
+      when: `\`kitchen feedback\` on a job that escalated from ${to} (or \`--to ${to}\`); the round budget resets`,
+      guard: all(
+        operatorIs("feedback"),
+        check(
+          (j, f) => feedbackTarget(j, f) === to,
+          (j, f) => `feedback goes to ${feedbackTarget(j, f)}${f.feedbackTo ? " (--to)" : j.escalatedFrom ? " (where it escalated from)" : ""}, not ${to}`,
+        ),
+      ),
+      apply: resetBudget,
+    }),
+  ),
   { id: "needs-human>rejected", from: "needs-human", to: "rejected", when: "`kitchen reject`", guard: operatorIs("reject") },
 ];
 
@@ -843,7 +871,10 @@ export function move(job: Job, to: Stage, facts: Facts): MoveResult {
     }
     const next: Job = structuredClone(job);
     if (!WAITING.includes(to)) next.pausedReason = undefined;
-    if (row.id !== "*>paused") next.attempts.backoff = 0;
+    // The backoff counter survives a pause and its resume, so repeated rate limits back off longer;
+    // the first move that is neither resets it.
+    if (to !== "paused" && job.stage !== "paused") next.attempts.backoff = 0;
+    next.escalatedFrom = to === "needs-human" ? job.stage : job.stage === "needs-human" ? undefined : job.escalatedFrom;
     next.attempts.errors = 0;
     next.attempts.refused = 0;
     row.apply?.(next, facts); // sees the stage being left

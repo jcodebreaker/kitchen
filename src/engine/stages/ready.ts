@@ -13,6 +13,7 @@ export const ready: StageHandler = async (ctx) => {
   const toolkitPr = job.smith.toolkitPr === null ? "none" : (await ctx.forge.prMerged(job.smith.toolkitPr)) ? "merged" : "open";
   const gatePass = await gateStillValid(ctx.jobDir, job);
   const facts = { ready: { synced: true, conflict: false, ci, toolkitPr, gatePass, baseMoved: false, recheckFailed: false } } as const;
-  const to = ci === "fail" ? "build" : ci === "pending" || toolkitPr === "open" ? "paused" : "report";
+  // Gate no longer PASS on this HEAD (commits since it touch more than feature drives): Gate again first.
+  const to = !gatePass ? "gate" : ci === "fail" ? "build" : ci === "pending" || toolkitPr === "open" ? "paused" : "report";
   return { to, facts };
 };

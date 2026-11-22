@@ -3,7 +3,7 @@
 //   kitchen ticket "<text>"
 //   kitchen run [--once] [--detach] [<job>]
 //   kitchen status
-//   kitchen resume <id|n> · feedback <id> ["<text>"] · reject <id>
+//   kitchen resume <id|n> · feedback <id> [--to <stage>] ["<text>"] · reject <id>
 //   kitchen report
 //   kitchen mcp --job <id> --role <role> [--repo <dir>]   the engine bridge (src/bridge/mcp.ts)
 import path from "node:path";
@@ -11,7 +11,7 @@ import { serveBridge } from "./bridge/mcp.ts";
 import * as cmd from "./cli/commands.ts";
 
 const USAGE =
-  'usage: kitchen ticket "<text>" | run [--once] [--detach] [<job>] | status | resume <id|n> | feedback <id> ["<text>"] | reject <id> | report | mcp …';
+  'usage: kitchen ticket "<text>" | run [--once] [--detach] [<job>] | status | resume <id|n> | feedback <id> [--to <stage>] ["<text>"] | reject <id> | report | mcp …';
 
 async function main(argv: string[]): Promise<number> {
   const [name, ...rest] = argv;
@@ -27,10 +27,12 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
   let repo = process.cwd();
+  let to: string | undefined;
   const pos: string[] = [];
   const flags = new Set<string>();
   for (let i = 0; i < rest.length; i++) {
     if (rest[i] === "--repo") repo = rest[++i] ?? repo;
+    else if (rest[i] === "--to" && name === "feedback") to = rest[++i];
     else if (rest[i].startsWith("--")) flags.add(rest[i]);
     else pos.push(rest[i]);
   }
@@ -51,7 +53,7 @@ async function main(argv: string[]): Promise<number> {
     case "resume":
       return cmd.resume(repo, need("<id|n>"), out);
     case "feedback":
-      return cmd.feedback(repo, need("<id>"), pos.slice(1).join(" "), out);
+      return cmd.feedback(repo, need("<id>"), pos.slice(1).join(" "), out, { to });
     case "reject":
       return cmd.reject(repo, need("<id>"), out);
     case "report":

@@ -477,6 +477,8 @@ const cases: Case[] = [
   { row: "ready>paused", job: { stage: "ready" }, to: "paused", facts: f({ ready: ready() }), refused: /neither CI pending/ },
   { row: "ready>build", job: { stage: "ready" }, to: "build", facts: f({ ready: ready({ ci: "fail" }) }), expect: (j) => assert.equal(j.round, 2) },
   { row: "ready>build", job: { stage: "ready" }, to: "build", facts: f({ ready: ready() }), refused: /no conflict, red CI/ },
+  { row: "ready>gate", job: { stage: "ready" }, to: "gate", facts: f({ ready: ready({ gatePass: false }) }) },
+  { row: "ready>gate", job: { stage: "ready" }, to: "gate", facts: f({ ready: ready() }), refused: /gate is PASS on this HEAD/ },
   // paused
   ...(["intake", "spec", "repro", "build", "gate", "drives", "verify", "toolkit", "review", "ready", "report"] as const).flatMap((to): Case[] => [
     {
@@ -545,14 +547,14 @@ const cases: Case[] = [
   // any active stage
   {
     row: "*>paused",
-    job: { stage: "build", attempts: { ...baseJob().attempts, backoff: 2 } },
+    job: { stage: "build" },
     to: "paused",
     facts: f({ adapter: { rateLimited: true, until: "2026-11-22T10:05:00.000Z" } }),
     expect: (j) => {
       assert.equal(j.pausedFrom, "build");
       assert.equal(j.waitFor, "backoff");
       assert.equal(j.until, "2026-11-22T10:05:00.000Z");
-      assert.equal(j.attempts.backoff, 3);
+      assert.equal(j.attempts.backoff, 1);
     },
   },
   {
@@ -574,7 +576,18 @@ const cases: Case[] = [
   { row: "*>needs-human", job: { stage: "gate" }, to: "needs-human", facts: f({ escalate: "round-limit" }), refused: /round budget left/ },
   { row: "*>needs-human", job: { stage: "spec", smith: { attempts: 2, toolkitPr: null } }, to: "needs-human", facts: f({ escalate: "smith-limit" }) },
   { row: "*>needs-human", job: { stage: "build", attempts: { ...baseJob().attempts, errors: 1 } }, to: "needs-human", facts: f({ escalate: "adapter-error" }) },
-  { row: "*>needs-human", job: { stage: "build" }, to: "needs-human", facts: f({ escalate: "adapter-error" }), refused: /first adapter error/ },
+  { row: "*>needs-human", job: { stage: "build" }, to: "needs-human", facts: f({ escalate: "adapter-error" }), refused: /first adapter-error/ },
+  {
+    row: "*>needs-human",
+    job: { stage: "spec", attempts: { ...baseJob().attempts, errors: 1 } },
+    to: "needs-human",
+    facts: f({ escalate: "engine-error", why: "worktree" }),
+    expect: (j) => {
+      assert.match(j.pausedReason ?? "", /^engine-error: worktree/);
+      assert.equal(j.escalatedFrom, "spec");
+    },
+  },
+  { row: "*>needs-human", job: { stage: "spec" }, to: "needs-human", facts: f({ escalate: "engine-error" }), refused: /first engine-error/ },
   { row: "*>needs-human", job: { stage: "drives", attempts: { ...baseJob().attempts, refused: 1 } }, to: "needs-human", facts: f({ escalate: "refused" }) },
   { row: "*>needs-human", job: { stage: "done" }, to: "needs-human", facts: f({ escalate: "round-limit" }), refused: /done is not an active stage/ },
   // needs-human
@@ -586,6 +599,34 @@ const cases: Case[] = [
     expect: (j) => assert.equal(j.roundStart, 4),
   },
   { row: "needs-human>build", job: { stage: "needs-human" }, to: "build", facts: f({ operator: "reject" }), refused: /kitchen feedback/ },
+  // feedback returns to the stage the job escalated from; `--to` overrides it (ADR 0007)
+  ...(["intake", "spec", "repro", "build", "gate", "drives", "verify", "toolkit", "review", "ready", "report"] as const).flatMap((to): Case[] => [
+    {
+      row: `needs-human>${to}`,
+      job: { stage: "needs-human", escalatedFrom: to, round: 2 },
+      to,
+      facts: f({ operator: "feedback" }),
+      expect: (j) => {
+        assert.equal(j.round, 3);
+        assert.equal(j.escalatedFrom, undefined);
+      },
+    },
+    {
+      row: `needs-human>${to}`,
+      job: { stage: "needs-human", escalatedFrom: to === "spec" ? "repro" : "spec" },
+      to,
+      facts: f({ operator: "feedback" }),
+      refused: /feedback goes to (spec|repro) \(where it escalated from\)/,
+    },
+  ]),
+  { row: "needs-human>build", job: { stage: "needs-human", escalatedFrom: "spec" }, to: "build", facts: f({ operator: "feedback", feedbackTo: "build" }) },
+  {
+    row: "needs-human>spec",
+    job: { stage: "needs-human", escalatedFrom: "spec" },
+    to: "spec",
+    facts: f({ operator: "feedback", feedbackTo: "build" }),
+    refused: /feedback goes to build \(--to\)/,
+  },
   { row: "needs-human>rejected", job: { stage: "needs-human" }, to: "rejected", facts: f({ operator: "reject" }) },
   { row: "needs-human>rejected", job: { stage: "needs-human" }, to: "rejected", facts: f({}), refused: /kitchen reject/ },
 ];
@@ -665,8 +706,37 @@ test("round budget: three rounds, then the →build move refuses with round-limi
   assert.ok("refused" in r && r.code === "round-limit");
   const h = move(j, "needs-human", f({ escalate: "round-limit" }));
   assert.ok("job" in h);
-  const back = move(h.job, "build", f({ operator: "feedback" }));
+  assert.equal(h.job.escalatedFrom, "verify");
+  const back = move(h.job, "build", f({ operator: "feedback", feedbackTo: "build" }));
   assert.ok("job" in back);
   assert.equal(back.job.round, 4);
   assert.ok("job" in move({ ...back.job, stage: "verify" }, "build", f({ verify: verify("FAIL") })), "the budget restarted");
+});
+
+test("backoff grows across rate limits: kept through paused and its resume, reset by the next other move", () => {
+  let j = baseJob({ stage: "build" });
+  const step = (to: Stage, facts: Facts) => {
+    const r = move(j, to, facts);
+    assert.ok("job" in r, "refused" in r ? r.refused : "");
+    j = r.job;
+  };
+  const limited = f({ adapter: { rateLimited: true, until: NOW } });
+  for (const n of [1, 2, 3]) {
+    step("paused", limited);
+    assert.equal(j.attempts.backoff, n, "the pause counts");
+    step("build", f({ waitCleared: true }));
+    assert.equal(j.attempts.backoff, n, "the resume keeps it");
+  }
+  step("gate", f({ build: { status: "READY", committed: true, pushed: true, pr: 1, localForge: false } }));
+  assert.equal(j.attempts.backoff, 0, "a real move resets it");
+});
+
+test("needs-human remembers where it escalated from; feedback goes back there", () => {
+  const r = move(baseJob({ stage: "repro", attempts: { ...baseJob().attempts, errors: 1 } }), "needs-human", f({ escalate: "adapter-error" }));
+  assert.ok("job" in r);
+  assert.equal(r.job.escalatedFrom, "repro");
+  assert.ok("refused" in move(r.job, "build", f({ operator: "feedback" })), "not build: that would skip repro");
+  const back = move(r.job, "repro", f({ operator: "feedback" }));
+  assert.ok("job" in back);
+  assert.equal(back.job.escalatedFrom, undefined);
 });

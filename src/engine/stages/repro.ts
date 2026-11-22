@@ -21,6 +21,7 @@ export const repro: StageHandler = async (ctx) => {
   const gap = h.GAP || undefined;
   const failed = h.REPRO === "FAILED-AS-EXPECTED";
   const c = failed ? await commitAll(job, `kitchen(${job.id}): regression test (repro)`) : null;
+  if (c?.stripped.length) ctx.log(`Toolkit primitive edits kept off the job branch: ${c.stripped.join(", ")}`);
   const facts = { repro: { failedAsExpected: failed, onBase: true, committed: !!c && c.ahead && c.clean, missingPrimitive: gap } };
   const to = failed ? "build" : gap ? "toolkit" : job.attempts.repro + 1 < 2 ? "repro" : "needs-info";
   if (to === "needs-info") await ctx.source.ask(job, { key: `ask/repro/m${job.moves}`, text: `Kitchen could not reproduce this after 2 tries.\n\n${r.text}` });
