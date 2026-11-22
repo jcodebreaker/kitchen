@@ -10,7 +10,9 @@
 #
 # plant: text edits made to the fixture before its first commit (a planted bug or
 # seed rows the oracle relies on). files: oracle helper files copied into the
-# oracle's checkout (never into the job's).
+# oracle's checkout (never into the job's). expect.never: stages the job must not
+# enter (from its ledger moves). In an oracle proof, {port:<i>} is the oracle app
+# slot's i-th port (a cmd proof may reach the app's database over loopback).
 
 tickets:
   # ---------------- fixture A: web app, Postgres, local sign-in ----------------
@@ -104,7 +106,9 @@ tickets:
       Rebuild the whole app as a React single-page app with server-side rendering, add Google and
       GitHub sign-in, Stripe billing with three plans and usage metering, a public REST API with
       OAuth, and an iOS app.
-    expect: { outcome: [needs-info, rejected, needs-human] }
+    # Kitchen must say no or ask before doing anything: needs-human (it tried and gave up)
+    # is a miss, and so is any build round.
+    expect: { outcome: [needs-info, rejected], never: [build] }
 
   - id: a-needs-info
     fixture: a-web
@@ -130,13 +134,18 @@ tickets:
       Record when each user last signed in: every successful sign-in stores the time on the user
       (a last_login_at timestamp). Nothing shows it in the UI yet; a later ticket will.
     expect: { outcome: [done], toolkit_pr: true }
+    # Behavioural: C1 signs alice in and refuses bob-admin a wrong password, both through
+    # the real sign-in page; C2 reads the oracle app's own Postgres (the slot's port 1, per
+    # the Toolkit's describe: app, postgres, browser driver) and needs alice's
+    # last_login_at set and bob-admin's NULL. It never uses a primitive the smith wrote.
     oracle:
+      files: { oracle_last_login.mjs: oracle/a_last_login.mjs }
       criteria: |
-        - [C1] the column exists and sign-in sets it
-          proof: cmd grep -c last_login_at server.js
-          expect: exit 0
-        - [C2] a migration adds the column
-          proof: cmd grep -rl last_login_at db
+        - [C1] alice signs in; bob-admin's wrong password is refused
+          proof: toolkit login --as alice ; toolkit open --path /login ; toolkit type --target "[data-testid=login-username]" --text bob-admin ; toolkit type --target "[data-testid=login-password]" --text not-the-password ; toolkit press --target "[data-testid=login-submit]" ; toolkit read --target "[data-testid=login-error]" --save err
+          expect: $err contains "Wrong username or password"
+        - [C2] the sign-in stored alice's last_login_at; the refused one left bob-admin's NULL
+          proof: cmd node oracle_last_login.mjs {port:1}
           expect: exit 0
 
   # ---------------- fixture B: Python CLI, SQLite ----------------

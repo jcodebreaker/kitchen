@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
+import { STAGES } from "../engine/machine.ts";
 
 export const OUTCOMES = ["done", "needs-info", "rejected", "needs-human", "paused"] as const;
 export type Outcome = (typeof OUTCOMES)[number];
@@ -25,7 +26,14 @@ export const TicketSchema = z
     trap: z.string().optional(),
     text: z.string().min(1),
     plant: z.array(Plant).default([]),
-    expect: z.object({ outcome: z.array(z.enum(OUTCOMES)).min(1), toolkit_pr: z.boolean().optional() }).strict(),
+    expect: z
+      .object({
+        outcome: z.array(z.enum(OUTCOMES)).min(1),
+        toolkit_pr: z.boolean().optional(),
+        /** Stages the job must never enter (from its ledger moves): `[build]` = no build round happened. */
+        never: z.array(z.enum(STAGES)).optional(),
+      })
+      .strict(),
     oracle: z
       .object({
         criteria: z.string().min(1),
