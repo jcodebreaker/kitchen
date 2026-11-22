@@ -1,0 +1,114 @@
+{
+  "fixture": "d-api",
+  "tool": "claude",
+  "model": "sonnet",
+  "effort": "medium",
+  "at": "2026-11-22T06:51:42.584Z",
+  "init": {
+    "exit": 0,
+    "secs": 223.018,
+    "questions": null
+  },
+  "agent": {
+    "runs": [
+      {
+        "mode": "survey",
+        "ok": true,
+        "secs": 30.412,
+        "usd": 0.1587039,
+        "inTok": 141474,
+        "outTok": 4554,
+        "model": "sonnet",
+        "tool": "claude",
+        "sessionId": "e48861a9-8776-4088-a322-a9a3306b3d5f",
+        "line": "The survey is written to `.kitchen-out/survey.md`. It covers an API surface, adopting `npm start` and building a Stripe mock and an SMTP catcher, with four features and no questions for you."
+      },
+      {
+        "mode": "build",
+        "ok": true,
+        "secs": 180.87,
+        "usd": 0.7075847,
+        "inTok": 1036153,
+        "outTok": 26233,
+        "model": "sonnet",
+        "tool": "claude",
+        "sessionId": "e48861a9-8776-4088-a322-a9a3306b3d5f",
+        "line": "The Toolkit is built and `toolkit_check` passed, including all 7 drives twice (fresh and after reset) and a second instance running at the same time; details are in `.kitchen-out/setup.md`."
+      }
+    ],
+    "secs": 211.282,
+    "usd": 0.8662886,
+    "inTok": 1177627,
+    "outTok": 30787
+  },
+  "fixes": 0,
+  "baseCheck": {
+    "code": 0,
+    "secs": 11.243
+  },
+  "proven": {
+    "sha": "283ea009c1428eb76ac588068cc873cb10b8fe6d",
+    "at": "2026-11-22T06:51:42.505Z",
+    "parallel": true,
+    "features": [
+      {
+        "file": "features/cancel-order.md",
+        "paths": [
+          "server.js",
+          "lib/stripe.js"
+        ]
+      },
+      {
+        "file": "features/create-order.md",
+        "paths": [
+          "server.js",
+          "lib/pricing.js",
+          "lib/stripe.js",
+          "lib/mail.js",
+          "db/schema.sql"
+        ]
+      },
+      {
+        "file": "features/read-orders.md",
+        "paths": [
+          "server.js",
+          "db/schema.sql"
+        ]
+      },
+      {
+        "file": "features/stripe-webhook.md",
+        "paths": [
+          "server.js",
+          "lib/signature.js",
+          "lib/mail.js"
+        ]
+      }
+    ],
+    "prepareSecs": 0.369,
+    "secs": 10.964
+  },
+  "commits": [
+    "283ea00 kitchen setup: Toolkit (bin/dev, SKILL.md, features, .env.kitchen)",
+    "e212525 fixture d-api"
+  ],
+  "toolkitFiles": [
+    ".gitignore",
+    "SKILL.md",
+    "TEMPLATE.md",
+    "app.mjs",
+    "bin",
+    "features",
+    "lib",
+    "mock.mjs",
+    "package.json",
+    "seed.mjs",
+    "bin/dev",
+    "features/README.md",
+    "features/cancel-order.md",
+    "features/create-order.md",
+    "features/read-orders.md",
+    "features/stripe-webhook.md",
+    "lib/common.mjs"
+  ],
+  "log": "/private/tmp/claude-501/-Users-simo-pttx/58ffbf3c-d628-41d8-aabb-4f73bfb4d366/scratchpad/runs/d-claude/init.log"
+}

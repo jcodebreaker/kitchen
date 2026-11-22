@@ -264,6 +264,16 @@ export async function initCmd(o: InitOpts, out: Out): Promise<number> {
       say(`setup (${mode}): resume failed (${r.error}); starting a fresh session`);
       r = await a.run({ ...req, resumeSession: undefined, prompt: `${role}\n\n${prompt}` });
     }
+    // Finished but its file isn't there (seen on Codex: a write chained after a failing command): one short nudge in the same session.
+    if (r.ok && !r.outPath && r.sessionId) {
+      say(`setup (${mode}): ${outFile} was not written; asking once more in the same session`);
+      const again = await a.run({
+        ...req,
+        resumeSession: r.sessionId,
+        prompt: `Your ${outFile} is not at ${path.join(wtGit.workTree, ".kitchen-out", outFile)}: the command that should have written it didn't run or failed. Write it now (on its own, not chained after another command), then answer with one line.`,
+      });
+      if (again.ok) r = { ...again, usage: sumUsage(r.usage, again.usage) };
+    }
     const secs = (Date.now() - t0) / 1000;
     const rec: RunRecord = {
       mode,
@@ -516,3 +526,9 @@ ${report}
 Fix the Toolkit in this worktree, prove it again with \`toolkit_check\`, and
 write \`setup.md\` again (same header lines).`;
 }
+
+const sumUsage = (a: AgentResult["usage"], b: AgentResult["usage"]): AgentResult["usage"] => ({
+  usd: a?.usd === undefined && b?.usd === undefined ? undefined : (a?.usd ?? 0) + (b?.usd ?? 0),
+  inTok: (a?.inTok ?? 0) + (b?.inTok ?? 0),
+  outTok: (a?.outTok ?? 0) + (b?.outTok ?? 0),
+});
