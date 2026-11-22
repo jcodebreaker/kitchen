@@ -125,11 +125,14 @@ type CodexEvent = {
 export class CodexAdapter implements AgentAdapter {
   readonly name = "codex" as const;
   /** `rawLog`: append every JSONL event there (debugging; Codex keeps its own transcript too). */
-  constructor(
-    private bin = process.env.KITCHEN_CODEX_BIN ?? "codex",
-    private binArgs: string[] = [],
-    private rawLog?: string,
-  ) {}
+  private readonly bin: string;
+  private readonly binArgs: string[];
+  private readonly rawLog?: string;
+  constructor(bin = process.env.KITCHEN_CODEX_BIN ?? "codex", binArgs: string[] = [], rawLog?: string) {
+    this.bin = bin;
+    this.binArgs = binArgs;
+    this.rawLog = rawLog;
+  }
 
   async run(req: AgentRequest): Promise<AgentResult> {
     mkdirSync(outDirOf(req), { recursive: true });

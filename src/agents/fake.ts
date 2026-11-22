@@ -10,7 +10,10 @@ export type FakeScript = (req: AgentRequest, call: number) => FakeStep;
 export class FakeAdapter implements AgentAdapter {
   readonly name = "fake" as const;
   readonly calls: AgentRequest[] = [];
-  constructor(private script: FakeScript) {}
+  private readonly script: FakeScript;
+  constructor(script: FakeScript) {
+    this.script = script;
+  }
 
   async run(req: AgentRequest): Promise<AgentResult> {
     this.calls.push(req);

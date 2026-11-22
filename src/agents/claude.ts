@@ -114,7 +114,10 @@ type ClaudeJson = {
 
 export class ClaudeAdapter implements AgentAdapter {
   readonly name = "claude" as const;
-  constructor(private bin = process.env.KITCHEN_CLAUDE_BIN ?? "claude") {}
+  private readonly bin: string;
+  constructor(bin = process.env.KITCHEN_CLAUDE_BIN ?? "claude") {
+    this.bin = bin;
+  }
 
   async run(req: AgentRequest): Promise<AgentResult> {
     mkdirSync(outDirOf(req), { recursive: true });
