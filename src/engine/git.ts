@@ -22,7 +22,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execa } from "execa";
-import { engineGitEnv } from "../agents/env.ts";
+import { engineGitEnv, safePath } from "../agents/env.ts";
 
 export type GitRepo = { gitDir: string; workTree: string };
 
@@ -138,8 +138,29 @@ export function filterDriversOf(names: string): string[] {
   return [...out];
 }
 
+let gitBin: string | undefined;
+
+/**
+ * Absolute path of git, resolved once from the absolute PATH entries only, so a
+ * `git` planted in a worktree can never be the one that runs.
+ */
+export function resolveGit(pathVar: string | undefined = process.env.PATH): string {
+  if (gitBin) return gitBin;
+  for (const dir of safePath(pathVar).split(":")) {
+    if (!dir) continue;
+    const candidate = path.join(dir, "git");
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      gitBin = candidate;
+      return candidate;
+    } catch {}
+  }
+  throw new Error("git not found on an absolute PATH entry");
+}
+
 async function exec(repo: GitRepo, argv: string[], env: Record<string, string>, input?: string) {
-  return execa("git", argv, { cwd: repo.workTree, env, extendEnv: false, reject: false, input, stripFinalNewline: false });
+  // cwd is the gitdir, never the worktree: --work-tree already says where the files are.
+  return execa(resolveGit(), argv, { cwd: repo.gitDir, env, extendEnv: false, reject: false, input, stripFinalNewline: false });
 }
 
 /** Open a repo for engine git calls: lists the config's filter drivers once, so every call empties them. */

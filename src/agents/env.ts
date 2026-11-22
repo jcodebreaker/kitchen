@@ -85,9 +85,26 @@ function scrub(home: ScrubHome): Record<string, string> {
   };
 }
 
+/**
+ * Pure: PATH with only absolute entries. An empty entry (leading, trailing or
+ * double `:`) or a relative one like `.` means "the current directory", which
+ * for many spawns is a worktree: a planted `git` there would run instead.
+ */
+export function safePath(p: string | undefined): string {
+  return (p ?? "")
+    .split(":")
+    .filter((e) => path.isAbsolute(e))
+    .join(":");
+}
+
+function withSafePath(env: Record<string, string>): Record<string, string> {
+  if ("PATH" in env) env.PATH = safePath(env.PATH);
+  return env;
+}
+
 /** Pure: the env an agent gets, given the parent env and the scrub home files. */
 export function scrubEnv(parent: NodeJS.ProcessEnv, home: ScrubHome): Record<string, string> {
-  return { ...pick(parent, [...BASE, ...AGENT_AUTH]), ...scrub(home), KITCHEN_AGENT: "1" };
+  return withSafePath({ ...pick(parent, [...BASE, ...AGENT_AUTH]), ...scrub(home), KITCHEN_AGENT: "1" });
 }
 
 /** Writes the files the scrub points at into `dir` (engine-owned, outside every writable root). */
@@ -119,7 +136,7 @@ export function parseEnvFile(text: string): Record<string, string> {
  * app file can't turn a credential helper back on.
  */
 export function untrustedEnvOf(parent: NodeJS.ProcessEnv, home: ScrubHome, app: Record<string, string>): Record<string, string> {
-  return { ...pick(parent, BASE), ...app, ...scrub(home), KITCHEN_UNTRUSTED: "1" };
+  return withSafePath({ ...pick(parent, BASE), ...app, ...scrub(home), KITCHEN_UNTRUSTED: "1" });
 }
 
 /**

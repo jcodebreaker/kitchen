@@ -155,3 +155,10 @@ Both tools start the MCP server outside their command sandbox: the bridge wrote 
 | `toolkit_status` (doctor, via Docker) | PASS 5/5 | – | – |
 | manifest verifies against the signed head | PASS | PASS (n=12) | PASS (n=12) |
 | cost | – | $0.0047; 60k in / 2k out tokens | 223k in (mostly cached) / 1.1k out tokens |
+
+## Round 3 (W0 review): PATH and planted binaries
+
+- Every env Kitchen builds keeps only absolute PATH entries (`safePath`), and engine git runs an absolute `git` resolved once from those entries, with `cwd` set to the gitdir, never the worktree. `spikes/w0/planted-git.ts` plants an executable `git` in a linked worktree and runs `sourceStamp` with `PATH=":$PATH"`: the planted binary does not run.
+- `plainCheckout` reads the filter-driver list once per `openGit`; it is for fixtures and engine-owned checkouts only. Job worktrees always use `linkedWorktree`.
+- The rollback floor in `$KITCHEN_HOME/heads/` can be bypassed by deleting the counter file. That needs write access to `$KITCHEN_HOME`, which agents don't have (denied on both tools); unsandboxed app code does, and that is the documented app-sandbox gap.
+- Codex integrity rerun with the result file written first: check d passes. In two reruns the model chose not to attempt the file-tool `.git` rewrite (0 attempts, `.git` unchanged), so that one check came back unproven rather than failed; the attempt-and-refusal was shown in the previous round ("patch rejected: writing outside of the project").

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseEnvFile, scrubEnv, untrustedEnvOf } from "./env.ts";
+import { parseEnvFile, safePath, scrubEnv, untrustedEnvOf } from "./env.ts";
 
 const home = { gitConfig: "/k/scrub/gitconfig", ghConfigDir: "/k/scrub/gh" };
 const parent = {
@@ -58,4 +58,9 @@ describe("untrustedEnvOf (app, tests, Toolkit)", () => {
 
 it("parseEnvFile reads KEY=value lines and skips comments", () => {
   expect(parseEnvFile("# fake\nA=1\n  B = two words \nnot a line\n")).toEqual({ A: "1", B: "two words" });
+});
+
+it("safePath drops empty and relative PATH entries", () => {
+  expect(safePath(":/usr/bin::./bin:.:/bin:")).toBe("/usr/bin:/bin");
+  expect(safePath(undefined)).toBe("");
 });
