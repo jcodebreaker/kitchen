@@ -135,10 +135,11 @@ export const repro: StageHandler = async (ctx) => {
     );
   } else why = !onBase ? `the branch differs from the base by more than the repro files: ${diff.join(", ")}` : `not committed: ${missing().join(", ")}`;
   ctx.log(`repro ${crit.id}: ${why}`);
-  // The proof ran on the base and can't show the bug as written: a step failed before the expect was read, or the
-  // expect held. The repro role can't change the contract, so its author (intake, or spec above low risk) rewrites it
-  // once, with the evidence, like a spec-lint refusal; after that the usual second try, then needs-info.
-  const contractProblem = onBase && committed && !failedAsExpected && (job.attempts.contract ?? 0) === 0 ? why : undefined;
+  // The contract's own proof (nothing for the repro role to write) ran on the base and can't show the bug as written:
+  // a step failed before the expect was read, or the expect held. The repro role can't change the contract, so its
+  // author (intake, or spec above low risk) rewrites it once, with the evidence, like a spec-lint refusal; then the
+  // usual two tries, then needs-info. A proof that needed a drive or test the repro role wrote gets its retry first.
+  const contractProblem = n === 1 && !need.length && onBase && committed && !failedAsExpected && (job.attempts.contract ?? 0) === 0 ? why : undefined;
   if (contractProblem) {
     const file = job.risk === "low" ? "intake-refused.md" : "spec-refused.md";
     const own = job.risk === "low" ? "intake.md" : "spec.md";
