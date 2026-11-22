@@ -297,5 +297,10 @@ export const report: StageHandler = async (ctx) => {
     return true;
   });
   if (c.did) ctx.log(`PR comment posted${job.pr !== null ? ` on #${job.pr}` : " (local forge: recorded)"}`);
+  // W3b: the draft PR becomes ready for review once the report is up.
+  await once(ctx.repo, job.id, `pr-ready/${head}`, async () => {
+    await ctx.forge.markReady(job.pr);
+    return true;
+  });
   return { to: "done", facts: { report: { rendered: true, idsResolved: true, evidencePushed: !!pub.value?.commit, commented: !!c.value, localForge } } };
 };

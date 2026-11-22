@@ -37,7 +37,7 @@ const PRIMITIVES = {
   type: { args: { target: "selector", text: "string" }, does: "replace the field's value" },
   read: { args: { target: "selector (default body)", attr: "optional attribute" }, does: "inner text or attribute of the first match" },
   screenshot: { args: { name: "file stem" }, does: "full-page PNG into --out" },
-  http: { args: { method: "GET|POST…", path: "/api/…", body: "optional JSON" }, does: "same-origin request as the signed-in browser user" },
+  http: { args: { method: "GET|POST…", path: "/api/…", body: "optional JSON", expect_status: "optional: ok only for this status (e.g. 403)" }, does: "same-origin request as the signed-in browser user" },
   open: { args: { path: "/settings" }, does: "navigate the page to a path on the app (same origin only)" },
   reload: { args: {}, does: "reload the current page from the server" },
 };

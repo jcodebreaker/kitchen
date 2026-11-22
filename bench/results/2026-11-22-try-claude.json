@@ -1,0 +1,54 @@
+{
+  "runId": "2026-11-22-smoke-claude-47197",
+  "tier": "smoke",
+  "tool": "claude",
+  "results": [
+    {
+      "ticket": "b-control-long-title",
+      "fixture": "b-cli",
+      "set": "tuned",
+      "kind": "control",
+      "trap": false,
+      "control": true,
+      "run": 1,
+      "expected": [
+        "done"
+      ],
+      "job": "001-tasks-add-should-refuse-a-title-longer-t",
+      "outcome": "needs-human",
+      "reason": "C1's proof uses the same over-length title for both adds, so the \"200 characters still accepted\" step cannot succeed.",
+      "oracle": "n/a",
+      "toolkitPr": false,
+      "correct": false,
+      "rounds": 1,
+      "verifyFails": 0,
+      "secs": 41,
+      "usd": 0.175,
+      "path": "intake → build → needs-human"
+    }
+  ],
+  "skipped": [],
+  "summary": {
+    "runs": 1,
+    "correct": 0,
+    "rate": 0,
+    "traps": {
+      "runs": 0,
+      "caught": 0
+    },
+    "controls": {
+      "runs": 1,
+      "falseFails": 0
+    },
+    "tuned": {
+      "runs": 1,
+      "correct": 0
+    },
+    "heldout": {
+      "runs": 0,
+      "correct": 0
+    },
+    "usd": 0.175,
+    "secs": 41
+  }
+}

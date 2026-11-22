@@ -8,15 +8,32 @@
 import fs from "node:fs";
 import path from "node:path";
 import { builderPolicy, contractOf, filesChecksRunThrough, scriptsChanged, testFilesOf } from "../contract.ts";
+import { mergeRev } from "../git.ts";
 import { ensureUp } from "../instance.ts";
-import { once, roundDir, writeAtomic } from "../store.ts";
-import { commitWith, ensureWorktree, fileAtHead, pendingFiles } from "../worktree.ts";
+import { once, roundDir, updateJob, writeAtomic } from "../store.ts";
+import { changedFiles, commitWith, ensureWorktree, fileAtHead, jobGitOf, pendingFiles } from "../worktree.ts";
 import { runBaseCheck } from "./base-check.ts";
 import { contractBlock, earlierRoundsBlock, humanFeedback, toolkitBlock } from "./context.ts";
 import { prompt } from "./prompts.ts";
+import { syncFile } from "./ready.ts";
 import { headers, runRole } from "./role.ts";
 import { hasToolkit } from "./toolkit-info.ts";
 import type { StageHandler } from "./types.ts";
+
+/** Ready's pending sync (a conflict with the moved base), if any. */
+function readSync(jobDir: string): { base: string; conflicts: string[] } | null {
+  try {
+    return JSON.parse(fs.readFileSync(syncFile(jobDir), "utf8")) as { base: string; conflicts: string[] };
+  } catch {
+    return null;
+  }
+}
+
+/** A file from a round folder as a prompt block, when it exists. */
+function fileBlockIf(dir: string, file: string, title: string) {
+  const p = path.join(dir, file);
+  return fs.existsSync(p) ? [{ title, body: fs.readFileSync(p, "utf8") }] : [];
+}
 
 export const build: StageHandler = async (ctx) => {
   let job = await ensureWorktree(ctx.repo, ctx.refresh());
@@ -25,6 +42,28 @@ export const build: StageHandler = async (ctx) => {
   if (contract?.file === "intake.md" && job.kind !== "bug" && job.round === job.roundStart)
     await runBaseCheck(ctx, job, contract.criteria).catch((e) => ctx.log(`base check skipped: ${(e as Error).message}`));
   if (hasToolkit(job) && job.slot) await ensureUp(job, ctx.jobDir, ctx.log).catch((e) => ctx.log(`app not up for the builder: ${(e as Error).message}`));
+  // Ready's sync with the base conflicted: the merge is started again here and left in progress
+  // (markers in the files, MERGE_HEAD set) for the builder to resolve; the engine's commit below
+  // concludes it as a merge commit.
+  const sync = readSync(ctx.jobDir);
+  let syncing: { base: string; conflicts: string[]; fromBase: string[] } | null = null;
+  if (sync) {
+    const git = await jobGitOf(job);
+    const m = await mergeRev(git, sync.base, { message: `kitchen(${job.id}): sync with the base ${sync.base.slice(0, 12)}`, leave: true });
+    if (!m.ok) {
+      const mb = (await git.run(["merge-base", "HEAD", sync.base])).stdout.trim();
+      syncing = { base: sync.base, conflicts: m.conflicts, fromBase: await changedFiles(job, mb, sync.base) };
+      ctx.log(`sync with the base ${sync.base.slice(0, 12)}: the builder resolves ${m.conflicts.join(", ")}`);
+    } else {
+      ctx.log(`sync with the base ${sync.base.slice(0, 12)}: merged cleanly this time`);
+      await updateJob(ctx.repo, job.id, (j) => {
+        j.base = sync.base;
+        return j;
+      });
+      fs.rmSync(syncFile(ctx.jobDir), { force: true });
+      job = ctx.refresh();
+    }
+  }
   const fb = humanFeedback(ctx.jobDir);
   const repro = job.reproFiles ?? [];
   const proofFiles = (contract?.criteria ?? []).flatMap(testFilesOf).filter((f) => !repro.includes(f));
@@ -54,6 +93,19 @@ export const build: StageHandler = async (ctx) => {
               },
             ]
           : [{ title: "Files the proofs run through (you may not edit these)", body: "- the `scripts` of any package.json" }]),
+        ...(syncing
+          ? [
+              {
+                title: "Merge conflict with the base (resolve this first)",
+                body: [
+                  `The base moved to ${syncing.base.slice(0, 12)} and merging it into this branch conflicts. The merge is in progress in your worktree: resolve the conflict markers in these files, keeping both the base's change and this ticket's, and leave no markers behind:`,
+                  ...syncing.conflicts.map((f) => `- ${f}`),
+                  "Don't commit: the engine concludes the merge.",
+                ].join("\n"),
+              },
+            ]
+          : []),
+        ...fileBlockIf(roundDir(ctx.jobDir, job.round - 1), "ci.md", "The PR's CI was red (fix this first)"),
         ...earlierRoundsBlock(ctx.jobDir, job),
         ...(fb.length ? [{ title: "Feedback from a human", body: fb.join("\n\n") }] : []),
         await toolkitBlock(job, job.worktree),
@@ -71,11 +123,33 @@ export const build: StageHandler = async (ctx) => {
     const now = fs.existsSync(path.join(job.worktree, f)) ? fs.readFileSync(path.join(job.worktree, f), "utf8") : null;
     if (scriptsChanged(await fileAtHead(job, f), now)) pkgs.push(f);
   }
+  const policy = builderPolicy({ protectedGlobs: ctx.config.protected, reproFiles: repro, proofFiles, checkFiles, scriptsChanged: pkgs });
+  // A merge with the base brings the base's own changes (its Toolkit, kitchen.yaml…): those are the
+  // base's, not the builder's, so a file the base changed passes when it is exactly the base's version.
+  const fromBase = new Set(syncing?.fromBase ?? []);
+  const atBase = new Map<string, string | null>();
+  for (const f of fromBase) atBase.set(f, await fileAtHead(job, f, syncing?.base));
   const c = await commitWith(
     job,
-    `kitchen(${job.id}): round ${job.round}\n\n${job.title}`,
-    builderPolicy({ protectedGlobs: ctx.config.protected, reproFiles: repro, proofFiles, checkFiles, scriptsChanged: pkgs }),
+    syncing
+      ? `kitchen(${job.id}): sync with the base ${syncing.base.slice(0, 12)}, round ${job.round}`
+      : `kitchen(${job.id}): round ${job.round}\n\n${job.title}`,
+    (file, status) => {
+      if (fromBase.has(file)) {
+        const p = path.join(job.worktree, file);
+        const now = fs.existsSync(p) ? fs.readFileSync(p, "utf8") : null;
+        if (now === atBase.get(file)) return null;
+      }
+      return policy(file, status);
+    },
   );
+  if (syncing) {
+    await updateJob(ctx.repo, job.id, (j) => {
+      j.base = syncing.base;
+      return j;
+    });
+    fs.rmSync(syncFile(ctx.jobDir), { force: true });
+  }
   if (c.refused.length) {
     for (const x of c.refused) ctx.log(`kept off the job branch: ${x}`);
     writeAtomic(path.join(roundDir(ctx.jobDir, job.round), "build-refused.md"), `${c.refused.map((x) => `- ${x}`).join("\n")}\n`);

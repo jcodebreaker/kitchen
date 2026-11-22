@@ -125,7 +125,29 @@ export const ConfigSchema = z
       .prefault({}),
     /** Where PRs, checks and Toolkit tickets live. `local`: no remote (W1/W3a); `fake`: a JSON file, for engine tests. */
     forge: z
-      .object({ kind: z.enum(["local", "fake", "github"]).default("local"), file: z.string().optional() })
+      .object({
+        kind: z.enum(["local", "fake", "github"]).default("local"),
+        file: z.string().optional(),
+        /** github: `owner/name`. */
+        repo: z
+          .string()
+          .regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/)
+          .optional(),
+        /** github: the URL the engine pushes to and fetches from (default https://github.com/<repo>.git). Always explicit (ADR 0006). */
+        url: z.string().optional(),
+        /** The branch PRs target and Ready syncs with. */
+        base: z.string().default("main"),
+      })
+      .strict()
+      .prefault({}),
+    /** Where tickets come from. `prompt`: `kitchen ticket`. `github`: open issues with `label` (the label is the trust boundary). */
+    source: z
+      .object({
+        kind: z.enum(["prompt", "github"]).default("prompt"),
+        label: z.string().default("kitchen"),
+        /** GitHub logins whose replies on a needs-info issue count, besides the issue's author. */
+        operators: z.array(z.string()).default([]),
+      })
       .strict()
       .prefault({}),
   })

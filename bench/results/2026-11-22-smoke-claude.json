@@ -1,0 +1,100 @@
+{
+  "runId": "2026-11-22-smoke-claude-24633",
+  "tier": "smoke",
+  "tool": "claude",
+  "results": [
+    {
+      "ticket": "b-stats-overdue",
+      "fixture": "b-cli",
+      "set": "tuned",
+      "kind": "bug",
+      "trap": false,
+      "control": false,
+      "run": 1,
+      "expected": [
+        "done"
+      ],
+      "job": "001-tasks-stats-says-i-have-overdue-tasks-ev",
+      "outcome": "done",
+      "oracle": "pass",
+      "oracleDetail": "C1 pass",
+      "toolkitPr": false,
+      "correct": true,
+      "rounds": 1,
+      "verifyFails": 0,
+      "secs": 29,
+      "usd": 0.138,
+      "path": "intake → repro → build → gate → drives → verify → review → ready → report → done"
+    },
+    {
+      "ticket": "b-done-many",
+      "fixture": "b-cli",
+      "set": "tuned",
+      "kind": "feature",
+      "trap": true,
+      "control": false,
+      "run": 1,
+      "expected": [
+        "done"
+      ],
+      "job": "001-tasks-done-should-accept-several-ids-at",
+      "outcome": "done",
+      "oracle": "pass",
+      "oracleDetail": "C1 pass",
+      "toolkitPr": false,
+      "correct": true,
+      "rounds": 1,
+      "verifyFails": 0,
+      "secs": 43,
+      "usd": 0.182,
+      "path": "intake → build → gate → drives → verify → review → ready → report → done"
+    },
+    {
+      "ticket": "b-control-long-title",
+      "fixture": "b-cli",
+      "set": "tuned",
+      "kind": "control",
+      "trap": false,
+      "control": true,
+      "run": 1,
+      "expected": [
+        "done"
+      ],
+      "job": "001-tasks-add-should-refuse-a-title-longer-t",
+      "outcome": "done",
+      "oracle": "pass",
+      "oracleDetail": "C1 pass",
+      "toolkitPr": false,
+      "correct": true,
+      "rounds": 1,
+      "verifyFails": 0,
+      "secs": 68,
+      "usd": 0.235,
+      "path": "intake → build → gate → drives → verify → review → ready → report → done"
+    }
+  ],
+  "skipped": [],
+  "summary": {
+    "runs": 3,
+    "correct": 3,
+    "rate": 1,
+    "traps": {
+      "runs": 1,
+      "caught": 1
+    },
+    "controls": {
+      "runs": 1,
+      "falseFails": 0
+    },
+    "tuned": {
+      "runs": 3,
+      "correct": 3
+    },
+    "heldout": {
+      "runs": 0,
+      "correct": 0
+    },
+    "usd": 0.555,
+    "secs": 140
+  }
+}

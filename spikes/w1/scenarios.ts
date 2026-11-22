@@ -30,7 +30,7 @@ const DRIVES_OK = "DRIVES: OK\n";
 const PASS = "VERDICT: PASS\n";
 const CRITERIA_JUDGED = `${CRITERIA}- [C2] the work file reads well\n  proof: cmd ls work\n  expect: judged\n  covers: R1\n`;
 const REVIEW_PASS = "VERDICT: PASS\n";
-const REPORT = "<h1>Report</h1><p>Gate passed: {{eLAST}}</p>\n";
+const REPORT = '<section id="summary"><p>Gate passed: {{eLAST}}</p></section>\n';
 
 const straight = { builder: [BUILD], "verifier:drives": [DRIVES_OK], verifier: [PASS], "reviewer-code": [REVIEW_PASS], report: [REPORT] };
 const low = { ...straight, intake: [intake("chore", "low", CRITERIA)] };

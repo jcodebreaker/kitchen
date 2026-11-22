@@ -1,0 +1,146 @@
+{
+  "runId": "2026-11-22-smoke-claude-3243",
+  "tier": "smoke",
+  "tool": "claude",
+  "results": [
+    {
+      "ticket": "a-count",
+      "fixture": "a-web",
+      "set": "tuned",
+      "kind": "feature",
+      "trap": false,
+      "control": false,
+      "run": 1,
+      "expected": [
+        "done"
+      ],
+      "job": "001-on-the-home-page-show-how-many-projects",
+      "outcome": "done",
+      "oracle": "pass",
+      "oracleDetail": "C1 pass; C2 pass",
+      "toolkitPr": false,
+      "correct": true,
+      "rounds": 1,
+      "verifyFails": 0,
+      "secs": 87,
+      "usd": 0.182,
+      "path": "intake → build → gate → drives → verify → review → ready → report → done"
+    },
+    {
+      "ticket": "a-chore",
+      "fixture": "a-web",
+      "set": "tuned",
+      "kind": "chore",
+      "trap": false,
+      "control": false,
+      "run": 1,
+      "expected": [
+        "done"
+      ],
+      "job": "001-rename-the-appearance-heading-on-the-set",
+      "outcome": "done",
+      "oracle": "pass",
+      "oracleDetail": "C1 pass",
+      "toolkitPr": false,
+      "correct": true,
+      "rounds": 2,
+      "verifyFails": 0,
+      "secs": 116,
+      "usd": 0.215,
+      "path": "intake → build → gate → drives → verify → review → build → gate → drives → verify → review → ready → report → done"
+    },
+    {
+      "ticket": "b-stats-overdue",
+      "fixture": "b-cli",
+      "set": "tuned",
+      "kind": "bug",
+      "trap": false,
+      "control": false,
+      "run": 1,
+      "expected": [
+        "done"
+      ],
+      "job": "001-tasks-stats-says-i-have-overdue-tasks-ev",
+      "outcome": "needs-info",
+      "reason": "could not reproduce after 2 tries",
+      "oracle": "n/a",
+      "toolkitPr": false,
+      "correct": false,
+      "rounds": 1,
+      "verifyFails": 0,
+      "secs": 52,
+      "usd": 0.076,
+      "path": "intake → repro → repro → needs-info"
+    },
+    {
+      "ticket": "b-done-many",
+      "fixture": "b-cli",
+      "set": "tuned",
+      "kind": "feature",
+      "trap": true,
+      "control": false,
+      "run": 1,
+      "expected": [
+        "done"
+      ],
+      "job": "001-tasks-done-should-accept-several-ids-at",
+      "outcome": "needs-human",
+      "reason": "proofs pass argv as one string (\"done 1 2\"); the cli primitive hands it to `tasks` as a single arg, so argparse rejects it (exit 2) before any app code runs.",
+      "oracle": "n/a",
+      "toolkitPr": false,
+      "correct": false,
+      "rounds": 2,
+      "verifyFails": 1,
+      "secs": 72,
+      "usd": 0.315,
+      "path": "intake → build → gate → drives → verify → build → needs-human"
+    },
+    {
+      "ticket": "b-control-long-title",
+      "fixture": "b-cli",
+      "set": "tuned",
+      "kind": "control",
+      "trap": false,
+      "control": true,
+      "run": 1,
+      "expected": [
+        "done"
+      ],
+      "job": "001-tasks-add-should-refuse-a-title-longer-t",
+      "outcome": "needs-info",
+      "reason": "could not reproduce after 2 tries",
+      "oracle": "n/a",
+      "toolkitPr": false,
+      "correct": false,
+      "rounds": 1,
+      "verifyFails": 0,
+      "secs": 67,
+      "usd": 0.081,
+      "path": "intake → repro → repro → needs-info"
+    }
+  ],
+  "skipped": [],
+  "summary": {
+    "runs": 5,
+    "correct": 2,
+    "rate": 0.4,
+    "traps": {
+      "runs": 1,
+      "caught": 0
+    },
+    "controls": {
+      "runs": 1,
+      "falseFails": 0
+    },
+    "tuned": {
+      "runs": 5,
+      "correct": 2
+    },
+    "heldout": {
+      "runs": 0,
+      "correct": 0
+    },
+    "usd": 0.869,
+    "secs": 394
+  }
+}

@@ -1,5 +1,5 @@
 // Where tickets come from (PLAN §1 sources/). One interface for prompt tickets
-// (W1) and GitHub issues (W3b): take tickets in, ask the author a question,
+// (prompt.ts) and GitHub issues (github.ts): take tickets in, ask the author a question,
 // and tell the runner when an answer arrived (needs-info → intake).
 import type { Job, TicketRef } from "../engine/machine.ts";
 

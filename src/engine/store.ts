@@ -189,7 +189,16 @@ export function findJob(repo: string, ref: string): Job {
   return hit;
 }
 
-export type NewJob = { title: string; ticket: TicketRef; body: string; roundLimit: number; base: string; toolkitBin: string; now?: Date };
+export type NewJob = {
+  title: string;
+  ticket: TicketRef;
+  body: string;
+  roundLimit: number;
+  base: string;
+  /** The base sha when the base has a Toolkit: the job's proofs run with that sha's engine-owned checkout. Else "". */
+  toolkitRef?: string;
+  now?: Date;
+};
 
 /**
  * Create a job folder. Numbers are taken under a lock, so two `kitchen ticket`s
@@ -227,7 +236,7 @@ export async function createJob(repo: string, o: NewJob): Promise<{ job: Job; cr
       worktree: "",
       pr: null,
       slot: null,
-      toolkitRef: "",
+      toolkitRef: o.toolkitRef ?? "",
       returnTo: null,
       gap: null,
       attempts: { drives: 0, render: 0, toolkitTicket: 0, repro: 0, inconclusive: 0, backoff: 0, errors: 0, refused: 0 },
@@ -241,7 +250,7 @@ export async function createJob(repo: string, o: NewJob): Promise<{ job: Job; cr
       updatedAt: now,
       uid,
       gitDir: "",
-      toolkitBin: o.toolkitBin,
+      toolkitBin: "", // resolved from toolkitRef by src/engine/job-toolkit.ts
       // The id the Toolkit gets (`--id`): short and unique across repos, since the slot pool and Docker names are machine-wide.
       slotId: `${id.slice(0, id.indexOf("-"))}-${uid.replace(/-/g, "").slice(0, 10)}`,
       manifestHead: emptyHead(sealOf({ uid })),

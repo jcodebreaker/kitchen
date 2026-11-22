@@ -97,10 +97,8 @@ const TOOLKIT_PRIMITIVES = [TOOLKIT, `:(exclude)${TOOLKIT}/features`];
 /**
  * Put every Toolkit file outside features/ back as it is at HEAD, in the index
  * and the worktree: a job commit never carries a Toolkit primitive change (a
- * smith's edit, or a builder's). Returns the paths put back.
- * W3b: the smith works on its own Toolkit PR branch in an engine-owned checkout,
- * so there is nothing of its work here to lose; in W1 its edits in the job
- * worktree are dropped by this.
+ * builder's, or anything else's). Returns the paths put back. The smith never
+ * works here: it has its own worktree on its Toolkit branch (ensureSmithWorktree).
  */
 export async function stripToolkitEdits(job: Job): Promise<string[]> {
   const git = await gitOf(job);
@@ -205,6 +203,54 @@ export async function diffStat(job: Job): Promise<{ file: string; lines: number 
     });
 }
 
+/**
+ * The smith's own worktree (PLAN §2 Toolkit layers): `.worktrees/_smith-<job>-<n>` on the
+ * Toolkit branch `kitchen/toolkit/<job>-<n>`, started from the Toolkit the job runs now. The
+ * smith's edits land there, never on the job branch. Idempotent like ensureWorktree; its
+ * gitdir is resolved engine side. Returns a Job-shaped view for commitWith.
+ */
+export async function ensureSmithWorktree(repo: string, job: Job, n: number, from: string): Promise<Job> {
+  const id = `_smith-${job.id}-${n}`;
+  const wt = path.join(repo, ".worktrees", id);
+  const branch = `kitchen/toolkit/${job.id}-${n}`;
+  const main = await openGit(plainCheckout(repo));
+  let linked: { gitDir: string; workTree: string } | null = null;
+  if (fs.existsSync(wt)) {
+    try {
+      linked = linkedWorktree(repo, id, wt);
+    } catch {
+      fs.renameSync(wt, `${wt}.stray-${Date.now()}`);
+    }
+  }
+  if (!linked) {
+    await main.run(["worktree", "prune"]);
+    let hasBranch = true;
+    try {
+      await main.run(["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]);
+    } catch {
+      hasBranch = false;
+    }
+    await main.run(hasBranch ? ["worktree", "add", "--quiet", wt, branch] : ["worktree", "add", "--quiet", "-b", branch, wt, from]);
+    linked = linkedWorktree(repo, id, wt);
+  }
+  return { ...job, worktree: linked.workTree, gitDir: linked.gitDir, base: from, branch };
+}
+
+/** Remove the smith's worktree (its branch stays: it is the Toolkit PR's head). */
+export async function removeSmithWorktree(repo: string, job: Job, n: number): Promise<void> {
+  const wt = path.join(repo, ".worktrees", `_smith-${job.id}-${n}`);
+  if (!fs.existsSync(wt)) return;
+  const main = await openGit(plainCheckout(repo));
+  try {
+    await main.run(["worktree", "remove", "--force", "--force", wt]);
+  } catch {
+    fs.rmSync(wt, { recursive: true, force: true });
+    await main.run(["worktree", "prune"]);
+  }
+}
+
+/** The job's worktree as an engine git handle (Ready's sync). */
+export const jobGitOf = (job: Job) => gitOf(job);
 /** The job's whole diff from the base to HEAD, as a patch (for reviewers and the report). */
 export async function diffPatch(job: Job): Promise<string> {
   return (await (await gitOf(job)).run(["diff", "--no-ext-diff", "--no-textconv", "--no-color", job.base, "HEAD"])).stdout;

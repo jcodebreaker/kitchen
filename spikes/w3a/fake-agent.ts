@@ -228,7 +228,7 @@ function replay(req: AgentRequest, mode: string): FakeStep {
   return { file: "STATUS: READY\n", line: "ok" };
 }
 
-/** The smith "merges" a primitive: the Toolkit's describe (generated from bin/dev's table) lists it from now on. */
+/** The smith adds a primitive in its worktree: describe (generated from bin/dev's table) lists it once the Toolkit PR is pinned. */
 function addPrimitive(repo: string, name: string) {
   const f = path.join(repo, ".kitchen", "toolkit", "bin", "dev");
   const s = fs.readFileSync(f, "utf8");
@@ -268,7 +268,7 @@ export default async function script(req: AgentRequest): Promise<FakeStep> {
 
   if (req.role === "smith") {
     const gap = /Missing primitive: (\S+)/.exec(req.prompt)?.[1] ?? "?";
-    addPrimitive(repo, gap);
+    addPrimitive(req.cwd, gap); // W3b: the smith works in its own worktree on its Toolkit branch
     return { file: `STATUS: READY\nPRIMITIVE: ${gap}\n`, line: `READY ${gap}` };
   }
 

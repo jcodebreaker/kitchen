@@ -100,7 +100,7 @@ const ops = {
     await page.screenshot({ path: file, fullPage: true });
     return { ok: true, out: page.url(), files: [file] };
   },
-  async http({ method = "GET", path: p = "/", body }) {
+  async http({ method = "GET", path: p = "/", body, expect_status }) {
     // Uses the browser context's cookies, so it acts as the signed-in user.
     const r = await context.request.fetch(appUrl(p), {
       maxRedirects: 0,
@@ -112,7 +112,9 @@ const ops = {
     try {
       parsed = JSON.parse(text);
     } catch {}
-    return { ok: r.status() < 400, out: { status: r.status(), body: parsed } };
+    // ok: a 2xx/3xx, or exactly `expect_status` when given (so a proof can assert a 403 or 404).
+    const ok = expect_status === undefined ? r.status() < 400 : String(r.status()) === String(expect_status);
+    return { ok, out: { status: r.status(), body: parsed } };
   },
 };
 

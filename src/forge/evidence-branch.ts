@@ -57,7 +57,7 @@ export async function commitEvidence(o: {
     if (parent) await git.run(["read-tree", parent], { env });
     else await git.run(["read-tree", "--empty"], { env });
     // What is on the branch now: top-level folders and when each was published.
-    const top = parent ? (await git.run(["ls-tree", "-d", "--name-only", parent])).stdout.split("\n").filter(Boolean) : [];
+    const top = parent ? (await git.run(["ls-tree", "--full-tree", "-d", "--name-only", parent])).stdout.split("\n").filter(Boolean) : [];
     const published = new Map<string, string>();
     for (const d of top) {
       try {
@@ -66,7 +66,7 @@ export async function commitEvidence(o: {
       } catch {}
     }
     const pruned = expired(published, o.now ?? new Date(), o.keepDays).filter((d) => d !== o.job);
-    for (const d of [o.job, ...pruned]) await git.run(["rm", "--cached", "-r", "-q", "--ignore-unmatch", "--", d], { env });
+    for (const d of [o.job, ...pruned]) await git.run(["rm", "--cached", "-r", "-q", "--ignore-unmatch", "--", `:(top)${d}`], { env }); // from the top: cwd is the gitdir, inside the work tree
     const files = filesUnder(o.bundle);
     for (const f of files) {
       const sha = (await git.run(["hash-object", "-w", "--no-filters", path.join(o.bundle, f)])).stdout.trim();

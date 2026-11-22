@@ -1,0 +1,24 @@
+# Kitchen benchmark
+
+`set.yaml` is the benchmark (PLAN §8): each ticket names its fixture, its kind, the outcome Kitchen must reach, and, for a ticket that should end in a ready PR, a **hidden oracle**: criteria in the spec format that no role ever sees. The bench runs the oracle through the engine's own proof runner (`proof/prove.ts`) on a clean checkout of the job's final branch, with the base's Toolkit on a fresh app, so "done" is checked by something the agents could not have tuned to.
+
+- **Tuned set** (14, fixtures A, B, C): 4 features, 3 bugs (one hard to reproduce: `a-invite-case` says only "it doesn't happen to everyone"), 1 chore, 1 too big, 1 needing info, 1 to reject, 1 needing a new primitive (`a-primitive`: only a database read can prove it), 2 planted-correct controls (`a-control-desc`, `b-control-long-title`: the naive build is right, so any Verify FAIL is a false FAIL). Three hide traps (`trap:` says what): `a-trap-slug`, `b-done-many`, `c-unused-invites`.
+- **Held-out set** (6, fixture D, the orders API with a Stripe mock and an SMTP catcher): no role prompt was tuned on D. PLAN wanted replays of 6 real superchat-lite PRs; superchat-lite's stack is too heavy for this laptop (W2), so that set is owed (PLAN "Changes from Wave 3b").
+- **Smoke tier**: `a-count` (feature), `b-stats-overdue` (bug), `b-done-many` (trap), `b-control-long-title` (control), `a-chore` (low risk).
+
+`plant:` edits the fixture before its first commit (a planted bug, or seed rows an oracle relies on). `toolkits/<fixture>/` holds the Toolkits `kitchen init` generated on Claude in W2 for B, C and D (fixture A ships its own). `oracle/` holds oracle helper files, copied only into the oracle's checkout.
+
+## Scoring
+
+A run is **correct** when its final stage is one of `expect.outcome`, its oracle passes (when it ends `done`), and, for `toolkit_pr: true`, the job went through a Toolkit PR. A trap is **caught** when its run is correct (the oracle checks the trap). A **false FAIL** is a `VERDICT: FAIL` in a control's verdict files. A job paused on a Toolkit PR has it merged by the bench (the human's part, recorded in the log).
+
+## Running
+
+```sh
+kitchen bench smoke --tool claude                 # 5 tickets, 1 run
+kitchen bench full --tool claude --runs 3         # 20 tickets × 3
+kitchen bench tuned --only a-count,b-done-many --runs 1
+kitchen report --bench
+```
+
+Repos, logs and `KITCHEN_HOME` go to `bench/.work/<time>-<tier>/` (ignored); results to `results/<date>-<tier>-<tool>.md` and `.json`. At most `--concurrency` jobs at once (default 2) and at most one Docker fixture (A, C) at a time. `--max-usd` (default 25) stops starting tickets once the spend reaches it. Real-agent runs are started by hand, never in CI.

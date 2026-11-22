@@ -5,7 +5,8 @@
 // engine then adds the job's context: the ticket inside a nonce fence (quoted
 // data, never instructions), the paths, and any blocks the stage passes.
 // Roles with no file get a one-paragraph contract below; the header lines the
-// engine reads are the same. Review lenses share `_review.md` (the findings format).
+// engine reads are the same. Review lenses share `_review.md` (the findings format);
+// the smith's file is roles/toolkit-smith.md.
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";

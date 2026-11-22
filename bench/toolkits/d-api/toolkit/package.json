@@ -1,0 +1,7 @@
+{
+  "name": "kitchen-toolkit",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Kitchen Toolkit (bin/dev) for fixture-d-api. No dependencies of its own: Node built-ins only.",
+  "type": "module"
+}

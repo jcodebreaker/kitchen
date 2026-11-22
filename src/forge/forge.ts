@@ -1,23 +1,28 @@
 // Where PRs, CI checks, Toolkit PRs and Toolkit tickets live (PLAN §1 forge/).
 // Every write is idempotent by lookup: the engine records a key in `filed`
 // after it, but a crash in between runs it again, so each method looks first.
-// W1 ships `local` (no remote) and `fake` (a JSON file the spikes edit).
-// GitHub comes in W3b.
+// `local` (no remote; Toolkit PRs are local branches a human merges), `fake`
+// (a JSON file the spikes edit) and `github` (src/forge/github.ts: `gh` with the
+// engine's credentials, pushes through engine/git.ts; W3b).
 // W4 adds: publishEvidence (the `kitchen-evidence` branch, evidence-branch.ts),
 // label (`kitchen:review-required`), reviewComments (done → build from a trusted
 // person's PR comment) and openPr (`kitchen toolkit maintain`'s one Toolkit PR).
 import fs from "node:fs";
 import path from "node:path";
 import type { Config } from "../config.ts";
+import { openGit, plainCheckout } from "../engine/git.ts";
 import { writeAtomic } from "../engine/store.ts";
 import { withFileLock } from "../lock.ts";
 import { commitEvidence, EVIDENCE_BRANCH } from "./evidence-branch.ts";
+import { GithubForge } from "./github.ts";
 
 export type CiState = "none" | "pending" | "pass" | "fail";
 /** A review comment on a PR. `association`: the author's relation to the repo (GitHub's author_association: OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR, NONE…). */
 export type PrComment = { id: string; pr: number; author: string; association: string; body: string; at: string };
 /** Where a job's published folder is: the branch commit, and a link prefix for files in it (`<url>report.html`). */
 export type Published = { commit: string; url: string; pruned: string[] };
+/** The smith's Toolkit PR: its branch (in the main repo) at `head`. */
+export type ToolkitPrRequest = { key: string; title: string; body: string; branch: string; head: string };
 
 export interface Forge {
   readonly kind: "local" | "fake" | "github";
@@ -25,8 +30,10 @@ export interface Forge {
   publish(o: { branch: string; title: string; head: string }): Promise<{ pushed: boolean; pr: number | null }>;
   checks(pr: number | null): Promise<CiState>;
   prMerged(pr: number): Promise<boolean>;
-  /** A Toolkit PR from the smith, found by key. */
-  openToolkitPr(o: { key: string; title: string }): Promise<number>;
+  /** Push the smith's Toolkit branch and open (or find) its PR, by key. */
+  openToolkitPr(o: ToolkitPrRequest): Promise<number>;
+  /** The draft PR becomes ready for review (report → done). */
+  markReady(pr: number | null): Promise<void>;
   /** A Toolkit ticket, found by key. Returns its ref. */
   fileTicket(o: { key: string; title: string; body: string }): Promise<string>;
   ticketClosed(ref: string): Promise<boolean>;
@@ -79,12 +86,28 @@ export class LocalForge implements Forge {
   async checks(): Promise<CiState> {
     return "none";
   }
-  async prMerged() {
-    return false;
+  /** A local Toolkit PR is merged when its head is in the base (the main checkout's HEAD). */
+  async prMerged(pr: number) {
+    const p = readLocalForge(this.repo).find((x) => x.kind === "toolkit-pr" && Number(x.n) === pr);
+    if (!p) return false;
+    const git = await openGit(plainCheckout(this.repo));
+    try {
+      await git.run(["merge-base", "--is-ancestor", String(p.head), "HEAD"]);
+      return true;
+    } catch {
+      return false;
+    }
   }
-  async openToolkitPr(): Promise<number> {
-    throw new Error("the local forge has no Toolkit PRs (W3b)");
+  /** No remote: the smith's branch is the PR (a human merges it into the base); recorded with a local number. */
+  async openToolkitPr(o: ToolkitPrRequest): Promise<number> {
+    const prs = readLocalForge(this.repo).filter((x) => x.kind === "toolkit-pr");
+    const had = prs.find((x) => x.key === o.key);
+    if (had) return Number(had.n);
+    const n = prs.length + 1;
+    localRecord(this.repo, { kind: "toolkit-pr", n, ...o });
+    return n;
   }
+  async markReady() {}
   async fileTicket(o: { key: string; title: string; body: string }) {
     const f = path.join(this.repo, ".kitchen", "tickets.jsonl");
     const lines = fs.existsSync(f) ? fs.readFileSync(f, "utf8").split("\n").filter(Boolean) : [];
@@ -125,7 +148,9 @@ export class LocalForge implements Forge {
 /** The fake forge's state file. Counts every call per key, so a side effect that ran twice shows. */
 export type FakeForgeState = {
   prs: { n: number; branch: string; title: string; head: string; checks: CiState; merged: boolean; pushes: number; creates: number }[];
-  toolkitPrs: { n: number; key: string; title: string; merged: boolean; calls: number }[];
+  toolkitPrs: { n: number; key: string; title: string; branch?: string; head?: string; merged: boolean; calls: number }[];
+  /** PRs marked ready for review. */
+  ready?: number[];
   tickets: { ref: string; key: string; title: string; closed: boolean; calls: number }[];
   comments: { key: string; pr: number | null; body: string; calls: number }[];
   evidence: { key: string; job: string; commit: string; calls: number }[];
@@ -195,11 +220,18 @@ export class FakeForge implements Forge {
     const s = readFakeForge(this.file);
     return !!(s.prs.find((p) => p.n === pr)?.merged || s.toolkitPrs.find((p) => p.n === pr)?.merged);
   }
-  openToolkitPr(o: { key: string; title: string }) {
+  async markReady(pr: number | null) {
+    if (pr === null) return;
+    await this.edit((s) => {
+      s.ready = s.ready ?? [];
+      if (!s.ready.includes(pr)) s.ready.push(pr);
+    });
+  }
+  openToolkitPr(o: ToolkitPrRequest) {
     return this.edit((s) => {
       let p = s.toolkitPrs.find((x) => x.key === o.key);
       if (!p) {
-        p = { n: s.next++, key: o.key, title: o.title, merged: false, calls: 0 };
+        p = { n: s.next++, key: o.key, title: o.title, branch: o.branch, head: o.head, merged: false, calls: 0 };
         s.toolkitPrs.push(p);
       }
       p.calls++;
@@ -276,7 +308,7 @@ export class FakeForge implements Forge {
 
 export function forgeFor(repo: string, cfg: Config): Forge {
   if (cfg.forge.kind === "fake") return new FakeForge(path.resolve(repo, cfg.forge.file ?? ".kitchen/fake-forge.json"), repo);
-  if (cfg.forge.kind === "github") throw new Error("forge: github comes in W3b");
+  if (cfg.forge.kind === "github") return new GithubForge(repo, cfg);
   return new LocalForge(repo);
 }
 
