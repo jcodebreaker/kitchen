@@ -82,8 +82,15 @@ const cases: Case[] = [
     row: "intake>spec",
     job: {},
     to: "spec",
-    facts: f({ intake: { decision: "ACCEPT", kind: "feature", risk: "medium" } }),
+    facts: f({ intake: { decision: "ACCEPT", kind: "feature", risk: "medium", requirements: 2 } }),
     expect: (j) => assert.equal(j.risk, "medium"),
+  },
+  {
+    row: "intake>spec",
+    job: {},
+    to: "spec",
+    facts: f({ intake: { decision: "ACCEPT", kind: "feature", risk: "medium", requirements: 0 } }),
+    refused: /lists no requirements/,
   },
   { row: "intake>spec", job: {}, to: "spec", facts: f({ intake: { decision: "ACCEPT", kind: "feature", risk: "low" } }), refused: /low skips spec/ },
   {

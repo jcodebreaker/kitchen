@@ -4,9 +4,11 @@
 import path from "node:path";
 import { seedTouched } from "../../checks/risk-floor.ts";
 import type { Config } from "../../config.ts";
+import { contractOf } from "../contract.ts";
 import { effectiveRisk, type Job } from "../machine.ts";
 import { roundDir } from "../store.ts";
 import { diffStat } from "../worktree.ts";
+import { nonDiscriminating } from "./base-check.ts";
 import { prompt } from "./prompts.ts";
 import { headers, runRole } from "./role.ts";
 import type { StageHandler } from "./types.ts";
@@ -30,6 +32,9 @@ export const review: StageHandler = async (ctx) => {
   const diff = await diffStat(job);
   const lenses = lensesFor(ctx.config, job, diff);
   const seeds = seedTouched(diff, ctx.config);
+  // Criteria that already held on the base (before the change, or with only the new drives): their PASS proves nothing.
+  const contract = contractOf(ctx.jobDir);
+  const weak = contract && job.kind !== "bug" ? nonDiscriminating(ctx.jobDir, contract.criteria) : [];
   let blocking: string | undefined;
   for (const lens of lenses) {
     const r = await runRole(ctx, {
@@ -45,6 +50,11 @@ export const review: StageHandler = async (ctx) => {
           `Worktree: ${job.worktree}`,
           `Base: ${job.base}`,
           ...(seeds.length ? [`Seed data or migrations changed (check nothing seeds the answer a proof reads): ${seeds.join(", ")}`] : []),
+          ...(weak.length
+            ? [
+                `NON-DISCRIMINATING criteria (they already pass on the base, so their PASS proves nothing about this change; check the code does what they claim): ${weak.join(", ")}`,
+              ]
+            : []),
         ],
       }),
       dest: path.join(roundDir(ctx.jobDir, job.round), `review-${lens}.md`),
@@ -53,5 +63,7 @@ export const review: StageHandler = async (ctx) => {
     if (h.VERDICT !== "PASS") blocking ??= `${lens}: ${h.FINDING ?? h.VERDICT ?? "no verdict"}`;
   }
   ctx.log(`review: ${lenses.length ? lenses.join(", ") : "no lenses on this path"} → ${blocking ? `BLOCKING ${blocking}` : "PASS"}`);
-  return blocking ? { to: "build", facts: { review: { pass: false, blocking } } } : { to: "ready", facts: { review: { pass: true } } };
+  return blocking
+    ? { to: "build", facts: { review: { pass: false, blocking, nonDiscriminating: weak } } }
+    : { to: "ready", facts: { review: { pass: true, nonDiscriminating: weak } } };
 };

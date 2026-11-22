@@ -19,12 +19,20 @@
 //      dump or network tool)
 //   5. a bug has a `repro: true` criterion with a mechanical expect; only a bug has one
 //   6. ids are unique
+//   7. the spec matches the ticket, structurally (ADR 0003: no agent checks the
+//      spec): intake.md lists the ticket's requirements (`## Requirements`, R1…Rn,
+//      each a quote or faithful paraphrase, negative ones marked); every criterion
+//      `covers:` at least one R, every R in scope is covered by a criterion, and a
+//      negative R ("no owner shown for regular users") is covered by at least one
+//      criterion whose mechanical expect asserts an absence
 import path from "node:path";
-import { absentString, ExpectError, isJudged, negativeClauses, parseExpect } from "../proof/assert.ts";
+import { absentString, type Clause, ExpectError, isJudged, negativeClauses, parseExpect } from "../proof/assert.ts";
 import { checkPrimArgs, DriveFormatError } from "../proof/drive-format.ts";
 import { ProofLineError, parseProof, type Segment, words } from "../proof/proof-line.ts";
 
-export type Criterion = { id: string; text: string; proof: string | null; expect: string | null; repro: boolean };
+export type Criterion = { id: string; text: string; proof: string | null; expect: string | null; repro: boolean; covers: string[] };
+/** One requirement intake read in the ticket. `negative`: it says what must not happen; `outOfScope`: intake rescoped it away (with a note). */
+export type Requirement = { id: string; text: string; negative: boolean; outOfScope: boolean };
 export type LintResult = { ok: boolean; reason?: string; missingPrimitive?: string; criteria: Criterion[]; newDrives: string[] };
 /** What the Toolkit offers: primitive names, every feature drive's name → its args, and the drives that take a screenshot. */
 export type ToolkitView = { primitives: string[]; drives: Record<string, string[]>; screenshots?: string[] };
@@ -36,16 +44,17 @@ export function parseCriteria(md: string): Criterion[] {
   for (const line of md.split("\n")) {
     const c = /^\s*[-*]\s*\[(C\d+)\]\s*(.*)$/.exec(line);
     if (c) {
-      cur = { id: c[1], text: c[2].trim(), proof: null, expect: null, repro: false };
+      cur = { id: c[1], text: c[2].trim(), proof: null, expect: null, repro: false, covers: [] };
       out.push(cur);
       continue;
     }
-    const kv = /^\s+(proof|expect|repro):\s*(.*?)\s*$/.exec(line);
+    const kv = /^\s+(proof|expect|repro|covers):\s*(.*?)\s*$/.exec(line);
     if (cur && kv) {
       // A trailing `# comment` after the value is not part of it (outside quotes).
-      const v = kv[1] === "expect" ? stripTrailingComment(kv[2]) : kv[2];
+      const v = kv[1] === "expect" || kv[1] === "covers" ? stripTrailingComment(kv[2]) : kv[2];
       if (kv[1] === "proof") cur.proof = v;
       else if (kv[1] === "expect") cur.expect = v;
+      else if (kv[1] === "covers") cur.covers = [...new Set(v.toUpperCase().match(/\bR\d+\b/g) ?? [])];
       else cur.repro = v === "true";
     } else if (/^\S/.test(line)) cur = null;
   }
@@ -62,6 +71,32 @@ function stripTrailingComment(s: string): string {
     else if (c === "#" && (i === 0 || /\s/.test(s[i - 1]))) return s.slice(0, i).trim();
   }
   return s.trim();
+}
+
+/**
+ * intake.md's `## Requirements`: `- R1: …`, a negative one `- R3 (negative): …`, one intake
+ * rescoped away `- R5 (out of scope): … — why`. Any other line in the section is a note.
+ */
+export function parseRequirements(md: string): Requirement[] {
+  const out: Requirement[] = [];
+  let inSection = false;
+  for (const line of md.split("\n")) {
+    const h = /^#{1,6}\s+(.*)$/.exec(line);
+    if (h) {
+      inSection = /^requirements\b/i.test(h[1].trim());
+      continue;
+    }
+    const m = inSection ? /^\s*[-*]\s*\[?(R\d+)\]?\s*((?:\([^)]*\)\s*)*)[:.\u2013\u2014-]\s*(.*)$/i.exec(line) : null;
+    if (!m || out.some((r) => r.id === m[1].toUpperCase())) continue;
+    const marks = m[2].toLowerCase();
+    out.push({
+      id: m[1].toUpperCase(),
+      text: m[3].trim(),
+      negative: /\b(negative|must not|not)\b/.test(marks),
+      outOfScope: /out of scope|rescoped|dropped/.test(marks),
+    });
+  }
+  return out;
 }
 
 /** `## New drives` list items: `- settings.display-name: what it does`, name → description. */
@@ -135,8 +170,21 @@ function takesScreenshot(segs: Segment[], view: ToolkitView, newDrives: Record<s
  * the last one (`projects.create --user bob-admin --name "Bob plan" ; … ; open --path /projects`).
  * Returns the clause that isn't backed, or null.
  */
+/** `$x == ""` / `json … == ""`: an empty read holds whenever the element is missing, so the lint treats it as a negative. */
+const emptyEquals = (clauses: Clause[]) => clauses.filter((c) => (c.kind === "json" || c.kind === "var") && c.op === "==" && c.value === "");
+/** The clauses of an expect that assert an absence (the lint's view: negatives plus equality to empty). */
+export const absenceClauses = (expect: string): Clause[] => {
+  const cs = parseExpect(expect);
+  return [...negativeClauses(cs), ...emptyEquals(cs)];
+};
+/** A step that makes something: a feature drive, or an `http` call that writes. */
+const makes = (s: Segment) => s.kind === "toolkit" && (s.drive || (s.name === "http" && /^(POST|PUT|PATCH|DELETE)$/i.test(s.args.method ?? "")));
+
 function unbackedNegative(expect: string, segs: Segment[]): string | null {
-  const neg = negativeClauses(parseExpect(expect));
+  const clauses = parseExpect(expect);
+  // Equality to empty names nothing that must not show: an earlier step must at least make something for it to be about.
+  for (const c of emptyEquals(clauses)) if (!segs.slice(0, -1).some(makes)) return c.src;
+  const neg = negativeClauses(clauses);
   if (!neg.length) return null;
   const earlier = segs
     .slice(0, -1)
@@ -164,7 +212,45 @@ export function isProtected(p: string, globs: string[]): boolean {
   return [...globs, ...TOOLKIT_PRIMITIVE_PATHS].some((g) => path.posix.matchesGlob(n, g) || n === norm(g));
 }
 
-export function lintSpec(md: string, o: { kind: string | null; toolkit: ToolkitView; protected?: string[] }): LintResult {
+/**
+ * Rule 7: why the criteria don't match intake's requirements, or null. Every criterion covers an R
+ * intake listed; every R in scope is covered; a negative R by at least one criterion asserting an absence.
+ */
+export function coverageProblem(criteria: Criterion[], reqs: Requirement[]): string | null {
+  if (!reqs.length) return "intake.md lists no requirements (`## Requirements`, `- R1: …`): nothing to check the criteria against";
+  const ids = new Set(reqs.map((r) => r.id));
+  for (const c of criteria) {
+    if (!c.covers.length) return `${c.id} covers no requirement: add a \`covers: R…\` line naming the requirement(s) of intake.md it proves`;
+    const unknown = c.covers.find((r) => !ids.has(r));
+    if (unknown) return `${c.id} covers ${unknown}, which intake.md does not list (${[...ids].join(", ")})`;
+  }
+  for (const r of reqs.filter((x) => !x.outOfScope)) {
+    const by = criteria.filter((c) => c.covers.includes(r.id));
+    if (!by.length) return `${r.id} ("${r.text}") is covered by no criterion: every requirement of the ticket needs one`;
+    if (!r.negative) continue;
+    const asserts = by.some((c) => {
+      try {
+        return !!c.expect && !isJudged(c.expect) && absenceClauses(c.expect).length > 0;
+      } catch {
+        return false;
+      }
+    });
+    if (!asserts)
+      return `${r.id} says what must not happen ("${r.text}"), but no criterion covering it asserts an absence (\`text "…" not visible\`, \`not contains "…"\`, \`$x != …\`)`;
+  }
+  return null;
+}
+
+export function lintSpec(
+  md: string,
+  o: {
+    kind: string | null;
+    toolkit: ToolkitView;
+    protected?: string[];
+    /** intake.md's requirements: rule 7 runs when given. */
+    requirements?: Requirement[];
+  },
+): LintResult {
   const criteria = parseCriteria(md);
   const newDriveText = newDriveLines(md);
   const newDrives = Object.keys(newDriveText);
@@ -250,6 +336,11 @@ export function lintSpec(md: string, o: { kind: string | null; toolkit: ToolkitV
     if (hit) return fail(`${c.id}: the proof touches protected path ${hit}`);
     const named = (c.text.match(/[\w./-]+\.[\w]+|\.kitchen\/[\w./-]+/g) ?? []).find((p) => isProtected(p, o.protected ?? []));
     if (named) return fail(`${c.id}: the criterion touches protected path ${named}`);
+  }
+  // 7. the criteria match the ticket's requirements
+  if (o.requirements) {
+    const why = coverageProblem(criteria, o.requirements);
+    if (why) return fail(why);
   }
   // 5. a bug has a mechanical repro criterion
   if (o.kind === "bug" && !criteria.some((c) => c.repro && c.expect !== null && !isJudged(c.expect)))

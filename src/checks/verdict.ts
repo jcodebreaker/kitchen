@@ -179,7 +179,13 @@ export function renderVerdict(v: Verdict, head: string, round: number): string {
     "| criterion | decided by | result | evidence | why |",
     "|---|---|---|---|---|",
     ...v.criteria.map(
-      (c) => `| ${c.id} | ${c.judged ? "verifier" : "engine"} | ${c.result} | ${c.evidence.join(" ")} | ${(c.why ?? "").replace(/\|/g, "\\|")} |`,
+      (c) =>
+        `| ${c.id} | ${c.judged ? "verifier" : "engine"} | ${c.result} | ${c.evidence.join(" ")} | ${[
+          ...(v.nonDiscriminating.includes(c.id) ? ["NON-DISCRIMINATING (held on the base too)"] : []),
+          ...(c.why ? [c.why] : []),
+        ]
+          .join("; ")
+          .replace(/\|/g, "\\|")} |`,
     ),
     ...(v.nonDiscriminating.length
       ? [

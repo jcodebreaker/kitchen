@@ -2,14 +2,16 @@
 // inconclusive, paused), ported to fixture A: the scripted agent (fake-agent.ts),
 // the real Toolkit, Docker and engine, up to review (ready and report are W3b/W4).
 //   node spikes/w3a/paths.ts [scenario…] <scratch>
-// Scenarios: repro-retry gap bad-gap inconclusive backoff (default: all, one Docker stack at a time).
+// Scenarios: repro-retry gap bad-gap inconclusive backoff nondisc (default: all, one Docker stack at a time).
+// nondisc (review round 2): a new check line that works only in-chain is caught alone from seed;
+// a criterion on a new drive that already holds on the base is flagged NON-DISCRIMINATING.
 // Each prints PASS/FAIL lines; exit 1 on any miss.
 import fs from "node:fs";
 import path from "node:path";
 import { readFakeForge } from "../../src/forge/forge.ts";
 import { check, finish, HERE, jobDir, jobOf, kitchen, kitchenContainers, makeFixtureRepo, type Repo, sleep, stagesOf, stepUntil, ticket } from "./lib.ts";
 
-const ALL = ["repro-retry", "gap", "bad-gap", "inconclusive", "backoff"];
+const ALL = ["repro-retry", "gap", "bad-gap", "inconclusive", "backoff", "nondisc"];
 const args = process.argv.slice(2);
 const root = path.resolve(args.filter((a) => !ALL.includes(a))[0] ?? path.join(HERE, ".work"));
 const picked = args.filter((a) => ALL.includes(a));
@@ -44,6 +46,70 @@ const clean = (r: Repo, id: string, label: string) =>
   );
 
 const SCENARIOS: Record<string, () => Promise<void>> = {
+  // Review round 2, findings 2 and 4.
+  async nondisc() {
+    const { r, id, log } = start("nondisc");
+    stepUntil(r, id, STOP, { max: 40, log });
+    const w = walk(r, id);
+    check(
+      "nondisc: path (drives twice: the first drive's check line fails alone)",
+      w === "intake → spec → build → gate → drives → drives → verify → review",
+      w,
+    );
+    const d1 = read(r, id, "rounds/1/drives-check-1.md");
+    check(
+      "nondisc: drives 1 — the whole proof passes in-chain, but the check line fails run alone from seed",
+      /PASS C1 \(whole proof, twice\)/.test(d1) && /FAIL check line settings\.appearance-heading \(alone, from seed\)/.test(d1),
+      d1
+        .split("\n")
+        .filter((l) => /check line|C1/.test(l))
+        .join(" | "),
+    );
+    const d2 = read(r, id, "rounds/1/drives-check-2.md");
+    check("nondisc: drives 2 — the self-sufficient check line passes alone", /PASS check line settings\.appearance-heading/.test(d2), d2.split("\n")[2] ?? "");
+    const b = JSON.parse(read(r, id, "base-check.json") || "{}") as {
+      skipped?: { criterion: string }[];
+      afterDrives?: { files: string[]; results: { criterion: string; status: string; evidence: string[] }[]; passing: string[] };
+    };
+    check("nondisc: the first base check skipped C1 (its drive didn't exist yet)", !!b.skipped?.some((s) => s.criterion === "C1"), JSON.stringify(b.skipped));
+    check(
+      "nondisc: after drives, C1 ran on the base + the new drive file only and passed: NON-DISCRIMINATING",
+      JSON.stringify(b.afterDrives?.passing) === '["C1"]' && JSON.stringify(b.afterDrives?.files) === '[".kitchen/toolkit/features/settings-heading.md"]',
+      JSON.stringify(b.afterDrives?.results),
+    );
+    const m = fs
+      .readFileSync(path.join(jobDir(r, id), "evidence", "manifest.jsonl"), "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l) as { id: string; phase?: string; sha: string });
+    const ids = new Set(b.afterDrives?.results.flatMap((x) => x.evidence) ?? []);
+    const stamped = m.filter((e) => ids.has(e.id));
+    check(
+      "nondisc: those entries are stamped phase: base, on the base sha",
+      stamped.length > 0 && stamped.every((e) => e.phase === "base" && e.sha === jobOf(r, id).base),
+      `${stamped.length} entries`,
+    );
+    const v = fs.readdirSync(path.join(jobDir(r, id), "rounds", "1")).filter((f) => f.startsWith("verdict-"));
+    const verdict = v.length ? read(r, id, `rounds/1/${v.sort().at(-1)}`) : "";
+    check(
+      "nondisc: the verdict flags C1 NON-DISCRIMINATING (row and footer); C2 is not",
+      /^\| C1 \| engine \| PASS \|.*NON-DISCRIMINATING/m.test(verdict) &&
+        /^NON-DISCRIMINATING: C1 /m.test(verdict) &&
+        !/^\| C2 .*NON-DISCRIMINATING/m.test(verdict),
+      verdict
+        .split("\n")
+        .filter((l) => /C1|C2|NON-/.test(l))
+        .join(" | "),
+    );
+    check(
+      "nondisc: the job worktree's prepare marker survived the base checkout",
+      /"src":"[^"]*\.worktrees\/[^".]+"/.test(read(r, id, "prepared.json")),
+      read(r, id, "prepared.json"),
+    );
+    check("nondisc: the base checkout is gone", !fs.existsSync(`${jobOf(r, id).worktree}.base`));
+    clean(r, id, "nondisc");
+  },
+
   // W1 "bug": not reproduced once, then reproduced. Here the first try's drive waits for a heading that
   // never shows: a timed-out wait for something other than what the expect asks is a broken proof.
   async "repro-retry"() {

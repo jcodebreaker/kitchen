@@ -128,7 +128,15 @@ export type Escalation = "round-limit" | "smith-limit" | "adapter-error" | "engi
 /** What guards read. Gathered by the caller (stage handlers, runner, CLI) from files, git and the forge. */
 export type Facts = {
   now: string;
-  intake?: { decision: "ACCEPT" | "NEEDS-INFO" | "REJECT"; kind?: Kind; risk?: Risk; surfaces?: ("ui" | "security")[]; criteria?: Lint };
+  intake?: {
+    decision: "ACCEPT" | "NEEDS-INFO" | "REJECT";
+    kind?: Kind;
+    risk?: Risk;
+    surfaces?: ("ui" | "security")[];
+    criteria?: Lint;
+    /** How many requirements intake.md lists (`## Requirements`): the spec is checked against them (spec-lint rule 7). */
+    requirements?: number;
+  };
   /** needs-info: the source shows an answer from the author or operator. */
   replied?: boolean;
   /** A human command. */
@@ -153,7 +161,8 @@ export type Facts = {
     ticket?: string;
   };
   toolkit?: { checkPassed: boolean; sha: string; pr: number | null };
-  review?: { pass: boolean; blocking?: string };
+  /** nonDiscriminating: criteria that already held on the base (base-check.json), for the report (W4). */
+  review?: { pass: boolean; blocking?: string; nonDiscriminating?: string[] };
   ready?: {
     synced: boolean;
     conflict: boolean;
@@ -220,6 +229,8 @@ const intakeIs =
   (d: "ACCEPT" | "NEEDS-INFO" | "REJECT"): Guard =>
   (_j, f) =>
     need(f.intake, "intake") ?? (f.intake?.decision === d ? null : `intake.md says ${f.intake?.decision}, not ${d}`);
+const hasRequirements: Guard = (_j, f) =>
+  (f.intake?.requirements ?? 0) > 0 ? null : "intake.md lists no requirements (`## Requirements`, R1…): the spec has nothing to cover";
 const criteriaLint: Guard = (_j, f) => (f.intake?.criteria?.ok ? null : `inline criteria fail spec-lint: ${f.intake?.criteria?.reason ?? "no criteria"}`);
 const setIntake = (j: Job, f: Facts) => {
   j.kind = f.intake?.kind ?? j.kind;
@@ -272,13 +283,14 @@ export const TABLE: readonly Row[] = [
     id: "intake>spec",
     from: "intake",
     to: "spec",
-    when: "ACCEPT, risk medium or high (a bug at medium/high goes spec → repro)",
+    when: "ACCEPT, risk medium or high, intake.md lists the requirements (a bug at medium/high goes spec → repro)",
     guard: all(
       intakeIs("ACCEPT"),
       check(
         (j, f) => riskOf(j, f) === "medium" || riskOf(j, f) === "high",
         (j, f) => `risk is ${riskOf(j, f)}: low skips spec`,
       ),
+      hasRequirements,
     ),
     apply: setIntake,
   },

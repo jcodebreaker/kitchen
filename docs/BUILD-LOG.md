@@ -111,7 +111,7 @@ One entry per wave: what was built, review rounds and scores, what is proven, an
 - `toolkit up|down|maintain` are not built.
 - `prepare` has no stall detection (a hung download waits for the 30-minute timeout).
 
-## Wave 3a: proof and the core path (in review: round 1 6.5/10)
+## Wave 3a: proof and the core path (review round 2 fixes done, awaiting re-review; round 1 6.5/10)
 
 **Built**
 - `src/proof/assert.ts`: mechanical `expect:` matchers (`ok`, exit code, `text "…" visible`, contains, JSON path into the output or a `$var`, row count, `$var` comparisons, `and`). `src/proof/proof-line.ts`: the `proof:` line parser. `src/proof/prove.ts`: one criterion's proof through `kitchen drive` (toolkit segments via runDrive, cmd/test via stampCommand), then assert. `kitchen drive <job> <C> [--repro] [--arg k=v]…` on the CLI.
@@ -131,3 +131,14 @@ One entry per wave: what was built, review rounds and scores, what is proven, an
 **Proven:** the review's ticket ("admins see every user's projects with owner; regular users still see only their own") reached review on Claude with a negative criterion that creates bob's project first ($0.308; an earlier run, $0.583, found the `--save` gap), and the same spec FAILs a scripted builder that leaks every project. Codex not run: its account usage limit is reached until 2026-12-21. Attacks 26/26 (role-rule self-check case added), kill 8/8, paths 24/24, W1 paths 34/34. `npm test` 274/274, typecheck and lint clean.
 
 **Still open:** Codex re-run of the admin ticket; W2's sandbox-exec for cmd/test proofs (marked `// W2 sandbox:` in `prove.ts`); `toolkit check --feature` remains this wave's chain check until W2's `check.ts` is wired in; ready/report (W3b/W4).
+
+**Review round 2 fixes** (`spikes/w3a/results.md` "Review round 2 fixes", PLAN "Changes from the Wave 3a review (round 2)"):
+- The spec must match the ticket, by structure (ADR 0003): intake writes `## Requirements` (R1..Rn, negatives and rescopes marked), every criterion `covers:` some, and spec-lint rule 7 refuses an uncovered requirement, a criterion covering nothing, or a negative requirement no covering criterion asserts an absence for. The reviewer's ticket, verbatim, on Claude: intake split it into R1–R4 (two negative), the spec's R4 criterion refuses "alice" in alice's own project list, PASS to review ($0.382); `wrong.ts owner` (owner shown to everyone, per-user list kept) FAILs exactly that criterion.
+- Base check after drives: criteria that needed a new drive or test run on a base checkout plus only the new drive/test files (`phase: base`); a pass is NON-DISCRIMINATING in the verdict, the verifier's prompt and the review prompt.
+- cmd/test proofs run under a `sandbox-exec` profile (`src/proof/sandbox.ts`: loopback only, `$HOME` unreadable, worktree-only writes, credentials/`$KITCHEN_HOME`/job folders denied; Linux UNSANDBOXED); evidence is redacted when written. `contain.ts` 11/11 (key read, env dump, urllib, raw socket, `.env.kitchen`, outside write, job.json; controls show each succeeds unsandboxed). Found while proving it: `allow network* (local ip …)` let outbound sockets through.
+- New `check:` lines run alone from seed in the drives stage (`paths.ts nondisc`: a drive that works only after the proof's login is caught, fixed on attempt 2).
+- `$o == ""` is a negative for the lint; the builder policy is a rule table.
+- Spikes: contain 11/11, attacks 26/26, kill 8/8, paths 34/34, wrong owner 5/5 and leak 4/4, e2e claude admin 12/12, W1 paths 34/34. `npm test` 294/294, typecheck and lint clean. Real-agent spend $0.382 (Claude); Codex not run (quota).
+- Merged main's W2 round 2 (sandbox module now `src/toolkit/sandbox.ts`; the proof profile reuses its deny list).
+
+**Open after round 2:** the app the Toolkit starts, the primitives of a merged Toolkit, Gate's checks and the builder's `checks` tool are still unsandboxed; Linux has no proof sandbox; the base check after drives needs a `prepare` of the base checkout (one extra prepare per job with new drives); the coverage rule trusts intake's reading of the ticket (short, quoted, shown to review).

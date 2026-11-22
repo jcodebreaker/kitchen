@@ -4,16 +4,18 @@
 // feature: "show the signed-in user's display name in the header, editable on /settings"
 // bug:     dark mode doesn't persist after a reload (lib.ts BUG is planted in the copy first)
 // visual:  (extra) a styling ticket, so the spec has a judged criterion and the verifier judges screenshots
-// admin:   the review's ticket: admins see every user's projects with owner, regular users only their own
-//          (the spec needs a negative criterion backed by a step that makes another user's project;
-//          `wrong.ts` then replays this spec against a builder that leaks every project)
+// admin:   the review's ticket, verbatim (round 2): admins see every user's projects with the owner shown,
+//          regular users only their own with no owner shown. intake lists the requirements (R1..Rn,
+//          the negative ones marked); the spec must cover each, so "no owner shown" gets a criterion
+//          that refuses the owner element for alice; `wrong.ts` replays the spec against builders
+//          that leak every project, or show the owner to everyone)
 // Claude: sonnet for strong roles, haiku for medium (verifier). Codex: the config's tier map
 // (npx @openai/codex@0.171.0). Writes <scratch>/e2e-<tool>-<kind>.json (per-stage models,
 // time, cost) and .log, prints PASS/FAIL lines.
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { parseCriteria } from "../../src/checks/spec-lint.ts";
+import { absenceClauses, parseCriteria, parseRequirements } from "../../src/checks/spec-lint.ts";
 import { isJudged, negativeClauses, parseExpect } from "../../src/proof/assert.ts";
 import { parseProof } from "../../src/proof/proof-line.ts";
 import {
@@ -47,8 +49,8 @@ const TICKETS: Record<string, string> = {
   feature:
     "Show the signed-in user's display name in the header, and let them change it on /settings. Someone who never set a display name sees their username there instead.",
   bug: "Dark mode doesn't persist. I switch it on in Settings and it says Saved, but when I reload the page the app is light again.",
-  // The W3a reviewer's ticket: the spec must create another user's project before asserting a regular user can't see it.
-  admin: "Admins see every user's projects with owner; regular users still see only their own.",
+  // The W3a reviewer's ticket, verbatim: the spec must cover "no owner shown" for regular users, not only "only their own".
+  admin: "Admins see every user's projects with the owner shown; regular users still see only their own, with no owner shown.",
 };
 const agent =
   tool === "claude"
@@ -188,6 +190,36 @@ if (kind === "visual")
     lastVerdict.split("\n").find((l) => l.includes("| verifier |")) ?? "no judged criterion in the contract",
   );
 if (kind === "admin") {
+  // The structural spec check (spec-lint rule 7): intake's requirements, the negative ones marked, all covered.
+  const intakeText = fs.existsSync(path.join(dir, "intake.md")) ? fs.readFileSync(path.join(dir, "intake.md"), "utf8") : "";
+  const reqs = parseRequirements(intakeText);
+  console.log(`    requirements: ${reqs.map((x) => `${x.id}${x.negative ? " (negative)" : ""}: ${x.text}`).join(" | ")}`);
+  const ownerReq = reqs.filter((x) => x.negative && /owner/i.test(x.text));
+  check(`${tool} admin: intake lists "no owner shown" as a negative requirement`, ownerReq.length > 0, ownerReq.map((x) => `${x.id}: ${x.text}`).join(" | "));
+  const specCriteria = parseCriteria(fs.existsSync(path.join(dir, "spec.md")) ? fs.readFileSync(path.join(dir, "spec.md"), "utf8") : "");
+  const ownerCrit = specCriteria.filter((c) => {
+    try {
+      return (
+        c.covers.some((id) => ownerReq.some((x) => x.id === id)) &&
+        !!c.expect &&
+        !isJudged(c.expect) &&
+        absenceClauses(c.expect).length > 0 &&
+        /\balice\b/.test(c.proof ?? "")
+      );
+    } catch {
+      return false;
+    }
+  });
+  check(
+    `${tool} admin: a criterion covering it refuses the owner element for alice`,
+    ownerCrit.length > 0,
+    ownerCrit.map((c) => `${c.id} covers ${c.covers.join(",")}: ${c.proof} → ${c.expect}`).join(" | ") ||
+      specCriteria.map((c) => `${c.id} covers ${c.covers.join(",")}`).join(" "),
+  );
+  for (const c of ownerCrit) {
+    const line = lastVerdict.split("\n").find((l) => l.startsWith(`| ${c.id} |`)) ?? "";
+    check(`${tool} admin: ${c.id} (no owner for alice) PASS by the engine on the right build`, /\| engine \| PASS/.test(line), line);
+  }
   // A negative criterion (not visible / not contains / !=) whose proof first makes another user's project.
   const specText = fs.existsSync(path.join(dir, "spec.md")) ? fs.readFileSync(path.join(dir, "spec.md"), "utf8") : "";
   const negatives = parseCriteria(specText).filter((c) => {

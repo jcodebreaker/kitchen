@@ -2,7 +2,7 @@
 // rates kind and risk; a low-risk ticket carries inline criteria, which must
 // pass the full spec-lint against the Toolkit as it is on the repo's checkout.
 import path from "node:path";
-import { lintSpec } from "../../checks/spec-lint.ts";
+import { lintSpec, parseRequirements } from "../../checks/spec-lint.ts";
 import type { Kind, Risk } from "../machine.ts";
 import { writeAtomic } from "../store.ts";
 import { fileBlock, toolkitBlock } from "./context.ts";
@@ -24,7 +24,7 @@ export const intake: StageHandler = async (ctx) => {
       role: "intake",
       job: ctx.job,
       jobDir: ctx.jobDir,
-      blocks: [await toolkitBlock(ctx.job, ctx.repo), ...fileBlock(ctx.jobDir, "intake-refused.md", "Your last intake.md was refused by spec-lint: fix this")],
+      blocks: [await toolkitBlock(ctx.job, ctx.repo), ...fileBlock(ctx.jobDir, "intake-refused.md", "Your last intake.md was refused: fix this")],
     }),
     dest: path.join(ctx.jobDir, "intake.md"),
   });
@@ -38,15 +38,26 @@ export const intake: StageHandler = async (ctx) => {
     .filter((s): s is "ui" | "security" => s === "ui" || s === "security");
   if (!decision) return { to: "needs-info", facts: {}, note: `intake.md has no DECISION line (${h.DECISION ?? "missing"})` };
   const view = hasToolkit(ctx.job) ? await toolkitView(ctx.job, ctx.repo) : { primitives: [], drives: {} };
-  const criteria = risk === "low" ? lintSpec(r.text, { kind: kind ?? null, toolkit: view, protected: ctx.config.protected }) : undefined;
-  if (criteria && !criteria.ok) {
-    ctx.log(`inline criteria refused by spec-lint: ${criteria.reason}`);
-    writeAtomic(path.join(ctx.jobDir, "intake-refused.md"), `REASON: ${criteria.reason}\n\n${r.text}`);
+  // The ticket's requirements, which the criteria (inline here, or the spec's) must cover: spec-lint rule 7.
+  const requirements = parseRequirements(r.text);
+  const criteria = risk === "low" ? lintSpec(r.text, { kind: kind ?? null, toolkit: view, protected: ctx.config.protected, requirements }) : undefined;
+  const refusal =
+    criteria && !criteria.ok
+      ? `inline criteria refused by spec-lint: ${criteria.reason}`
+      : decision === "ACCEPT" && !requirements.length
+        ? "intake.md lists no requirements (`## Requirements`, `- R1: …`)"
+        : null;
+  if (refusal) {
+    ctx.log(refusal);
+    writeAtomic(path.join(ctx.jobDir, "intake-refused.md"), `REASON: ${refusal}\n\n${r.text}`);
   }
   if (decision === "NEEDS-INFO") await ctx.source.ask(ctx.job, { key: `ask/m${ctx.job.moves}`, text: h.QUESTION ?? h.REASON ?? r.text });
   const to = decision === "REJECT" ? "rejected" : decision === "NEEDS-INFO" ? "needs-info" : risk !== "low" ? "spec" : kind === "bug" ? "repro" : "build";
   return {
     to,
-    facts: { intake: { decision, kind, risk, surfaces, criteria: criteria && { ok: criteria.ok, reason: criteria.reason } }, why: h.QUESTION ?? h.REASON },
+    facts: {
+      intake: { decision, kind, risk, surfaces, requirements: requirements.length, criteria: criteria && { ok: criteria.ok, reason: criteria.reason } },
+      why: h.QUESTION ?? h.REASON,
+    },
   };
 };

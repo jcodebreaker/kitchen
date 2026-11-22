@@ -109,25 +109,22 @@ export type BuilderLimits = {
   scriptsChanged?: string[];
 };
 
+/** What the builder may not change, in order: the first rule that matches a path gives the reason it is kept off the branch. */
+const BUILDER_RULES: readonly [(f: string, l: BuilderLimits) => boolean, string][] = [
+  [(f) => f.startsWith(TOOLKIT), "the builder may not change the Toolkit (primitives go through the smith, feature drives through the verifier)"],
+  [(f, l) => l.reproFiles.includes(f), "the repro's regression test is not the builder's to edit"],
+  [(f, l) => (l.proofFiles ?? []).includes(f), "a test file a `test` proof runs is the contract's, not the builder's to write or edit"],
+  [(f, l) => (l.checkFiles ?? []).includes(f), "Gate's checks or the test command run through this file"],
+  [(f, l) => (l.scriptsChanged ?? []).includes(f), "package.json `scripts` changed: Gate's checks and test proofs run through them"],
+  [(f, l) => isProtected(f, l.protectedGlobs), "protected path"],
+  [(f) => f.startsWith(".kitchen/"), "Kitchen's own files"],
+];
+
 /** Builder: app code and tests. No Toolkit file (primitives: smith; drives: verifier), no protected path, nothing a proof runs through. */
 export const builderPolicy =
   (l: BuilderLimits): CommitPolicy =>
   (f) =>
-    f.startsWith(TOOLKIT)
-      ? "the builder may not change the Toolkit (primitives go through the smith, feature drives through the verifier)"
-      : l.reproFiles.includes(f)
-        ? "the repro's regression test is not the builder's to edit"
-        : (l.proofFiles ?? []).includes(f)
-          ? "a test file a `test` proof runs is the contract's, not the builder's to write or edit"
-          : (l.checkFiles ?? []).includes(f)
-            ? "Gate's checks or the test command run through this file"
-            : (l.scriptsChanged ?? []).includes(f)
-              ? "package.json `scripts` changed: Gate's checks and test proofs run through them"
-              : isProtected(f, l.protectedGlobs)
-                ? "protected path"
-                : f.startsWith(".kitchen/")
-                  ? "Kitchen's own files"
-                  : null;
+    BUILDER_RULES.find(([hit]) => hit(f, l))?.[1] ?? null;
 
 /** Verifier, drives mode: feature drive files, and the test files the contract's `test` proofs name. */
 export const drivesPolicy =
