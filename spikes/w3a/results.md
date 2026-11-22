@@ -204,4 +204,4 @@ Real-agent total this round: Claude $0.382, Codex 0.
 
 Still unsandboxed (ADR 0006): the app the Toolkit starts and the primitives of a merged Toolkit sha (they need Docker and the network); everything on Linux.
 
-Totals on this code: `contain.ts home` 20/20, `contain.ts tmp` 21/21, `engine.ts attacks` 26/26 (its gate check `node --check server.js` ran sandboxed in all four gates), `paths.ts` 34/34. `npm test` 297/297, typecheck and lint clean. No agent calls.
+Totals on this code: `contain.ts home` 20/20, `contain.ts tmp` 21/21, `engine.ts attacks` 26/26 (its gate check `node --check server.js` ran sandboxed in all four gates), `paths.ts` 34/34. `npm test` 295/295, typecheck and lint clean. No agent calls.
