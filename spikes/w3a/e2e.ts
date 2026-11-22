@@ -37,7 +37,7 @@ const name = `e2e-${tool}-${kind}`;
 
 const TICKETS: Record<string, string> = {
   visual:
-    "The Sign out control in the header looks like a stray button. Make it look like the other header links (same colour and size, no button chrome), in both light and dark mode.",
+    "Make the \"Fixture A\" brand name in the header stand out: larger, bold, in the accent colour, with a small dot before it. It must look right in both light and dark mode.",
   feature:
     "Show the signed-in user's display name in the header, and let them change it on /settings. Someone who never set a display name sees their username there instead.",
   bug: "Dark mode doesn't persist. I switch it on in Settings and it says Saved, but when I reload the page the app is light again.",
@@ -108,7 +108,10 @@ const verdicts = fs.existsSync(path.join(dir, "rounds"))
     )
   : [];
 const lastVerdict = verdicts.length ? fs.readFileSync(verdicts.sort().at(-1) as string, "utf8") : "";
-const changed = j.base ? execFileSync("git", ["-C", r.dir, "diff", "--stat", j.base, j.branch], { encoding: "utf8" }).trim() : "";
+let changed = "";
+try {
+  changed = execFileSync("git", ["-C", r.dir, "diff", "--stat", j.base, j.branch], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+} catch {} // no job branch: the job stopped before any worktree
 const result = {
   tool,
   kind,
