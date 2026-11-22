@@ -7,6 +7,7 @@ import path from "node:path";
 import { guardCriteria, lintSpec, parseRequirements } from "../../checks/spec-lint.ts";
 import { testLayout } from "../../checks/test-layout.ts";
 import type { Kind, Risk } from "../machine.ts";
+import { unprovableWithoutToolkit } from "../no-toolkit.ts";
 import { writeAtomic } from "../store.ts";
 import { ensureWorktree } from "../worktree.ts";
 import { baseNegativeProblems, guardBaseProblems, runBaseCheck } from "./base-check.ts";
@@ -63,7 +64,8 @@ export const intake: StageHandler = async (ctx) => {
       : undefined;
   // No Toolkit (ADR 0010): a criterion that drives the app pauses the job before anything is built, unless the person chose checks only.
   const needsApp = criteria?.needsApp ?? [];
-  const waits = noToolkit && criteria?.ok && decision === "ACCEPT" && needsApp.length > 0 && !ctx.job.checksOnly;
+  const unprovable = noToolkit && criteria?.ok && needsApp.length ? unprovableWithoutToolkit(criteria.criteria, kind ?? null) : null;
+  const waits = noToolkit && criteria?.ok && decision === "ACCEPT" && needsApp.length > 0 && (!ctx.job.checksOnly || !!unprovable);
   // spec-lint rule 3 (c): a negative no earlier step backs must be false on the base, and a regression guard must
   // hold there. The inline criteria run on the base now (the worktree at the base, a fresh app); build reuses the
   // result for the same criteria.
@@ -102,7 +104,7 @@ export const intake: StageHandler = async (ctx) => {
     facts: {
       intake: { decision, kind, risk, surfaces, requirements: requirements.length, criteria: criteria && { ok: criteria.ok, reason: criteria.reason } },
       why: h.QUESTION ?? h.REASON,
-      ...(noToolkit ? { noToolkit: { needsApp, highRisk: false } } : {}),
+      ...(noToolkit ? { noToolkit: { needsApp, highRisk: false, ...(unprovable ? { unprovable } : {}) } } : {}),
     },
   };
 };

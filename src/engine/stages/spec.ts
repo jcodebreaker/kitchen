@@ -12,6 +12,7 @@ import { testLayout } from "../../checks/test-layout.ts";
 import { nothingPolicy } from "../contract.ts";
 import { ensureUp } from "../instance.ts";
 import { effectiveRisk } from "../machine.ts";
+import { unprovableWithoutToolkit } from "../no-toolkit.ts";
 import { writeAtomic } from "../store.ts";
 import { commitWith, ensureWorktree } from "../worktree.ts";
 import { baseNegativeProblems, guardBaseProblems, runBaseCheck } from "./base-check.ts";
@@ -82,9 +83,11 @@ export const spec: StageHandler = async (ctx) => {
   let { ok, reason } = lint;
   const needsApp = lint.needsApp ?? [];
   // No Toolkit (ADR 0010): a criterion that drives the app pauses the job before anything is built, unless the person chose checks only.
-  if (noToolkit && lint.ok && needsApp.length && !job.checksOnly) {
+  const unprovable = noToolkit && lint.ok && needsApp.length ? unprovableWithoutToolkit(lint.criteria, job.kind) : null;
+  const noToolkitFacts = noToolkit ? { noToolkit: { needsApp, highRisk: false, ...(unprovable ? { unprovable } : {}) } } : {};
+  if (noToolkit && lint.ok && needsApp.length && (!job.checksOnly || unprovable)) {
     ctx.log(`no Toolkit, and ${needsApp.join(", ")} drive${needsApp.length === 1 ? "s" : ""} the app: waiting for kitchen toolkit build`);
-    return { to: "paused", facts: { spec: { ok, reason }, noToolkit: { needsApp, highRisk: false } } };
+    return { to: "paused", facts: { spec: { ok, reason }, ...noToolkitFacts } };
   }
   const guards = lint.ok ? guardCriteria(lint.criteria, requirements).filter((g) => !needsApp.includes(g)) : [];
   if (lint.ok && (job.kind !== "bug" || lint.baseNegatives.length || guards.length)) {
@@ -119,5 +122,5 @@ export const spec: StageHandler = async (ctx) => {
     }
   }
   const to = lint.missingPrimitive ? "toolkit" : job.kind === "bug" ? "repro" : "build";
-  return { to, facts: { spec: { ok, reason, missingPrimitive: lint.missingPrimitive } } };
+  return { to, facts: { spec: { ok, reason, missingPrimitive: lint.missingPrimitive }, ...noToolkitFacts } };
 };

@@ -34,7 +34,7 @@ import { takeTicket } from "./base.ts";
 import { ensureJobToolkit } from "./job-toolkit.ts";
 import { acquireRunLock } from "./lock.ts";
 import { type Facts, isActive, type Job, move, type Stage } from "./machine.ts";
-import { wakeWithToolkit } from "./no-toolkit.ts";
+import { baseTipThrottled, wakeWithToolkit } from "./no-toolkit.ts";
 import { HANDLERS } from "./stages/index.ts";
 import { hasToolkit } from "./stages/toolkit-info.ts";
 import { LockLost, type Proposal, RoleFailure, type StageContext } from "./stages/types.ts";
@@ -167,7 +167,8 @@ export async function runKitchen(o: RunOpts): Promise<{ steps: number; moves: nu
         const jobs = listJobs(repo).filter(wanted);
         const runnable = jobs.filter((j) => isActive(j.stage) && !inFlight.has(j.id)).sort(byOldest);
         while (runnable.length && inFlight.size < concurrency) dispatch(runnable.shift() as Job);
-        const waiting = jobs.filter((j) => j.stage === "paused");
+        // A job waiting for the person to build a Toolkit doesn't keep the runner alive (the next run wakes it).
+        const waiting = jobs.filter((j) => j.stage === "paused" && j.waitFor !== "no-toolkit");
         if (!inFlight.size && !runnable.length && !waiting.length) break;
         await Promise.race([...inFlight.values(), new Promise((r) => setTimeout(r, tickMs))]);
       }
@@ -258,9 +259,23 @@ async function takeNew(repo: string, d: Deps, print: (l: string) => void) {
   }
 }
 
+let lastTipError = "";
 /** Paused jobs whose condition cleared go back to pausedFrom; needs-info jobs with a reply go back to intake. */
 async function checkWaits(repo: string, d: Deps, print: (l: string) => void, wanted: (j: Job) => boolean) {
-  for (const job of listJobs(repo).filter(wanted)) {
+  const jobs = listJobs(repo).filter(wanted);
+  // The base tip, once per pass and at most once a minute, only when a job waits for a Toolkit (review M4).
+  let tip: string | null = null;
+  if (jobs.some((j) => j.stage === "paused" && j.waitFor === "no-toolkit")) {
+    try {
+      tip = await baseTipThrottled(repo, d.config);
+      lastTipError = "";
+    } catch (e) {
+      const m = (e as Error).message;
+      if (m !== lastTipError) print(`no-toolkit: can't read the base to see whether a Toolkit arrived: ${m}`);
+      lastTipError = m;
+    }
+  }
+  for (const job of jobs) {
     if (job.stage === "paused" && job.pausedFrom) {
       let cleared = false;
       let wake: Facts["wake"];
@@ -274,8 +289,8 @@ async function checkWaits(repo: string, d: Deps, print: (l: string) => void, wan
         cleared = ci !== "pending" && (!waiting || ci === "pass" || ci === "fail");
       } else if (job.waitFor === "toolkit-ticket") cleared = !!job.toolkitTicketRef && (await d.forge.ticketClosed(job.toolkitTicketRef));
       // The Toolkit reached the base (kitchen/setup merged): the job takes it and goes on (no-toolkit.ts).
-      else if (job.waitFor === "no-toolkit") {
-        const w = await wakeWithToolkit(repo, d.config, job).catch((e) => {
+      else if (job.waitFor === "no-toolkit" && tip) {
+        const w = await wakeWithToolkit(repo, d.config, job, tip).catch((e) => {
           print(`${job.id}  no-toolkit: ${(e as Error).message}`);
           return { toolkit: false } as const;
         });

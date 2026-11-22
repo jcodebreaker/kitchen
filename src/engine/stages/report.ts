@@ -25,6 +25,7 @@ import { jobRequirements } from "./context.ts";
 import { prompt } from "./prompts.ts";
 import { lastVerdictFile } from "./review.ts";
 import { runRole } from "./role.ts";
+import { hasToolkit } from "./toolkit-info.ts";
 import type { StageHandler } from "./types.ts";
 import { argsDeltasOf } from "./verify.ts";
 
@@ -117,7 +118,7 @@ async function factsOf(repoDir: string, jobDir: string, job: Job, head: string, 
     head,
     verdict: /^VERDICT:\s*(\S+)/m.exec(vText)?.[1] ?? "none",
     humanMustCheck,
-    ...(job.toolkitRef ? {} : { noToolkit: true }),
+    ...(hasToolkit(job) ? {} : { noToolkit: true }),
     requirements: jobRequirements(jobDir),
     criteria: (contract?.criteria ?? []).map((c) => {
       const r = rows.find((x) => x.id === c.id);

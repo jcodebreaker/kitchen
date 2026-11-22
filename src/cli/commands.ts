@@ -18,6 +18,7 @@ import { findingById, findingsOf } from "../engine/stages/context.ts";
 import { findJob, jobDirOf, kitchenDir, scanJobs, writeAtomic } from "../engine/store.ts";
 import { runView } from "../engine/views.ts";
 import { changedFiles, headOf } from "../engine/worktree.ts";
+import { mergeSetupHow } from "../init/build.ts";
 import { appendLedger, readLedger } from "../ledger/append.ts";
 import { formatMeasures, measures } from "../ledger/measures.ts";
 import { formatCounts, summarize } from "../ledger/report.ts";
@@ -139,17 +140,28 @@ async function resumeNoToolkit(repo: string, ref: string, job: Job, out: Out): P
   const w = await wakeWithToolkit(repo, loadConfig(repo), job);
   const from = job.pausedFrom as Stage;
   if (w.toolkit) return human(repo, ref, from, { operator: "resume", wake: w.facts }, "resumed: the Toolkit is on the base now", out);
+  const cfg = loadConfig(repo);
   if (await unmergedSetup(repo)) {
-    out(`${job.id}  still waits: the Toolkit is on kitchen/setup but not merged. Review it, git merge kitchen/setup, then kitchen resume ${job.id}`);
+    out(
+      `${job.id}  still waits: the Toolkit is on kitchen/setup but not on ${cfg.forge.base} yet. Review it, ${mergeSetupHow(cfg)}, then kitchen resume ${job.id}`,
+    );
     return 1;
   }
   const hard = needsToolkitToGoOn(jobDirOf(repo, job.id), job);
   if (hard) {
-    out(`${job.id}  can't go on without a Toolkit: ${hard}. Run kitchen toolkit build (about 3–15 min), merge kitchen/setup, then kitchen resume ${job.id}`);
+    out(`${job.id}  can't go on without a Toolkit: ${hard}. Run kitchen toolkit build (about 3–15 min), ${mergeSetupHow(cfg)}, then kitchen resume ${job.id}`);
     return 1;
   }
   out(`${job.id}  goes on without a Toolkit: proven by checks and tests only; criteria that need the app will say "not proven (no Toolkit)"`);
-  return human(repo, ref, from, { operator: "resume", wake: { checksOnly: true } }, "resumed without a Toolkit: checks and tests only", out);
+  // The machine checks it again (a high-risk job, or one checks can't prove, is refused there too).
+  return human(
+    repo,
+    ref,
+    from,
+    { operator: "resume", wake: { checksOnly: true }, noToolkit: { needsApp: [], highRisk: false } },
+    "resumed without a Toolkit: checks and tests only",
+    out,
+  );
 }
 
 export async function resume(repo: string, ref: string, out: Out): Promise<number> {

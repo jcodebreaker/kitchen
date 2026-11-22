@@ -209,6 +209,11 @@ export const verify: StageHandler = async (ctx) => {
     },
   };
   if (v.verdict === "PASS") return { to: "review", facts };
+  // Without a Toolkit, nothing (or not every requirement) was proven: never a pass; the job waits for one (ADR 0010 review M5).
+  if (v.verdict === "NO-TOOLKIT") {
+    const needsApp = v.criteria.filter((c) => c.result === "NO-TOOLKIT").map((c) => c.id);
+    return { to: "paused", facts: { ...facts, noToolkit: { needsApp, highRisk: false, unprovable: v.unproven ?? "nothing was proven" } }, note: v.unproven };
+  }
   if (v.verdict === "FAIL") return { to: "build", facts };
   if (v.verdict === "TOOLKIT-GAP") return { to: "toolkit", facts };
   // INCONCLUSIVE

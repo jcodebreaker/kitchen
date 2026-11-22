@@ -631,6 +631,92 @@ const cases: Case[] = [
     refused: /the job has a Toolkit/,
   },
   { row: "spec>paused", job: { stage: "spec", risk: "medium" }, to: "paused", facts: f({ spec: okLint, noToolkit: { needsApp: ["C2"], highRisk: false } }) },
+  // review L3: the machine itself refuses to build past criteria that need the app, without a Toolkit
+  {
+    row: "spec>build",
+    job: { stage: "spec", kind: "feature", risk: "medium" },
+    to: "build",
+    facts: f({ spec: okLint, noToolkit: { needsApp: ["C2"], highRisk: false } }),
+    refused: /C2 drive the app: it waits for one/,
+  },
+  {
+    row: "spec>build",
+    job: { stage: "spec", kind: "feature", risk: "medium", checksOnly: true },
+    to: "build",
+    facts: f({ spec: okLint, noToolkit: { needsApp: ["C2"], highRisk: false } }),
+  },
+  {
+    row: "spec>repro",
+    job: { stage: "spec", kind: "bug", risk: "medium", checksOnly: true },
+    to: "repro",
+    facts: f({ spec: okLint, noToolkit: { needsApp: ["C1"], highRisk: false, unprovable: "it is a bug whose reproduction (C1) drives the app" } }),
+    refused: /bug whose reproduction \(C1\) drives the app: it waits for one/,
+  },
+  {
+    row: "intake>build",
+    job: { stage: "intake" },
+    to: "build",
+    facts: f({
+      intake: { decision: "ACCEPT", kind: "feature", risk: "low", criteria: okLint, requirements: 1 },
+      noToolkit: { needsApp: ["C1"], highRisk: false },
+    }),
+    refused: /C1 drive the app: it waits for one/,
+  },
+  {
+    row: "intake>repro",
+    job: { stage: "intake", checksOnly: true },
+    to: "repro",
+    facts: f({
+      intake: { decision: "ACCEPT", kind: "bug", risk: "low", criteria: okLint, requirements: 1 },
+      noToolkit: { needsApp: ["C1"], highRisk: false, unprovable: "a bug" },
+    }),
+    refused: /a bug: it waits for one/,
+  },
+  // review M5: a verdict with nothing proven waits for the Toolkit, never a pass
+  {
+    row: "verify>paused(no-toolkit)",
+    job: { stage: "verify" },
+    to: "paused",
+    facts: f({ verify: verify("NO-TOOLKIT"), noToolkit: { needsApp: ["C1"], highRisk: false, unprovable: "no criterion was proven" } }),
+    expect: (j) => {
+      assert.equal(j.waitFor, "no-toolkit");
+      assert.equal(j.pausedFrom, "verify");
+    },
+  },
+  {
+    row: "verify>paused(no-toolkit)",
+    job: { stage: "verify" },
+    to: "paused",
+    facts: f({ verify: verify("PASS") }),
+    refused: /verdict is PASS, not NO-TOOLKIT/,
+  },
+  { row: "verify>review", job: { stage: "verify" }, to: "review", facts: f({ verify: verify("NO-TOOLKIT") }), refused: /verdict is NO-TOOLKIT, not PASS/ },
+  // going on without a Toolkit: never high risk, never what checks can't prove, never without the facts
+  {
+    row: "paused>spec",
+    job: { stage: "paused", pausedFrom: "spec", waitFor: "no-toolkit", risk: "high" },
+    to: "spec",
+    facts: f({ operator: "resume", wake: { checksOnly: true }, noToolkit: { needsApp: [], highRisk: true } }),
+    refused: /high-risk job can't go on without a Toolkit/,
+  },
+  {
+    row: "paused>verify",
+    job: { stage: "paused", pausedFrom: "verify", waitFor: "no-toolkit" },
+    to: "verify",
+    facts: f({
+      operator: "resume",
+      wake: { checksOnly: true },
+      noToolkit: { needsApp: ["C1"], highRisk: false, unprovable: "R1 is proven only by driving the app" },
+    }),
+    refused: /R1 is proven only by driving the app/,
+  },
+  {
+    row: "paused>intake",
+    job: { stage: "paused", pausedFrom: "intake", waitFor: "no-toolkit" },
+    to: "intake",
+    facts: f({ operator: "resume", wake: { checksOnly: true } }),
+    refused: /needs the noToolkit facts/,
+  },
   {
     row: "spec>paused",
     job: { stage: "spec", risk: "medium", checksOnly: true },
@@ -684,7 +770,7 @@ const cases: Case[] = [
     row: "paused>spec",
     job: { stage: "paused", pausedFrom: "spec", waitFor: "no-toolkit" },
     to: "spec",
-    facts: f({ operator: "resume", wake: { checksOnly: true } }),
+    facts: f({ operator: "resume", wake: { checksOnly: true }, noToolkit: { needsApp: [], highRisk: false } }),
     expect: (j) => {
       assert.equal(j.checksOnly, true);
       assert.equal(j.toolkitRef, "");
