@@ -16,10 +16,11 @@ import { adapterFor } from "../engine/runner.ts";
 import { writeAtomic } from "../engine/store.ts";
 import { kitchenHome } from "../home.ts";
 import { appendLedger } from "../ledger/append.ts";
-import { checkAtRef, runToolkitCheck } from "../toolkit/check.ts";
+import { checkAtRef, runToolkitCheck, trackedAt } from "../toolkit/check.ts";
 import { toolkitCheckout } from "../toolkit/checkout.ts";
 import { reclaimStaleSlots } from "../toolkit/slots.ts";
 import { setupBridgeServer } from "./bridge.ts";
+import { devEnvValues, refusal, scanText } from "./secrets.ts";
 
 const PKG = path.resolve(import.meta.dirname, "..", "..");
 const TEMPLATE = path.join(PKG, "toolkit-template");
@@ -140,11 +141,12 @@ export function readAnswers(text: string, questions: Question[]): Record<string,
   return out;
 }
 
-const KITCHEN_YAML = (tool: string) => `# Kitchen (https://github.com/…/kitchen). Every key has a default; see docs/PLAN.md §6.
+const KITCHEN_YAML = (tool: string) => `# Kitchen (npm package devkitchen). Every key has a default; unknown keys are refused.
+# The full list with defaults: src/config.ts in the package (ConfigSchema).
 agent: { tool: ${tool} }
-concurrency: 2
+concurrency: 2   # a Toolkit proven parallel:false runs one job at a time regardless
 round_limit: 3
-# models: { builder: strong, verifier: medium }   # tiers map to models per tool
+# models: { builder: strong, verifier: medium, setup: strong }   # tiers map to models per tool
 # checks: ["npm test"]                            # what Gate runs in a job worktree
 `;
 
@@ -232,7 +234,7 @@ export async function initCmd(o: InitOpts, out: Out): Promise<number> {
   const cfg = loadConfig(repo);
   const tool = o.tool ?? cfg.agent.tool;
   const config: Config = { ...cfg, agent: { ...cfg.agent, tool } };
-  const model = o.model ?? modelFor(config, "smith");
+  const model = o.model ?? modelFor(config, "setup");
   const effort = (o.effort ?? "medium") as AgentRequest["effort"];
   let adapter: AgentAdapter | null = null;
   const agent = async () => {
@@ -341,7 +343,12 @@ export async function initCmd(o: InitOpts, out: Out): Promise<number> {
       save();
       fs.rmSync(questionsFile(repo), { force: true });
     }
-    // 8. build: same session, with the answers and the bridge
+    // 8. build: same session, with the answers and the bridge. A build that ended BLOCKED is retried on a re-run.
+    if (st.steps.build && st.steps.build.status !== "READY") {
+      say(`the last build said ${st.steps.build.status}: building again`);
+      delete st.steps.build;
+      save();
+    }
     if (!done("build")) {
       const { r, text } = await runSetup(
         "build",
@@ -360,11 +367,18 @@ export async function initCmd(o: InitOpts, out: Out): Promise<number> {
     }
   }
 
-  // 9. commit + 10. check, with up to maxFix rounds of fixes from the check's report
+  // 9. commit + 10. check, with up to maxFix rounds of fixes from the check's report.
+  // Only a passing full check is done: a failed one, or a static one (--generate-only) on a run without it, is run again.
+  const prior = st.steps.check;
+  if (prior && (!prior.ok || (prior.static && !o.generateOnly))) {
+    say(`the last check ${prior.ok ? "was static only (--generate-only)" : `failed at ${prior.failed}`}: checking again`);
+    delete st.steps.check;
+    save();
+  }
   const maxFix = o.maxFix ?? 2;
   for (;;) {
     if (!done("commit")) {
-      const c = existing ? { sha: base, commits: [] } : await commitSetup(wtGit, base);
+      const c = existing ? { sha: base, commits: [] } : await commitSetup(wtGit, base, devEnvValues(repo, new Set(await trackedAt(repo, "HEAD"))));
       st.steps.commit = c;
       save();
       say(c.commits.length ? `committed on ${SETUP_BRANCH}: ${c.commits.join(", ")}` : "nothing new to commit");
@@ -372,7 +386,7 @@ export async function initCmd(o: InitOpts, out: Out): Promise<number> {
     if (o.generateOnly && !done("check")) {
       const sha = st.steps.commit?.sha ?? base;
       const co = await toolkitCheckout(repo, sha);
-      const r = await runToolkitCheck({ repo, toolkitBin: co.bin, src: co.dir, staticOnly: true, print: (l) => out(`  ${l}`) });
+      const r = await runToolkitCheck({ repo, toolkitBin: co.bin, src: co.dir, staticOnly: true, print: (l) => out(`  ${l}`) }).finally(co.release);
       st.steps.check = { ok: r.ok, sha, secs: r.secs, failed: r.failed, parallel: r.describe?.parallel !== false, static: true };
       save();
       say(
@@ -410,17 +424,20 @@ export async function initCmd(o: InitOpts, out: Out): Promise<number> {
     break;
   }
 
-  // 11. next steps
+  // 11. next steps: only a passing full check counts as done
   const check = st.steps.check;
-  if (check && !check.parallel) {
-    const f = path.join(repo, "kitchen.yaml");
-    const y = fs.readFileSync(f, "utf8");
-    if (/^concurrency:\s*\d+/m.test(y)) fs.writeFileSync(f, y.replace(/^concurrency:\s*\d+.*$/m, "concurrency: 1   # the Toolkit says parallel: false"));
-    say("the Toolkit can't run two instances at once: concurrency set to 1");
+  if (!check?.ok) {
+    say(`not done: ${check ? `toolkit check failed at ${check.failed}` : "no check ran"}; see .kitchen/init/state.json`);
+    return 1;
   }
+  if (check.static) {
+    say("generated only (--generate-only): describe and the feature files pass; the Toolkit is NOT proven (no toolkit.proven)");
+    return 0;
+  }
+  if (!check.parallel) say("the Toolkit can't run two instances at once (parallel:false): kitchen run takes one job at a time");
   const usd = st.runs.reduce((s, r) => s + (r.usd ?? 0), 0);
   const secs = st.runs.reduce((s, r) => s + r.secs, 0);
-  say(`done: Toolkit proven on ${check?.sha.slice(0, 12)}; agent time ${Math.round(secs)}s${usd ? `, $${usd.toFixed(2)}` : ""} over ${st.runs.length} run(s)`);
+  say(`done: Toolkit proven on ${check.sha.slice(0, 12)}; agent time ${Math.round(secs)}s${usd ? `, $${usd.toFixed(2)}` : ""} over ${st.runs.length} run(s)`);
   out("next:");
   if (!existing) out(`  1. review the branch ${SETUP_BRANCH} (git log -p main..${SETUP_BRANCH}) and merge it`);
   out("  2. commit kitchen.yaml, .gitignore, .claude/skills/kitchen/ and .agents/skills/kitchen/");
@@ -438,13 +455,36 @@ async function tracked(git: Awaited<ReturnType<typeof openGit>>, file: string): 
 }
 
 /** Engine commits on kitchen/setup: the dev environment the build path added, then the Toolkit, each reviewable alone. */
-async function commitSetup(wt: { gitDir: string; workTree: string }, base: string): Promise<{ sha: string; commits: string[] }> {
+async function commitSetup(
+  wt: { gitDir: string; workTree: string },
+  base: string,
+  devValues: Map<string, string>,
+): Promise<{ sha: string; commits: string[] }> {
   // The agents' outbox is never committed (its file was copied already); an exclude pathspec for it trips git when the repo ignores it.
   fs.rmSync(path.join(wt.workTree, ".kitchen-out"), { recursive: true, force: true });
   const git = await openGit(wt);
   const commits: string[] = [];
   const commit = async (paths: string[], message: string) => {
     await git.run(["add", "-A", "--", ...paths, ...NOT_COMMITTED]);
+    // Secret scan of everything staged: refuse the commit, name the file and key.
+    const staged = (await git.run(["diff", "--cached", "--name-only", "-z", "--no-renames", "--diff-filter=d", "--no-ext-diff"])).stdout
+      .split("\0")
+      .filter(Boolean);
+    const findings = staged.flatMap((f) => {
+      const file = path.join(wt.workTree, f);
+      try {
+        const st = fs.statSync(file);
+        if (!st.isFile() || st.size > 2 << 20) return [];
+        const text = fs.readFileSync(file, "utf8");
+        return text.includes("\0") ? [] : scanText(f, text, devValues);
+      } catch {
+        return [];
+      }
+    });
+    if (findings.length) {
+      await git.run(["reset", "-q"]);
+      throw new Error(refusal(findings, wt.workTree));
+    }
     try {
       await git.run(["diff", "--cached", "--quiet", "--no-ext-diff"]);
       return;

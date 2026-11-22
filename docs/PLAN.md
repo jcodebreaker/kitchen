@@ -249,8 +249,11 @@ Every command prints exactly one JSON line on stdout and logs to stderr. Kitchen
 2. `up`, then `doctor`
 3. one drive per feature
 4. `reset`, then the drive again
-5. `down`
-6. it confirms the evidence survived, and that 2 slots can be up at once, unless `describe` says `parallel:false`, in which case concurrency for that project drops to 1
+5. the **contract probe**: every primitive in `describe` once, then the refusals the contract requires (`read` of a missing target is `ok:false`, `open`/`http` of another origin refused, a flag given twice refused)
+6. `down`
+7. it confirms the evidence survived, and that 2 slots can be up at once, unless `describe` says `parallel:false`, in which case the runner takes one job at a time for that project (whatever `kitchen.yaml` says)
+
+Every call is held to exactly one JSON line on stdout; `up` gives an http(s) url (a CLI: any absolute URL); `doctor` runs at least one check; every feature maps to `paths` that match tracked files.
 
 On a pass it writes `.kitchen/toolkit.proven` with the base sha. **When the base changes,** `kitchen run` checks the Toolkit again before taking new work:
 - If the Toolkit or feature-mapped paths changed, it runs the full check.
@@ -725,7 +728,7 @@ History: all of these are now part of §2 and §3, which are the current contrac
 | Where init's output lands | `kitchen.yaml`, `.gitignore` entries and the skill go into the working tree (the user commits them); the Toolkit (and any dev-environment files the build path adds, as a separate commit) goes on the branch `kitchen/setup`. `toolkit.proven` names that commit (`branch: kitchen/setup`); a fast-forward merge needs no re-proof |
 | A queue pause needs somewhere to live | `.kitchen/queue.json` (`kitchen status` prints it). It stays paused until the base moves again or the Toolkit ticket is closed; then the re-proof runs again. A base without a Toolkit yet (init's branch not merged) is not re-checked |
 | Machines that can't run a project's stack | `kitchen init --generate-only`: the setup agent writes the Toolkit but may only run `describe`; the engine checks describe and the feature files statically and writes no `toolkit.proven` |
-| `toolkit up\|down\|maintain` | Not built in W2 (W3b/W4); `kitchen toolkit check` is |
+| `toolkit up\|down\|maintain` | `toolkit up` (foreground, one slot, Ctrl-C brings it down) and `toolkit down --id` were built in the W2 review round; `maintain` stays W4 |
 | Jobs still run the repo's own `.kitchen/toolkit/bin/dev` (W1) | The engine-owned checkout (`src/toolkit/checkout.ts`) is built and used by `toolkit check`, the re-proof and init; switching jobs' `toolkitBin` to it lands with the smith and PR pinning (W3b) |
 
 ## Changes from Wave 3a (spikes/w3a/results.md)
@@ -741,3 +744,19 @@ History: all of these are now part of §2 and §3, which are the current contrac
 | Slot ids from job ids were too long for `--id` and collided across repos | `slotId` = `<n>-<10 hex of the job uid>` |
 | `test <file>` proofs need a command | `kitchen.yaml` `test_cmd` (default `npm test -- {file}`) |
 | The verifier agent cost a run even when nothing is judged | Verify starts the agent only when there are `judged` criteria and every mechanical proof passed; drives starts it only when a drive is missing or failed the check |
+
+## Changes from the Wave 2 review
+
+| Finding | Change (proven by `spikes/w2/`) |
+|---|---|
+| A `bin/dev` timeout never fired when a child held stdout (a 2 s timeout returned after 146 s) | `runToolkit` spawns `bin/dev` in its own process group and, on timeout, kills the group and stops waiting on the pipes; the result says `timed out after Ns`. After a normal exit the pipes get 1 s to drain. `prepare` also fails when it prints nothing for 5 minutes (stall). `timeout.ts` |
+| A broken Toolkit passed `toolkit check` | One JSON line per call, http(s) `url`, `doctor` with ≥1 check, `surface` an enum, and the contract probe (every primitive once + the required refusals). `probe.ts`: the reviewer's fake and each of its faults fail, named; the 7 generated Toolkits of A–D and fixture A's hand-made one pass |
+| Feature `paths` could be empty or a typo, which weakened the re-proof | `paths` required; every glob must match a tracked file at the base |
+| `parallel:false` wasn't enforced (init edited `kitchen.yaml` with a regex) | The runner uses `min(concurrency, proven.parallel ? n : 1)`; init no longer edits `kitchen.yaml` |
+| An init re-run after a failed check said "done" | Only a passing full check is done; a failed or static check is run again on a re-run; otherwise init exits 1 with the real state |
+| Setup from inside the tools held one long Bash call | `kitchen init --detach` + `.kitchen/init/status.json` + `kitchen init --status [--wait ≤110]`; one init per repo at a time. The skill starts it outside the sandbox and polls with `--wait` (Claude Code refuses a foreground `sleep 60`) |
+| Real values could be committed in `.env.kitchen` | A secret scan of everything the setup commit stages: live-key shapes and any value equal to one in the developer's untracked `.env*`; the commit is refused, naming file, line and key |
+| Checkout GC could remove a checkout in use | Per-checkout leases (owner pid + start time) and live slots' `toolkitBin` keep GC off it; creation and removal share one lock. `gc.ts` |
+| The setup bridge ran agent-written code unconfined | ADR 0008: on macOS every `bin/dev` the bridge runs goes through `sandbox-exec` denying credentials, agent auth and `$KITCHEN_HOME`. `sandbox.ts`. Linux: unhandled |
+| `.env.kitchen` could set `PATH`, `NODE_OPTIONS`, `DYLD_*`, `LD_*`… | Those names are dropped before the env is built |
+| `prepare` cache per sha only | Also per lockfile hash for the same source tree; a `setup` model key in `kitchen.yaml`; `kitchen toolkit up|down` |

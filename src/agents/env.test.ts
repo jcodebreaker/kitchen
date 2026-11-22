@@ -54,6 +54,20 @@ describe("untrustedEnvOf (app, tests, Toolkit)", () => {
     expect(env.PGPASSWORD).toBe("fake");
     closesPush(env);
   });
+  it(".env.kitchen can't set PATH, NODE_OPTIONS, the dynamic loader or Kitchen's own names", () => {
+    const e = untrustedEnvOf(parent, home, {
+      PATH: "/tmp/evil",
+      NODE_OPTIONS: "--require /tmp/x.js",
+      DYLD_INSERT_LIBRARIES: "/tmp/x.dylib",
+      LD_PRELOAD: "/tmp/x.so",
+      BASH_ENV: "/tmp/x.sh",
+      KITCHEN_CONTROL_ENV: "",
+      DATABASE_URL: "postgres://fake",
+    });
+    expect(e.PATH).toBe("/usr/bin");
+    for (const k of ["NODE_OPTIONS", "DYLD_INSERT_LIBRARIES", "LD_PRELOAD", "BASH_ENV", "KITCHEN_CONTROL_ENV"]) expect(e[k]).toBeUndefined();
+    expect(e.DATABASE_URL).toBe("postgres://fake");
+  });
 });
 
 it("parseEnvFile reads KEY=value lines and skips comments", () => {

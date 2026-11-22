@@ -131,12 +131,26 @@ export function parseEnvFile(text: string): Record<string, string> {
 }
 
 /**
+ * Names `.env.kitchen` may not set: what changes which program runs or what it
+ * loads before any app code (PATH, NODE_OPTIONS, the dynamic loader, shell
+ * startup files), and the names the engine sets itself. Dropped, never merged.
+ */
+export const DENIED_APP_ENV =
+  /^(PATH|NODE_OPTIONS|NODE_PATH|DYLD_.*|LD_.*|BASH_ENV|ENV|ZDOTDIR|PYTHONSTARTUP|PYTHONPATH|PERL5OPT|PERL5LIB|RUBYOPT|JAVA_TOOL_OPTIONS|KITCHEN_(?:HOME|CONTROL_ENV|TOOLKIT_STATE|UNTRUSTED|AGENT)|DOCKER_HOST|DOCKER_CONTEXT)$/;
+
+/** Pure: the `.env.kitchen` values that may reach worktree code. */
+export function appEnvOf(app: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(Object.entries(app).filter(([k]) => !DENIED_APP_ENV.test(k)));
+}
+
+/**
  * Pure: the env for a process that runs worktree code. Allowlist + git/gh scrub
  * + the app's `.env.kitchen` values. The scrub wins over `.env.kitchen`, so an
- * app file can't turn a credential helper back on.
+ * app file can't turn a credential helper back on, and DENIED_APP_ENV names
+ * (PATH, NODE_OPTIONS, DYLD_*, LD_*…) are dropped from it.
  */
 export function untrustedEnvOf(parent: NodeJS.ProcessEnv, home: ScrubHome, app: Record<string, string>): Record<string, string> {
-  return withSafePath({ ...pick(parent, BASE), ...app, ...scrub(home), KITCHEN_UNTRUSTED: "1" });
+  return withSafePath({ ...pick(parent, BASE), ...appEnvOf(app), ...scrub(home), KITCHEN_UNTRUSTED: "1" });
 }
 
 /**

@@ -1,0 +1,48 @@
+{
+  "fixture": "d-api",
+  "tool": "codex",
+  "model": "gpt-5.6-terra",
+  "effort": "medium",
+  "at": "2026-11-22T07:52:34.489Z",
+  "init": {
+    "exit": 1,
+    "secs": 231.311,
+    "questions": null
+  },
+  "agent": {
+    "runs": [
+      {
+        "mode": "survey",
+        "ok": true,
+        "secs": 70.491,
+        "inTok": 186461,
+        "outTok": 2526,
+        "model": "gpt-5.6-terra",
+        "tool": "codex",
+        "sessionId": "01a2023a-9760-7a10-bff2-d96cf6b8e7f1",
+        "line": "Survey complete: wrote `.kitchen-out/survey.md` with a build-path Toolkit plan."
+      },
+      {
+        "mode": "build",
+        "ok": false,
+        "secs": 160.466,
+        "inTok": 0,
+        "outTok": 0,
+        "model": "gpt-5.6-terra",
+        "tool": "codex",
+        "sessionId": "01a2023a-9760-7a10-bff2-d96cf6b8e7f1",
+        "line": "I’m building the API Toolkit with isolated Stripe and SMTP mocks, then I’ll run the Kitchen contract check and iterate on any failures."
+      }
+    ],
+    "secs": 230.957,
+    "usd": null,
+    "inTok": 186461,
+    "outTok": 2526
+  },
+  "fixes": 0,
+  "baseCheck": null,
+  "proven": null,
+  "commits": [],
+  "toolkitFiles": [],
+  "log": "/private/tmp/claude-501/-Users-simo-pttx/58ffbf3c-d628-41d8-aabb-4f73bfb4d366/scratchpad/w2fix/runs/d-codex/init.log"
+}

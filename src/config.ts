@@ -5,7 +5,7 @@ import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 
-export const ROLES = ["intake", "spec", "builder", "smith", "verifier", "reviewer", "report", "retro"] as const;
+export const ROLES = ["intake", "spec", "builder", "smith", "verifier", "reviewer", "report", "retro", "setup"] as const;
 export type RoleName = (typeof ROLES)[number];
 export const TIERS = ["strong", "medium", "cheap"] as const;
 export type ModelTier = (typeof TIERS)[number];
@@ -54,6 +54,8 @@ export const ConfigSchema = z
         reviewer: z.string().default("medium"),
         report: z.string().default("medium"),
         retro: z.string().default("cheap"),
+        /** `kitchen init`'s setup role (survey, build, fix rounds). */
+        setup: z.string().default("strong"),
       })
       .strict()
       .prefault({}),

@@ -12,7 +12,7 @@ not on PATH, use `npx devkitchen` in its place.
 
 | the user says | run |
 |---|---|
-| set up Kitchen, "make a Toolkit", first use | `kitchen init` (see Setup) |
+| set up Kitchen, "make a Toolkit", first use | `kitchen init --status`, then `kitchen init --detach` and `kitchen init --status --wait 90` (see Setup) |
 | "do X", "fix Y", "add Z" (a request for work) | `kitchen ticket "<their words, verbatim>"` then offer to start the queue |
 | start, run, "go", work the queue | `kitchen run --detach` (see Running), then `kitchen status` |
 | what's happening, status, progress | `kitchen status` |
@@ -42,21 +42,43 @@ poll in a loop.
 
 `kitchen init` writes `kitchen.yaml`, installs this skill, generates the
 Toolkit with Kitchen's setup agent on a branch (`kitchen/setup`) and proves it
-with `kitchen toolkit check`. It takes several minutes: run it in the
-background or with a long timeout, and relay its lines.
+with `kitchen toolkit check`. It takes 5–15 minutes and starts its own agent,
+Docker containers and network calls, so, like a queue drain:
 
-**Questions.** Without a terminal, `init` can't ask the user itself. If it
-exits with code **3**, it has written `.kitchen/setup-questions.json`:
+0. First run `kitchen init --status`. If it says `running`, go to step 2; if
+   `questions`, go to Questions; if `done`, relay it. Otherwise start it:
+1. Start it **detached and outside your sandbox**: `kitchen init --detach`.
+   - Claude Code: a normal Bash command (if Bash runs sandboxed, run this one
+     with the sandbox off). The user approves `kitchen init` once.
+   - Codex: run it with escalated permissions (`require_escalated`, "run
+     outside the sandbox"); the user approves it once. Inside the sandbox it
+     can't write `.git`, reach Docker or start the setup agent.
+   It prints `init detached: pid <n>, log <file>` and returns at once.
+2. **Poll** with `kitchen init --status --wait 90` (read-only: no escalation
+   needed). It returns as soon as init stops running, or after 90 seconds with
+   the latest lines; don't use `sleep` (agent tools may refuse it), and never
+   one call that waits for the whole setup. Keep polling until it ends, in this
+   same turn: setup is what the user asked for. Relay a short progress line
+   now and then, not every poll. It ends in one of:
+   - `init: done`: relay the last lines (the next steps).
+   - `init: questions`: see Questions.
+   - `init: failed …`: show its lines and stop. Don't retry in a loop;
+     `kitchen init --detach` again resumes where it stopped, if the user wants.
+   - `init: running …`: poll again.
+
+**Questions.** `init` can't ask the user itself. On `init: questions` it has
+written `.kitchen/setup-questions.json`:
 
 ```json
 { "questions": [{ "id": "q1", "question": "…", "why": "…", "default": "…" }] }
 ```
 
-Ask the user each question (show `why` and the default), write their answers
-to `.kitchen/setup-answers.json` as `{ "answers": { "q1": "…" } }` (an empty
-answer means "use the default"), then run `kitchen init --answers
-.kitchen/setup-answers.json`. `init` resumes where it stopped; every step it
-finished is kept.
+Ask the user each question (show `why` and the default) and wait for their
+answers: never answer for them. Write the answers to
+`.kitchen/setup-answers.json` as `{ "answers": { "q1": "…" } }` (an empty
+answer means "use the default"), then start `kitchen init --answers
+.kitchen/setup-answers.json --detach` the same way as step 1 and poll again.
+`init` resumes where it stopped; every step it finished is kept.
 
 When it ends it prints the next steps: review and merge the `kitchen/setup`
 branch, commit `kitchen.yaml` and the skill folders.
