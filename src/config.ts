@@ -42,6 +42,8 @@ const DEFAULT_MODELS: Record<"claude" | "codex" | "fake", Record<ModelTier, stri
 
 export const ConfigSchema = z
   .object({
+    /** The schema version (`kitchen migrate`, src/migrate/migrate.ts CONFIG_VERSION). Absent: 0, before 0.1. */
+    version: z.literal(1).optional(),
     concurrency: z.number().int().min(1).max(32).default(2),
     round_limit: z.number().int().min(1).max(20).default(3),
     models: z

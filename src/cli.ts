@@ -10,6 +10,7 @@
 //   kitchen drive <job> <C> [--repro] [--arg k=v]… [--role r]   one criterion's proof (src/proof/prove.ts)
 //   kitchen drive <job> --view "<view>" [--role reviewer-ux]     one extra view for a UX/UI lens (src/engine/views.ts)
 //   kitchen dismiss <job> <finding-id> [--reason "<why>"]        a review finding was not useful (ledger, per lens)
+//   kitchen migrate [--dry-run]                                  kitchen.yaml schema + Toolkit template files (src/migrate/migrate.ts)
 //   kitchen retro [status | unmute <lens>/<category> | approve <n>]   mutes and lesson drafts (src/retro/retro.ts)
 //   kitchen toolkit maintain [--force]                           pstack's maintain pass (src/toolkit/maintain.ts)
 //   kitchen mcp --job <id> --role <role> [--repo <dir>]   the engine bridge (src/bridge/mcp.ts)
@@ -18,7 +19,7 @@ import { serveBridge } from "./bridge/mcp.ts";
 import * as cmd from "./cli/commands.ts";
 
 const USAGE =
-  'usage: kitchen ticket "<text>" | run [--once] [--detach] [<job>] | status | resume <id|n> | feedback <id> [--to <stage>] ["<text>"] | reject <id> | report [--bench] [--json] | retro [status | unmute <lens>/<category> | approve <n>] | bench smoke|full|tuned|heldout […] | init [--answers <file>] [--detach] | init --status [--wait <s>] | toolkit check [--feature x] [--src dir] | toolkit up | toolkit down --id <id> | drive <job> <C> [--repro] [--arg k=v]… | drive <job> --view "<view>" | dismiss <job> <finding> [--reason "<why>"] | toolkit maintain [--force] | mcp …';
+  'usage: kitchen ticket "<text>" | run [--once] [--detach] [<job>] | status | resume <id|n> | feedback <id> [--to <stage>] ["<text>"] | reject <id> | report [--bench] [--json] | retro [status | unmute <lens>/<category> | approve <n>] | migrate [--dry-run] | bench smoke|full|tuned|heldout […] | init [--answers <file>] [--detach] | init --status [--wait <s>] | toolkit check [--feature x] [--src dir] | toolkit up | toolkit down --id <id> | drive <job> <C> [--repro] [--arg k=v]… | drive <job> --view "<view>" | dismiss <job> <finding> [--reason "<why>"] | toolkit maintain [--force] | mcp …';
 
 async function main(argv: string[]): Promise<number> {
   const [name, ...rest] = argv;
@@ -88,6 +89,9 @@ async function main(argv: string[]): Promise<number> {
         return 0;
       }
       return cmd.report(repo, out, { json: flags.has("--json") });
+    case "migrate":
+      for (const f of flags) if (f !== "--dry-run") throw new Error(`kitchen migrate: unknown flag ${f}`);
+      return (await import("./cli/migrate-command.ts")).migrate(repo, { dryRun: flags.has("--dry-run") }, out);
     case "dismiss":
       if (!pos[1]) throw new Error('kitchen dismiss needs <job> <finding-id> [--reason "<why>"]');
       return cmd.dismiss(repo, need("<job>"), pos[1], reason, out);

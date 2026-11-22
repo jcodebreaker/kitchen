@@ -143,6 +143,7 @@ export function readAnswers(text: string, questions: Question[]): Record<string,
 
 const KITCHEN_YAML = (tool: string) => `# Kitchen (npm package devkitchen). Every key has a default; unknown keys are refused.
 # The full list with defaults: src/config.ts in the package (ConfigSchema).
+version: 1       # the schema version; kitchen migrate raises it
 agent: { tool: ${tool} }
 concurrency: 2   # a Toolkit proven parallel:false runs one job at a time regardless
 round_limit: 3
