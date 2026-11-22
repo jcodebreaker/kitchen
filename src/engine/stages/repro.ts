@@ -20,7 +20,7 @@ import { freshUp } from "../instance.ts";
 import { updateJob, writeAtomic } from "../store.ts";
 import { changedFiles, commitWith, ensureWorktree, headOf } from "../worktree.ts";
 import { contractBlock, toolkitBlock } from "./context.ts";
-import { featureFilesAtHead } from "./drives.ts";
+import { featureFilesAt } from "./drives.ts";
 import { prompt } from "./prompts.ts";
 import { headers, named, runRole } from "./role.ts";
 import { described, featureDrives, hasToolkit } from "./toolkit-info.ts";
@@ -73,7 +73,7 @@ export const repro: StageHandler = async (ctx) => {
     gap = named(headers(r.text).GAP, (await described(job)).primitives);
   }
   job = ctx.refresh();
-  const before = await featureFilesAtHead(job);
+  const before = await featureFilesAt(job, job.base);
   const policy = reproPolicy(ctx.config.protected);
   const wt = job.worktree;
   const tk = await described(job);
@@ -81,7 +81,7 @@ export const repro: StageHandler = async (ctx) => {
     const layer = policy(f, status);
     if (layer || !FEATURE_FILE.test(f)) return layer;
     const text = fs.readFileSync(path.join(wt, f), "utf8");
-    const changed = status === "M" && before.has(f) ? changedExistingDrive(before.get(f) ?? "", text) : null;
+    const changed = before.has(f) ? changedExistingDrive(before.get(f) ?? "", text) : null;
     if (changed) return changed;
     // A drive the repro adds must pass W2's feature rules too, or it breaks the Toolkit's re-proof once merged.
     const problems = featureFileProblems(f, text, tk.features);

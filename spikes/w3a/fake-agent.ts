@@ -2,12 +2,20 @@
 // planted dark-mode bug (lib.ts BUG). It plays every role the way a real one
 // would, including what a misbehaving one would try, so the engine's own
 // checks are what is under test. The ticket names the scenario:
-//   scenario: honest   every role does its job; the judged criterion is cited correctly
-//   scenario: attacks  the repro sneaks in a fix; the builder edits the Toolkit, the
-//                      repro drive and kitchen.yaml and stamps a self-check for C3; the
-//                      drives role first writes a drive with code in it; the verifier
-//                      cites a forged id, then a stale (round 1) id, then the builder's
-//                      self-check, and only then the right ids
+//   scenario: honest        every role does its job; the judged criterion is cited correctly
+//   scenario: attacks       the repro sneaks in a fix; the builder edits the Toolkit, the
+//                           repro drive and kitchen.yaml and stamps a self-check for C3; the
+//                           drives role first writes a drive with code in it; the verifier
+//                           cites a forged id, then a stale (round 1) id, then the builder's
+//                           self-check, and only then the right ids
+//   scenario: repro-retry   the repro's first drive waits for a heading that never shows (a
+//                           broken proof, not the bug); the second is right
+//   scenario: gap           the spec names a missing primitive (spec → toolkit → spec); the
+//                           drives role names one (drives → toolkit → drives); the smith adds
+//                           each to the Toolkit's describe
+//   scenario: bad-gap       the drives role writes free text in GAP: (a failed write, not a gap)
+//   scenario: inconclusive  the verifier says INCONCLUSIVE four times, then judges right
+//   scenario: backoff       the builder is rate limited once
 // Calls are counted per job, role and mode in $KITCHEN_FAKE_STATE (survives kill -9).
 import { spawn } from "node:child_process";
 import fs from "node:fs";
@@ -34,6 +42,21 @@ const SPEC = `## Criteria
 - anything but the theme
 `;
 
+/** The gap scenario's first spec: C2 starts with a primitive the Toolkit lacks. */
+const SPEC_GAP = SPEC.replace(
+  "  proof: toolkit settings.toggle-dark --user alice\n",
+  '  proof: toolkit hover --target "[data-testid=nav-settings]" ; toolkit settings.toggle-dark --user alice\n',
+);
+
+const kitchenBlock = (drive: string) => `
+## Kitchen
+
+\`\`\`kitchen
+paths: [server.js]
+check: { drive: ${drive}, args: { user: alice } }
+\`\`\`
+`;
+
 const REPRO_DRIVE = `# Theme after reload
 
 Sign in → Settings → toggle Dark mode → reload from the server.
@@ -54,7 +77,13 @@ steps:
   - http:  { method: GET, path: /api/me }
     save: me
 \`\`\`
-`;
+${kitchenBlock("settings.theme-after-reload")}`;
+
+/** repro-retry, attempt 1: after the reload it waits for a heading the page doesn't have, so it times out on a step, not on the bug. */
+const REPRO_DRIVE_BROKEN = REPRO_DRIVE.replace(
+  '  - press: { target: "[data-testid=nav-settings]" }\n  - wait:  { until: { text: "Appearance" }, timeout: 10s }\n  - read:',
+  '  - press: { target: "[data-testid=nav-settings]" }\n  - wait:  { until: { text: "Preferences" }, timeout: 3s }\n  - read:',
+);
 
 const SCREENSHOT_DRIVE = `# Settings in dark mode
 
@@ -71,7 +100,7 @@ steps:
   - wait:  { until: { text: "theme-dark", target: body, attr: class }, timeout: 5s }
   - screenshot: { name: settings-dark }
 \`\`\`
-`;
+${kitchenBlock("settings.dark-screenshot")}`;
 
 /** The drive a dishonest drives role writes first: code that prints the answer. */
 const CODE_DRIVE = `# Settings in dark mode
@@ -102,7 +131,7 @@ const load = (): State => {
 const save = (s: State) => fs.writeFileSync(stateFile(), JSON.stringify(s, null, 2));
 
 /** A tiny MCP client: start the bridge, call one tool, return its result text. */
-function callBridge(b: BridgeServer, tool: string, args: Record<string, unknown>): Promise<string> {
+export function callBridge(b: BridgeServer, tool: string, args: Record<string, unknown>): Promise<string> {
   return new Promise((resolve, reject) => {
     const p = spawn(b.command, b.args, { env: b.env, stdio: ["pipe", "pipe", "inherit"] });
     let buf = "";
@@ -130,11 +159,23 @@ const write = (cwd: string, rel: string, text: string) => {
   fs.writeFileSync(path.join(cwd, rel), text);
 };
 
+/** The smith "merges" a primitive: the Toolkit's describe (generated from bin/dev's table) lists it from now on. */
+function addPrimitive(repo: string, name: string) {
+  const f = path.join(repo, ".kitchen", "toolkit", "bin", "dev");
+  const s = fs.readFileSync(f, "utf8");
+  if (s.includes(`  ${name}: {`)) return;
+  fs.writeFileSync(
+    f,
+    s.replace("const PRIMITIVES = {\n", `const PRIMITIVES = {\n  ${name}: { args: { target: "selector" }, does: "added by the smith (spike)" },\n`),
+  );
+}
+
 export default async function script(req: AgentRequest): Promise<FakeStep> {
   const scenario = /scenario: ([a-z-]+)/.exec(req.prompt)?.[1] ?? "honest";
   const mode = /Mode: (\w+)/.exec(req.prompt)?.[1] ?? "";
   const job = /^Job: (\S+)/m.exec(req.prompt)?.[1] ?? "?";
   const round = Number(/Round: (\d+)/.exec(req.prompt)?.[1] ?? 1);
+  const repo = /^Repository: (.+)$/m.exec(req.prompt)?.[1] ?? "";
   const s = load();
   const key = `${job}/${req.role}/${mode}`;
   const n = ((s[key] as number) ?? 0) + 1;
@@ -144,10 +185,16 @@ export default async function script(req: AgentRequest): Promise<FakeStep> {
 
   if (req.role === "intake")
     return { file: "DECISION: ACCEPT\nKIND: bug\nRISK: medium\nSURFACES: ui\nREASON: dark mode is lost on reload\n", line: "ACCEPT bug medium" };
-  if (req.role === "spec") return { file: SPEC, line: "spec: 3 criteria" };
+  if (req.role === "spec") return { file: scenario === "gap" && n === 1 ? SPEC_GAP : SPEC, line: "spec: 3 criteria" };
+
+  if (req.role === "smith") {
+    const gap = /Missing primitive: (\S+)/.exec(req.prompt)?.[1] ?? "?";
+    addPrimitive(repo, gap);
+    return { file: `STATUS: READY\nPRIMITIVE: ${gap}\n`, line: `READY ${gap}` };
+  }
 
   if (req.role === "verifier" && mode === "repro") {
-    write(req.cwd, ".kitchen/toolkit/features/theme.md", REPRO_DRIVE);
+    write(req.cwd, ".kitchen/toolkit/features/theme.md", scenario === "repro-retry" && n === 1 ? REPRO_DRIVE_BROKEN : REPRO_DRIVE);
     if (attacks) {
       // A repro that "reproduces" by also fixing the bug would prove nothing: the engine keeps only new files and drives.
       const f = path.join(req.cwd, "server.js");
@@ -157,6 +204,7 @@ export default async function script(req: AgentRequest): Promise<FakeStep> {
   }
 
   if (req.role === "builder") {
+    if (scenario === "backoff" && n === 1) return { ok: false, rateLimited: true, line: "429 rate limit reached" };
     const f = path.join(req.cwd, "server.js");
     fs.writeFileSync(f, fs.readFileSync(f, "utf8").replace(BUG.to, BUG.from));
     if (attacks && round === 1) {
@@ -180,19 +228,22 @@ export default async function script(req: AgentRequest): Promise<FakeStep> {
   }
 
   if (req.role === "verifier" && mode === "drives") {
+    if (scenario === "gap" && n === 1) return { file: "DRIVES: FAILED\nGAP: drag\n\nThe screenshot needs a drag.\n", line: "GAP drag" };
+    if (scenario === "bad-gap" && n === 1) return { file: "DRIVES: FAILED\nGAP: the `read` primitive fails on a missing selector\n", line: "GAP (free text)" };
     write(req.cwd, ".kitchen/toolkit/features/settings-dark.md", attacks && n === 1 ? CODE_DRIVE : SCREENSHOT_DRIVE);
     if (attacks && n === 1) write(req.cwd, "server.js", "// the drives role may not touch app code\n");
     return { file: "DRIVES: OK\n", line: "DRIVES: OK" };
   }
 
   if (req.role === "verifier" && mode === "verify") {
+    if (scenario === "inconclusive" && n <= 4) return { file: "VERDICT: INCONCLUSIVE\n\nThe app did not render the page.\n", line: "VERDICT: INCONCLUSIVE" };
     // The ids the engine listed for C3 in this prompt.
     const block = req.prompt.split("- C3 (stamped")[1] ?? "";
     const ids = [...block.split("\n- ")[0].matchAll(/^\s+- (e\d+):/gm)].map((m) => m[1]);
     // The engine copies the judged evidence where the agent can open it.
     if (ids.length && !fs.existsSync(path.join(req.cwd, ".kitchen-out", "evidence", ids[0], "call.json")))
       return { file: "VERDICT: INCONCLUSIVE\n", line: "no evidence to look at" };
-    const evidenceDir = path.join(/^Repository: (.+)$/m.exec(req.prompt)?.[1] ?? "", ".kitchen", "jobs", job, "evidence");
+    const evidenceDir = path.join(repo, ".kitchen", "jobs", job, "evidence");
     let cite = ids.join(" ");
     if (attacks) {
       if (n === 1) {

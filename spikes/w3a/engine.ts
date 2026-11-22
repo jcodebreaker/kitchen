@@ -6,6 +6,9 @@
 import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { bridgeServer } from "../../src/bridge/mcp.ts";
+import { citationProblemFor } from "../../src/checks/verdict.ts";
+import { callBridge } from "./fake-agent.ts";
 import {
   check,
   finish,
@@ -106,10 +109,17 @@ async function attacks() {
   const everDrive = git(r, "log", "-p", "--format=", branch, "--", ".kitchen/toolkit/features/settings-dark.md");
   check("no commit ever carried the code drive", !/eval:|```js/.test(everDrive) && everDrive.includes("settings.dark-screenshot"));
   const checkEntries = m.filter((e) => String(e.phase ?? "").startsWith("toolkit-check"));
+  const chains = (pass: number) => [...new Set(checkEntries.filter((e) => e.phase === `toolkit-check-${pass}`).map((e) => String(e.chain)))].sort();
   check(
-    "toolkit check --feature ran each new drive twice (reset between), stamped role engine",
-    checkEntries.length > 0 && checkEntries.every((e) => e.role === "engine" && e.criterion === "drives"),
+    "the drives check ran each affected criterion's whole proof twice (reset between), stamped role engine",
+    checkEntries.length > 0 &&
+      checkEntries.every((e) => e.role === "engine" && e.criterion === "drives") &&
+      JSON.stringify(chains(1)) === JSON.stringify(["C1", "C3"]) &&
+      JSON.stringify(chains(2)) === JSON.stringify(["C1", "C3"]),
+    `pass 1: ${chains(1).join(",")}; pass 2: ${chains(2).join(",")}`,
   );
+  const settingsDark = git(r, "show", `${branch}:.kitchen/toolkit/features/settings-dark.md`);
+  check("the new feature file passes W2's rules (its check: line is there)", /check: \{ drive: settings\.dark-screenshot/.test(settingsDark));
 
   // Verify: forged, stale and self-check citations each refused (a round each), then PASS.
   const verdicts = [1, 2, 3, 4].map((n) => {
@@ -139,6 +149,29 @@ async function attacks() {
   check("the job reached review", j.stage === "review", `${j.stage} ${j.pausedReason ?? ""}`);
   const v = verifyManifestCli(r, id);
   check("the manifest verifies against the signed head", v.ok === true && v.entries === j.manifestHead.n, JSON.stringify(v));
+
+  // The ROLE rule alone: a builder self-check stamped for this very HEAD (clean), round and criterion is still refused.
+  const head = git(r, "rev-parse", branch).trim();
+  process.env.KITCHEN_HOME = r.home; // the bridge signs with this repo's engine key
+  const out2 = await callBridge(bridgeServer({ repo: r.dir, job: id, role: "builder" }, r.env), "drive", {
+    feature: "settings.dark-screenshot",
+    args: { user: "alice" },
+    criterion: "C3",
+  });
+  const ids = (JSON.parse(out2) as { evidence?: string[] }).evidence ?? [];
+  const after = manifest(r, id);
+  const self = after.filter((e) => ids.includes(e.id));
+  check(
+    "a builder self-check stamped for this HEAD (clean), this round and C3",
+    self.length > 0 && self.every((e) => e.role === "builder" && e.sha === head && e.dirty === false && e.round === j.round && e.criterion === "C3"),
+    self.map((e) => `${e.id} ${e.role} ${e.sha.slice(0, 8)} r${e.round} ${e.criterion} dirty=${e.dirty}`).join("; ") || out2.slice(0, 200),
+  );
+  const why = citationProblemFor("C3", ids, after, head, j.round);
+  check(
+    "…is refused by the role rule alone (only engine and verifier entries are proof)",
+    /a builder self-check, not proof/.test(why ?? ""),
+    why ?? "accepted",
+  );
   check("no container of this job left running", kitchenContainers(j.slotId).length === 0, kitchenContainers(j.slotId).join(" "));
 }
 

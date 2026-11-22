@@ -120,7 +120,7 @@ export const drives: StageHandler = async (ctx) => {
     job = ctx.refresh();
     // Only feature drive files and the contract's test files; a feature file only if it holds no code and passes W2's rules.
     const wt = job.worktree;
-    const before = await featureFilesAtHead(job);
+    const before = await featureFilesAt(job, job.base, job.reproFiles ?? []);
     tk = await described(job);
     const c = await commitWith(job, `kitchen(${job.id}): feature drives`, (f, status) => {
       const layer = drivesPolicy(testFiles)(f, status);
@@ -129,7 +129,7 @@ export const drives: StageHandler = async (ctx) => {
       const text = fs.readFileSync(path.join(wt, f), "utf8");
       const l = lintFeatureFile(text, tk.primitives);
       if (!l.ok) return `refused: ${l.reason}`;
-      const changed = status === "M" ? changedExistingDrive(before.get(f) ?? "", text) : null;
+      const changed = before.has(f) ? changedExistingDrive(before.get(f) ?? "", text) : null;
       if (changed) return `refused: ${changed}`;
       const problems = featureFileProblems(f, text, tk.features);
       return problems.length ? `refused: ${problems.join("; ")}` : null;
@@ -201,14 +201,19 @@ function unreachableCited(jobDir: string, text: string, round: number): boolean 
   });
 }
 
-/** Every features/*.md at HEAD that the worktree still has, by repo-relative path. */
-export async function featureFilesAtHead(job: Job): Promise<Map<string, string>> {
+/**
+ * Every features/*.md the worktree has, as it was at `ref` (repo-relative path → text):
+ * the drives a job may not change. At the base: the shared drives (a job may still fix a
+ * drive it added itself on a retry). The repro's own files are taken at HEAD by the
+ * drives stage: no later stage changes what the repro committed.
+ */
+export async function featureFilesAt(job: Job, ref: string, headFor: string[] = []): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   const dir = path.join(job.worktree, FEATURES_DIR);
   if (!fs.existsSync(dir)) return out;
   for (const f of fs.readdirSync(dir).filter((x) => x.endsWith(".md"))) {
     const rel = `${FEATURES_DIR}/${f}`;
-    const t = await fileAtHead(job, rel);
+    const t = await fileAtHead(job, rel, headFor.includes(rel) ? "HEAD" : ref);
     if (t !== null) out.set(rel, t);
   }
   return out;
