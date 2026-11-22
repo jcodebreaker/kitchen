@@ -101,7 +101,8 @@ export async function resume(repo: string, ref: string, out: Out): Promise<numbe
 
 /**
  * needs-info: the answer goes to the source and the job back to intake.
- * needs-human: back to the stage it escalated from (ADR 0007), or `--to <stage>`.
+ * needs-human: back to the stage it escalated from (ADR 0007), or `--to <stage>` at or before it
+ * and never past verify (intake, spec, repro, build, drives, verify).
  * done: back to build. The text is kept for the builder only if the move is made.
  */
 export async function feedback(repo: string, ref: string, text: string, out: Out, o: { to?: string } = {}): Promise<number> {

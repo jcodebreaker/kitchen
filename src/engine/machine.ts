@@ -235,6 +235,15 @@ const isBug = check(
 const notBug = check((j) => j.kind !== "bug", "kind is bug: bugs go through repro");
 /** Where `kitchen feedback` sends a needs-human job: `--to`, else the stage it escalated from, else build. */
 export const feedbackTarget = (j: Pick<Job, "escalatedFrom">, f: Pick<Facts, "feedbackTo">): Stage => f.feedbackTo ?? j.escalatedFrom ?? "build";
+/** Stages `kitchen feedback --to` may name (ADR 0007): none past verify, so gate, drives and verify always run again before ready. */
+export const FEEDBACK_TO: readonly Stage[] = ["intake", "spec", "repro", "build", "drives", "verify"];
+/** Why `--to <to>` is refused for a needs-human job, or null: it must be in FEEDBACK_TO and at or before the stage it escalated from. Pure. */
+export function feedbackToRefusal(j: Pick<Job, "escalatedFrom">, to: Stage): string | null {
+  const from = j.escalatedFrom ?? "build";
+  if (!FEEDBACK_TO.includes(to)) return `--to ${to}: feedback goes to one of ${FEEDBACK_TO.join(", ")}, so the job is gated, driven and verified again`;
+  if (STAGES.indexOf(to) > STAGES.indexOf(from)) return `--to ${to}: it is past ${from}, where the job escalated from; that would skip ${from}`;
+  return null;
+}
 const resetBudget = (j: Job) => {
   j.round += 1;
   j.roundStart = j.round;
@@ -840,9 +849,10 @@ export const TABLE: readonly Row[] = [
       id: `needs-human>${to}`,
       from: "needs-human",
       to,
-      when: `\`kitchen feedback\` on a job that escalated from ${to} (or \`--to ${to}\`); the round budget resets`,
+      when: `\`kitchen feedback\` on a job that escalated from ${to}${FEEDBACK_TO.includes(to) ? ` (or \`--to ${to}\` on one that escalated later)` : ""}; the round budget resets`,
       guard: all(
         operatorIs("feedback"),
+        (j, f) => (f.feedbackTo ? feedbackToRefusal(j, f.feedbackTo) : null),
         check(
           (j, f) => feedbackTarget(j, f) === to,
           (j, f) => `feedback goes to ${feedbackTarget(j, f)}${f.feedbackTo ? " (--to)" : j.escalatedFrom ? " (where it escalated from)" : ""}, not ${to}`,
