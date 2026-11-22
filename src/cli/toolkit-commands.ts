@@ -7,6 +7,11 @@ import path from "node:path";
 import { plainCheckout } from "../engine/git.ts";
 import { serveSetupBridge } from "../init/bridge.ts";
 import { initCmd } from "../init/init.ts";
+import { detachInit, readStatus, statusReport, tracked } from "../init/status.ts";
+import { ownerAlive } from "../lock.ts";
+
+const CLI = path.resolve(import.meta.dirname, "..", `cli${path.extname(import.meta.filename)}`);
+
 import { checkAtRef } from "../toolkit/check.ts";
 import { ensurePrepared, toolkitCheckout } from "../toolkit/checkout.ts";
 import { runToolkit } from "../toolkit/run.ts";
@@ -53,18 +58,38 @@ export async function w2(name: string, argv: string[]): Promise<number> {
   if (name === "init") {
     const { flags } = parseFlags(argv, ["repo", "answers", "tool", "model", "effort", "max-fix"]);
     for (const k of Object.keys(flags))
-      if (!["repo", "answers", "tool", "model", "effort", "max-fix", "generate-only"].includes(k)) throw new Error(`kitchen init: unknown flag --${k}`);
-    return initCmd(
-      {
-        repo: path.resolve(str(flags.repo) ?? process.cwd()),
-        answers: str(flags.answers),
-        tool: str(flags.tool) as "claude" | "codex" | undefined,
-        model: str(flags.model),
-        effort: str(flags.effort),
-        maxFix: flags["max-fix"] ? Number(flags["max-fix"]) : undefined,
-        generateOnly: flags["generate-only"] === true,
-      },
+      if (!["repo", "answers", "tool", "model", "effort", "max-fix", "generate-only", "detach", "status"].includes(k))
+        throw new Error(`kitchen init: unknown flag --${k}`);
+    const repo = plainCheckout(path.resolve(str(flags.repo) ?? process.cwd())).workTree;
+    if (flags.status === true) {
+      const s = readStatus(repo);
+      const r = statusReport(s, !!s && ownerAlive({ pid: s.pid, start: s.pidStart }));
+      for (const l of r.lines) out(l);
+      return r.code;
+    }
+    if (flags.detach === true) {
+      const fixed = argv.map((a) => (a.startsWith("--answers=") ? `--answers=${path.resolve(a.slice(10))}` : a));
+      const i = fixed.indexOf("--answers");
+      if (i >= 0 && fixed[i + 1]) fixed[i + 1] = path.resolve(fixed[i + 1]);
+      return detachInit(repo, CLI, fixed, out);
+    }
+    return tracked(
+      repo,
+      (o) =>
+        initCmd(
+          {
+            repo,
+            answers: str(flags.answers),
+            tool: str(flags.tool) as "claude" | "codex" | undefined,
+            model: str(flags.model),
+            effort: str(flags.effort),
+            maxFix: flags["max-fix"] ? Number(flags["max-fix"]) : undefined,
+            generateOnly: flags["generate-only"] === true,
+          },
+          o,
+        ),
       out,
+      process.env.KITCHEN_INIT_LOG,
     );
   }
   // toolkit check [--feature x] [--src dir] [--rev r] · toolkit up [--rev r] [--src dir] · toolkit down --id <id>

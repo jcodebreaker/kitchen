@@ -34,6 +34,8 @@ const script: FakeScript = (req) => {
       filter: (s) => !s.includes("node_modules"),
     });
     fs.copyFileSync(path.join(A, ".env.kitchen"), path.join(req.cwd, ".env.kitchen"));
+    // flow.ts's secret-scan case: a live-looking key in .env.kitchen (built here so no file holds the literal)
+    if (process.env.W2_FAKE_SECRET) fs.appendFileSync(path.join(req.cwd, ".env.kitchen"), `STRIPE_SECRET_KEY=${"sk_live_"}${"4eC39HqLyjWDarjtT1zdp7dc"}\n`);
     return { line: "Toolkit written", file: "STATUS: READY\nSURFACE: web\nPATH: build\nFEATURES: 3\nCHECK: NOT-RUN\n" };
   }
   if (req.role === "intake") return { line: "rejected", file: "DECISION: REJECT\nREASON: spike\n" };
