@@ -4,7 +4,8 @@
 //   kitchen run [--once] [--detach] [<job>]
 //   kitchen status
 //   kitchen resume <id|n> · feedback <id> [--to <stage>] ["<text>"] · reject <id>
-//   kitchen report
+//   kitchen report [--bench]
+//   kitchen bench smoke|full|tuned|heldout [--tool claude|codex] [--runs n] [--only a,b] [--concurrency n] [--max-usd x] [--out dir]   (src/bench/run.ts)
 //   kitchen init [--answers <file>] [--tool claude|codex] [--detach] · init --status  ·  kitchen toolkit check [--feature x] [--src dir] · toolkit up · toolkit down --id <id>   (src/cli/toolkit-commands.ts)
 //   kitchen drive <job> <C> [--repro] [--arg k=v]… [--role r]   one criterion's proof (src/proof/prove.ts)
 //   kitchen mcp --job <id> --role <role> [--repo <dir>]   the engine bridge (src/bridge/mcp.ts)
@@ -13,11 +14,12 @@ import { serveBridge } from "./bridge/mcp.ts";
 import * as cmd from "./cli/commands.ts";
 
 const USAGE =
-  'usage: kitchen ticket "<text>" | run [--once] [--detach] [<job>] | status | resume <id|n> | feedback <id> [--to <stage>] ["<text>"] | reject <id> | report | init [--answers <file>] [--detach] | init --status [--wait <s>] | toolkit check [--feature x] [--src dir] | toolkit up | toolkit down --id <id> | drive <job> <C> [--repro] [--arg k=v]… | mcp …';
+  'usage: kitchen ticket "<text>" | run [--once] [--detach] [<job>] | status | resume <id|n> | feedback <id> [--to <stage>] ["<text>"] | reject <id> | report [--bench] | bench smoke|full|tuned|heldout […] | init [--answers <file>] [--detach] | init --status [--wait <s>] | toolkit check [--feature x] [--src dir] | toolkit up | toolkit down --id <id> | drive <job> <C> [--repro] [--arg k=v]… | mcp …';
 
 async function main(argv: string[]): Promise<number> {
   const [name, ...rest] = argv;
   if (name === "toolkit" || name === "init" || name === "setup-mcp") return (await import("./cli/toolkit-commands.ts")).w2(name, rest);
+  if (name === "bench") return bench(rest);
   if (name === "mcp") {
     const flags: Record<string, string> = {};
     for (let i = 0; i < rest.length; i += 2) {
@@ -68,6 +70,10 @@ async function main(argv: string[]): Promise<number> {
     case "reject":
       return cmd.reject(repo, need("<id>"), out);
     case "report":
+      if (flags.has("--bench")) {
+        for (const l of (await import("./bench/run.ts")).benchReport(repo)) out(l);
+        return 0;
+      }
       return cmd.report(repo, out);
     case "drive":
       for (const f of flags) if (f !== "--repro") throw new Error(`kitchen drive: unknown flag ${f}`);
@@ -77,6 +83,36 @@ async function main(argv: string[]): Promise<number> {
       console.error(USAGE);
       return 2;
   }
+}
+
+async function bench(rest: string[]): Promise<number> {
+  const tier = rest[0];
+  if (!["smoke", "full", "tuned", "heldout"].includes(tier ?? ""))
+    throw new Error("usage: kitchen bench smoke|full|tuned|heldout [--tool claude|codex] [--runs n] [--only a,b] [--concurrency n] [--max-usd x] [--out dir]");
+  const f: Record<string, string> = {};
+  for (let i = 1; i < rest.length; i += 2) {
+    const k = rest[i]?.replace(/^--/, "");
+    if (!k || rest[i + 1] === undefined || !["tool", "runs", "only", "concurrency", "max-usd", "out"].includes(k))
+      throw new Error(`kitchen bench: bad flag ${rest[i]}`);
+    f[k] = rest[i + 1];
+  }
+  const tool = (f.tool ?? "claude") as "claude" | "codex";
+  if (tool !== "claude" && tool !== "codex") throw new Error("--tool is claude or codex");
+  const { runBench } = await import("./bench/run.ts");
+  const kitchenRoot = path.resolve(import.meta.dirname, "..");
+  const r = await runBench({
+    kitchenRoot,
+    tier: tier as "smoke" | "full" | "tuned" | "heldout",
+    tool,
+    runs: Number(f.runs ?? (tier === "smoke" ? 1 : 3)),
+    only: f.only?.split(",").filter(Boolean),
+    concurrency: Number(f.concurrency ?? 2),
+    maxUsd: Number(f["max-usd"] ?? 25),
+    out: path.resolve(f.out ?? path.join(kitchenRoot, "bench", ".work", `${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}-${tier}`)),
+    ledgerRepo: process.cwd(),
+    print: (l) => console.log(l),
+  });
+  return r.results.every((x) => x.correct) ? 0 : 1;
 }
 
 main(process.argv.slice(2)).then(

@@ -25,10 +25,10 @@ tickets:
     expect: { outcome: [done] }
     oracle:
       criteria: |
-        - [O1] alice (one project) sees "1 project"
+        - [C1] alice (one project) sees "1 project"
           proof: toolkit login --as alice ; toolkit open --path /home ; toolkit read --target body --save page
           expect: $page contains "1 project" and $page not contains "1 projects"
-        - [O2] bob-admin (none) sees "0 projects"
+        - [C2] bob-admin (none) sees "0 projects"
           proof: toolkit login --as bob-admin ; toolkit open --path /home ; toolkit read --target body --save page
           expect: $page contains "0 projects"
 
@@ -47,7 +47,7 @@ tickets:
     expect: { outcome: [done] }
     oracle:
       criteria: |
-        - [O1] a code typed in lower case joins
+        - [C1] a code typed in lower case joins
           proof: toolkit login --as alice ; toolkit open --path /join ; toolkit type --target "[data-testid=invite-input]" --text "inv-0a1b2c3d" ; toolkit press --target "[data-testid=invite-submit]" ; toolkit read --target "[data-testid=invite-result]" --save r
           expect: $r contains "Invite accepted"
 
@@ -65,7 +65,7 @@ tickets:
     expect: { outcome: [done] }
     oracle:
       criteria: |
-        - [O1] the suggestion for a taken slug is free
+        - [C1] the suggestion for a taken slug is free
           proof: toolkit login --as alice ; toolkit http --method POST --path /projects/new/step2 --body '{"name":"Onboarding","slug":"onboarding"}' --save r
           expect: $r contains "onboarding-3" and $r not contains "Try onboarding-2"
 
@@ -78,7 +78,7 @@ tickets:
     expect: { outcome: [done] }
     oracle:
       criteria: |
-        - [O1] the seeded description shows on /projects
+        - [C1] the seeded description shows on /projects
           proof: toolkit login --as alice ; toolkit open --path /projects ; toolkit read --target body --save page
           expect: $page contains "Seeded example project" and $page contains "Onboarding"
 
@@ -92,7 +92,7 @@ tickets:
     expect: { outcome: [done] }
     oracle:
       criteria: |
-        - [O1] the heading is renamed
+        - [C1] the heading is renamed
           proof: toolkit login --as alice ; toolkit open --path /settings ; toolkit read --target body --save page
           expect: $page contains "Look and feel" and $page not contains "Appearance" and $page contains "Dark mode"
 
@@ -132,10 +132,10 @@ tickets:
     expect: { outcome: [done], toolkit_pr: true }
     oracle:
       criteria: |
-        - [O1] the column exists and sign-in sets it
+        - [C1] the column exists and sign-in sets it
           proof: cmd grep -c last_login_at server.js
           expect: exit 0
-        - [O2] a migration adds the column
+        - [C2] a migration adds the column
           proof: cmd grep -rl last_login_at db
           expect: exit 0
 
@@ -155,7 +155,7 @@ tickets:
     oracle:
       files: { oracle_stats.py: oracle/b_stats.py }
       criteria: |
-        - [O1] done late tasks are not overdue; open late ones are
+        - [C1] done late tasks are not overdue; open late ones are
           proof: cmd python3 -m unittest -q oracle_stats
           expect: exit 0
 
@@ -172,7 +172,7 @@ tickets:
     oracle:
       files: { oracle_done.py: oracle/b_done.py }
       criteria: |
-        - [O1] several ids; an unknown one changes nothing
+        - [C1] several ids; an unknown one changes nothing
           proof: cmd python3 -m unittest -q oracle_done
           expect: exit 0
 
@@ -188,7 +188,7 @@ tickets:
     oracle:
       files: { oracle_title.py: oracle/b_title.py }
       criteria: |
-        - [O1] 201 refused, 200 accepted
+        - [C1] 201 refused, 200 accepted
           proof: cmd python3 -m unittest -q oracle_title
           expect: exit 0
 
@@ -207,7 +207,7 @@ tickets:
     expect: { outcome: [done] }
     oracle:
       criteria: |
-        - [O1] the theme survives a reload
+        - [C1] the theme survives a reload
           proof: toolkit login --as alice ; toolkit http --method POST --path /api/settings/theme --body '{"theme":"dark"}' ; toolkit http --method GET --path /api/me --save me
           expect: $me contains "dark"
 
@@ -225,7 +225,7 @@ tickets:
     expect: { outcome: [done] }
     oracle:
       criteria: |
-        - [O1] one unused invite of two
+        - [C1] one unused invite of two
           proof: toolkit login --as bob-admin ; toolkit open --path /admin ; toolkit read --target body --save page
           expect: $page contains "1 unused invite" and $page not contains "2 unused"
 
@@ -240,7 +240,7 @@ tickets:
     expect: { outcome: [done] }
     oracle:
       criteria: |
-        - [O1] filter by status, refuse an unknown one
+        - [C1] filter by status, refuse an unknown one
           proof: toolkit http --method POST --path /orders --as dev-key-1 --body '{"email":"f@example.test","items":[{"sku":"MUG-01","qty":1}]}' ; toolkit http --method GET --path "/orders?email=f@example.test&status=paid" --as dev-key-1 --save paid ; toolkit http --method GET --path "/orders?email=f@example.test&status=pending" --as dev-key-1 --save pending ; toolkit http --method GET --path "/orders?email=f@example.test&status=lost" --as dev-key-1 --save bad
           expect: $pending contains "pending" and $paid not contains "pending" and $bad contains "400"
 
@@ -258,7 +258,7 @@ tickets:
     oracle:
       files: { oracle_qty.test.mjs: oracle/d_qty.test.mjs }
       criteria: |
-        - [O1] 100 accepted, 101 refused
+        - [C1] 100 accepted, 101 refused
           proof: cmd node --test oracle_qty.test.mjs
           expect: exit 0
 
@@ -272,7 +272,7 @@ tickets:
     expect: { outcome: [done] }
     oracle:
       criteria: |
-        - [O1] 4 t-shirts (100.00) are charged 90.00 at Stripe
+        - [C1] 4 t-shirts (100.00) are charged 90.00 at Stripe
           proof: toolkit http --method POST --path /orders --as dev-key-1 --body '{"email":"d@example.test","items":[{"sku":"TEE-01","qty":4}]}' --save r ; toolkit payments --path /v1/payment_intents --contains 9000 --save p
           expect: $r contains "9000" and ok
 
@@ -285,7 +285,7 @@ tickets:
     expect: { outcome: [done] }
     oracle:
       criteria: |
-        - [O1] version in /healthz
+        - [C1] version in /healthz
           proof: toolkit http --method GET --path /healthz --save h
           expect: $h contains "0.0.0"
 
@@ -305,6 +305,6 @@ tickets:
     expect: { outcome: [done] }
     oracle:
       criteria: |
-        - [O1] the new subject arrives
+        - [C1] the new subject arrives
           proof: toolkit http --method POST --path /orders --as dev-key-1 --body '{"email":"s@example.test","items":[{"sku":"MUG-01","qty":1}]}' ; toolkit mail --to s@example.test --subject "We got your order"
           expect: ok
