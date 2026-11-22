@@ -42,13 +42,18 @@ kitchen/                       npm: devkitchen, bin: kitchen
 │   │   ├── lock.ts            run lock + heartbeat
 │   │   ├── git.ts             worktrees, commits, push (engine-only)
 │   │   └── stages/            one handler per stage
-│   ├── agents/                adapter.ts, claude.ts, codex.ts, fake.ts
+│   ├── agents/                adapter.ts, claude.ts, codex.ts, fake.ts, env.ts (agentEnv, untrustedEnv)
+│   ├── bridge/                mcp.ts: `kitchen mcp`, the job-scoped MCP server agents drive the app through
 │   ├── proof/
 │   │   ├── drive.ts           `kitchen drive`: the only path that runs a proof and writes evidence
-│   │   ├── manifest.ts        stamped evidence entries (sha, round, criterion)
+│   │   ├── drive-format.ts    the restricted YAML drive format, reserved args, $var
+│   │   ├── manifest.ts        stamped evidence entries: hash chain, file hashes, engine-signed head
+│   │   ├── source-stamp.ts    HEAD, dirty flag and tree hash of the tested worktree
 │   │   └── assert.ts          expect: matchers (text, json path, exit code, row count)
 │   ├── checks/                gate.ts, spec-lint.ts, risk-floor.ts, verdict.ts, report-render.ts, redact.ts
-│   ├── toolkit/               contract.ts, check.ts, slots.ts (ports + ids), describe.ts
+│   ├── toolkit/               run.ts (bin/dev with the untrusted env), contract.ts, check.ts, slots.ts (ports + ids), describe.ts
+│   ├── home.ts                $KITCHEN_HOME and the engine key
+│   ├── lock.ts                owner-checked lock files (pid + start time)
 │   ├── sources/               prompt.ts, github.ts   (TicketSource)
 │   ├── forge/                 github.ts (draft PR, comment, checks status, evidence branch)
 │   ├── ledger/                append.ts, report.ts
@@ -80,7 +85,7 @@ kitchen.yaml                              committed
 .kitchen/jobs/<NNN-slug>/                 ignored
   job.json  ticket.md  intake.md  spec.md
   rounds/<N>/build.md gate.md verify.md review-<lens>.md
-  evidence/manifest.jsonl + files         written only by `kitchen drive`
+  evidence/manifest.jsonl + e<N>/         written only by `kitchen drive`; one folder per entry
   report.src.html  report.html
 .kitchen/ledger.jsonl  .kitchen/run.lock  .kitchen/toolkit.proven   ignored
 .worktrees/<NNN-slug>/                    ignored
@@ -106,7 +111,10 @@ type Job = {
 type Stage = 'intake'|'needs-info'|'spec'|'repro'|'build'|'gate'|'drives'|'verify'|'toolkit'
            |'review'|'ready'|'report'|'done'|'needs-human'|'paused'|'rejected';
 // paused carries: pausedFrom: Stage; waitFor: 'backoff'|'toolkit-pr'|'ci'|'toolkit-ticket'; until?: string
-// manifestHash: string   // sha256 of evidence/manifest.jsonl after the last engine write
+// uid: string            // random per job; scopes the manifest head's HMAC
+// manifestHead: { n: number; hash: string; mac: string }
+//                        // entry count, sha256 of the last entry line, HMAC(engine key) over both.
+//                        // Written after every engine append; required by every verify (see Proofs)
 ```
 
 A paused job **releases its slot**. The runner checks `waitFor` on every tick and moves the job back to `pausedFrom` when the condition clears:
@@ -167,7 +175,7 @@ The Toolkit grows with the app in two different ways, because the app has two ki
 
 | Layer | What | Who changes it | Where it lands |
 |---|---|---|---|
-| **Primitives** | `bin/dev` commands: prepare, up, down, reset, doctor, describe, login, press, type, read, screenshot, http, sql… | **Toolkit smith** only | Its own Toolkit PR, proven on main. Human-merged. The job uses that sha until it's merged |
+| **Primitives** | `bin/dev` commands: prepare, up, down, reset, doctor, describe, login, open, reload, press, type, read, screenshot, http, sql… | **Toolkit smith** only | Its own Toolkit PR, proven on main. Human-merged. The job uses that sha until it's merged |
 | **Feature drives** | `features/<x>.md`: how to reach and exercise one feature, written as a **declarative list of primitive calls**, which the engine interprets (`proof/drive.ts`). Feature drives can't contain code, so a drive can't simply print its own expected answer | The **verifier role**, in the `drives` stage. It's the independent party, and this saves a strong-model run. The engine rejects any Toolkit edit in a builder commit. The code lens always reviews drive diffs | Job PR. `toolkit check --feature` runs on the job HEAD |
 
 A new feature's drive can only run against the job branch, since the feature only exists there. Primitives are what every job depends on, so they must be proven on main. Any drive that needs real code is a primitive, and goes through the smith.
@@ -192,32 +200,44 @@ steps:
   - press: { target: "[data-testid=settings]" }
   - wait:  { until: { text: "Appearance" }, timeout: 10s }
   - press: { target: "[aria-label='Dark mode']" }
-  - read:  { target: body, attr: class }
+  - wait:  { until: { text: "theme-dark", target: body, attr: class }, timeout: 5s }
+  - read:  { target: "[data-testid=theme-state]" }
     save: theme                     # capture a value for later steps or for expect
   - retry: { times: 2, on: fail }   # applies to the step before
 ```
 
-The step names are primitive names from `describe`. The only built-in control is `wait`, `retry`, `save` and `$var`. There are no loops, branches or code. Anything that needs more is a primitive.
+The format is an official **restricted YAML subset**, parsed by Kitchen itself (`proof/drive-format.ts`, no YAML dependency): top-level `drive`, `args`, `steps`; one step per line as a flow mapping; `save:` is the only line that may follow a step. Anchors, multi-line values and unknown keys are refused, so drives can't grow structure.
+- The step names are primitive names from `describe`. The only built-in control is `wait`, `retry`, `save` and `$var`. There are no loops, branches or code. Anything that needs more is a primitive.
+- `wait: { until: { text, target?, attr? }, timeout }` polls the `read` primitive (target default `body`) until its output contains `text`. A wait whose text is empty, literally or after `$var` substitution, fails.
+- **Reserved args.** `id`, `src`, `out` and `ports` are set by the engine on every call; a step may not pass them, nor any arg whose name isn't `[a-z][a-z0-9_]*`. The engine calls `bin/dev <primitive> --id=<slot id> --src=<worktree> --out=<entry folder> --<arg>=<value>…` (one `--k=v` argv item per arg), and `bin/dev` refuses a flag given twice, so nothing appended can override an engine flag.
+- `save` of an object (e.g. `http`'s `{status, body}`) stores its JSON text. A drive returns its saved `vars`, so a spec `expect:` may refer to them as `$name`.
+- **One drive at a time per job.** `kitchen drive` holds a per-job lock (in-process queue plus a lock file naming its owner pid and start time) around the whole drive, so the next evidence id is read from the head under the lock.
 
 ### Toolkit contract
 
-Every command prints exactly one JSON line on stdout and logs to stderr. Kitchen runs the `bin/dev` of the **engine-owned Toolkit checkout at `toolkitRef`** (see below), always with `--src <worktree>`, so it is always clear which Toolkit code runs and which app code it starts.
+Every command prints exactly one JSON line on stdout and logs to stderr. Kitchen runs the `bin/dev` of the **engine-owned Toolkit checkout at `toolkitRef`** (see below), always with `--src <worktree>`, so it is always clear which Toolkit code runs and which app code it starts. Flags are accepted as `--k=v` or `--k v`; a flag given twice is refused.
+
+**Environment.** The engine runs `bin/dev` with the **untrusted env** (§3: the allowlist and git/gh scrub, no agent auth, plus the worktree's `.env.kitchen`), and adds only what the control plane needs (`DOCKER_HOST`, `DOCKER_CONTEXT`), named in `KITCHEN_CONTROL_ENV`. `bin/dev` must strip those names before it starts app processes or anything else that runs worktree code.
 
 | command | must |
 |---|---|
 | `prepare --src <dir>` | Make a fresh worktree runnable: install dependencies with a shared cache, copy `.env.kitchen` (fake or sandbox values only, made at setup, **never the developer's real `.env`**), build. Prints `{"status":"ok","secs":n}` |
-| `up --id <id> --src <dir> --ports <p1,p2,…>` | Start from an empty data folder through migrations and seed data to a usable app on the given ports. Prints `{"status":"ready","url":…}` or `{"status":"fail","why":…}`. It must fit in the ports it's given. Snapshot-restored seed data is encouraged, so `up` takes seconds |
+| `up --id <id> --src <dir> --ports <p1,p2,…>` | Start from an empty data folder through migrations and seed data to a usable app on the given ports. Prints `{"status":"ready","url":…}` or `{"status":"fail","why":…}`. It must fit in the ports it's given (`describe`'s `ports.needs`; `up` refuses fewer). Snapshot-restored seed data is encouraged, so `up` takes seconds |
 | `doctor --id <id>` | Read-only. Prints `{"status":"ok"\|"fail","checks":[…]}` |
 | `reset --id <id>` | Put the data and drive sessions back to seed state without a full restart |
 | `down --id <id>` | Stop only what that id started. Keeps the evidence |
-| `describe` | Prints the capability list: primitives, features, seed users, externals, whether jobs can run in parallel. **Generated, never hand-kept** |
-| drives | `<drive> --id <id> [args]`. Session state (browser, terminal, cookies) lasts until `reset` or `down`. Prints one JSON line `{"ok":bool,"out":…,"files":[…]}` |
+| `describe [--src <worktree>]` | Prints the capability list: primitives, feature **files** (from `--src`, so a job branch's new drives show; the engine parses the drives in them), seed users, externals, `ports: {needs, order}`, whether jobs can run in parallel. **Generated, never hand-kept** |
+| primitives | `<primitive> --id <id> --src <dir> --out <dir> [--arg=value…]`. Session state (browser, terminal, cookies) lasts until `reset` or `down`. Prints one JSON line `{"ok":bool,"out":…,"files":[…]}`. Every file goes into `--out` (the engine's entry folder `evidence/e<N>/`); a file reported anywhere else fails the step and is never copied |
+
+**Required generic primitives** (every Toolkit with a UI has them, so drives stay portable): `read {target, attr?}` (inner text or attribute; a missing element or attribute is `ok:false`, never an empty string), `open {path}`, `reload`, `press`, `type`, `screenshot`, `login {as}`, `http {method, path, body?}`. `open` and `http` resolve `path` against the app's URL and refuse any other origin (`//host`, `http://other`, userinfo tricks).
 
 **Externals.** `describe` lists `externals: [{name, mode: "mock"|"sandbox"}]`, for example Stripe sandbox, mail catcher or OAuth mock. Seed users are local fake credentials, never real ones. Mobile is out of scope for v0.1.
 
 **Slots and ports.** The engine keeps a pool of `concurrency` slots for each machine, in `~/.kitchen/slots.json`, shared across repos.
 - **Ports:** each slot reserves a block of 20 free ports, checked with a probe in the range 31000–32767 (below the Linux ephemeral range).
-- **Stale slots:** a slot whose owner pid has died, or whose run lock is stale, is reclaimed. Its `down` runs first.
+- **What a slot records:** its id, ports, owner pid **and that process's start time**, and the `bin/dev` and `--src` it was started with (the registry is shared across repos, so reclaiming must run the right Toolkit).
+- **Stale slots:** a slot whose owner process is gone (dead pid, or a live pid with another start time: the pid was reused) is reclaimed. Its own Toolkit's `down` runs first, with the untrusted env.
+- **Locking:** `slots.json` is changed under a lock file that names its owner (pid + start time). It is taken over only when that owner is gone, never by age, so a long `down` during reclaim keeps it.
 - **Recording:** the slot is recorded in `job.json` and given to `up`.
 
 **`kitchen toolkit check [--feature x] [--src dir]`** runs:
@@ -245,6 +265,9 @@ On a pass it writes `.kitchen/toolkit.proven` with the base sha. **When the base
   expect: contains "dark"
 - [C3] Theme reducer unit-tested
   proof: test src/theme.test.ts
+- [C5] The saved theme is "Dark"
+  proof: toolkit settings.toggle-dark --as alice
+  expect: $theme == "Dark"   # a drive's saved vars may be used in a mechanical expect
 - [C4] Header looks right in dark mode at phone width
   proof: toolkit settings.open --as alice --width 390 ; toolkit screenshot header
   expect: judged          # only an agent can decide; must cite the screenshot
@@ -264,10 +287,14 @@ On a pass it writes `.kitchen/toolkit.proven` with the base sha. **When the base
 
 `kitchen drive <job> <criterion> [--repro]` is the **only** way a proof runs:
 1. Reads the proof lines.
-2. Runs them through the Toolkit, or as a command or test, in the job's slot.
-3. Writes the files to `evidence/`.
-4. Adds manifest entries stamped `{id, sha, round, criterion, cmd, exit, at}`.
-5. Applies `expect:`.
+2. Runs them through the Toolkit, or as a command or test, in the job's slot. Every process that runs worktree code (Toolkit primitives, the app, tests, cmd proofs) gets the untrusted env (§3).
+3. Writes each call's files into its own entry folder `evidence/e<N>/`, plus `e<N>/call.json` (argv, exit, result, stdout/stderr tails).
+4. Adds one manifest entry per call, stamped `{id, prev, sha, dirty, tree, round, criterion, role, cmd, exit, files: [{path, sha256}], at}`:
+   - `sha` is HEAD of the **tested worktree** (never "unknown": no git, no proof), `dirty` whether the working tree differs from it, `tree` the git tree hash of what was on disk.
+   - `role` says who asked (engine, builder, verifier…), so a builder's self-check is never taken for Verify evidence.
+   - A `wait` is one entry with its poll count (`wait: {text, polls, hit}`); every poll is in its `call.json`.
+   - A TOOLKIT-GAP is an entry too (`gap: <primitive>`), so a Verdict citing it has something to cite.
+5. Applies `expect:` (which may use the drive's saved `$vars`).
 
 **Verdicts by expect type:**
 
@@ -283,7 +310,10 @@ On a pass it writes `.kitchen/toolkit.proven` with the base sha. **When the base
 - writes up a TOOLKIT-GAP, naming the primitive that's missing
 
 The verifier has a shell, so the manifest's integrity is enforced by mechanism, not by rule:
-- After each `kitchen drive` write, the engine records `manifestHash` in `job.json`. `verdict.ts` refuses a manifest whose hash doesn't match.
+- The manifest is a hash chain: each entry carries `prev` (sha256 of the line before) and the sha256 of every file it cites.
+- After each append the engine writes `manifestHead {n, hash, mac}` to `job.json`; `mac` is an HMAC over the head with the engine key in `$KITCHEN_HOME/engine.key` (mode 600), scoped by the job's `uid`.
+- `verifyManifest` **requires** that head (there is no default): an edited, dropped, reordered or appended line, a changed evidence file, a deleted manifest while the head says `n > 0`, or a head not signed by the engine key is refused. Ids come from the head, so they never restart.
+- What this protects and what it doesn't is in ADR 0006 ("Manifest integrity"): agents can't write job state or read the key; unsandboxed app code still could.
 - Every mechanical proof runs before any verifier agent starts.
 - Changes made through `--args` are logged against the spec and listed in the Report.
 
@@ -318,7 +348,8 @@ interface AgentAdapter {
   name: 'claude' | 'codex' | 'fake';
   run(req: { role: string; prompt: string; cwd: string; model: string;
              tier: 'read' | 'write'; resumeSession?: string;
-             timeoutSec: number; maxTurns: number }): Promise<{
+             timeoutSec: number; maxTurns: number;
+             bridge?: BridgeServer; denyRead?: string[] }): Promise<{
     ok: boolean; line: string; sessionId?: string; rateLimited?: boolean;
     usage?: { usd?: number; inTok?: number; outTok?: number }; transcriptPath?: string }>;
 }
@@ -332,21 +363,25 @@ interface AgentAdapter {
 | write | spec, builder, verifier, smith, setup | File edits in the worktree plus a shell |
 
 **No agent gets git push or a GitHub token,** and that is enforced:
-- Agents are spawned with a scrubbed environment: no `GH_TOKEN` or `GITHUB_TOKEN`, an empty `GH_CONFIG_DIR`, `GIT_CONFIG_GLOBAL` pointing at a file with `credential.helper=` empty, and `GIT_TERMINAL_PROMPT=0`, `GIT_CONFIG_NOSYSTEM=1` (macOS's system git config turns on the keychain helper), `SSH_AUTH_SOCK` unset, and `GIT_SSH_COMMAND=false`, so SSH remotes can't push either.
-- **Agents can't write job state.** An agent's writable root is its worktree only. It writes its one file at `.kitchen-out/<file>` inside the worktree (read-tier roles that run before a worktree exists, such as intake, get a scratch folder the engine creates for that run), and the engine copies it into `.kitchen/jobs/<id>/`, then deletes it. `.kitchen/jobs/` (with `job.json` and the manifest) is outside every agent's writable root. The manifest hash is a second check behind that.
+- Agents are spawned with a scrubbed environment: no `GH_TOKEN` or `GITHUB_TOKEN`, an empty `GH_CONFIG_DIR`, `GIT_CONFIG_GLOBAL` pointing at a file with `credential.helper=` empty, and `GIT_TERMINAL_PROMPT=0`, `GIT_CONFIG_NOSYSTEM=1` (macOS's system git config turns on the keychain helper), `SSH_AUTH_SOCK` unset, `GIT_SSH_COMMAND=false`, and a command-scope `url.kitchen-push-blocked:///.pushInsteadOf=` that rewrites every push URL to an unknown transport, so no remote (SSH, HTTPS or a plain local path) can be pushed to.
+- **Worktree code gets the same scrub (`untrustedEnv`).** Every process that runs code from a worktree (the app, tests, cmd proofs, Toolkit primitives) is started with the same allowlist and git/gh scrub, **without** the agent tool's own auth, plus the worktree's `.env.kitchen`. The Toolkit's control plane additionally gets `DOCKER_HOST`/`DOCKER_CONTEXT`, which `bin/dev` strips before starting the app. This hands app code no credentials; it does not confine it (it runs as the user, unsandboxed). An OS sandbox for app processes is a later hardening item (ADR 0006).
+- **Agents can't write job state, or read the engine key.** An agent's writable root is its worktree only. It writes its one file at `.kitchen-out/<file>` inside the worktree (read-tier roles that run before a worktree exists, such as intake, get a scratch folder the engine creates for that run), and the engine copies it into `.kitchen/jobs/<id>/`, then deletes it. `.kitchen/jobs/` (with `job.json` and the manifest) is outside every agent's writable root. `$KITCHEN_HOME` is denied for reading too (Claude: `sandbox.filesystem.denyRead` + `Read(...)` deny rules; Codex: a permission profile with the folder set to `deny`). The signed manifest head is a second check behind that.
+- **Project config in the worktree is ignored.** A worktree may carry `.mcp.json`, `.claude/settings.json` or `.codex/config.toml` (from the user's repo, or written by an earlier agent). Claude runs with `--setting-sources ""` and `--strict-mcp-config`; Codex with `--ignore-user-config`, which also drops project trust, so the project layer stays disabled. Proven with canaries that would run if loaded (ADR 0006, "Bridge").
 - The engine commits what the builder leaves, pushes, and opens or updates the PR, using its own credentials.
 - A wall-clock limit and a turn limit per role are structure, not a cost cap.
 
+**The engine bridge.** Neither tool's sandbox can reach Docker or the network (ADR 0006), so agents drive the app through `kitchen mcp --job <id> --role <role>`, an MCP server the agent tool starts (`AgentRequest.bridge`; built by `bridgeServer()` with an explicit env: Docker vars and `KITCHEN_HOME`). It runs as the engine, outside the Bash sandbox, and exposes only job-scoped tools:
+- `drive`: one feature drive (by name, from the job's worktree) or one primitive, in the job's slot, stamped with the caller's role. Reserved args, unknown fields, other jobs and foreign origins are refused.
+- `toolkit_status`: `doctor` for the job's slot.
+- (W1) `checks` for the builder: `kitchen.yaml` checks in the worktree.
+
+Wiring: Claude `--mcp-config '{"mcpServers":{"kitchen":…}}' --allowedTools 'mcp__kitchen__*'` (with `--strict-mcp-config`, only this server). Codex `-c mcp_servers.kitchen.{command,args,env}=…` plus `-c mcp_servers.kitchen.default_tools_approval_mode="approve"`: without it Codex refuses every MCP call ("requires approval, but approval policy is never"). The builder self-checks and the verifier and UX lenses ask for views this way; file requests (`VIEW:`, `--args`) stay as a fallback.
+
 **UX and UI lenses** don't drive the app themselves:
 - They get Verify's stamped screenshots.
-- They may ask for more views (for example a page at 390 px) by adding a line to their review file, `VIEW: <feature drive or page> --width 390`. The engine runs those through `kitchen drive --view`, they land as stamped evidence, and the lens is re-run once with the new evidence.
+- They may ask for more views (for example a page at 390 px) through the bridge, or by adding a line to their review file, `VIEW: <feature drive or page> --width 390`. Either way the engine runs it, it lands as stamped evidence, and the lens is re-run once with the new evidence.
 
-**W0 confirms the exact flags:**
-- for claude: `-p`, json output, model, allowed tools or permission mode, max turns, resume
-- for codex: `exec`, json, model, sandbox
-- that Docker and the CLI work from inside a Codex sandbox session
-
-**Fallback** if Codex can't reach Docker inside its sandbox: the Toolkit runs outside it, started by the engine (which is not sandboxed). The Codex agent only calls `kitchen drive`, which goes through the engine. The result is recorded in an ADR.
+The exact flags per tool, the writable roots and what W0 proved are in ADR 0006.
 
 ## 4. Commands
 
@@ -636,6 +671,8 @@ Round 4 minors are applied: the `toolkit` return rule depends on where the job c
 
 ## Changes from Wave 0 findings (ADR 0006, spikes/w0/toolkit-results.md)
 
+History: all of these are now part of §2 and §3, which are the current contract. The bridge was built and proven on both tools in the W0 review round (next table).
+
 | Finding | Change |
 |---|---|
 | Neither tool's sandbox can reach Docker; agents have no network | **Engine bridge:** `kitchen mcp --job <id> --role <role>` is an MCP server that the agent tool starts. It runs outside the Bash sandbox, as the engine, and exposes only job-scoped tools: `drive` (a feature drive or one primitive, in the job's slot, stamped), `toolkit_status` (doctor), and for the builder `checks` (runs `kitchen.yaml` checks in the worktree). It refuses anything outside the job. This is how the builder self-checks and how the verifier and UX lenses ask for views. File requests (`VIEW:`, `--args`) stay as a fallback. W1 must prove the bridge works on both tools |
@@ -649,3 +686,17 @@ Round 4 minors are applied: the `toolkit` return rule depends on where the job c
 | Mixed import styles | `.ts` relative imports everywhere (`rewriteRelativeImportExtensions`), so the code runs directly on Node and builds with tsc |
 | Skills | The same `SKILL.md` goes to `.claude/skills/kitchen/` and `.agents/skills/kitchen/` |
 | `--detach` from inside a sandbox keeps the sandbox | The `/kitchen` skill starts `kitchen run --detach` outside the sandbox (a one-time approval on Codex) |
+
+## Changes from the Wave 0 review
+
+| Finding | Change (in §2/§3, proven by `spikes/w0/`) |
+|---|---|
+| Worktree code ran with the engine's full env (a fake `GH_TOKEN` showed in `ps eww <appPid>`) | One `untrustedEnv()` for every process that runs worktree code; `bin/dev` strips the Docker vars before starting the app; push blocked by a command-scope `pushInsteadOf`. An OS sandbox for app processes is a later hardening item |
+| A drive step could override engine flags (`id`, `out`) | Reserved args refused by the parser; `--k=v` argv; `bin/dev` refuses a flag given twice |
+| Codex refused MCP calls under `approval_policy="never"` | `mcp_servers.kitchen.default_tools_approval_mode="approve"` |
+| Manifest hash in a sibling file, default-trusted | Hash chain + per-file hashes + engine-signed head in `job.json`, required by every verify; ids never restart |
+| `${BASE}${p}` could leave the app; e<N> prediction raced; project config in the worktree; bridge without Docker env | `new URL` + same-origin; per-job drive lock; project config proven ignored (canaries); `bridgeServer()` passes Docker vars explicitly |
+| Empty waits passed; missing attributes read as "" | Empty wait text fails; `read` of a missing attribute is `ok:false` |
+| Slots didn't record their Toolkit; pid reuse; lock stolen by age | Slots store `toolkitBin`, `src`, `pidStart`; reclaim runs that `down`; owner-based lock |
+| Stamped sha could be "unknown" or the kitchen repo's | HEAD of the tested worktree + `dirty` + `tree`; no git, no proof |
+| Codex agents could read `$KITCHEN_HOME` (the engine key) | Codex runs under a permission profile with `$KITCHEN_HOME` denied; Claude gets `sandbox.filesystem.denyRead` + `Read()` deny rules |

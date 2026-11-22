@@ -6,7 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["src/**", "spikes/**", "fixtures/**/*.mjs", "fixtures/**/*.js", "*.ts", "*.json", "!**/package-lock.json"]
+    "includes": ["src/**/*.ts", "spikes/**/*.ts", "spikes/**/*.mjs", "fixtures/**/*.mjs", "fixtures/**/*.js", "*.ts", "*.json", "!**/package-lock.json"]
   },
   "formatter": {
     "enabled": true,

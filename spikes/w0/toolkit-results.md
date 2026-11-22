@@ -1,5 +1,32 @@
 # W0 spike B: Toolkit contract and drive format on fixture A
 
+## Rerun after the W0 review (2026-11-22)
+
+`node spikes/w0/run-toolkit-spike.mjs <scratch>`: **48/48 expectations met**, exit 0, no kitchen containers left. The script now asserts every outcome (including the negative ones) and exits 1 on a miss. What changed, and the key lines:
+
+| Area | Expectation (all PASS) | Key output |
+|---|---|---|
+| untrusted env | control with the engine env: local push works, `gh` sees `GH_TOKEN` | `push exit 0 [new branch] control-push`, `mentionsGhToken: true` |
+| | `ps eww <appPid>`: no `GH_TOKEN`/fake token/agent keys/Docker/control vars | `KITCHEN_UNTRUSTED=1` present, nothing else |
+| | app startup `git push origin` fails, no branch | `exit 128 git: 'remote-kitchen-push-blocked' is not a git command` |
+| | app startup `gh auth status` fails | `exit 1, notLoggedIn: true` |
+| engine flags | `login {as: bob-admin, id: p2}` (drive and primitive) refused, nothing stamped | `login: "id" is set by the engine and can't be passed by a step` |
+| | `screenshot {out: <abs>}` refused, nothing written outside evidence | `screenshot: "out" is set by the engine…` |
+| | `bin/dev read --id=s1 … --id=p2` | `{"ok":false,"out":"flag --id given twice"}` |
+| origin | `http @evil.example/x` stays on the app | `{"status":404}` on `/@evil.example/x` |
+| | `http http://evil.example/x`, `open //evil.example/x` | `"…" leaves the app (http://evil.example): refused` |
+| waits | wait on `$empty` (substituted to "") fails | `why: "empty wait text"` |
+| | `read {attr: data-nope}` | `body has no attribute data-nope` (ok:false) |
+| | each wait is one entry with its poll count | `e6:2 e24:6 …` |
+| manifest | entries chained, files hashed, in own `e<N>/` | `e11/call.json,e11/settings-dark.png` |
+| | edited line / deleted manifest / dropped line / replaced PNG / edited or removed head | `does not chain` / `missing or empty but the engine recorded 92` / `has 91 entries` / `content changed` / `signature does not match` / `no expected manifest head` |
+| concurrency | 3 concurrent drives on one job | ids `e89 e90 e91`, verify ok |
+| stamp | sha = tested worktree HEAD (≠ kitchen repo HEAD), `dirty:false`; dirty tree stamped `dirty:true` + own tree; non-git source refused | `git rev-parse … failed: not a git repository` |
+| slots | slot records `toolkitBin`, `src`, `pidStart`; dead owner reclaimed through its own `down`; reused pid (other start time) reclaimed | `reclaimed: ["orphan"]`, `reclaimed: ["fresh"]` |
+| contract | `describe` lists feature files only, `ports.needs: 3`, has `open`/`reload` | `["features/invites.md","features/projects.md","features/settings.md"]` |
+
+The 2026-11-22 sections below are the original spike B run and are kept as history; some details there (manifest hash file, `files/e<N>/`, per-poll entries) were replaced as above.
+
 Date: 2026-11-22. Machine: macOS laptop, Docker Desktop 29.5 (4 CPU, 6 GB), Node 26.9.
 Reproduce: `node spikes/w0/run-toolkit-spike.mjs <scratch dir> [--cold]` (copies
 `fixtures/a-web` to `<scratch>/src` as a stand-in worktree, runs everything below,

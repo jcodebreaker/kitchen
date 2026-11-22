@@ -8,4 +8,4 @@
 
 Each file holds one fenced `drive` block in the Kitchen drive format. Kitchen
 (`src/proof/drive.ts`) interprets it; `bin/dev` only answers primitive calls.
-`bin/dev describe` lists these drives, generated from the files.
+`bin/dev describe` lists these files; Kitchen parses the drives in them.
