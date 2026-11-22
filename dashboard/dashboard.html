@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; frame-ancestors 'none'">
+<title>Kitchen</title>
+<!--
+  Kitchen's dashboard. Served by `kitchen dashboard` (src/dashboard/server.ts) on 127.0.0.1;
+  everything it shows comes from /data.json (src/dashboard/data.ts), read from .kitchen/.
+  Self-contained: no fonts, scripts or styles from anywhere else. ?theme=light|dark overrides the system.
+-->
+<style>
+:root {
+  --bg: #f6f5f2;
+  --panel: #ffffff;
+  --sunk: #efede8;
+  --line: #e3e0d9;
+  --line-strong: #d3cfc6;
+  --ink: #1d1b18;
+  --ink-2: #57534c;
+  --ink-3: #8a857b;
+  --accent: #c2410c;
+  --accent-soft: #fbe7dc;
+  --pass: #15803d;
+  --pass-soft: #dcf2e3;
+  --fail: #b91c1c;
+  --fail-soft: #fbe1e1;
+  --warn: #a16207;
+  --warn-soft: #f8ecc9;
+  --gap: #6d28d9;
+  --gap-soft: #ece4fb;
+  --idle: #a8a296;
+  --shadow: 0 1px 0 rgba(29, 27, 24, .04), 0 1px 3px rgba(29, 27, 24, .06);
+  --radius: 10px;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #131211; --panel: #1c1a18; --sunk: #171514; --line: #2b2825; --line-strong: #3a3632;
+    --ink: #eeebe5; --ink-2: #b4aea4; --ink-3: #7f796f; --accent: #fb8a4c; --accent-soft: #3a2216;
+    --pass: #4ade80; --pass-soft: #12301d; --fail: #f87171; --fail-soft: #3a1717; --warn: #fbbf24; --warn-soft: #33280f;
+    --gap: #b794f6; --gap-soft: #2a1f42; --idle: #5f5a52; --shadow: 0 1px 0 rgba(0, 0, 0, .3); color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #131211; --panel: #1c1a18; --sunk: #171514; --line: #2b2825; --line-strong: #3a3632;
+  --ink: #eeebe5; --ink-2: #b4aea4; --ink-3: #7f796f; --accent: #fb8a4c; --accent-soft: #3a2216;
+  --pass: #4ade80; --pass-soft: #12301d; --fail: #f87171; --fail-soft: #3a1717; --warn: #fbbf24; --warn-soft: #33280f;
+  --gap: #b794f6; --gap-soft: #2a1f42; --idle: #5f5a52; --shadow: 0 1px 0 rgba(0, 0, 0, .3); color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink); font: 14px/1.45 var(--sans); -webkit-font-smoothing: antialiased; }
+a { color: inherit; }
+.wrap { max-width: 1680px; margin: 0 auto; padding: 0 24px 40px; }
+
+/* top bar */
+header { position: sticky; top: 0; z-index: 2; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+header .wrap { display: flex; align-items: center; gap: 16px; height: 56px; padding-bottom: 0; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 650; letter-spacing: -.01em; font-size: 15px; }
+.mark { width: 22px; height: 22px; border-radius: 6px; background: var(--accent); display: grid; place-items: center; }
+.mark svg { width: 14px; height: 14px; }
+.repo { font-family: var(--mono); font-size: 13px; color: var(--ink-2); padding: 3px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }
+.spacer { flex: 1; }
+.runner { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-2); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--idle); }
+.dot.live { background: var(--pass); box-shadow: 0 0 0 0 color-mix(in srgb, var(--pass) 60%, transparent); animation: pulse 2s infinite; }
+@keyframes pulse { 70% { box-shadow: 0 0 0 7px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+.updated { font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+button.theme { border: 1px solid var(--line); background: var(--panel); color: var(--ink-2); border-radius: 7px; height: 30px; width: 30px; cursor: pointer; display: grid; place-items: center; }
+button.theme:hover { color: var(--ink); border-color: var(--line-strong); }
+button.theme svg { width: 15px; height: 15px; }
+
+/* measures */
+.measures { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; margin: 20px 0 18px; box-shadow: var(--shadow); }
+.m { background: var(--panel); padding: 14px 16px 13px; min-width: 0; }
+.m .k { font-size: 11.5px; color: var(--ink-3); text-transform: uppercase; letter-spacing: .06em; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.m .v { font-size: 26px; font-weight: 620; letter-spacing: -.02em; margin-top: 4px; font-variant-numeric: tabular-nums; line-height: 1.15; }
+.m .v small { font-size: 14px; font-weight: 500; color: var(--ink-3); letter-spacing: 0; margin-left: 4px; }
+.m .s { font-size: 12.5px; color: var(--ink-2); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.bar { height: 4px; border-radius: 2px; background: var(--sunk); margin-top: 9px; overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--accent); border-radius: 2px; }
+
+/* attention strip */
+.attention { display: none; align-items: center; gap: 10px; padding: 10px 14px; border-radius: var(--radius); background: var(--warn-soft); color: var(--ink); border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent); margin-bottom: 16px; font-size: 13.5px; }
+.attention.on { display: flex; }
+.attention b { color: var(--warn); font-weight: 650; }
+.attention code { font-family: var(--mono); font-size: 12.5px; background: color-mix(in srgb, var(--panel) 70%, transparent); padding: 1px 6px; border-radius: 5px; }
+
+/* board */
+.board { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 8px; align-items: flex-start; }
+.col { flex: 1 1 0; min-width: 236px; background: var(--sunk); border: 1px solid var(--line); border-radius: var(--radius); min-height: 120px; display: flex; flex-direction: column; }
+.col.empty { flex: 0 0 124px; min-width: 0; opacity: .72; }
+.col h2 { margin: 0; padding: 11px 12px 9px; white-space: nowrap; font-size: 12.5px; font-weight: 650; letter-spacing: .01em; display: flex; align-items: center; gap: 8px; color: var(--ink-2); }
+.col h2 .n { font-family: var(--mono); font-size: 11.5px; color: var(--ink-3); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 0 7px; line-height: 18px; }
+.col.human h2 { color: var(--warn); }
+.col .cards { display: flex; flex-direction: column; gap: 8px; padding: 0 8px 8px; }
+.col .none { color: var(--ink-3); font-size: 12.5px; padding: 6px 12px 14px; }
+
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 9px; padding: 11px 12px 10px; box-shadow: var(--shadow); position: relative; }
+.card.active::before { content: ""; position: absolute; left: -1px; top: 10px; bottom: 10px; width: 3px; border-radius: 0 3px 3px 0; background: var(--accent); }
+.card.paused::before { content: ""; position: absolute; left: -1px; top: 10px; bottom: 10px; width: 3px; border-radius: 0 3px 3px 0; background: var(--warn); }
+.card .top { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--ink-3); }
+.card .id { font-family: var(--mono); }
+.tag { font-size: 11px; font-weight: 600; padding: 0 6px; border-radius: 5px; line-height: 18px; border: 1px solid var(--line); color: var(--ink-2); background: var(--sunk); }
+.tag.high { color: var(--fail); background: var(--fail-soft); border-color: transparent; }
+.tag.medium { color: var(--warn); background: var(--warn-soft); border-color: transparent; }
+.tag.low { color: var(--pass); background: var(--pass-soft); border-color: transparent; }
+.stage { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--ink-2); }
+.card .title { margin: 6px 0 8px; font-weight: 560; font-size: 13.5px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+.chip { font-family: var(--mono); font-size: 10.5px; font-weight: 600; line-height: 18px; padding: 0 6px; border-radius: 5px; background: var(--sunk); color: var(--ink-3); }
+.chip.PASS { background: var(--pass-soft); color: var(--pass); }
+.chip.FAIL { background: var(--fail-soft); color: var(--fail); }
+.chip.INCONCLUSIVE { background: var(--warn-soft); color: var(--warn); }
+.chip.TOOLKIT-GAP { background: var(--gap-soft); color: var(--gap); }
+.chip.rev { font-family: var(--sans); }
+.note { font-size: 12px; color: var(--warn); background: var(--warn-soft); border-radius: 6px; padding: 5px 8px; margin-bottom: 8px; line-height: 1.35; overflow-wrap: anywhere; }
+.note.neutral { color: var(--ink-2); background: var(--sunk); }
+.meta { display: flex; align-items: center; gap: 12px; font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.pips { display: inline-flex; gap: 3px; align-items: center; }
+.pips i { width: 6px; height: 6px; border-radius: 50%; background: var(--line-strong); }
+.pips i.on { background: var(--ink-2); }
+.pips i.last { background: var(--fail); }
+.meta .r { display: inline-flex; gap: 6px; align-items: center; }
+.meta a { margin-left: auto; color: var(--accent); text-decoration: none; font-weight: 600; font-size: 12px; }
+.meta a:hover { text-decoration: underline; }
+.meta .pr { font-family: var(--mono); color: var(--ink-3); }
+.empty-state { text-align: center; color: var(--ink-2); padding: 64px 0; }
+.empty-state code { font-family: var(--mono); background: var(--panel); border: 1px solid var(--line); padding: 2px 8px; border-radius: 6px; }
+footer { margin-top: 18px; font-size: 12px; color: var(--ink-3); display: flex; gap: 18px; flex-wrap: wrap; }
+footer b { color: var(--ink-2); font-weight: 600; }
+.err { color: var(--fail); }
+@media (max-width: 1100px) { .measures { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 640px) {
+  .wrap { padding: 0 16px 32px; }
+  .measures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .updated { display: none; }
+  .col { min-width: 78vw; }
+}
+@media (prefers-reduced-motion: reduce) { .dot.live { animation: none; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <div class="brand">
+      <span class="mark" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9h10v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M1.5 9h13M6 6.5c0-1 .8-1.2.8-2.2M9.5 6.5c0-1 .8-1.2.8-2.2"/></svg></span>
+      Kitchen
+    </div>
+    <span class="repo" id="repo">…</span>
+    <span class="spacer"></span>
+    <span class="runner"><span class="dot" id="dot"></span><span id="runner">…</span></span>
+    <span class="updated" id="updated"></span>
+    <button class="theme" id="theme" title="Light or dark" aria-label="Switch light or dark">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="5.5"/><path d="M8 2.5v11A5.5 5.5 0 0 0 8 2.5z" fill="currentColor"/></svg>
+    </button>
+  </div>
+</header>
+<main class="wrap">
+  <section class="measures" id="measures" aria-label="Measures"></section>
+  <div class="attention" id="attention" role="status"></div>
+  <section class="board" id="board" aria-label="Jobs by stage"></section>
+  <footer id="foot"></footer>
+</main>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const pct = (a, b) => (b ? Math.round((100 * a) / b) : null);
+const money = (n) => (n >= 10 ? `$${n.toFixed(0)}` : n >= 1 ? `$${n.toFixed(2)}` : `$${n.toFixed(3)}`.replace(/0$/, ""));
+const dur = (s) => (s < 90 ? `${Math.round(s)}s` : s < 5400 ? `${Math.round(s / 60)}m` : `${(s / 3600).toFixed(1)}h`);
+const ago = (iso) => {
+  const s = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
+  return s < 60 ? "just now" : `${dur(s)} ago`;
+};
+
+// theme: ?theme= wins, then the saved choice, then the system
+const params = new URLSearchParams(location.search);
+let saved = null;
+try { saved = localStorage.getItem("kitchen-theme"); } catch {}
+const forced = params.get("theme") || saved;
+if (forced === "light" || forced === "dark") document.documentElement.dataset.theme = forced;
+$("theme").addEventListener("click", () => {
+  const dark = document.documentElement.dataset.theme
+    ? document.documentElement.dataset.theme === "dark"
+    : matchMedia("(prefers-color-scheme: dark)").matches;
+  document.documentElement.dataset.theme = dark ? "light" : "dark";
+  try { localStorage.setItem("kitchen-theme", document.documentElement.dataset.theme); } catch {}
+});
+
+function measure(k, v, unit, s, bar) {
+  return `<div class="m"><div class="k">${esc(k)}</div><div class="v">${v}${unit ? `<small>${esc(unit)}</small>` : ""}</div>` +
+    `<div class="s">${s}</div>${bar === null || bar === undefined ? "" : `<div class="bar"><i style="width:${Math.max(0, Math.min(100, bar))}%"></i></div>`}</div>`;
+}
+
+function renderMeasures(d) {
+  const m = d.summary;
+  const mr = pct(m.mergeReady, m.takenIn);
+  const fp = pct(m.firstPass, m.verified);
+  const inc = pct(m.inconclusiveVerdicts, m.verdicts);
+  const fl = pct(m.flaky, m.groups);
+  $("measures").innerHTML = [
+    measure("Merge-ready", mr === null ? "–" : mr, mr === null ? "" : "%", `${m.mergeReady} of ${m.takenIn} tickets taken in`, mr),
+    measure("First-pass verdict", fp === null ? "–" : fp, fp === null ? "" : "%", `${m.firstPass} of ${m.verified} passed Verify first try`, fp),
+    measure("Rounds per job", m.roundsMean || "–", "", "mean, past intake", null),
+    measure("Cost", money(m.usd), "", m.mergeReady ? `median ${money(m.medianUsd)} · ${dur(m.medianSecs)} per ready PR` : "agent spend so far", null),
+    measure("INCONCLUSIVE · flake", `${inc ?? 0}<small>%</small> · ${fl ?? 0}`, "%", `${m.inconclusiveVerdicts} of ${m.verdicts} verdicts · ${m.flaky} of ${m.groups} proofs flaky`, null),
+    measure("Toolkit gaps", m.gapsPerJob, "/ job", m.mutes.length ? `retro muted ${m.mutes.map(esc).join(", ")}` : "rising means the drive format is too thin", null),
+  ].join("");
+}
+
+function pips(round, limit) {
+  let h = "";
+  for (let i = 1; i <= limit; i++) h += `<i class="${i <= round ? (i === limit && round >= limit ? "last" : "on") : ""}"></i>`;
+  return `<span class="pips" title="round ${round} of ${limit}">${h}</span>`;
+}
+
+function card(j) {
+  const cls = ["card", j.paused ? "paused" : j.active ? "active" : ""].join(" ");
+  const n = esc(j.id.split("-")[0]);
+  const chips = j.criteria.map((c) => `<span class="chip ${esc(c.result)}" title="${esc(c.id)}: ${esc(c.result)}">${esc(c.id)}</span>`).join("");
+  const rev = j.review ? `<span class="chip rev ${j.review.result === "PASS" ? "PASS" : "FAIL"}" title="review: ${j.review.blocking} blocking, ${j.review.notes} notes">review ${j.review.result === "PASS" ? "ok" : `${j.review.blocking} blocking`}</span>` : "";
+  const note = j.paused
+    ? `<div class="note">paused: ${esc(j.paused)}</div>`
+    : j.reason && ["needs-human", "needs-info", "rejected"].includes(j.stage)
+      ? `<div class="note${j.stage === "rejected" ? " neutral" : ""}">${esc(j.reason.length > 140 ? `${j.reason.slice(0, 140)}…` : j.reason)}</div>`
+      : "";
+  return `<article class="${cls}">
+    <div class="top"><span class="id">#${n}</span>${j.risk ? `<span class="tag ${esc(j.risk)}">${esc(j.risk)}</span>` : ""}${j.kind ? `<span class="tag">${esc(j.kind)}</span>` : ""}<span class="stage">${esc(j.stage)}</span></div>
+    <div class="title" title="${esc(j.title)}">${esc(j.title)}</div>
+    ${chips || rev ? `<div class="chips">${chips}${rev}</div>` : ""}
+    ${note}
+    <div class="meta"><span class="r">${pips(j.round, j.roundLimit)}</span><span>${money(j.usd)}</span><span>${dur(j.secs)}</span>${j.pr ? `<span class="pr">PR #${j.pr}</span>` : ""}${j.report ? `<a href="${esc(j.report)}" target="_blank" rel="noopener">Report →</a>` : ""}</div>
+  </article>`;
+}
+
+function renderBoard(d) {
+  if (!d.jobs.length) {
+    $("board").innerHTML = `<div class="empty-state" style="grid-column:1/-1">No jobs yet. Give Kitchen a ticket: <code>kitchen ticket "…"</code> then <code>kitchen run --detach</code></div>`;
+    return;
+  }
+  const cols = d.columns.filter((c) => c.id !== "closed" || d.jobs.some((j) => j.column === "closed"));
+  $("board").innerHTML = cols
+    .map((c) => {
+      const js = d.jobs.filter((j) => j.column === c.id);
+      return `<div class="col ${c.id}${js.length ? "" : " empty"}"><h2>${esc(c.title)}<span class="n">${js.length}</span></h2>` +
+        (js.length ? `<div class="cards">${js.map(card).join("")}</div>` : `<div class="none">—</div>`) + `</div>`;
+    })
+    .join("");
+}
+
+function renderAttention(d) {
+  const waiting = d.jobs.filter((j) => j.column === "human");
+  const a = $("attention");
+  if (!waiting.length) { a.classList.remove("on"); return; }
+  a.classList.add("on");
+  a.innerHTML = `<b>${waiting.length} job${waiting.length > 1 ? "s" : ""} need${waiting.length > 1 ? "" : "s"} you.</b> Answer with <code>kitchen feedback &lt;id&gt; "…"</code> or close with <code>kitchen reject &lt;id&gt;</code>.`;
+}
+
+function render(d) {
+  $("repo").textContent = d.repo;
+  document.title = `Kitchen · ${d.repo}`;
+  $("dot").className = `dot${d.runner.running ? " live" : ""}`;
+  $("runner").textContent = d.runner.running ? "running" : "idle";
+  $("runner").title = d.runner.text;
+  $("updated").textContent = `updated ${new Date(d.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
+  renderMeasures(d);
+  renderAttention(d);
+  renderBoard(d);
+  const esc_ = d.summary.escalations.slice(0, 4).map((e) => `${e.n}× ${esc(e.to === "needs-human" ? e.code : e.to)}`).join(", ");
+  $("foot").innerHTML = `<span><b>${d.jobs.length}</b> jobs</span>${esc_ ? `<span>escalations: ${esc_}</span>` : ""}${d.corrupt.length ? `<span class="err">unreadable: ${d.corrupt.map(esc).join(", ")}</span>` : ""}<span>full numbers: <b>kitchen report</b></span>`;
+}
+
+let timer = null;
+async function tick() {
+  try {
+    const r = await fetch("data.json", { cache: "no-store" });
+    if (!r.ok) throw new Error(`${r.status}`);
+    render(await r.json());
+  } catch (e) {
+    $("runner").textContent = "dashboard server unreachable";
+    $("dot").className = "dot";
+  }
+  clearTimeout(timer);
+  timer = setTimeout(tick, document.hidden ? 15000 : 3000);
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden) tick(); });
+tick();
+</script>
+</body>
+</html>

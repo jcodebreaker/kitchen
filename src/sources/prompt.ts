@@ -8,6 +8,14 @@ import type { Job } from "../engine/machine.ts";
 import { jobDirOf, titleOf, writeAtomic } from "../engine/store.ts";
 import type { IncomingTicket, TicketSource } from "./source.ts";
 
+export const draftsDir = (repo: string) => path.join(repo, ".kitchen", "retro", "drafts");
+const slugOf = (t: string) =>
+  t
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 40) || "lesson";
+
 export class PromptSource implements TicketSource {
   readonly kind = "prompt" as const;
   private readonly repo: string;
@@ -39,6 +47,19 @@ export class PromptSource implements TicketSource {
       .filter((f) => f.endsWith(".md") && f > since)
       .sort()
       .map((f) => fs.readFileSync(path.join(d, f), "utf8"));
+  }
+
+  /** A retro lesson as a draft: `.kitchen/retro/drafts/<n>-<slug>.md`, found again by its key. `kitchen retro approve <n>` makes it a ticket. */
+  async draft(o: { key: string; title: string; body: string }): Promise<string> {
+    const d = draftsDir(this.repo);
+    fs.mkdirSync(d, { recursive: true });
+    const head = `<!-- kitchen:${o.key} -->`;
+    const files = fs.readdirSync(d).filter((f) => /^\d+-/.test(f)); // approved drafts too (renamed .approved)
+    const had = files.find((f) => fs.readFileSync(path.join(d, f), "utf8").startsWith(head));
+    if (had) return `draft:${had.split("-")[0]}`;
+    const n = String(files.length + 1).padStart(3, "0");
+    writeAtomic(path.join(d, `${n}-${slugOf(o.title)}.md`), `${head}\n# ${o.title.trim()}\n\n${o.body.trim()}\n`);
+    return `draft:${n}`;
   }
 
   /** `kitchen feedback` on a needs-info job: store the operator's answer. */

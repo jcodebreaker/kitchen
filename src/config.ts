@@ -42,6 +42,8 @@ const DEFAULT_MODELS: Record<"claude" | "codex" | "fake", Record<ModelTier, stri
 
 export const ConfigSchema = z
   .object({
+    /** The schema version (`kitchen migrate`, src/migrate/migrate.ts CONFIG_VERSION). Absent: 0, before 0.1. */
+    version: z.literal(1).optional(),
     concurrency: z.number().int().min(1).max(32).default(2),
     round_limit: z.number().int().min(1).max(20).default(3),
     models: z
@@ -81,8 +83,17 @@ export const ConfigSchema = z
       .prefault({}),
     automerge: z.enum(["off", "low"]).default("off"),
     protected: z.array(z.string()).default(["kitchen.yaml"]),
+    /**
+     * The retro (src/retro/): every `every_jobs` finished jobs it mutes a review category for a lens after `mute_after`
+     * dismissals (never for the lenses in `never_mute`) and files at most `max_tickets` lesson tickets as drafts.
+     */
     retro: z
-      .object({ every_jobs: z.number().int().positive().default(5) })
+      .object({
+        every_jobs: z.number().int().positive().default(5),
+        mute_after: z.number().int().positive().default(3),
+        max_tickets: z.number().int().min(0).max(10).default(3),
+        never_mute: z.array(z.string()).default(["security"]),
+      })
       .strict()
       .prefault({}),
     checks: z.array(Check).default([]),

@@ -42,6 +42,7 @@ import type { Config } from "../../config.ts";
 import { appendLedger } from "../../ledger/append.ts";
 import { evidenceDir, sealOf } from "../../proof/job.ts";
 import { type Entry, verifyManifest } from "../../proof/manifest.ts";
+import { mutedFinding } from "../../retro/state.ts";
 import { contractOf } from "../contract.ts";
 import { effectiveRisk, type Job } from "../machine.ts";
 import { once, roundDir, writeAtomic } from "../store.ts";
@@ -391,8 +392,12 @@ export const review: StageHandler = async (ctx) => {
       return { to: "needs-human", facts: { escalate: "review-unparseable", why: still.join("; ") } };
     }
 
-    // The engine's call: what blocks, merged across lenses.
-    const judged = judge(all, anchors, dismissed);
+    // The engine's call: what blocks, merged across lenses. A category the retro muted for this lens
+    // never blocks (src/retro/retro.ts); it stays a note with the reason.
+    const judged = judge(all, anchors, dismissed).map((f) => {
+      const muted = f.blocks ? mutedFinding(ctx.repo, f) : null;
+      return muted ? { ...f, blocks: false, downgraded: muted } : f;
+    });
     const merged = dedupe(judged);
     const stats: LensStats[] = lenses.map((l) => lensStats(l, verdictOf(texts.get(l) ?? ""), judged, merged));
     writeAtomic(path.join(round, "review.md"), renderReview({ round: job.round, head, lenses, merged, stats }));

@@ -9,7 +9,7 @@
 //   never Kitchen's own comments.
 import type { Config } from "../config.ts";
 import type { Job } from "../engine/machine.ts";
-import { gh, marker } from "../forge/github.ts";
+import { gh, marker, numberOf } from "../forge/github.ts";
 import type { IncomingTicket, TicketSource } from "./source.ts";
 
 type Issue = { number: number; title: string; body: string; url: string; author?: { login?: string }; labels?: { name: string }[] };
@@ -70,6 +70,20 @@ export class GithubSource implements TicketSource {
     await gh(["issue", "comment", job.ticket.id, ...this.R(), "--body-file", "-"], {
       input: `Kitchen needs one answer before it can start on this:\n\n> ${o.text.trim().replace(/\n/g, "\n> ")}\n\nReply here; Kitchen picks the reply up on its next run.\n\n${marker(o.key)}\n`,
     });
+  }
+
+  /**
+   * A retro lesson as an issue **without** the source label: the label is the trust boundary, so Kitchen never
+   * works on its own proposal until a person labels it. Found again by its hidden key marker.
+   */
+  async draft(o: { key: string; title: string; body: string }): Promise<string> {
+    const r = await gh(["issue", "list", ...this.R(), "--state", "all", "--search", `"kitchen:${o.key}" in:body`, "--limit", "20", "--json", "number,body"], {
+      json: true,
+    });
+    const had = ((r.data as { number: number; body: string }[]) ?? []).find((i) => i.body.includes(marker(o.key)));
+    if (had) return `#${had.number}`;
+    const c = await gh(["issue", "create", ...this.R(), "--title", o.title, "--body-file", "-"], { input: `${o.body}\n\n${marker(o.key)}\n` });
+    return `#${numberOf(c.out.trim().split("\n").pop() ?? "")}`;
   }
 
   async replies(job: Job): Promise<string[]> {

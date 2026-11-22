@@ -26,6 +26,16 @@ const PKG = path.resolve(import.meta.dirname, "..", "..");
 const TEMPLATE = path.join(PKG, "toolkit-template");
 const SKILL = path.join(PKG, "skills", "kitchen", "SKILL.md");
 const ROLE = path.join(PKG, "roles", "setup.md");
+/** The /kitchen skill, the same file for both tools: .claude/skills (Claude Code) and .agents/skills (Codex). */
+export function installSkill(repo: string): string[] {
+  const files = [".claude/skills/kitchen/SKILL.md", ".agents/skills/kitchen/SKILL.md"];
+  for (const f of files) {
+    fs.mkdirSync(path.dirname(path.join(repo, f)), { recursive: true });
+    fs.copyFileSync(SKILL, path.join(repo, f));
+  }
+  return files;
+}
+
 export const SETUP_BRANCH = "kitchen/setup";
 const WT_ID = "_setup";
 const IDENTITY = { GIT_AUTHOR_NAME: "Kitchen", GIT_AUTHOR_EMAIL: "kitchen@localhost", GIT_COMMITTER_NAME: "Kitchen", GIT_COMMITTER_EMAIL: "kitchen@localhost" };
@@ -48,6 +58,9 @@ export const GITIGNORE = [
   ".kitchen/setup-questions.json",
   ".kitchen/setup-answers.json",
   ".kitchen-out/",
+  ".kitchen/retro/",
+  ".kitchen/local-forge.jsonl",
+  ".kitchen/evidence.lock",
   ".worktrees/",
 ];
 
@@ -143,6 +156,7 @@ export function readAnswers(text: string, questions: Question[]): Record<string,
 
 const KITCHEN_YAML = (tool: string) => `# Kitchen (npm package devkitchen). Every key has a default; unknown keys are refused.
 # The full list with defaults: src/config.ts in the package (ConfigSchema).
+version: 1       # the schema version; kitchen migrate raises it
 agent: { tool: ${tool} }
 concurrency: 2   # a Toolkit proven parallel:false runs one job at a time regardless
 round_limit: 3
@@ -171,11 +185,7 @@ export async function initCmd(o: InitOpts, out: Out): Promise<number> {
   }
   // 2. the /kitchen skill, the same file for both tools
   if (!done("skills")) {
-    const files = [".claude/skills/kitchen/SKILL.md", ".agents/skills/kitchen/SKILL.md"];
-    for (const f of files) {
-      fs.mkdirSync(path.dirname(path.join(repo, f)), { recursive: true });
-      fs.copyFileSync(SKILL, path.join(repo, f));
-    }
+    const files = installSkill(repo);
     st.steps.skills = { files };
     save();
     say(`skill installed: ${files.join(", ")}`);
@@ -224,6 +234,9 @@ export async function initCmd(o: InitOpts, out: Out): Promise<number> {
     let copied = false;
     if (!existing && !fs.existsSync(path.join(wt, ".kitchen", "toolkit", "bin", "dev"))) {
       fs.cpSync(TEMPLATE, path.join(wt, ".kitchen", "toolkit"), { recursive: true });
+      // npm leaves .gitignore files out of a package: the template's one is written here.
+      const gi = path.join(wt, ".kitchen", "toolkit", ".gitignore");
+      if (!fs.existsSync(gi)) fs.writeFileSync(gi, "node_modules/\n");
       copied = true;
     }
     st.steps.template = { copied, existing };

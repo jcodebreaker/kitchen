@@ -17,6 +17,7 @@ import path from "node:path";
 import type { Job } from "../engine/machine.ts";
 import { readLocalForge } from "../forge/forge.ts";
 import { appendLedger, readLedger } from "../ledger/append.ts";
+import { measures } from "../ledger/measures.ts";
 import { runOracle } from "./oracle.ts";
 import { agentYaml, FIXTURES, makeBenchRepo, mergeToolkitBranch } from "./repo.ts";
 import { type BenchTicket, loadSet, pick, type Tier } from "./set.ts";
@@ -55,6 +56,10 @@ export type RunResult = {
   correct: boolean;
   rounds: number;
   verifyFails: number;
+  /** Verify proof runs (W5 `proof` ledger lines), how many were INCONCLUSIVE, and the (HEAD, criterion) groups that both passed and failed: a flaky drive. */
+  proofRuns?: number;
+  inconclusive?: number;
+  flaky?: number;
   secs: number;
   usd: number;
   path: string;
@@ -98,9 +103,10 @@ function jobIdOf(repo: string): string | null {
   return fs.existsSync(d) ? (fs.readdirSync(d).find((x) => /^\d{3,}-/.test(x)) ?? null) : null;
 }
 
-/** Ledger facts of one job: cost, the stage path, verify FAILs. */
-function jobFacts(repo: string, id: string): { usd: number; path: string; verifyFails: number } {
+/** Ledger facts of one job: cost, the stage path, verify FAILs, INCONCLUSIVE and flaky proofs. */
+function jobFacts(repo: string, id: string): { usd: number; path: string; verifyFails: number; proofRuns: number; inconclusive: number; flaky: number } {
   const lines = readLedger(repo).filter((l) => l.job === id);
+  const m = measures(lines);
   const usd = lines.filter((l) => l.event === "agent").reduce((n, l) => n + (l.usd ?? 0), 0);
   const moves = lines.filter((l) => l.event === "move");
   const stages = moves.length ? [moves[0].stage, ...moves.map((m) => String(m.result))] : [];
@@ -110,7 +116,7 @@ function jobFacts(repo: string, id: string): { usd: number; path: string; verify
     for (const r of fs.readdirSync(rounds))
       for (const f of fs.readdirSync(path.join(rounds, r)).filter((x) => /^verdict-m\d+\.md$/.test(x)))
         if (/^VERDICT:\s*FAIL/m.test(fs.readFileSync(path.join(rounds, r, f), "utf8"))) verifyFails++;
-  return { usd, path: stages.join(" → "), verifyFails };
+  return { usd, path: stages.join(" → "), verifyFails, proofRuns: m.proofs.runs, inconclusive: m.proofs.inconclusive, flaky: m.proofs.flakyGroups };
 }
 
 async function runOne(o: BenchOpts, t: BenchTicket, n: number, home: string): Promise<RunResult> {
@@ -208,6 +214,9 @@ async function runOne(o: BenchOpts, t: BenchTicket, n: number, home: string): Pr
     correct,
     rounds: job.round,
     verifyFails: facts.verifyFails,
+    proofRuns: facts.proofRuns,
+    inconclusive: facts.inconclusive,
+    flaky: facts.flaky,
     secs: Math.round((Date.now() - t0) / 1000),
     usd: Math.round(facts.usd * 1000) / 1000,
     path: facts.path,
@@ -225,6 +234,8 @@ export type Summary = {
   heldout: { runs: number; correct: number };
   usd: number;
   secs: number;
+  /** Over the runs that recorded proof lines (W5 on); null when none did. */
+  proofs: { runs: number; inconclusive: number; flaky: number } | null;
 };
 
 /** Pure: the §0.2 numbers from the results. */
@@ -242,7 +253,21 @@ export function summarize(rs: RunResult[]): Summary {
     heldout: rate(rs.filter((r) => r.set === "heldout")),
     usd: Math.round(rs.reduce((n, r) => n + r.usd, 0) * 1000) / 1000,
     secs: rs.reduce((n, r) => n + r.secs, 0),
+    proofs: rs.some((r) => r.proofRuns !== undefined)
+      ? {
+          runs: rs.reduce((n, r) => n + (r.proofRuns ?? 0), 0),
+          inconclusive: rs.reduce((n, r) => n + (r.inconclusive ?? 0), 0),
+          flaky: rs.reduce((n, r) => n + (r.flaky ?? 0), 0),
+        }
+      : null,
   };
+}
+
+/** Pure: "INCONCLUSIVE 1/40 (3%), flaky 0" or why there is no count. */
+export function proofsLine(p: Summary["proofs"]): string {
+  if (!p) return "INCONCLUSIVE and flake: not counted (run before W5's proof ledger lines)";
+  const pc = (a: number) => (p.runs ? `${Math.round((100 * a) / p.runs)}%` : "n/a");
+  return `INCONCLUSIVE ${p.inconclusive}/${p.runs} proof runs (${pc(p.inconclusive)}), flaky ${p.flaky} (${pc(p.flaky)})`;
 }
 
 /** Pure: the results page. */
@@ -252,7 +277,7 @@ export function resultsMarkdown(o: { tier: string; tool: string; date: string; r
   return [
     `# Bench ${o.tier} on ${o.tool}, ${o.date}`,
     "",
-    `${s.correct}/${s.runs} runs correct (${pct(s.correct, s.runs)}). Traps caught ${s.traps.caught}/${s.traps.runs}. False FAILs on controls: ${s.controls.falseFails} over ${s.controls.runs} runs. Tuned ${pct(s.tuned.correct, s.tuned.runs)} (${s.tuned.correct}/${s.tuned.runs}), held-out ${pct(s.heldout.correct, s.heldout.runs)} (${s.heldout.correct}/${s.heldout.runs}). Agent cost $${s.usd.toFixed(2)}; ticket time ${Math.round(s.secs / 60)} min; wall clock ${Math.round(o.wallSecs / 60)} min.`,
+    `${s.correct}/${s.runs} runs correct (${pct(s.correct, s.runs)}). Traps caught ${s.traps.caught}/${s.traps.runs}. False FAILs on controls: ${s.controls.falseFails} over ${s.controls.runs} runs. Tuned ${pct(s.tuned.correct, s.tuned.runs)} (${s.tuned.correct}/${s.tuned.runs}), held-out ${pct(s.heldout.correct, s.heldout.runs)} (${s.heldout.correct}/${s.heldout.runs}). ${proofsLine(s.proofs)}. Agent cost $${s.usd.toFixed(2)}; ticket time ${Math.round(s.secs / 60)} min; wall clock ${Math.round(o.wallSecs / 60)} min.`,
     "",
     "| ticket | set | kind | expected | actual | oracle | correct | rounds | verify FAILs | time | cost | path |",
     "|---|---|---|---|---|---|---|---|---|---|---|---|",
@@ -375,7 +400,7 @@ export function benchReport(repo: string): string[] {
     const s = summarize(rs);
     const med = (xs: number[]) => (xs.length ? [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)] : 0);
     out.push(
-      `${runId}: ${s.correct}/${s.runs} correct, traps ${s.traps.caught}/${s.traps.runs}, control false FAILs ${s.controls.falseFails}, tuned ${s.tuned.correct}/${s.tuned.runs}, held-out ${s.heldout.correct}/${s.heldout.runs}, $${s.usd.toFixed(2)} total, median ${med(rs.map((r) => r.secs))} s and $${med(rs.map((r) => r.usd)).toFixed(3)} per ticket`,
+      `${runId}: ${s.correct}/${s.runs} correct, traps ${s.traps.caught}/${s.traps.runs}, control false FAILs ${s.controls.falseFails}, tuned ${s.tuned.correct}/${s.tuned.runs}, held-out ${s.heldout.correct}/${s.heldout.runs}, $${s.usd.toFixed(2)} total, median ${med(rs.map((r) => r.secs))} s and $${med(rs.map((r) => r.usd)).toFixed(3)} per ticket; ${proofsLine(s.proofs)}`,
     );
     for (const r of rs)
       out.push(

@@ -1,5 +1,5 @@
-// `kitchen report` (W1): counts per stage and per event from the de-duplicated ledger.
-// The full report (rates, time and cost per path, flake rate) comes in W5.
+// Raw counts per stage and per event from the de-duplicated ledger (the tail of `kitchen report`),
+// and time and cost per stage for one job's Report. The §0 measures are measures.ts.
 import type { LedgerLine } from "./append.ts";
 
 export type Counts = { lines: number; jobs: number; byEvent: Record<string, number>; byStage: Record<string, Record<string, number>>; usd: number };

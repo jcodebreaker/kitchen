@@ -18,6 +18,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { type ArgsDelta, decideVerdict, type ProofRecord, renderVerdict } from "../../checks/verdict.ts";
+import { appendLedger } from "../../ledger/append.ts";
+import { drivesOf } from "../../ledger/measures.ts";
 import { isJudged } from "../../proof/assert.ts";
 import { evidenceDir, sealOf } from "../../proof/job.ts";
 import { type Entry, verifyManifest } from "../../proof/manifest.ts";
@@ -93,6 +95,16 @@ export const verify: StageHandler = async (ctx) => {
       else result = "FAIL";
       proofs.push({ criterion: c.id, result, ...(p.why ? { why: p.why } : {}), ...(p.gap ? { gap: p.gap } : {}), evidence: p.evidence });
       save();
+      // One line per proof run, so `kitchen report` can count INCONCLUSIVE and flaky drives (§0).
+      appendLedger(ctx.repo, {
+        job: job.id,
+        stage: "verify",
+        round: job.round,
+        event: "proof",
+        key: `${job.id}/m${moves}/proof/${c.id}`,
+        result,
+        detail: { criterion: c.id, drives: drivesOf(c.proof), head, ...(p.gap ? { gap: p.gap } : {}) },
+      });
       ctx.log(`${c.id} ${isJudged(c.expect) ? "(judged: evidence) " : ""}${result}${p.why ? `: ${p.why}` : ""}`);
       job = ctx.refresh();
     }
