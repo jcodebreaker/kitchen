@@ -135,6 +135,33 @@ export const repro: StageHandler = async (ctx) => {
     );
   } else why = !onBase ? `the branch differs from the base by more than the repro files: ${diff.join(", ")}` : `not committed: ${missing().join(", ")}`;
   ctx.log(`repro ${crit.id}: ${why}`);
+  // On try 1 the contract itself is the problem when its own proof (nothing for the repro role to write) ran on the
+  // base and can't show the bug as written (a step failed before the expect was read, or the expect held), or when
+  // the repro role could not write what the contract names (a drive the Toolkit can't express, with no primitive
+  // gap named). The repro role can't change the contract, so its author (intake, or spec above low risk) rewrites it
+  // once, with the evidence and the role's note, like a spec-lint refusal; then the usual two tries, then
+  // needs-info. A drive or test the repro role did write but got wrong gets its retry first.
+  const contractAtFault = need.length ? !committed && !gap : onBase && committed && !failedAsExpected;
+  const contractProblem = n === 1 && contractAtFault && (job.attempts.contract ?? 0) === 0 ? why : undefined;
+  if (contractProblem) {
+    const file = job.risk === "low" ? "intake-refused.md" : "spec-refused.md";
+    const own = job.risk === "low" ? "intake.md" : "spec.md";
+    writeAtomic(
+      path.join(ctx.jobDir, file),
+      [
+        `REASON: the repro criterion ${crit.id} could not reproduce the bug on the base (${job.base.slice(0, 12)}): ${why}`,
+        "",
+        'Kitchen ran its proof, exactly as written, on a fresh app from the base. A repro must run every step there and end with its expect FALSE: that is the bug, shown. A step that fails before the expect is read is a broken proof, not a reproduction (an `http` answered with a 4xx fails its step unless `--expect_status` names that status; `read --equals` and a pinned `--expect_exit` fail the step too): read the value instead (`toolkit read --target status --save code`) and put the right value in the expect (`$code == "201"`), which the bug makes false. An expect that already holds on the base does not test the bug the ticket reports: find what goes wrong and assert the right behaviour. When the repro role could not write a drive the proof names (its note says why: the Toolkit cannot express it), use what exists instead (a seeded value typed as a literal, an existing drive or primitive). Rewrite the criteria (keep the requirements unless they were wrong).',
+        "",
+        ...lastAttempt(ctx.jobDir, n).map((b) => `## ${b.title}\n\n${b.body}`),
+        "",
+        `## Your ${own}`,
+        "",
+        fs.existsSync(path.join(ctx.jobDir, own)) ? fs.readFileSync(path.join(ctx.jobDir, own), "utf8") : "",
+      ].join("\n"),
+    );
+    return { to: job.risk === "low" ? "intake" : "spec", facts: { repro: { failedAsExpected, onBase, committed, contractProblem } }, note: why };
+  }
   const to = failedAsExpected ? "build" : job.attempts.repro + 1 < 2 ? "repro" : "needs-info";
   if (to === "needs-info")
     await ctx.source.ask(job, {

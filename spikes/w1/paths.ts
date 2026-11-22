@@ -54,11 +54,12 @@ const expectPath = (label: string, r: Repo, id: string, want: string) => check(`
 
 // 3. REMOVED (W3a): "bug via repro, not reproduced once, then reproduced" relied on the W1 repro stub;
 //    repro now runs the proof itself on the base. Ported to fixture A: spikes/w3a/paths.ts repro-retry.
-// 3b. low-risk bug: straight to repro; no reproduction after 2 tries → needs-info
+// 3b. low-risk bug: straight to repro; the contract can't reproduce on try 1, so intake rewrites it once
+//     (the repro contract loop, spikes/regression); still no reproduction after 2 tries → needs-info
 {
   const { r, id } = scenario("bug-lost");
   run(r);
-  expectPath("bug (low) not reproduced", r, id, "intake → repro → repro → needs-info");
+  expectPath("bug (low) not reproduced", r, id, "intake → repro → intake → repro → repro → needs-info");
   check("bug-lost: question.md for the author", fs.existsSync(path.join(jobDir(r, id), "question.md")));
 }
 

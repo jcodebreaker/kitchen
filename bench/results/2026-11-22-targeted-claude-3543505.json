@@ -1,0 +1,198 @@
+{
+  "runId": "2026-11-22-full-claude-24879",
+  "kitchen": {
+    "sha": "3543505fd38d1f63bd6a5f55ae76a59d3466c4ed",
+    "dirty": false
+  },
+  "tier": "full",
+  "tool": "claude",
+  "results": [
+    {
+      "ticket": "b-stats-overdue",
+      "fixture": "b-cli",
+      "set": "tuned",
+      "kind": "bug",
+      "trap": false,
+      "control": false,
+      "run": 1,
+      "expected": [
+        "done"
+      ],
+      "job": "001-tasks-stats-says-i-have-overdue-tasks-ev",
+      "outcome": "done",
+      "oracle": "pass",
+      "oracleDetail": "C1 pass",
+      "toolkitPr": false,
+      "correct": true,
+      "drives": [
+        {
+          "drive": "primitive:cli",
+          "verifies": 2,
+          "inconclusive": 0,
+          "runs": 11,
+          "passed": 11,
+          "failed": 0,
+          "flaky": false
+        },
+        {
+          "drive": "primitive:seed",
+          "verifies": 2,
+          "inconclusive": 0,
+          "runs": 7,
+          "passed": 7,
+          "failed": 0,
+          "flaky": false
+        }
+      ],
+      "rounds": 1,
+      "verifyFails": 0,
+      "proofRuns": 2,
+      "inconclusive": 0,
+      "flaky": 0,
+      "secs": 42,
+      "usd": 0.161,
+      "path": "intake → repro → build → gate → drives → verify → review → ready → report → done"
+    },
+    {
+      "ticket": "d-qty-100",
+      "fixture": "d-api",
+      "set": "heldout",
+      "kind": "bug",
+      "trap": false,
+      "control": false,
+      "run": 1,
+      "expected": [
+        "done"
+      ],
+      "job": "001-an-order-for-exactly-100-of-one-item-is",
+      "outcome": "done",
+      "oracle": "pass",
+      "oracleDetail": "C1 pass",
+      "toolkitPr": false,
+      "correct": true,
+      "drives": [],
+      "rounds": 1,
+      "verifyFails": 0,
+      "proofRuns": 2,
+      "inconclusive": 0,
+      "flaky": 0,
+      "secs": 42,
+      "usd": 0.159,
+      "path": "intake → repro → build → gate → drives → verify → review → ready → report → done"
+    },
+    {
+      "ticket": "d-control-version",
+      "fixture": "d-api",
+      "set": "heldout",
+      "kind": "control",
+      "trap": false,
+      "control": true,
+      "run": 1,
+      "expected": [
+        "done"
+      ],
+      "job": "001-get-healthz-should-also-report-the-servi",
+      "outcome": "done",
+      "oracle": "pass",
+      "oracleDetail": "C1 pass",
+      "toolkitPr": false,
+      "correct": true,
+      "drives": [
+        {
+          "drive": "primitive:http",
+          "verifies": 2,
+          "inconclusive": 0,
+          "runs": 6,
+          "passed": 6,
+          "failed": 0,
+          "flaky": false
+        },
+        {
+          "drive": "primitive:read",
+          "verifies": 2,
+          "inconclusive": 0,
+          "runs": 9,
+          "passed": 8,
+          "failed": 1,
+          "flaky": true
+        }
+      ],
+      "rounds": 1,
+      "verifyFails": 0,
+      "proofRuns": 2,
+      "inconclusive": 0,
+      "flaky": 0,
+      "secs": 52,
+      "usd": 0.18,
+      "path": "intake → build → gate → drives → verify → review → ready → report → done"
+    }
+  ],
+  "skipped": [],
+  "summary": {
+    "runs": 3,
+    "correct": 3,
+    "rate": 1,
+    "traps": {
+      "runs": 0,
+      "caught": 0
+    },
+    "controls": {
+      "runs": 1,
+      "falseFails": 0
+    },
+    "tuned": {
+      "runs": 1,
+      "correct": 1
+    },
+    "heldout": {
+      "runs": 2,
+      "correct": 2
+    },
+    "usd": 0.5,
+    "secs": 136,
+    "proofs": {
+      "runs": 6,
+      "inconclusive": 0,
+      "flaky": 0
+    },
+    "oracleRetries": 0,
+    "drives": [
+      {
+        "fixture": "b-cli",
+        "drive": "primitive:cli",
+        "jobs": 1,
+        "verifies": 2,
+        "inconclusive": 0,
+        "runs": 11,
+        "flakyJobs": 0
+      },
+      {
+        "fixture": "b-cli",
+        "drive": "primitive:seed",
+        "jobs": 1,
+        "verifies": 2,
+        "inconclusive": 0,
+        "runs": 7,
+        "flakyJobs": 0
+      },
+      {
+        "fixture": "d-api",
+        "drive": "primitive:http",
+        "jobs": 1,
+        "verifies": 2,
+        "inconclusive": 0,
+        "runs": 6,
+        "flakyJobs": 0
+      },
+      {
+        "fixture": "d-api",
+        "drive": "primitive:read",
+        "jobs": 1,
+        "verifies": 2,
+        "inconclusive": 0,
+        "runs": 9,
+        "flakyJobs": 1
+      }
+    ]
+  }
+}

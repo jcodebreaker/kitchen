@@ -11,7 +11,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import { prComment, type ReportEntry, type ReportFacts, renderReport, shortCmd } from "../../checks/report-render.ts";
-import { parseRequirements } from "../../checks/spec-lint.ts";
 import { appendLedger, readLedger } from "../../ledger/append.ts";
 import { stageCosts } from "../../ledger/report.ts";
 import { evidenceDir, sealOf } from "../../proof/job.ts";
@@ -22,6 +21,7 @@ import { effectiveRisk, type Job } from "../machine.ts";
 import { listJobs, once, roundDir, writeAtomic } from "../store.ts";
 import { commitLog, diffPatch, diffStat, headOf } from "../worktree.ts";
 import { nonDiscriminating } from "./base-check.ts";
+import { jobRequirements } from "./context.ts";
 import { prompt } from "./prompts.ts";
 import { lastVerdictFile } from "./review.ts";
 import { runRole } from "./role.ts";
@@ -77,7 +77,6 @@ type ReviewJson = {
 
 /** Everything the engine says in the report, from the job's files and the ledger, never from the agent. */
 async function factsOf(repoDir: string, jobDir: string, job: Job, head: string, humanMustCheck: boolean): Promise<ReportFacts> {
-  const intake = fs.existsSync(path.join(jobDir, "intake.md")) ? fs.readFileSync(path.join(jobDir, "intake.md"), "utf8") : "";
   const contract = contractOf(jobDir);
   const weak = contract && job.kind !== "bug" ? nonDiscriminating(jobDir, contract.criteria) : [];
   const rs = rounds(jobDir);
@@ -118,7 +117,7 @@ async function factsOf(repoDir: string, jobDir: string, job: Job, head: string, 
     head,
     verdict: /^VERDICT:\s*(\S+)/m.exec(vText)?.[1] ?? "none",
     humanMustCheck,
-    requirements: parseRequirements(intake),
+    requirements: jobRequirements(jobDir),
     criteria: (contract?.criteria ?? []).map((c) => {
       const r = rows.find((x) => x.id === c.id);
       return {

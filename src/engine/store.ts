@@ -114,6 +114,7 @@ export const JobSchema = z.looseObject({
     backoff: Count,
     errors: Count,
     refused: Count,
+    contract: Count.optional(),
   }),
   smith: z.object({ attempts: Count, toolkitPr: z.number().int().nullable() }),
   toolkitTicketRef: z.string().nullable(),

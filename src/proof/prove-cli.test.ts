@@ -84,3 +84,12 @@ test("an expect that says nothing about exit still requires exit 0, as a cmd pro
   unknownExit = "0";
   assert.equal((await run('contains "unknown command"')).status, "pass");
 });
+
+test("a cli step's output: json/rows/--save read stdout, contains reads stdout and stderr, exit the code (b-done-many: `json .open` read the wrapper)", async () => {
+  const list = (expect: string) => prove({ jobDir: dir, criterion: { id: "C1", proof: "toolkit cli --argv list", expect }, role: "engine", testCmd: "true" });
+  assert.equal((await list('contains "1 Buy milk"')).status, "pass");
+  assert.equal((await list('not contains "stdout"')).status, "pass", "the wrapper's keys are not the output");
+  assert.equal((await list("rows == 1")).status, "pass", "one line of stdout");
+  unknownExit = "1";
+  assert.equal((await run('exit 1 and contains "unknown command: frobnicate"')).status, "pass", "stderr shows too");
+});

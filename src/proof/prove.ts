@@ -88,6 +88,13 @@ export async function prove(o: ProveOpts): Promise<ProveResult> {
   if (segs[0].kind !== "toolkit" && !judged && !clauses.some((x) => x.kind === "exit")) clauses = [...parseExpect("exit 0"), ...clauses];
   const common = { jobDir: o.jobDir, criterion: o.stampAs ?? c.id, role: o.role, tag: o.tag, source: o.source };
   let lastExit: number | null = null;
+  // A command step's output is {exit, stdout, stderr} (the cli primitive): `json`, `rows` and `--save` read its
+  // stdout, `contains` what the terminal shows (stdout and stderr), `exit` its exit code.
+  const setOutput = (out: unknown) => {
+    const cmd = commandOut(out);
+    outcome.output = cmd ? cmd.stdout : text(out);
+    outcome.shown = cmd ? [cmd.stdout, cmd.stderr].filter((x) => x.trim()).join("\n") : undefined;
+  };
   try {
     if (segs[0].kind === "toolkit") {
       for (const s of segs) {
@@ -98,11 +105,11 @@ export async function prove(o: ProveOpts): Promise<ProveResult> {
         const r = await runDrive({ ...common, request: s.drive ? { feature: s.name, args: used } : { primitive: s.name, args: used }, log: o.log });
         evidence.push(...r.steps.flatMap((x) => x.evidence));
         Object.assign(outcome.vars, r.vars);
-        outcome.output = text(r.steps.at(-1)?.out);
+        setOutput(r.steps.at(-1)?.out);
         for (const st of r.steps) if (exitOf(st.out) !== null) lastExit = exitOf(st.out);
         if (r.gap) return res("gap", { gap: r.gap, why: `the Toolkit has no primitive ${r.gap}` });
         if (!r.ok) {
-          outcome.output = text(r.failedAt?.out);
+          setOutput(r.failedAt?.out);
           const waitTimedOut = r.failedAt?.wait !== undefined && !r.failedAt.why;
           return res("step-failed", {
             why: `${s.name}: step "${r.failedAt?.step}" failed${r.failedAt?.why ? ` (${r.failedAt.why})` : ""}`,
@@ -139,8 +146,14 @@ export async function prove(o: ProveOpts): Promise<ProveResult> {
       evidence.push(r.id);
       outcome.exit = r.exit;
       outcome.ok = r.exit === 0;
-      const out = path.join(evidenceDir(o.jobDir), r.id, "stdout.txt");
-      outcome.output = fs.existsSync(out) ? fs.readFileSync(out, "utf8") : r.tail;
+      // As for a cli step: `json`/`rows` read stdout, `contains` what the terminal shows (stdout and stderr).
+      const read = (f: string) => {
+        const file = path.join(evidenceDir(o.jobDir), r.id, f);
+        return fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null;
+      };
+      const stdout = read("stdout.txt");
+      outcome.output = stdout ?? r.tail;
+      if (stdout !== null) outcome.shown = [stdout, read("stderr.txt") ?? ""].filter((x) => x.trim()).join("\n");
       if (r.timedOut) return res("step-failed", { why: `timed out after ${o.timeoutSec ?? 600}s` });
     }
   } catch (e) {
@@ -150,6 +163,15 @@ export async function prove(o: ProveOpts): Promise<ProveResult> {
   if (judged) return res("pass");
   const a = evaluate(clauses, outcome);
   return res(a.pass ? "pass" : "assert-fail", { assert: a, ...(a.why ? { why: a.why } : {}) });
+}
+
+/** A command step's output (`{exit, stdout, stderr}`, the cli primitive), or null. */
+export function commandOut(out: unknown): { exit: number; stdout: string; stderr: string } | null {
+  const exit = exitOf(out);
+  if (exit === null) return null;
+  const o = out as { stdout?: unknown; stderr?: unknown };
+  if (typeof o.stdout !== "string" && typeof o.stderr !== "string") return null;
+  return { exit, stdout: typeof o.stdout === "string" ? o.stdout : "", stderr: typeof o.stderr === "string" ? o.stderr : "" };
 }
 
 /** The exit code a command step reported (`{exit, stdout, stderr}`, the cli primitive), or null. */

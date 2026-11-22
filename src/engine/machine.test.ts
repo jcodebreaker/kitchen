@@ -218,6 +218,34 @@ const cases: Case[] = [
     facts: f({ repro: { failedAsExpected: false, onBase: true, committed: false } }),
     refused: /only 1 try/,
   },
+  {
+    row: "repro>intake",
+    job: { stage: "repro", risk: "low", attempts: { ...baseJob().attempts, repro: 1 } },
+    to: "intake",
+    facts: f({ repro: { failedAsExpected: false, onBase: true, committed: true, contractProblem: 'step-failed: http: step "http" failed' } }),
+    expect: (j) => assert.deepEqual([j.attempts.contract, j.attempts.repro], [1, 0]),
+  },
+  {
+    row: "repro>intake",
+    job: { stage: "repro", risk: "low", attempts: { ...baseJob().attempts, contract: 1 } },
+    to: "intake",
+    facts: f({ repro: { failedAsExpected: false, onBase: true, committed: true, contractProblem: "x" } }),
+    refused: /already sent back once/,
+  },
+  {
+    row: "repro>spec",
+    job: { stage: "repro", risk: "medium" },
+    to: "spec",
+    facts: f({ repro: { failedAsExpected: false, onBase: true, committed: true, contractProblem: "the expect holds on the base" } }),
+    expect: (j) => assert.equal(j.attempts.contract, 1),
+  },
+  {
+    row: "repro>spec",
+    job: { stage: "repro", risk: "low" },
+    to: "spec",
+    facts: f({ repro: { failedAsExpected: false, onBase: true, committed: true, contractProblem: "x" } }),
+    refused: /the contract is intake's/,
+  },
   // build
   {
     row: "build>gate",

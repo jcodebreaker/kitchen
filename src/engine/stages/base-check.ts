@@ -16,8 +16,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { checksPrepareOf } from "../../checks/run-checks.ts";
-import { type Criterion, guardCriteria, parseRequirements } from "../../checks/spec-lint.ts";
-import { isJudged } from "../../proof/assert.ts";
+import { type BaseNegative, type Criterion, guardCriteria } from "../../checks/spec-lint.ts";
+import { type ClauseResult, isJudged } from "../../proof/assert.ts";
 import { prove } from "../../proof/prove.ts";
 import { namedDrives, testFilesOf } from "../contract.ts";
 import { linkedWorktree, openGit, plainCheckout } from "../git.ts";
@@ -25,10 +25,11 @@ import { freshUp, resetUp } from "../instance.ts";
 import type { Job } from "../machine.ts";
 import { writeAtomic } from "../store.ts";
 import { changedFiles, headOf } from "../worktree.ts";
+import { jobRequirements } from "./context.ts";
 import { FEATURES_DIR, featureDrives, hasToolkit } from "./toolkit-info.ts";
 import type { StageContext } from "./types.ts";
 
-export type BaseResult = { criterion: string; status: string; why?: string; evidence: string[] };
+export type BaseResult = { criterion: string; status: string; why?: string; evidence: string[]; clauses?: ClauseResult[] };
 export type BaseCheck = {
   head: string;
   /** The criteria checked, as written: a changed contract is checked again. */
@@ -41,10 +42,53 @@ export type BaseCheck = {
   afterDrives?: { head: string; files: string[]; results: BaseResult[]; passing: string[] };
 };
 
-/** The contract's regression guards, from intake.md's `(unchanged)` requirements. */
+/** The contract's regression guards, from the `(unchanged)` requirements (intake.md's, with the spec's re-marks). */
 function guardsOf(jobDir: string, criteria: Criterion[]): string[] {
-  const f = path.join(jobDir, "intake.md");
-  return guardCriteria(criteria, parseRequirements(fs.existsSync(f) ? fs.readFileSync(f, "utf8") : ""));
+  return guardCriteria(criteria, jobRequirements(jobDir));
+}
+
+/**
+ * spec-lint rule 3 (c): a negative clause no earlier step backs counts only when the base shows the thing,
+ * i.e. the clause is FALSE on the base (the old heading, the wrong total, the error the change removes is
+ * there before it). One line per clause that the base doesn't back: it held there too (it holds whatever
+ * the code does), or its proof couldn't run on the base. Pure.
+ */
+export function baseNegativeProblems(pending: BaseNegative[], b: BaseCheck | null): string[] {
+  if (!b) return [];
+  const out: string[] = [];
+  const how =
+    'If the requirement means existing behaviour stays as it is, mark it `(unchanged)` (intake: in its `## Requirements`; the spec: re-mark it in its own `## Requirements`, `- R4 (unchanged): … — why`) and prove it positively (the same output, `$x == …`); if something must disappear, make it show first in an earlier step of the same proof (its text as an arg: `toolkit <feature>.create --name "<text>" ; … ; open --path /list`), or read a value after a step that makes something and assert `$v != "<the wrong value>"`';
+  for (const n of pending) {
+    const skipped = b.skipped.find((s) => s.criterion === n.criterion);
+    const r = b.results.find((x) => x.criterion === n.criterion);
+    if (skipped)
+      out.push(`${n.criterion}: \`${n.clause}\` can't be checked on the base (${skipped.why}), so nothing shows the thing is there before the change. ${how}`);
+    else if (!r) continue;
+    else if (r.status !== "pass" && r.status !== "assert-fail")
+      out.push(
+        `${n.criterion}: \`${n.clause}\`: the proof doesn't run on the base (${r.why ?? r.status}), so nothing shows the thing is there before the change: put this negative in a criterion whose every step runs on the current code (check the new behaviour in another criterion). ${how}`,
+      );
+    else if (r.clauses?.find((c) => c.clause === n.clause)?.pass)
+      out.push(
+        `${n.criterion}: \`${n.clause}\` already holds on the base, before any change (evidence ${r.evidence.join(" ")}): the thing never shows there, so its absence proves nothing. ${how}`,
+      );
+  }
+  return out;
+}
+
+/**
+ * A regression guard (a criterion covering only `(unchanged)` requirements) states what the current code
+ * already does, so it must hold on the base. One that fails there misreads the current behaviour (the wrong
+ * output shape, a value the code never gives) and would fail a correct build: one line per such guard. Pure.
+ */
+export function guardBaseProblems(guards: string[], b: BaseCheck | null): string[] {
+  if (!b) return [];
+  return b.results
+    .filter((r) => guards.includes(r.criterion) && r.status !== "pass")
+    .map(
+      (r) =>
+        `${r.criterion} guards existing behaviour (it covers only \`(unchanged)\` requirements) but fails on the current code (${r.why ?? r.status}; evidence ${r.evidence.join(" ")}): a guard must hold before the change. Assert what the current code really gives: read the proof's last output as it is (an \`http\` step's output is \`{status, body}\`: \`json .body.ok\`; a drive's output is its last step's), and use the values the current code shows`,
+    );
 }
 
 export const baseCheckFile = (jobDir: string) => path.join(jobDir, "base-check.json");
@@ -126,7 +170,13 @@ export async function runBaseCheckAfterDrives(ctx: StageContext, job: Job, crite
           source: { worktree: source.workTree, gitDir: source.gitDir },
           log: (m) => ctx.log(`[base after drives] ${m}`),
         });
-        out.results.push({ criterion: c.id, status: p.status, ...(p.why ? { why: p.why } : {}), evidence: p.evidence });
+        out.results.push({
+          criterion: c.id,
+          status: p.status,
+          ...(p.why ? { why: p.why } : {}),
+          evidence: p.evidence,
+          ...(p.assert ? { clauses: p.assert.results } : {}),
+        });
         if (p.status === "pass" && !guards.includes(c.id)) out.passing.push(c.id);
       }
     }
@@ -178,7 +228,13 @@ export async function runBaseCheck(ctx: StageContext, job: Job, criteria: Criter
         tag: { phase: "base" },
         log: (m) => ctx.log(`[base] ${m}`),
       });
-      out.results.push({ criterion: c.id, status: p.status, ...(p.why ? { why: p.why } : {}), evidence: p.evidence });
+      out.results.push({
+        criterion: c.id,
+        status: p.status,
+        ...(p.why ? { why: p.why } : {}),
+        evidence: p.evidence,
+        ...(p.assert ? { clauses: p.assert.results } : {}),
+      });
       if (p.status === "pass" && !guards.includes(c.id)) out.passing.push(c.id);
     }
   }

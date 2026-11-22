@@ -6,8 +6,8 @@
 //   exit 0 · exit != 0 · exit code 1  the cmd/test exit code, or the last command step's (the cli primitive)
 //   text "Saved" visible              the page's body text contains it (the engine reads `body` after the proof)
 //   text "Error" not visible
-//   contains "dark" · not contains "x" the proof's last output contains it
-//   json .theme == "dark"             a JSON path into the last output
+//   contains "dark" · not contains "x" the proof's last output contains it (a command step: its stdout or stderr)
+//   json .theme == "dark"             a JSON path into the last output (a command step: its stdout)
 //   json $me.body.theme == "dark"     … or into a saved var (a drive's `save:`)
 //   rows == 3 · rows $list >= 1 · row count 2   length of a JSON array (or of `rows`/`body` in an object; else non-empty lines)
 //   $theme == "Dark" · $theme != "Light" · $me contains "dark"
@@ -18,8 +18,10 @@ export type Outcome = {
   /** Every step ran ok (toolkit) / the command exited 0. */
   ok: boolean;
   exit: number;
-  /** The last step's output (a string, or JSON text). */
+  /** The last step's output (a string, or JSON text; a command step's stdout). */
   output: string;
+  /** What `contains` reads when it differs from `output`: a command step's stdout and stderr, as a terminal shows them. */
+  shown?: string;
   vars: Record<string, string>;
   /** `body` text read after the proof, for `text … visible`. */
   pageText?: string;
@@ -240,19 +242,25 @@ export type AssertResult = { pass: boolean; results: ClauseResult[]; why?: strin
 /** Words of a page that failed (an error, not-found or no-access page): absence of anything there proves nothing. */
 const ERROR_PAGE =
   /\b(not found|page not found|404|403|500|forbidden|access denied|permission denied|unauthori[sz]ed|internal server error|server error|bad request|admins only|something went wrong)\b/i;
-/** Why a negative clause can't hold on this page or response (it failed, or is empty), or null. */
-export function failedSubject(text: string | undefined): string | null {
+/**
+ * Why a negative clause can't hold on this page or response (it failed, or is empty), or null. `expected`: the
+ * strings the same expect asks to be there: an error page whose error one of them names (and shows) is the
+ * expected outcome (`contains "not found or already used" and not contains "Invite accepted"`), not a failure.
+ */
+export function failedSubject(text: string | undefined, expected: string[] = []): string | null {
   if (text === undefined || !text.trim()) return "empty: an empty read shows nothing, so its absence proves nothing";
   const j = tryJson(text);
   const status = j && typeof j === "object" ? Number((j as Record<string, unknown>).status) : Number.NaN;
   if (status >= 400) return `the response failed (status ${status}): its absence proves nothing`;
   const m = ERROR_PAGE.exec(text.slice(0, 2000));
-  if (m && !(j && typeof j === "object"))
+  const asserted = m && expected.some((w) => text.includes(w) && w.toLowerCase().includes(m[1].toLowerCase()));
+  if (m && !asserted && !(j && typeof j === "object"))
     return `the page looks like an error page ("${m[1]}"): a "not visible" check there proves nothing; if that error is the expected outcome, assert it (text "…" visible)`;
   return null;
 }
 
 export function evaluate(clauses: Clause[], o: Outcome): AssertResult {
+  const expected = clauses.flatMap(wantedStrings);
   const results: ClauseResult[] = clauses.map((c): ClauseResult => {
     const subject = (name: string | null): { ok: true; v: string } | { ok: false; got: string } =>
       name === null ? { ok: true, v: o.output } : name in o.vars ? { ok: true, v: o.vars[name] } : { ok: false, got: `$${name} was not saved` };
@@ -264,15 +272,16 @@ export function evaluate(clauses: Clause[], o: Outcome): AssertResult {
       case "text": {
         if (o.pageText === undefined) return { clause: c.src, pass: false, got: "page text was not read" };
         const has = o.pageText.includes(c.text);
-        const bad = !c.visible && !has ? failedSubject(o.pageText) : null;
+        const bad = !c.visible && !has ? failedSubject(o.pageText, expected) : null;
         if (bad) return { clause: c.src, pass: false, got: bad };
         return { clause: c.src, pass: has === c.visible, got: has ? "present" : "absent" };
       }
       case "contains": {
-        const has = o.output.includes(c.text);
-        const bad = c.negate && !has ? failedSubject(o.output) : null;
+        const seen = o.shown ?? o.output;
+        const has = seen.includes(c.text);
+        const bad = c.negate && !has ? failedSubject(seen, expected) : null;
         if (bad) return { clause: c.src, pass: false, got: bad };
-        return { clause: c.src, pass: has !== c.negate, got: show(o.output) };
+        return { clause: c.src, pass: has !== c.negate, got: show(seen) };
       }
       case "json": {
         const s = subject(c.subject);
@@ -297,7 +306,7 @@ export function evaluate(clauses: Clause[], o: Outcome): AssertResult {
         const s = subject(c.name);
         if (!s.ok) return { clause: c.src, pass: false, got: s.got };
         if (c.op === "!=" || c.op === "not contains") {
-          const bad = failedSubject(s.v);
+          const bad = failedSubject(s.v, expected);
           if (bad && !bad.startsWith("the page looks")) return { clause: c.src, pass: false, got: `$${c.name} ${bad}` };
         }
         return { clause: c.src, pass: compare(s.v, c.op, c.value), got: show(s.v) };
