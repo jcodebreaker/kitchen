@@ -1,5 +1,6 @@
 // Gate (PLAN §2, gate → drives / build): the kitchen.yaml checks, run by the
-// engine in the job worktree with the untrusted env, each stamped in the
+// engine in the job worktree with the untrusted env under the proof sandbox
+// (run-checks.ts), each stamped in the
 // manifest (role engine, criterion gate). The result is pinned to HEAD: it
 // counts only if every check ran on that HEAD with a clean tree and HEAD did
 // not move while they ran; otherwise it is a FAIL that says why.
@@ -25,9 +26,9 @@ export function gateOutcome(
   return { head: before, result: failed.length ? "FAIL" : "PASS", ...(failed.length ? { why: `failed: ${failed.join(", ")}` } : {}), checks };
 }
 
-export async function runGate(o: { jobDir: string; checks: CheckSpec[]; headOf: () => Promise<string> }): Promise<GateResult> {
+export async function runGate(o: { jobDir: string; checks: CheckSpec[]; network: boolean; headOf: () => Promise<string> }): Promise<GateResult> {
   const before = await o.headOf();
-  const r = await runChecks({ jobDir: o.jobDir, checks: o.checks, role: "engine", criterion: "gate" });
+  const r = await runChecks({ jobDir: o.jobDir, checks: o.checks, role: "engine", criterion: "gate", network: o.network });
   const after = await o.headOf();
   const g = gateOutcome(before, after, r.results);
   const lines = [
@@ -36,6 +37,7 @@ export async function runGate(o: { jobDir: string; checks: CheckSpec[]; headOf: 
     ...(g.why ? [`WHY: ${g.why}`] : []),
     "",
     ...(o.checks.length ? g.checks : ["- no checks in kitchen.yaml"]),
+    ...(r.results.some((c) => !c.sandboxed) ? ["", "UNSANDBOXED: no OS sandbox on this platform; the checks ran unconfined (ADR 0006)"] : []),
   ];
   return { head: g.head, result: g.result, lines, ...(g.why ? { why: g.why } : {}) };
 }

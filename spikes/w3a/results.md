@@ -194,3 +194,14 @@ Real-agent total this round: Claude $0.382, Codex 0.
 ## Spike totals (final code)
 
 `contain.ts` 11/11, `engine.ts attacks` 26/26, `engine.ts kill` 8/8, `paths.ts` 34/34 (repro-retry 5, gap 5, bad-gap 4, inconclusive 7, backoff 3, nondisc 10), `wrong.ts claude owner` 5/5, `wrong.ts claude leak` 4/4, `e2e.ts claude admin` 12/12. W1 `paths.ts` 34/34. `npm test` 294/294, typecheck and lint clean.
+
+## Round 3: the proof sandbox, tightened (2026-11-22)
+
+| finding | fix | proof |
+|---|---|---|
+| The proof profile allowed writes anywhere under `/private/tmp` and `/private/var/folders`: with the repo there, a proof could write into another job's worktree | Writes only in the job worktree, a temp dir the engine makes fresh for each run (`kitchen-proof-*`, set as its `TMPDIR`, removed after, with that run's profile), `/dev` and `~/.npm` (`src/proof/sandbox.ts`, `stamp-cmd.ts`) | `contain.ts tmp` (repo under `/private/tmp/kitchen-contain-*`) 21/21 and `contain.ts home` 20/20: new C9, `node -e` writing into the sibling job's worktree → EPERM (control: the same command unsandboxed writes it). On the round-2 profile `contain.ts tmp` fails C5 and C9 (19/21): the mode discriminates. `sandbox.test.ts`: the write rule names the run's tmp and neither temp root |
+| Gate's checks and the builder's `checks` bridge tool ran builder-written code unsandboxed | `runChecks` stamps every check with `sandbox: true` under the same profile; kitchen.yaml `checks_network: true` (default false) drops only the network rules; the gate file says UNSANDBOXED where there is no sandbox-exec; the bridge reply carries `sandboxed` | `contain.ts`: Gate on the sibling job (`node --check server.js`, `node --test test/`) PASS, the test's output in the evidence (`pass 1`), every entry `sandboxed: true`; the `checks` tool (fake builder over the real bridge) with a check reading `engine.key` → EPERM, key nowhere in evidence, and `curl https://1.1.1.1` → "Failed to connect"; with `checks_network: true` the curl gets 301 and the key read is still denied (gate FAIL on readkey only). `sandbox.test.ts`: network on leaves the filesystem rules identical |
+
+Still unsandboxed (ADR 0006): the app the Toolkit starts and the primitives of a merged Toolkit sha (they need Docker and the network); everything on Linux.
+
+Totals on this code: `contain.ts home` 20/20, `contain.ts tmp` 21/21, `engine.ts attacks` 26/26 (its gate check `node --check server.js` ran sandboxed in all four gates), `paths.ts` 34/34. `npm test` 295/295, typecheck and lint clean. No agent calls.

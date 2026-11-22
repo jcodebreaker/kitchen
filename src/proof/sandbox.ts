@@ -1,9 +1,13 @@
-// The OS sandbox for `cmd` and `test` proofs (ADR 0006 "cmd and test proofs"):
+// The OS sandbox for `cmd` and `test` proofs and for the kitchen.yaml checks
+// (Gate, the builder's `checks` bridge tool) (ADR 0006 "cmd and test proofs"):
 // worktree code the builder wrote, run by the engine. spec-lint's cmd denylist
 // is a first line that catches the obvious; this profile is the real boundary.
-// On macOS each such proof runs under `sandbox-exec` with a profile that:
+// On macOS each such run goes under `sandbox-exec` with a profile that:
 //   - denies the network, except loopback (a test may start a server on localhost);
-//   - denies writing anywhere but the worktree, temp and /dev;
+//     checks with `checks_network: true` keep outbound network (a package install);
+//   - denies writing anywhere but the worktree, the run's own temp dir (its
+//     TMPDIR, made fresh by the engine: not /tmp, where a sibling job's
+//     worktree may live), /dev and the npm cache;
 //   - denies reading under $HOME, except the worktree, the toolchains on PATH that
 //     live under $HOME (nvm, volta, pyenv…) and the npm cache;
 //   - denies reading or writing the developer's credentials, the agent tools' auth
@@ -24,9 +28,12 @@ export type ProofSandboxOpts = {
   deny?: string[];
   /** PATH of the env the proof runs with: toolchains under $HOME on it stay readable. */
   pathEnv?: string;
+  /** Allow outbound network (kitchen.yaml `checks_network`); the filesystem rules stay. Default false. */
+  network?: boolean;
   home?: string;
   kHome?: string;
-  tmp?: string;
+  /** The run's own temp dir (its TMPDIR): the only writable place outside the worktree, /dev and the npm cache. */
+  tmp: string;
 };
 
 /** Toolchain and cache folders under $HOME a test command may need to read (when they exist). */
@@ -47,7 +54,7 @@ const subs = (ps: string[]) => [...new Set(ps.flatMap(both))].map((p) => `(subpa
 const under = (p: string, dir: string) => p === dir || p.startsWith(dir + path.sep);
 
 /** Pure (but for realpath): the SBPL profile for one job's cmd/test proofs. In SBPL the last matching rule wins. */
-export function proofProfileText(o: Required<Pick<ProofSandboxOpts, "worktree" | "home" | "kHome" | "tmp">> & ProofSandboxOpts): string {
+export function proofProfileText(o: Required<Pick<ProofSandboxOpts, "worktree" | "home" | "kHome">> & ProofSandboxOpts): string {
   const home = o.home;
   const onPath = (o.pathEnv ?? "")
     .split(":")
@@ -61,14 +68,19 @@ export function proofProfileText(o: Required<Pick<ProofSandboxOpts, "worktree" |
   const lits = [...new Set(pkgAbove.flatMap(both))].map((p) => `(literal ${q(p)})`).join(" ");
   return [
     "(version 1)",
-    ";; Kitchen cmd/test proof: worktree code, no network, $HOME unreadable (ADR 0006).",
+    `;; Kitchen cmd/test proof or check: worktree code, ${o.network ? "outbound network allowed (checks_network)" : "no network"}, $HOME unreadable (ADR 0006).`,
     "(allow default)",
-    "(deny network*)",
-    // Loopback only. Not `(allow network* (local ip …))`: an outbound socket matches that too (seen: 1.1.1.1:443 connected).
-    '(allow network-bind network-inbound (local ip "localhost:*"))',
-    '(allow network-outbound (remote ip "localhost:*"))',
+    ...(o.network
+      ? []
+      : [
+          "(deny network*)",
+          // Loopback only. Not `(allow network* (local ip …))`: an outbound socket matches that too (seen: 1.1.1.1:443 connected).
+          '(allow network-bind network-inbound (local ip "localhost:*"))',
+          '(allow network-outbound (remote ip "localhost:*"))',
+        ]),
     "(deny file-write*)",
-    `(allow file-write* ${subs([o.worktree, o.tmp, "/private/tmp", "/private/var/folders", "/dev", ...WRITABLE_IN_HOME.map((d) => path.join(home, d))])})`,
+    // Not /tmp or /var/folders as a whole: a repo living there would make every other job's worktree writable.
+    `(allow file-write* ${subs([o.worktree, o.tmp, "/dev", ...WRITABLE_IN_HOME.map((d) => path.join(home, d))])})`,
     `(deny file-read* ${subs([home])})`,
     "(allow file-read-metadata)",
     `(allow file-read* ${lits} ${subs([o.worktree, ...onPath, ...tools])})`,
@@ -78,18 +90,22 @@ export function proofProfileText(o: Required<Pick<ProofSandboxOpts, "worktree" |
   ].join("\n");
 }
 
+/** A fresh temp dir for one run (its TMPDIR, the only writable temp under the profile). The caller removes it. */
+export const proofTmpDir = (): string => fs.mkdtempSync(path.join(os.tmpdir(), "kitchen-proof-"));
+
 /**
- * The profile file for this job's proofs, written into $KITCHEN_HOME/sandbox/,
- * or null where there is no sandbox-exec (Linux: unsandboxed).
+ * The profile file for one run (it names that run's temp dir), written into
+ * $KITCHEN_HOME/sandbox/, or null where there is no sandbox-exec (Linux:
+ * unsandboxed). The caller removes it after the run.
  */
 export function proofSandboxProfile(o: ProofSandboxOpts): string | null {
   if (process.platform !== "darwin" || !fs.existsSync(SANDBOX_EXEC)) return null;
   const kHome = ensureHome(o.kHome ?? kitchenHome());
   fs.mkdirSync(path.join(kHome, "scrub"), { recursive: true, mode: 0o700 });
-  const text = proofProfileText({ ...o, home: o.home ?? os.homedir(), kHome, tmp: o.tmp ?? os.tmpdir() });
+  const text = proofProfileText({ ...o, home: o.home ?? os.homedir(), kHome });
   const dir = path.join(kHome, "sandbox");
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const file = path.join(dir, `proof-${createHash("sha256").update(o.worktree).digest("hex").slice(0, 12)}.sb`);
+  const file = path.join(dir, `proof-${createHash("sha256").update(`${o.worktree}\0${o.tmp}`).digest("hex").slice(0, 12)}.sb`);
   fs.writeFileSync(file, text, { mode: 0o600 });
   return file;
 }

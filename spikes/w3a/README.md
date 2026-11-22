@@ -8,7 +8,7 @@ Every script makes its repos under the scratch dir you give it (default `spikes/
 node spikes/w3a/engine.ts attacks <scratch>   # scripted agent, no model (~6 min): repro, layer rules, code in a drive, forged/stale/self-check citations
 node spikes/w3a/engine.ts kill <scratch>      # scripted agent, no model (~3 min): kill -9 mid-Verify, resume, no proof re-run
 node spikes/w3a/paths.ts [scenario…] <scratch> # scripted agent, no model (~30 min): the W1 paths that needed real stages: repro-retry gap bad-gap inconclusive backoff; and nondisc (review round 2: check line alone, base check after drives)
-node spikes/w3a/contain.ts <scratch>          # no agent, no Docker (~5 s): cmd/test proofs under the proof sandbox, evidence redacted on disk
+node spikes/w3a/contain.ts [home|tmp] [scratch] # no agent, no Docker (~10 s): cmd/test proofs and checks under the proof sandbox, evidence redacted on disk; `tmp` puts the repo under /tmp
 node spikes/w3a/e2e.ts claude feature <scratch>   # REAL agents: one feature ticket end to end (sonnet strong, haiku medium)
 node spikes/w3a/e2e.ts claude bug <scratch>       # REAL agents: the planted bug end to end
 node spikes/w3a/e2e.ts codex feature <scratch>    # REAL agents via npx @openai/codex@0.171.0, the config's tier map

@@ -100,7 +100,8 @@ const CHECKS_TOOL = {
   name: "checks",
   description:
     "Run this project's checks (kitchen.yaml `checks`: tests, lint, typecheck…) in your worktree, the way Gate will. " +
-    "The engine runs them with the app's sandbox env and stamps each one as evidence; the result lists each check's exit code and output tail.",
+    "The engine runs them with the app's env in a sandbox (no network unless kitchen.yaml sets checks_network; writes only in your worktree and TMPDIR; $HOME unreadable) " +
+    "and stamps each one as evidence; the result lists each check's exit code and output tail.",
   inputSchema: { type: "object", properties: {}, additionalProperties: false },
 };
 const RESTART_TOOL = {
@@ -216,9 +217,13 @@ export function makeBridge(o: BridgeOpts) {
     try {
       const cfg = loadConfig(path.resolve(o.repo));
       if (!cfg.checkList.length) return text({ ok: true, checks: [], note: "kitchen.yaml has no checks" });
-      const r = await runChecks({ jobDir, checks: cfg.checkList, role: o.role, criterion: "-" });
+      const r = await runChecks({ jobDir, checks: cfg.checkList, role: o.role, criterion: "-", network: cfg.checks_network });
       return text(
-        { ok: r.ok, sha: r.sha, checks: r.results.map((c) => ({ name: c.name, exit: c.exit, ok: c.ok, evidence: c.id, secs: c.secs, tail: c.tail })) },
+        {
+          ok: r.ok,
+          sha: r.sha,
+          checks: r.results.map((c) => ({ name: c.name, exit: c.exit, ok: c.ok, evidence: c.id, secs: c.secs, sandboxed: c.sandboxed, tail: c.tail })),
+        },
         !r.ok,
       );
     } catch (e) {
