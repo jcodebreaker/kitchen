@@ -78,6 +78,8 @@ export async function trackedAt(repo: string, rev: string): Promise<string[]> {
 }
 
 const TAIL = 1500;
+/** A primitive answer that admits there is nothing behind the name. */
+const NOT_IMPLEMENTED = /\b(not (yet )?implemented|unimplemented|not supported|todo)\b/i;
 const tail = (c: ToolkitCall) => (c.stderr.trim() ? c.stderr.trim().slice(-TAIL) : c.stdout.trim().slice(-TAIL));
 
 /** Engine side: the gitdir of a source tree, so drives can stamp it. A plain checkout, or a linked worktree under <repo>/.worktrees/. */
@@ -172,7 +174,15 @@ export async function runToolkitCheck(o: CheckOpts): Promise<CheckReport> {
       const stray = shape.data.files.filter((f) => !path.resolve(out, f).startsWith(out + path.sep));
       if (stray.length) bad.push(`${label}: files outside --out: ${stray.join(", ")}`);
       if (shape.data.ok === true && r.exit !== 0) bad.push(`${label}: ok:true but exit ${r.exit}`);
-      if (p.expect === "ok" && shape.data.ok !== true) bad.push(`${label}: must answer ok:true, got ${JSON.stringify(shape.data.out).slice(0, 160)}`);
+      const got = JSON.stringify(shape.data.out).slice(0, 160);
+      if (p.expect === "ok" && shape.data.ok !== true)
+        bad.push(
+          p.uncovered === "none"
+            ? `${label}: ${p.why}; got ok:false ${got} (implement it, call it from a feature drive, or declare its args in describe)`
+            : `${label}: must answer ok:true, got ${got}`,
+        );
+      else if (p.uncovered === "placeholder" && shape.data.ok !== true && NOT_IMPLEMENTED.test(got))
+        bad.push(`${label}: ${p.primitive} is listed in describe but answered ${got}: is it implemented?`);
     }
     return bad;
   };
@@ -407,6 +417,12 @@ export async function checkAtRef(
   repo = plainCheckout(repo).workTree;
   const co = await toolkitCheckout(repo, o.rev ?? "HEAD");
   o.print?.(`toolkit check: Toolkit ${co.sha.slice(0, 12)} (${path.relative(repo, co.dir)}), source ${o.src ? path.resolve(o.src) : "the same checkout"}`);
+  if (!co.merged)
+    o.print?.(
+      `toolkit check: ${co.sha.slice(0, 12)} is not merged into the base: bin/dev runs ${
+        co.sandboxed ? "under sandbox-exec (ADR 0008)" : "UNSANDBOXED: no OS sandbox on this platform (ADR 0008)"
+      }`,
+    );
   const src = o.src ?? co.dir;
   let r: CheckReport;
   try {

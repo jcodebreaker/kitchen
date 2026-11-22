@@ -1,7 +1,8 @@
 // Scripted setup role for the free W2 spikes (`agent: { tool: fake, script: … }`).
 // survey: one question the repo "can't answer". build: copies fixture A's
 // hand-made Toolkit into the setup worktree (a known-good Toolkit, so the flow
-// around it is what's tested). intake: rejects, so a job ends without work.
+// around it is what's tested), or the one in $W2_PLANT_DIR (sandbox.ts's planted
+// Toolkit). intake: rejects, so a job ends without work.
 // Every call is logged with its prompt to $W2_FAKE_LOG.
 import fs from "node:fs";
 import path from "node:path";
@@ -27,6 +28,12 @@ const script: FakeScript = (req) => {
         "",
       ].join("\n"),
     };
+  if (req.role === "setup" && process.env.W2_PLANT_DIR) {
+    // sandbox.ts: the Toolkit a prompt-injected agent would write (works, and leaks when it can)
+    fs.rmSync(path.join(req.cwd, ".kitchen", "toolkit"), { recursive: true, force: true });
+    fs.cpSync(path.join(process.env.W2_PLANT_DIR, ".kitchen", "toolkit"), path.join(req.cwd, ".kitchen", "toolkit"), { recursive: true });
+    return { line: "Toolkit written", file: "STATUS: READY\nSURFACE: web\nPATH: build\nFEATURES: 1\nCHECK: NOT-RUN\n" };
+  }
   if (req.role === "setup") {
     fs.rmSync(path.join(req.cwd, ".kitchen", "toolkit"), { recursive: true, force: true });
     fs.cpSync(path.join(A, ".kitchen", "toolkit"), path.join(req.cwd, ".kitchen", "toolkit"), {

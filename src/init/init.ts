@@ -498,10 +498,9 @@ async function commitSetup(
     [".", ...TOOLKIT_PATHS.map((p) => `:(exclude)${p}`), ...TOOLKIT_PATHS.map((p) => `:(exclude)${p}/**`)],
     "kitchen setup: dev environment for the Toolkit",
   );
-  await commit(
-    TOOLKIT_PATHS.filter((p) => fs.existsSync(path.join(wt.workTree, p))),
-    "kitchen setup: Toolkit (bin/dev, SKILL.md, features, .env.kitchen)",
-  );
+  // What the first commit left is the Toolkit. `.`, not the Toolkit paths: git 2.39 stages nothing for a
+  // lone directory pathspec beside the exclude globs (a Toolkit without .env.kitchen was never committed).
+  await commit(["."], "kitchen setup: Toolkit (bin/dev, SKILL.md, features, .env.kitchen)");
   const sha = (await git.run(["rev-parse", "HEAD"])).stdout.trim();
   if (sha === base) throw new Error("the setup role left nothing to commit");
   return { sha, commits };

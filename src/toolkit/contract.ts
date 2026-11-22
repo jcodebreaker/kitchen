@@ -127,23 +127,40 @@ export type Probe = {
   why: string;
   /** Append a second --id (a duplicated engine flag): the call must be refused. */
   dupFlag?: boolean;
+  /**
+   * A primitive no drive uses and no table entry covers: `none` (it declares no args in describe, so
+   * called with none it must answer ok:true), or `placeholder` (its declared args, each PLACEHOLDER).
+   */
+  uncovered?: "none" | "placeholder";
 };
 
-/** Safe positive args for the generic primitives. `ok` is required only where every Toolkit of that surface can answer it. */
+/** The value each declared arg of an otherwise uncovered primitive gets in the probe. */
+export const PLACEHOLDER = "kitchen-probe";
+
+export const MISSING_TARGET = "#kitchen-probe-missing-element";
+/**
+ * Safe args for the generic primitives (press and type aim at a missing element: no side effect).
+ * `ok` is required only where every Toolkit of that surface can answer it.
+ */
 const PROBE_TABLE: Record<string, { args: Record<string, Value>; okOn: readonly string[] }> = {
   read: { args: { target: "body" }, okOn: ["web"] },
   open: { args: { path: "/" }, okOn: ["web"] },
   reload: { args: {}, okOn: ["web"] },
+  press: { args: { target: MISSING_TARGET }, okOn: [] },
+  type: { args: { target: MISSING_TARGET, text: PLACEHOLDER }, okOn: [] },
   screenshot: { args: {}, okOn: ["web"] },
   http: { args: { method: "GET", path: "/" }, okOn: [] },
 };
 const FOREIGN = ["http://example.invalid/kitchen-probe", "//example.invalid/kitchen-probe"];
-export const MISSING_TARGET = "#kitchen-probe-missing-element";
 
 /**
- * Pure: the probe calls for a Toolkit. Every primitive in describe once (args
+ * Pure: the probe calls for a Toolkit. Every primitive in describe once: args
  * from the table, else from the first feature-drive step that calls it with
- * its check line's args substituted, else none), then the negative probes:
+ * its check line's args substituted. A primitive neither covers is held
+ * tighter, so an unimplemented one can't pass on shape alone: with args
+ * declared in describe it gets each one as PLACEHOLDER (and must not say "not
+ * implemented"); without, it is called with none and must answer ok:true.
+ * Then the negative probes:
  * `read` of a missing target is ok:false, `open`/`http` of another origin are
  * refused, a duplicated flag is refused.
  */
@@ -159,11 +176,32 @@ export function planProbes(d: DescribeOut, drives: { drive: Drive; args: Record<
       }
     return null;
   };
+  const declared = (name: string): string[] => {
+    const p = d.primitives.find((x) => (typeof x === "string" ? x : x.name) === name);
+    return p && typeof p !== "string" ? Object.keys(p.args ?? {}) : [];
+  };
   for (const name of names) {
     const t = PROBE_TABLE[name];
+    const used = t ? null : fromDrives(name);
     if (t) probes.push({ primitive: name, args: t.args, expect: t.okOn.includes(d.surface) ? "ok" : "shape", why: `${name} answers` });
     else if (name === "login" && d.seed_users[0]) probes.push({ primitive: name, args: { as: d.seed_users[0] }, expect: "shape", why: "login answers" });
-    else probes.push({ primitive: name, args: fromDrives(name) ?? {}, expect: "shape", why: `${name} answers` });
+    else if (used) probes.push({ primitive: name, args: used, expect: "shape", why: `${name} answers` });
+    else if (declared(name).length)
+      probes.push({
+        primitive: name,
+        args: Object.fromEntries(declared(name).map((a) => [a, PLACEHOLDER])),
+        expect: "shape",
+        why: `${name} answers its declared args`,
+        uncovered: "placeholder",
+      });
+    else
+      probes.push({
+        primitive: name,
+        args: {},
+        expect: "ok",
+        why: `${name} is listed in describe, no drive uses it and it declares no args, so called with none it must answer ok:true`,
+        uncovered: "none",
+      });
   }
   if (names.includes("read"))
     probes.push({ primitive: "read", args: { target: MISSING_TARGET }, expect: "refuse", why: "read of a missing target is ok:false" });
