@@ -58,7 +58,7 @@ function readRecord(file: string): CheckRecord | null {
   }
 }
 
-/** The base's own drive failures. `ok: false` means the base check could not run its drives at all (`failed` says where). */
+/** The drives that fail on the base as it is (its own check passed everything else). */
 export type BaseCheck = { sha: string; ok: boolean; failing: string[]; failed?: string; at: string; secs: number };
 export const baseCheckFile = (repo: string, sha: string) => path.join(kitchenDir(repo), "toolkit-base-checks", `${sha}.json`);
 
@@ -89,7 +89,10 @@ export async function baseDriveFailures(ctx: Pick<StageContext, "repo" | "log">,
       drivesOnly: true,
       print: (l) => ctx.log(`  base: ${l}`),
     });
-    const out: BaseCheck = { sha, ok: r.ok, failing: r.tolerated, ...(r.ok ? {} : { failed: r.failed }), at: new Date().toISOString(), secs: r.secs };
+    // The base could not run its drives at all (up, doctor, prepare…): nothing can be told apart, and blaming the
+    // smith would spend its attempt on the base's (or the machine's) trouble. Not cached: an engine error, retried.
+    if (!r.ok) throw new Error(`the base's own check at ${sha.slice(0, 12)} failed at ${r.failed}: the smith's work can't be judged against it`);
+    const out: BaseCheck = { sha, ok: true, failing: r.tolerated, at: new Date().toISOString(), secs: r.secs };
     writeAtomic(file, `${JSON.stringify(out, null, 2)}\n`);
     return out;
   } finally {
@@ -159,7 +162,6 @@ export const toolkit: StageHandler = async (ctx) => {
   // What already fails on the base is not the smith's doing (cached per base sha).
   const onBase = await baseDriveFailures(ctx, base);
   if (onBase.failing.length) ctx.log(`drives that already fail on the base ${base.slice(0, 12)}: ${onBase.failing.join(", ")}`);
-  if (!onBase.ok) ctx.log(`the base's own check stopped at ${onBase.failed}: no drive failure is tolerated`);
   // The proof: the same check jobs rely on, of base + this branch, from its own checkout (sandboxed: not merged).
   const co = await toolkitCheckout(ctx.repo, c.head);
   let report: Awaited<ReturnType<typeof runToolkitCheck>>;
