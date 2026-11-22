@@ -741,3 +741,18 @@ History: all of these are now part of §2 and §3, which are the current contrac
 | Slot ids from job ids were too long for `--id` and collided across repos | `slotId` = `<n>-<10 hex of the job uid>` |
 | `test <file>` proofs need a command | `kitchen.yaml` `test_cmd` (default `npm test -- {file}`) |
 | The verifier agent cost a run even when nothing is judged | Verify starts the agent only when there are `judged` criteria and every mechanical proof passed; drives starts it only when a drive is missing or failed the check |
+
+## Changes from the Wave 3a review (round 1, 6.5/10)
+
+| Finding | Change |
+|---|---|
+| `GAP: the \`read\` primitive fails…` named the primitive "the" | A gap is one primitive-shaped name (optionally followed by a separator and a note) that describe doesn't list; free text is a failed drives write (counts toward the drives cap) and an INCONCLUSIVE in Verify, never a Toolkit gap |
+| The drives check ran each new drive alone from seed, so a drive that needs an earlier segment's state failed | The drives check runs each affected criterion's **whole proof** twice (reset between), asserting every step runs (not the expect). A feature file a job writes must pass W2's feature rules (`parseFeature`, a `check:` line per drive, listed by describe) or it is kept off the branch |
+| Trivially true criteria passed (`not visible` of something that never existed, an error page, an empty read) | spec-lint: a negative expect needs an earlier step of the same proof that creates what must not show (its text is an arg). A negative clause fails on an error/not-found page, a failed response or an empty read. The engine runs every mechanical criterion once on the **base** before build (`base-check.json`, `phase: base`); a feature criterion that already passes there sends the spec back once, then is flagged NON-DISCRIMINATING in the verdict |
+| The builder controlled files proofs run through | The builder may not change: the test files `test` proofs run (the drives stage, or the repro, writes them), the scripts and config Gate's checks and `test_cmd` run through, package.json `scripts`. A diff touching `seed_paths` (default: migrations, seeds, `db/**`, `*.sql`…) raises risk to high and is listed for review (`seed-diff.md`, review prompt) |
+| `cmd` proofs were unrestricted | spec-lint refuses paths outside the worktree, `~`/`$HOME`, `env`/`printenv`, network tools and redirections outside; cmd/test proofs keep the untrusted env (W2's sandbox-exec profile when it lands); every bridge result passes through `proof/redact.ts` |
+| A cmd/test expect could pass on a crash | It holds only with exit 0 unless the expect is about `exit` |
+| A repro's timed-out wait counted however unrelated | Only when the waited text is what the criterion's own expect asks for |
+| `judged` was allowed for "message", "label", "reads", "width" | Only layout, appearance, visual style, tone or copy quality, and the proof must take a screenshot. `repro: true` only on a bug |
+| A refused manifest could still give PASS | INCONCLUSIVE |
+| No job could fix a drive it had added itself on a retry | "Existing" drives are the base's (and, for the drives stage, the repro's) |
