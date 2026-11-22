@@ -41,33 +41,37 @@ export function stampCommand(o: {
   criterion: string;
   timeoutSec: number;
   tag?: Record<string, string>;
+  /** Run against this checkout instead of the job worktree (the base check after drives). The manifest and job.json stay the job's. */
+  source?: { worktree: string; gitDir: string };
   /** Run under the proof sandbox (cmd and test proofs): no network, $HOME unreadable, writes only in the worktree. */
   sandbox?: boolean;
 }): Promise<StampedCmd> {
   return withJobLock(o.jobDir, async () => {
     const job = readJob(o.jobDir);
+    // The source the command runs in: the job worktree, or (base check) a checkout of the base. Never stored.
+    const src = { ...job, ...(o.source ?? {}) };
     const seal = sealOf(job);
     const ev = evidenceDir(o.jobDir);
     verifyManifest(ev, job.manifestHead, seal);
-    const source = await sourceStamp(jobGit(job));
+    const source = await sourceStamp(jobGit(src));
     const id = nextId(job.manifestHead);
     const dir = path.join(ev, id);
     fs.rmSync(dir, { recursive: true, force: true }); // a crashed run may have left files here
     fs.mkdirSync(dir, { recursive: true });
     const t0 = Date.now();
-    const env = untrustedEnv(job.worktree);
+    const env = untrustedEnv(src.worktree);
     // The job folders (evidence, job.json) and the repo's shared config (a remote URL may hold a token) are denied too.
-    const common = job.gitDir ? path.resolve(job.gitDir, "..", "..") : null;
+    const common = src.gitDir ? path.resolve(src.gitDir, "..", "..") : null;
     const profile = o.sandbox
       ? proofSandboxProfile({
-          worktree: job.worktree,
+          worktree: src.worktree,
           pathEnv: env.PATH,
           deny: [path.dirname(o.jobDir), ...(common ? [path.join(common, "config")] : [])],
         })
       : null;
     const [bin, argv] = sandboxedShell(o.cmd, profile);
     const sub = execa(bin, argv, {
-      cwd: job.worktree,
+      cwd: src.worktree,
       env,
       extendEnv: false,
       reject: false,
@@ -92,7 +96,7 @@ export function stampCommand(o: {
     fs.writeFileSync(path.join(dir, "stderr.txt"), redact(String(r.stderr)));
     fs.writeFileSync(
       path.join(dir, "call.json"),
-      redact(JSON.stringify({ name: o.name, cmd: o.cmd, cwd: job.worktree, exit, timedOut: !!r.timedOut, secs, ...(o.sandbox ? { sandboxed } : {}) }, null, 2)),
+      redact(JSON.stringify({ name: o.name, cmd: o.cmd, cwd: src.worktree, exit, timedOut: !!r.timedOut, secs, ...(o.sandbox ? { sandboxed } : {}) }, null, 2)),
     );
     const files = ["call.json", "stderr.txt", "stdout.txt"].map((f) => `${id}/${f}`);
     const { head } = appendEntry(

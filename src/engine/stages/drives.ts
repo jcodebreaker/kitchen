@@ -1,7 +1,10 @@
 // drives: every feature drive the contract names must resolve on the job HEAD,
 // hold no code, pass W2's feature-file rules, and every criterion that uses a
-// new or changed drive must run end to end, twice, from seed state, before any
-// proof runs (PLAN §2, drives → verify). The engine decides all of it; the
+// new or changed drive must run end to end, twice, from seed state, and every
+// new `check:` line must run alone from seed (as W2's re-proof will), before any
+// proof runs (PLAN §2, drives → verify). Then, for a feature, the criteria that
+// needed the new drives run on the base plus those drive files (base-check.ts):
+// one that already passes there is flagged NON-DISCRIMINATING. The engine decides all of it; the
 // verifier (drives mode) only writes what is missing or failed: feature drives,
 // and the test files `test` proofs name (the builder may not write those). The
 // engine commits only those files (drivesPolicy) before any proof runs, so no
@@ -13,12 +16,13 @@ import { changedExistingDrive, lintFeatureFile } from "../../checks/feature-lint
 import type { Criterion } from "../../checks/spec-lint.ts";
 import { evidenceDir, readJob, sealOf } from "../../proof/job.ts";
 import { verifyManifest } from "../../proof/manifest.ts";
-import { type ChainCheck, checkChain, featureFileProblems } from "../../toolkit/feature-check.ts";
+import { type ChainCheck, checkChain, checkLineAlone, checkLinesOf, featureFileProblems } from "../../toolkit/feature-check.ts";
 import { contractOf, drivesPolicy, namedDrives, testFilesOf } from "../contract.ts";
 import { freshUp } from "../instance.ts";
 import type { Job } from "../machine.ts";
 import { roundDir, writeAtomic } from "../store.ts";
-import { changedFiles, commitWith, fileAtHead } from "../worktree.ts";
+import { changedFiles, commitWith, fileAtHead, headOf } from "../worktree.ts";
+import { runBaseCheckAfterDrives } from "./base-check.ts";
 import { contractBlock, toolkitBlock } from "./context.ts";
 import { gateStillValid } from "./gate.ts";
 import { prompt } from "./prompts.ts";
@@ -26,7 +30,8 @@ import { headers, named as namedHeader, runRole } from "./role.ts";
 import { described, FEATURES_DIR, featureDrives, hasToolkit } from "./toolkit-info.ts";
 import type { StageHandler } from "./types.ts";
 
-type Assessment = { missing: string[]; refused: string[]; gaps: string[]; affected: Criterion[] };
+type CheckLine = { file: string; drive: string; args: Record<string, string> };
+type Assessment = { missing: string[]; refused: string[]; gaps: string[]; affected: Criterion[]; checkLines: CheckLine[] };
 
 /** A `GAP:` value that says nothing is missing (`none`, `-`, `n/a`, a placeholder). */
 const SAYS_NONE = /^`?(none|no|n\/?a|null|nil|-+|—|\(none\)|<.*>)`?(\s|$)/i;
@@ -38,6 +43,10 @@ async function assess(job: Job, criteria: Criterion[], tk: { primitives: string[
   const changedFeatureFiles = (await changedFiles(job, job.base)).filter((p) => p.startsWith(`${FEATURES_DIR}/`) && p.endsWith(".md"));
   const refused: string[] = [];
   const gaps: string[] = [];
+  // The check lines of drives this job added (a drive the base or the repro already had is not this job's).
+  const before = await featureFilesAt(job, job.base, job.reproFiles ?? []);
+  const had = new Set([...before].flatMap(([rel, text]) => checkLinesOf(rel, text).map((c) => c.drive)));
+  const checkLines: CheckLine[] = [];
   for (const rel of changedFeatureFiles) {
     const abs = path.join(job.worktree, rel);
     if (!fs.existsSync(abs)) continue;
@@ -47,6 +56,7 @@ async function assess(job: Job, criteria: Criterion[], tk: { primitives: string[
     else {
       gaps.push(...l.gaps);
       refused.push(...featureFileProblems(rel, text, tk.features));
+      checkLines.push(...checkLinesOf(rel, text).filter((c) => !had.has(c.drive)));
     }
   }
   const changedDrives = new Set([...named.keys()].filter((d) => f.files[d] && changedFeatureFiles.includes(f.files[d])));
@@ -57,6 +67,7 @@ async function assess(job: Job, criteria: Criterion[], tk: { primitives: string[
     refused,
     gaps: [...new Set(gaps)],
     affected,
+    checkLines,
   };
 }
 
@@ -78,6 +89,8 @@ export const drives: StageHandler = async (ctx) => {
     checks = [];
     for (const c of a.affected)
       checks.push(await checkChain({ job, jobDir: ctx.jobDir, criterion: c, testCmd: ctx.config.test_cmd, log: (m) => ctx.log(`[check] ${m}`) }));
+    // Each new check line alone, from seed: what the Toolkit's own check will run once this is merged.
+    for (const line of a.checkLines) checks.push(await checkLineAlone({ job, jobDir: ctx.jobDir, line, log: (m) => ctx.log(`[check line] ${m}`) }));
     return checks.filter((c) => !c.ok);
   };
   let failing = a.missing.length || a.refused.length ? [] : await runChecks();
@@ -103,9 +116,10 @@ export const drives: StageHandler = async (ctx) => {
                 d.startsWith("test file ") ? `- missing: ${d}` : `- missing: ${d} (args: ${Object.keys(named.get(d) ?? {}).join(", ") || "none"})`,
               ),
               ...a.refused.map((x) => `- refused: ${x}`),
-              ...failing.map(
-                (c) =>
-                  `- ${c.criterion}'s whole proof did not run end to end (the engine's check: reset, run, reset, run): ${c.why} (evidence ${c.evidence.join(" ")})`,
+              ...failing.map((c) =>
+                c.criterion.startsWith("check line ")
+                  ? `- the ${c.criterion.slice(11)} \`check:\` line failed when run alone from seed state (as the Toolkit's own check runs it after merge): ${c.why} (evidence ${c.evidence.join(" ")}). Make it self-sufficient: args that name seed data that already exists, or a drive whose own steps make what it needs first`
+                  : `- ${c.criterion}'s whole proof did not run end to end (the engine's check: reset, run, reset, run): ${c.why} (evidence ${c.evidence.join(" ")})`,
               ),
               ...previousFailure(dir, attempt - 1),
             ].join("\n"),
@@ -161,13 +175,31 @@ export const drives: StageHandler = async (ctx) => {
     [
       `RESOLVED: ${resolved}`,
       `FEATURE-CHECKS: ${featureChecks}`,
-      ...checks.map((c) => `- ${c.ok ? "PASS" : "FAIL"} ${c.criterion} (whole proof, twice) ${c.evidence.join(" ")}${c.why ? `: ${c.why}` : ""}`),
+      ...checks.map(
+        (c) =>
+          `- ${c.ok ? "PASS" : "FAIL"} ${c.criterion}${c.criterion.startsWith("check line ") ? " (alone, from seed)" : " (whole proof, twice)"} ${c.evidence.join(" ")}${c.why ? `: ${c.why}` : ""}`,
+      ),
       ...why.map((w) => `- ${w}`),
       "",
     ].join("\n"),
   );
   if (why.length) ctx.log(`drives: ${why.join("; ")}`);
   const writeFailed = !unreachable && !missingPrimitive && !(resolved && featureChecks);
+  // On to Verify: for a feature, the criteria that needed new drives or tests now run on the base plus those files.
+  let nonDiscriminating: string[] = [];
+  if (gateValid && !missingPrimitive && !unreachable && !writeFailed && job.kind !== "bug") {
+    try {
+      const after = await runBaseCheckAfterDrives(ctx, job, criteria, await headOf(job));
+      nonDiscriminating = after?.passing ?? [];
+    } catch (e) {
+      ctx.log(`base check after drives could not run: ${(e as Error).message}`);
+    }
+  }
+  if (nonDiscriminating.length)
+    fs.appendFileSync(
+      path.join(dir, `drives-check-${attempt}.md`),
+      `NON-DISCRIMINATING: ${nonDiscriminating.join(" ")} (already hold on the base with only the new drive files: base-check.json afterDrives)\n`,
+    );
   const facts = { drives: { gateValid, resolved, featureChecks, unreachable, missingPrimitive, writeFailed } };
   const to = !gateValid
     ? "gate"

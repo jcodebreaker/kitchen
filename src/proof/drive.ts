@@ -40,6 +40,8 @@ export type DriveOpts = {
   role: string;
   /** Extra fields stamped on every entry (e.g. `phase: "repro"`). Can't override the stamp's own fields. */
   tag?: Record<string, string>;
+  /** Run against this checkout instead of the job worktree (the base check after drives). The manifest and job.json stay the job's. */
+  source?: { worktree: string; gitDir: string };
   log?: (msg: string) => void;
 };
 
@@ -108,11 +110,13 @@ async function runLocked(o: DriveOpts): Promise<DriveResult> {
   const t0 = Date.now();
   const log = o.log ?? (() => {});
   const job = readJob(o.jobDir);
+  // The source the proof runs against: the job worktree, or (base check) a checkout of the base. Never stored.
+  const src = { ...job, ...(o.source ?? {}) };
   const seal = sealOf(job);
   const ev = evidenceDir(o.jobDir);
   verifyManifest(ev, job.manifestHead, seal); // refuse before running anything on a tampered record
-  const source = await sourceStamp(jobGit(job));
-  const { drive, args } = buildDrive(job, o.request);
+  const source = await sourceStamp(jobGit(src));
+  const { drive, args } = buildDrive(src, o.request);
 
   const vars: Record<string, string> = {};
   for (const a of drive.args) {
@@ -176,14 +180,14 @@ async function runLocked(o: DriveOpts): Promise<DriveResult> {
   };
 
   // A step naming a primitive the Toolkit doesn't have is a Toolkit gap, decided before anything runs, and stamped.
-  const { primitives } = await describeToolkit(job.toolkitBin, job.worktree);
+  const { primitives } = await describeToolkit(job.toolkitBin, src.worktree);
   const missing = drive.steps.find((s): s is PrimStep => s.kind === "prim" && !primitives.includes(s.name));
   if (missing) {
     openEntry();
     const e = stamp(
       missing,
       `TOOLKIT-GAP ${missing.name}`,
-      { cmd: `bin/dev describe --src=${job.worktree}`, exit: 0, ok: false, gap: missing.name },
+      { cmd: `bin/dev describe --src=${src.worktree}`, exit: 0, ok: false, gap: missing.name },
       { gap: missing.name, primitives },
     );
     log(`${e.id} GAP  ${missing.name} is not a primitive of this Toolkit`);
@@ -191,8 +195,8 @@ async function runLocked(o: DriveOpts): Promise<DriveResult> {
   }
   // One primitive call, writing its files into the open entry folder.
   const call = (name: string, args: Record<string, Value>, out: string): Promise<ToolkitCall> => {
-    const argv = [name, `--id=${job.slotId}`, `--src=${job.worktree}`, `--out=${out}`, ...toFlags(args)];
-    return runToolkit(job.toolkitBin, argv, { src: job.worktree, jobDir: o.jobDir });
+    const argv = [name, `--id=${job.slotId}`, `--src=${src.worktree}`, `--out=${out}`, ...toFlags(args)];
+    return runToolkit(job.toolkitBin, argv, { src: src.worktree, jobDir: o.jobDir });
   };
   const cmdOf = (c: ToolkitCall) => `bin/dev ${c.argv.map(shellQuote).join(" ")}`;
   /** Files a call reports must be inside its own --out folder; anything else fails the step and is never copied. */

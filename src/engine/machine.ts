@@ -161,7 +161,8 @@ export type Facts = {
     ticket?: string;
   };
   toolkit?: { checkPassed: boolean; sha: string; pr: number | null };
-  review?: { pass: boolean; blocking?: string };
+  /** nonDiscriminating: criteria that already held on the base (base-check.json), for the report (W4). */
+  review?: { pass: boolean; blocking?: string; nonDiscriminating?: string[] };
   ready?: {
     synced: boolean;
     conflict: boolean;

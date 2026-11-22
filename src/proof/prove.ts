@@ -48,6 +48,8 @@ export type ProveOpts = {
   /** `--args`: concrete values for feature drive args, over the spec's. */
   argsOverride?: Record<string, string>;
   tag?: Record<string, string>;
+  /** Run against this checkout instead of the job worktree (the base check after drives). The manifest and job.json stay the job's. */
+  source?: { worktree: string; gitDir: string };
   /** Stamp the entries for this criterion name instead of the criterion's id (the drives check stamps `drives`). */
   stampAs?: string;
   log?: (m: string) => void;
@@ -81,7 +83,7 @@ export async function prove(o: ProveOpts): Promise<ProveResult> {
   let clauses = judged ? [] : parseExpect(c.expect?.trim() ? c.expect : segs[0].kind === "toolkit" ? "ok" : "exit 0");
   // A cmd or test proof that crashed proves nothing: its expect holds only with exit 0, unless the expect is about the exit code.
   if (segs[0].kind !== "toolkit" && !judged && !clauses.some((x) => x.kind === "exit")) clauses = [...parseExpect("exit 0"), ...clauses];
-  const common = { jobDir: o.jobDir, criterion: o.stampAs ?? c.id, role: o.role, tag: o.tag };
+  const common = { jobDir: o.jobDir, criterion: o.stampAs ?? c.id, role: o.role, tag: o.tag, source: o.source };
   try {
     if (segs[0].kind === "toolkit") {
       for (const s of segs) {

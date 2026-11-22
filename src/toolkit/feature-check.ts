@@ -8,12 +8,17 @@
 //   only works once, or only from a dirty session, is caught before any proof
 //   depends on it. Stamped through `kitchen drive` (role engine, criterion
 //   `drives`, tags phase + chain).
+// - checkLineAlone: every `check:` line a job adds is run by itself from seed state
+//   (reset, then that one drive with its check args), the way `toolkit check` runs it
+//   after the job is merged; a drive that only works after an earlier segment of a
+//   proof passes checkChain but fails here.
 // - featureFileProblems: a feature file a job wrote must also pass W2's feature
 //   rules (src/toolkit/contract.ts parseFeature: one ```kitchen block, every drive
 //   with args has a `check:` line, describe lists the file), so the base-change
 //   re-proof (`toolkit check`) can drive it once the job is merged.
 import type { Criterion } from "../checks/spec-lint.ts";
 import { resetUp } from "../engine/instance.ts";
+import { runDrive } from "../proof/drive.ts";
 import { prove } from "../proof/prove.ts";
 import { parseFeature } from "./contract.ts";
 
@@ -48,6 +53,42 @@ export async function checkChain(o: {
     }
   }
   return { criterion: o.criterion.id, ok: true, evidence };
+}
+
+/** The `check:` lines of a feature file (repo-relative path), or [] when it doesn't parse (featureFileProblems says why). Pure. */
+export function checkLinesOf(rel: string, text: string): { file: string; drive: string; args: Record<string, string> }[] {
+  try {
+    return parseFeature(rel.replace(/^\.kitchen\/toolkit\//, ""), text).checks.map((c) => ({ file: rel, ...c }));
+  } catch {
+    return [];
+  }
+}
+
+/** One `check:` line, alone from seed: reset, then the drive with the line's args. Stamped `drives`, phase check-line. */
+export async function checkLineAlone(o: {
+  job: { toolkitBin: string; slotId: string; worktree: string; slot: { n: number; ports: number[] } | null };
+  jobDir: string;
+  line: { file: string; drive: string; args: Record<string, string> };
+  log?: (m: string) => void;
+}): Promise<ChainCheck> {
+  const label = `check line ${o.line.drive}`;
+  try {
+    await resetUp(o.job, o.jobDir);
+    const r = await runDrive({
+      jobDir: o.jobDir,
+      request: { feature: o.line.drive, args: o.line.args },
+      criterion: "drives",
+      role: "engine",
+      tag: { phase: "check-line", drive: o.line.drive },
+      log: o.log,
+    });
+    const evidence = r.steps.flatMap((s) => s.evidence);
+    if (r.ok) return { criterion: label, ok: true, evidence };
+    const why = r.gap ? `needs primitive ${r.gap}` : `step "${r.failedAt?.step}" failed${r.failedAt?.why ? ` (${r.failedAt.why})` : ""}`;
+    return { criterion: label, ok: false, why: `run alone from seed with ${JSON.stringify(o.line.args)}: ${why}`, evidence };
+  } catch (e) {
+    return { criterion: label, ok: false, why: (e as Error).message, evidence: [] };
+  }
 }
 
 /**
