@@ -4,10 +4,10 @@
 // line of the agent working on each job. Read-only.
 import fs from "node:fs";
 import path from "node:path";
-import { loadConfig } from "../config.ts";
+import { type Config, loadConfig, modelFor } from "../config.ts";
 import { runningNow } from "../engine/control.ts";
 import { readRunLock, staleReason } from "../engine/lock.ts";
-import { BY_YOU_STOPPED, isActive, type Job, pausedByYou, type Stage } from "../engine/machine.ts";
+import { BY_YOU_STOPPED, isActive, type Job, maxRisk, pausedByYou, type Risk, type Stage } from "../engine/machine.ts";
 import { JOB_ID, jobDirOf, scanJobs } from "../engine/store.ts";
 import { liveDiffStat } from "../engine/worktree.ts";
 import { type LedgerLine, readLedger } from "../ledger/append.ts";
@@ -78,6 +78,64 @@ export function stateOf(j: Pick<Job, "stage" | "waitFor">): JobState {
   if (j.stage === "rejected") return "rejected";
   return "run";
 }
+/**
+ * The Board's lanes (ADR 0013), left to right: Needs you first, then the stages a job works through,
+ * Ready (ready to merge) and Done (closed: rejected or stopped; merges come later).
+ */
+export const LANES = [
+  { k: "you", nm: "Needs you" },
+  { k: "intake", nm: "Intake" },
+  { k: "build", nm: "Build" },
+  { k: "check", nm: "Check" },
+  { k: "review", nm: "Review" },
+  { k: "ready", nm: "Ready" },
+  { k: "done", nm: "Done" },
+] as const;
+export type Lane = (typeof LANES)[number]["k"];
+const LANE_OF: Partial<Record<Stage, Lane>> = {
+  intake: "intake",
+  spec: "intake",
+  repro: "intake",
+  build: "build",
+  gate: "check",
+  drives: "check",
+  verify: "check",
+  toolkit: "check",
+  review: "review",
+  ready: "ready",
+  report: "ready",
+  done: "ready",
+};
+/**
+ * A job's lane on the Board. Pure. Needs you: whatever is the person's to act on (a question, an
+ * escalation, a Toolkit to build). Done: closed, rejected or stopped by you. A job paused by you, or
+ * waiting on something else, stays in the lane of the stage it paused in.
+ */
+export function laneOf(j: Pick<Job, "stage" | "waitFor" | "pausedFrom" | "escalatedFrom" | "pausedReason">, from?: string): Lane {
+  if (stateOf(j) === "you") return "you";
+  if (j.stage === "rejected" || (pausedByYou(j) && j.pausedReason === BY_YOU_STOPPED)) return "done";
+  return LANE_OF[workStage(j, from)] ?? "intake";
+}
+/** Who works in each lane, as its header says: the models this repo's kitchen.yaml runs, `engine` for Kitchen's own steps. */
+export function laneWho(cfg: Config | null): Record<Lane, string> {
+  const m = (role: string, fallback: string) => (cfg ? modelFor(cfg, role) : fallback);
+  return {
+    you: "you",
+    intake: m("intake", "intake agent"),
+    build: m("builder", "build agent"),
+    check: `engine + ${m("verifier", "verifier")}`,
+    review: m("reviewer", "review agents"),
+    ready: "engine",
+    done: "closed",
+  };
+}
+/** The job's real risk: intake's call, raised by the gate's floor. Null until intake has decided. */
+export const riskOf = (j: Pick<Job, "risk" | "riskFloor">): Risk | null => maxRisk(j.risk ?? null, j.riskFloor ?? null);
+/** The card's proof pill, from the latest verdict: pass, fail, or not proven yet (none, inconclusive, a gap). Rejected: none. */
+export function proofOf(stage: Stage, verdict: string | null): "pass" | "fail" | "not proven" | null {
+  if (stage === "rejected") return null;
+  return verdict === "PASS" ? "pass" : verdict === "FAIL" ? "fail" : "not proven";
+}
 /** What a job that needs you asks: intake's question (question.md), or why it escalated. */
 export function questionOf(j: Job, dir: string): string | null {
   if (j.stage === "needs-info") {
@@ -121,7 +179,8 @@ export type JobCard = {
   stage: string;
   paused: string | null;
   reason: string | null;
-  risk: string | null;
+  /** The job's real risk (riskOf), null until intake decides. */
+  risk: Risk | null;
   kind: string | null;
   /** job.json's round: the one evidence is stamped with, the timeline shows and a follow-up adds to. */
   round: number;
@@ -161,6 +220,10 @@ export type JobCard = {
   /** Files changed from the base (worktree as it is now). */
   files: FileStat[];
   doneAt: string | null;
+  /** The Board lane it sits in (laneOf). */
+  lane: Lane;
+  /** Its proof so far (proofOf). */
+  proof: "pass" | "fail" | "not proven" | null;
 };
 
 export type Snapshot = {
@@ -173,6 +236,8 @@ export type Snapshot = {
   toolkitProven: boolean;
   runner: { running: boolean; text: string };
   phases: { k: Phase; nm: string }[];
+  /** The Board's lanes in order, each with who works there. */
+  lanes: { k: Lane; nm: string; who: string }[];
   jobs: JobCard[];
   corrupt: string[];
   summary: {
@@ -275,7 +340,7 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
       stage: j.stage,
       paused: j.stage === "paused" ? `${j.waitFor ?? "paused"}${j.pausedFrom ? ` (from ${j.pausedFrom})` : ""}` : null,
       reason: j.pausedReason ?? null,
-      risk: j.riskFloor && j.risk && j.riskFloor !== j.risk ? j.riskFloor : (j.risk ?? null),
+      risk: riskOf(j),
       kind: j.kind ?? null,
       round: j.round,
       roundLimit: j.roundLimit,
@@ -304,6 +369,8 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
       runnerOn: runningNow(j),
       files: await changesOf(j, now),
       doneAt: j.doneAt ?? null,
+      lane: laneOf(j, last?.stage),
+      proof: proofOf(j.stage, v.verdict),
     });
   }
   const lock = readRunLock(repo);
@@ -311,10 +378,12 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
   const done = m.jobs.filter((j) => j.done);
   const today = new Date(now).toDateString();
   const priced = lines.filter((l) => typeof l.usd === "number");
-  let tool: string | null = null;
+  let cfg: Config | null = null;
   try {
-    tool = loadConfig(repo).agent.tool;
+    cfg = loadConfig(repo);
   } catch {}
+  const tool = cfg?.agent.tool ?? null;
+  const who = laneWho(cfg);
   const med = (xs: number[]) => (xs.length ? [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)] : 0);
   return {
     repo: path.basename(repo),
@@ -326,6 +395,7 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
     runner:
       lock && !stale ? { running: true, text: `running, pid ${lock.info?.pid}` } : { running: false, text: stale ? `not running (${stale})` : "not running" },
     phases: PHASES.map((p) => ({ k: p.k, nm: p.nm })),
+    lanes: LANES.map((l) => ({ k: l.k, nm: l.nm, who: who[l.k] })),
     jobs: jobs.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
     corrupt,
     summary: {
