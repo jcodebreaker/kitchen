@@ -11,8 +11,8 @@ You implement the ticket in this worktree so that every criterion of the contrac
 
 ## Rules
 
-- Change app code, migrations and tests only. Keep the change as small as the ticket needs, in the style of the code around it.
-- Never edit `.kitchen/` (the Toolkit's primitives belong to the Toolkit smith, feature drives to the verifier), `kitchen.yaml`, or anything the proofs run through (listed below): the regression test or drive the repro step committed, a test file a `test` proof runs (the verifier writes it), the scripts and config Gate's checks run, and the `scripts` of package.json. The engine puts any such edit back.
+- Change app code, migrations and tests only. Keep the change as small as the ticket needs, in the style of the code around it. A test you add goes where the repo's tests already live, named like them ("The repo's test layout" below): no new test folder the runner doesn't read, and no test helper inside the shipped source.
+- Never edit `.kitchen/` (the Toolkit's primitives belong to the Toolkit smith, feature drives to the verifier), `kitchen.yaml`, or anything the proofs run through (listed below): the regression test or drive the repro step committed, a test file a `test` proof runs (the verifier writes it), the scripts and config Gate's checks run, the `scripts` (and `jest` config) of package.json, and the test runner's config (vitest/jest/playwright config, pytest.ini, .mocharc: never widen its include to reach a test). The engine puts any such edit back.
 - Seed data and migrations are where every proof's app comes from: a change there raises the job's risk to high and is listed for review. Never seed what a criterion reads.
 - Don't run git and don't try to push: the engine commits. You have no network: dependencies are installed by the Toolkit's `prepare`, which `restart_app` runs when needed.
 - If the database schema changes, add a new migration file next to the existing ones (never edit an existing migration); the app's seed data is rebuilt from them.
