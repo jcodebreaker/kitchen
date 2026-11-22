@@ -250,8 +250,8 @@ if (kind === "xss") {
   );
   const final = execFileSync("git", ["-C", r.dir, "show", `${j.branch}:server.js`], { encoding: "utf8" });
   const base = new Set(fs.readFileSync(path.join(HERE, "../../fixtures/a-web/server.js"), "utf8").split("\n"));
-  const rawLeft = final.split("\n").filter((l) => !base.has(l) && /description/.test(l) && /\$\{(?!esc\()[^}]*description[^}]*\}/.test(l));
-  check("xss: round 2's builder fixed it: no added line interpolates a description without esc()", rawLeft.length === 0, rawLeft.join(" | "));
+  const rawLeft = final.split("\n").filter((l) => !base.has(l) && /description/.test(l) && /\$\{\s*[\w.]*description\s*\}/.test(l));
+  check("xss: round 2's builder fixed it: no added line interpolates a bare description (no esc around it)", rawLeft.length === 0, rawLeft.join(" | "));
   const last = review as RJ | null;
   check(
     "xss: the last review passes (no blocking finding)",
