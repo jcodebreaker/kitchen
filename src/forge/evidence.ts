@@ -80,7 +80,7 @@ export async function publishEvidence(o: {
     const pruned: string[] = [];
     if (parent) {
       const folders: { name: string; at: string | null }[] = [];
-      for (const name of (await git.run(["ls-tree", "--name-only", parent])).stdout.split("\n").filter(Boolean)) {
+      for (const name of (await git.run(["ls-tree", "--full-tree", "--name-only", parent])).stdout.split("\n").filter(Boolean)) {
         let at: string | null = null;
         try {
           at = (JSON.parse((await git.run(["show", `${parent}:${name}/meta.json`])).stdout) as { at?: string }).at ?? null;
@@ -88,11 +88,11 @@ export async function publishEvidence(o: {
         folders.push({ name, at });
       }
       for (const name of stale(folders, o.keepDays, now, o.job)) {
-        await git.run(["rm", "-r", "-f", "--cached", "--quiet", "--", name], { env });
+        await git.run(["rm", "-r", "-f", "--cached", "--quiet", "--", `:(top)${name}`], { env });
         pruned.push(name);
       }
     }
-    await git.run(["rm", "-r", "-f", "--cached", "--quiet", "--ignore-unmatch", "--", o.job], { env });
+    await git.run(["rm", "-r", "-f", "--cached", "--quiet", "--ignore-unmatch", "--", `:(top)${o.job}`], { env });
     let redacted = 0;
     const files = publishable(o.jobDir);
     for (const rel of files) {
