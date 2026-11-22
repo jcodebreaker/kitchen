@@ -13,10 +13,10 @@
 //      visible`, `not contains`, `!=`) holds whenever the thing never existed, so
 //      it must be backed (negativeBacking): (a) created: an earlier step of the
 //      same proof makes what must not show (its text is an arg of that step);
-//      (b) a value read: `$v != "…"` / `json … != …` on a value this proof reads
-//      after an earlier step that makes something (a drive, a writing `http`), or,
-//      for a bug, a literal the ticket names; the runtime refuses an unsaved,
-//      empty or failed subject (assert.ts); (c) shown on the base: anything else
+//      (b) a value read: `$v != "…"` / `json … != …` on a value a step of this
+//      proof reads and keeps (`--save v`, or the last output); the runtime
+//      refuses an unsaved, empty, missing or failed subject (assert.ts), so it
+//      holds only on a real value that differs; (c) shown on the base: anything else
 //      is left to the base check (`baseNegatives`): the clause must be FALSE on
 //      the base, the thing is there before the change (base-check.ts
 //      baseNegativeProblems). A repro criterion's expect must be able to be false
@@ -235,15 +235,15 @@ const makes = (s: Segment) => s.kind === "toolkit" && (s.drive || (s.name === "h
  *  (a) created: what must not show is an arg value of an earlier segment
  *      (`projects.create --user bob-admin --name "Bob plan" ; … ; open --path /projects`), or names one (a word
  *      of 5+ letters of such an arg: `cli --argv "add Zebra" ; … ` then `not contains "[x] 7 Zebra"`);
- *  (b) a value read: `$v != "…"` / `$v not contains "…"` / `json … != …` on a value this proof reads (a
- *      `--save v` segment, or the last output) after an earlier segment that makes something, or, for a bug,
- *      whose literal the ticket names (the wrong value it reports). At run time assert.ts fails such a clause
- *      when the value wasn't saved, is empty or is a failed response, so it can't hold by absence;
+ *  (b) a value read: `$v != "…"` / `$v not contains "…"` / `json … != …` on a value a step of this proof
+ *      reads and keeps (a primitive's `--save v`, or the last output): at run time assert.ts fails such a
+ *      clause when the value wasn't saved, is empty, is missing at its path or is a failed response, so it
+ *      can only hold on a real value that differs (`$amt != "8910"`, `$b not contains "true"` read by `sql`);
  *  (c) shown on the base: anything else goes to the base check, where it must be FALSE (base-check.ts).
  * Equality to empty (`$o == ""`) names nothing that must not show: it needs an earlier making step, else it
  * is refused (`refuse`). Pure.
  */
-export function negativeBacking(expect: string, segs: Segment[], o: { kind?: string | null; ticket?: string } = {}): { refuse?: string; base: string[] } {
+export function negativeBacking(expect: string, segs: Segment[]): { refuse?: string; base: string[] } {
   const clauses = parseExpect(expect);
   for (const c of emptyEquals(clauses)) if (!segs.slice(0, -1).some(makes)) return { refuse: c.src, base: [] };
   const base: string[] = [];
@@ -262,7 +262,6 @@ export function negativeBacking(expect: string, segs: Segment[], o: { kind?: str
   segs.forEach((s, i) => {
     if (s.kind === "toolkit" && s.save) saved.set(s.save, i);
   });
-  const ticket = (o.ticket ?? "").toLowerCase();
   for (const c of negativeClauses(clauses)) {
     const x = absentString(c)?.toLowerCase();
     if (x && earlier.some((v) => v === x || (Math.min(v.length, x.length) >= 3 && (v.includes(x) || x.includes(v))))) continue; // (a)
@@ -270,10 +269,7 @@ export function negativeBacking(expect: string, segs: Segment[], o: { kind?: str
     if (x && madeWords.some((w) => x.includes(w))) continue;
     if ((c.kind === "var" || c.kind === "json") && c.value !== null && String(c.value) !== "") {
       const subject = c.kind === "var" ? c.name : c.subject;
-      const at = subject === null ? segs.length - 1 : saved.get(subject);
-      const lit = String(c.value).toLowerCase();
-      if (at !== undefined && segs.slice(0, at).some(makes)) continue; // (b) read after a making step
-      if (at !== undefined && o.kind === "bug" && lit.length >= 2 && ticket.includes(lit)) continue; // (b) the wrong value the ticket names
+      if (subject === null || saved.has(subject)) continue; // (b) a value read and kept by a step of this proof
     }
     base.push(c.src); // (c)
   }
@@ -332,7 +328,7 @@ export function coverageProblems(criteria: Criterion[], reqs: Requirement[]): st
     });
     if (!asserts)
       out.push(
-        `${r.id} says what must not happen ("${r.text}"), but no criterion covering it asserts an absence (\`text "…" not visible\`, \`not contains "…"\`, \`$x != …\`), backed: what must not show is made by an earlier step of the same proof (its text an arg), or is a value read after a step that makes something (\`$amt != "8910"\`), or shows on the current code (the engine runs that proof on the base, every step must run there, and the clause must be false there). If it means existing behaviour stays as it is (nothing else changes, a case the change must leave alone), mark it \`(unchanged)\` instead and prove it positively (the same output or exit, \`$x == …\`)`,
+        `${r.id} says what must not happen ("${r.text}"), but no criterion covering it asserts an absence (\`text "…" not visible\`, \`not contains "…"\`, \`$x != …\`), backed: what must not show is made by an earlier step of the same proof (its text an arg), or is a value a step reads and saves (\`read --target amount --save amt\` then \`$amt != "8910"\`), or shows on the current code (the engine runs that proof on the base, every step must run there, and the clause must be false there). If it means existing behaviour stays as it is (nothing else changes, a case the change must leave alone), mark it \`(unchanged)\` instead and prove it positively (the same output or exit, \`$x == …\`)`,
       );
   }
   return out;
@@ -359,8 +355,6 @@ export function lintSpec(
     requirements?: Requirement[];
     /** The repo's test layout (checks/test-layout.ts): rule 8 runs when given. */
     testLayout?: TestLayout | null;
-    /** The ticket's text: for a bug, a `!=` literal it names backs the negative (rule 3 b). */
-    ticket?: string;
   },
 ): LintResult {
   const criteria = parseCriteria(md);
@@ -401,7 +395,7 @@ export function lintSpec(
       try {
         parseExpect(c.expect);
         if (kindOf === "toolkit") {
-          const b = negativeBacking(c.expect, segs, { kind: o.kind, ticket: o.ticket });
+          const b = negativeBacking(c.expect, segs);
           if (b.refuse)
             return `${c.id}: \`${b.refuse}\` holds whenever the thing never existed (an empty read); an earlier step of the same proof must make what it reads (a feature drive, a writing \`http\`)`;
           for (const clause of b.base) baseNegatives.push({ criterion: c.id, clause });

@@ -28,12 +28,6 @@ export function jobRequirements(jobDir: string): Requirement[] {
   return withSpecMarks(parseRequirements(read("intake.md")), read("spec.md"));
 }
 
-/** The ticket as it came in (ticket.md), or "". */
-export function ticketText(jobDir: string): string {
-  const p = path.join(jobDir, "ticket.md");
-  return fs.existsSync(p) ? fs.readFileSync(p, "utf8") : "";
-}
-
 export async function toolkitBlock(job: Job, src: string): Promise<PromptBlock> {
   try {
     return { title: "The Toolkit", body: await toolkitBrief(job, src) };

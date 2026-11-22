@@ -10,7 +10,7 @@ import type { Kind, Risk } from "../machine.ts";
 import { writeAtomic } from "../store.ts";
 import { ensureWorktree } from "../worktree.ts";
 import { baseNegativeProblems, runBaseCheck } from "./base-check.ts";
-import { fileBlock, testLayoutBlock, ticketText, toolkitBlock } from "./context.ts";
+import { fileBlock, testLayoutBlock, toolkitBlock } from "./context.ts";
 import { prompt } from "./prompts.ts";
 import { headers, runRole } from "./role.ts";
 import { hasToolkit, toolkitView } from "./toolkit-info.ts";
@@ -57,7 +57,6 @@ export const intake: StageHandler = async (ctx) => {
           protected: ctx.config.protected,
           requirements,
           testLayout: testLayout(ctx.repo, ctx.config.test_cmd),
-          ticket: ticketText(ctx.jobDir),
         })
       : undefined;
   // spec-lint rule 3 (c): a negative no earlier step backs must be false on the base. The inline criteria

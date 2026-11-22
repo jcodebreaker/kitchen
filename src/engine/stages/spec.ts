@@ -14,7 +14,7 @@ import { ensureUp } from "../instance.ts";
 import { writeAtomic } from "../store.ts";
 import { commitWith, ensureWorktree } from "../worktree.ts";
 import { baseNegativeProblems, runBaseCheck } from "./base-check.ts";
-import { fileBlock, humanFeedback, testLayoutBlock, ticketText, toolkitBlock } from "./context.ts";
+import { fileBlock, humanFeedback, testLayoutBlock, toolkitBlock } from "./context.ts";
 import { prompt } from "./prompts.ts";
 import { runRole } from "./role.ts";
 import { hasToolkit, toolkitView } from "./toolkit-info.ts";
@@ -61,7 +61,6 @@ export const spec: StageHandler = async (ctx) => {
     protected: ctx.config.protected,
     requirements,
     testLayout: testLayout(job.worktree, ctx.config.test_cmd),
-    ticket: ticketText(ctx.jobDir),
   });
   if (!lint.ok) {
     ctx.log(`spec-lint: ${lint.reason}`);

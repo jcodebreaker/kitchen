@@ -146,8 +146,14 @@ export async function prove(o: ProveOpts): Promise<ProveResult> {
       evidence.push(r.id);
       outcome.exit = r.exit;
       outcome.ok = r.exit === 0;
-      const out = path.join(evidenceDir(o.jobDir), r.id, "stdout.txt");
-      outcome.output = fs.existsSync(out) ? fs.readFileSync(out, "utf8") : r.tail;
+      // As for a cli step: `json`/`rows` read stdout, `contains` what the terminal shows (stdout and stderr).
+      const read = (f: string) => {
+        const file = path.join(evidenceDir(o.jobDir), r.id, f);
+        return fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null;
+      };
+      const stdout = read("stdout.txt");
+      outcome.output = stdout ?? r.tail;
+      if (stdout !== null) outcome.shown = [stdout, read("stderr.txt") ?? ""].filter((x) => x.trim()).join("\n");
       if (r.timedOut) return res("step-failed", { why: `timed out after ${o.timeoutSec ?? 600}s` });
     }
   } catch (e) {

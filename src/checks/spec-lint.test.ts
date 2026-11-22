@@ -207,14 +207,9 @@ test("rule 3: a negative is backed by a creating step, by a value read after a m
   // (b) a value read after a step that makes something (d-discount: the under-100 order's amount is not the discounted one).
   const order = "toolkit http --method POST --path /orders --body '{\"qty\":3}' ; toolkit read --target amount --save amt";
   assert.deepEqual(lint(spec(C("C1", "x", order, '$amt != "8910"'))).baseNegatives, []);
-  // … but not a read with nothing made first, nor a drive that saves in one segment.
-  assert.equal(lint(spec(C("C1", "x", `${leak} ; toolkit read --target owner --save o`, '$o != "bob"'))).baseNegatives.length, 1);
+  // … or any value a primitive reads and saves (a-primitive: `sql … --save b` then `$b not contains "true"`); not a drive's own save.
+  assert.deepEqual(lint(spec(C("C1", "x", `${leak} ; toolkit read --target owner --save o`, '$o != "bob"'))).baseNegatives, []);
   assert.equal(lint(spec(C("C1", "x", "toolkit settings.toggle-dark --user alice", '$theme != "Light"'))).baseNegatives.length, 1);
-  // (b) for a bug: the wrong value the ticket names.
-  const stats = "toolkit login --as alice ; toolkit read --target overdue --save n";
-  const bug = (ticket: string) => lintSpec(spec(C("C1", "x", stats, '$n != "3 overdue"', true)), { kind: "bug", toolkit, ticket }).baseNegatives.length;
-  assert.equal(bug("stats says 3 overdue when every late task is done"), 0);
-  assert.equal(bug("stats is wrong"), 1);
   // Equality to empty still needs a making step, refused at once.
   assert.match(lint(spec(C("C1", "x", `${leak} ; toolkit read --target owner --save o`, '$o == ""'))).reason ?? "", /never existed/);
   assert.ok(lint(spec(C("C1", "x", "cmd node --check server.js", "exit != 1"))).ok, "an exit code is not a negative expect");
