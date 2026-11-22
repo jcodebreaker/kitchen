@@ -66,3 +66,23 @@ One entry per wave: what was built, review rounds and scores, what is proven, an
 **Still stubs, swapped in at W3a and W3b:** the guards that read a role's file instead of evidence (repro on base, drives resolve, verify verdict, toolkit check), the base sync and fresh instance, the engine-owned Toolkit checkout, and the GitHub forge.
 
 **Known gap:** when the loop stops because it lost the lock, it frees the slots of stages that are still finishing.
+
+## Wave 2: Toolkit and setup (built, awaiting review)
+
+**Built**
+- `src/toolkit/contract.ts`: zod schemas for every command's JSON line and `describe` (`contract: 1`, surface, primitives, features, `seed_users`, externals, `ports.needs`, parallel), and the parser for a feature file's `kitchen` block (mapped `paths`, `check` args).
+- `src/toolkit/check.ts`: `kitchen toolkit check [--feature x] [--src dir]`: describe, feature files, prepare (timed), up, doctor, every check drive through the engine's interpreter (stamped into `.kitchen/checks/<run>/`), reset, the drives again, a second slot at once, down, evidence verified against the signed head; writes `.kitchen/toolkit.proven`.
+- `src/toolkit/checkout.ts`: the engine-owned checkout `.worktrees/_toolkit@<sha>`, `prepare` cached per sha and source, GC of unreferenced checkouts.
+- `src/toolkit/reproof.ts`: the base-change re-proof the runner calls before taking new work (full check if Toolkit or mapped paths changed, else doctor + smoke drive; a failure pauses the queue and files one Toolkit ticket).
+- `toolkit-template/`: generic `bin/dev` (contract v1), helpers, optional browser and terminal modules, `app.mjs`/`SKILL.md`/`features/` to fill in.
+- `roles/setup.md` (port of pstack's create-verification-skill, MIT, credited), `src/init/` (`kitchen init`, resumable, survey → ≤3 questions → build → engine commit on `kitchen/setup` → check → ≤2 fix rounds; `--answers`, exit 3 without a TTY, `--generate-only`), `kitchen setup-mcp` (the setup role's bridge), `skills/kitchen/SKILL.md`.
+- Fixtures B (Python CLI + SQLite), C (fixture A's app with its own compose setup), D (API with a Stripe-shaped payment API and SMTP); none ships a Toolkit.
+
+**Proven by running** (`spikes/w2/results.md`): `init` + `toolkit check` pass on A (regenerated from scratch), B, C, D on Claude Code (sonnet, medium effort: 103–264 s agent time, $0.42–$0.87 each) and on A, B, C on Codex (gpt-6-luna: 208–498 s); the no-TTY question flow and the base-change re-proof (`flow.ts`, scripted setup role, 26/26); superchat-lite generated in 229 s for $1.26 (generate-only: its stack is over this laptop's Docker budget).
+
+**Open**
+- No real survey asked a question; the question flow is proven with the scripted role only.
+- superchat-lite's Toolkit has never run (W3b's first step, on a machine with the Docker budget).
+- Jobs still use the repo's own `bin/dev` (W1); moving them onto the engine-owned checkout comes with the smith and PR pinning (W3b).
+- `toolkit up|down|maintain` are not built.
+- `prepare` has no stall detection (a hung download waits for the 30-minute timeout).

@@ -91,10 +91,14 @@ export function kitchenLive(
   });
 }
 
-/** Containers and slots this spike's Toolkits may have left (by Kitchen's labels/prefixes). */
+/**
+ * Containers a W2 spike may have left: Kitchen-named ones whose instance id is a
+ * check slot (chk-…) or the setup bridge's slot (setup-…). Other sessions on this
+ * machine run fixture A jobs (kitchen-a-web-<job slot>) at the same time; those aren't ours.
+ */
 export function ourContainers(): string[] {
   const r = spawnSync("docker", ["ps", "-a", "--format", "{{.Names}}"], { encoding: "utf8" });
-  return (r.stdout || "").split("\n").filter((n) => /^kitchen[-_]/.test(n));
+  return (r.stdout || "").split("\n").filter((n) => /^kitchen[-_]/.test(n) && /(chk|setup)-[0-9a-f]{6}/.test(n));
 }
 
 export const readJson = <T>(f: string): T => JSON.parse(fs.readFileSync(f, "utf8")) as T;
