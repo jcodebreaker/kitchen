@@ -13,4 +13,9 @@ export interface TicketSource {
   ask(job: Job, o: { key: string; text: string }): Promise<void>;
   /** Replies since the job entered needs-info (job.updatedAt); empty while there are none. */
   replies(job: Job): Promise<string[]>;
+  /**
+   * A proposed ticket for a person to approve (the retro's lessons). It is never work by itself: a GitHub
+   * issue without the source label, a prompt draft under .kitchen/retro/drafts/. Idempotent by key; returns its ref.
+   */
+  draft(o: { key: string; title: string; body: string }): Promise<string>;
 }

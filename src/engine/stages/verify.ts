@@ -103,7 +103,7 @@ export const verify: StageHandler = async (ctx) => {
         event: "proof",
         key: `${job.id}/m${moves}/proof/${c.id}`,
         result,
-        detail: { criterion: c.id, drives: drivesOf(c.proof), head },
+        detail: { criterion: c.id, drives: drivesOf(c.proof), head, ...(p.gap ? { gap: p.gap } : {}) },
       });
       ctx.log(`${c.id} ${isJudged(c.expect) ? "(judged: evidence) " : ""}${result}${p.why ? `: ${p.why}` : ""}`);
       job = ctx.refresh();

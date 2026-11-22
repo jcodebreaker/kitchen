@@ -43,6 +43,8 @@ export type Measures = {
   gaps: { total: number; perJob: number };
   primitivePrs: { total: number; perJob: number };
   drives: DriveMeasure[];
+  /** The same counts per proof chain (every drive a proof ran, in order): what the retro proposes fixing. */
+  chains: DriveMeasure[];
   proofs: { runs: number; inconclusive: number; flakyGroups: number; groups: number };
   perPath: { risk: string; jobs: number; done: number; usd: number; secs: number; medianUsd: number; medianSecs: number }[];
   usd: number;
@@ -126,21 +128,28 @@ export function measures(all: LedgerLine[]): Measures {
   }
 
   // Drives: INCONCLUSIVE and flake.
+  // Per drive, and per chain (a proof's whole sequence of drives, which is what actually ran).
   const proofLines = lines.filter((l) => l.event === "proof");
   const drives = new Map<string, DriveMeasure>();
+  const chains = new Map<string, DriveMeasure>();
+  const tally = (map: Map<string, DriveMeasure>, d: string) => {
+    const m = map.get(d) ?? { drive: d, runs: 0, pass: 0, fail: 0, inconclusive: 0, gap: 0, groups: 0, flaky: 0 };
+    map.set(d, m);
+    return m;
+  };
+  const count = (m: DriveMeasure, r: string) => {
+    m.runs++;
+    if (r === "PASS") m.pass++;
+    else if (r === "INCONCLUSIVE") m.inconclusive++;
+    else if (r === "TOOLKIT-GAP") m.gap++;
+    else m.fail++;
+  };
   const groups = new Map<string, { drives: string[]; results: Set<string> }>();
   for (const p of proofLines) {
     const names = (p.detail?.drives as string[] | undefined) ?? [];
     const r = String(p.result);
-    for (const d of names.length ? names : ["(none)"]) {
-      const m = drives.get(d) ?? { drive: d, runs: 0, pass: 0, fail: 0, inconclusive: 0, gap: 0, groups: 0, flaky: 0 };
-      m.runs++;
-      if (r === "PASS") m.pass++;
-      else if (r === "INCONCLUSIVE") m.inconclusive++;
-      else if (r === "TOOLKIT-GAP") m.gap++;
-      else m.fail++;
-      drives.set(d, m);
-    }
+    for (const d of names.length ? names : ["(none)"]) count(tally(drives, d), r);
+    count(tally(chains, names.join(" → ") || "(none)"), r);
     const g = `${p.job}/${p.detail?.head ?? "?"}/${p.detail?.criterion ?? "?"}`;
     const e = groups.get(g) ?? { drives: names, results: new Set<string>() };
     e.results.add(r);
@@ -150,9 +159,7 @@ export function measures(all: LedgerLine[]): Measures {
   for (const g of groups.values()) {
     const flaky = g.results.has("PASS") && g.results.size > 1;
     if (flaky) flakyGroups++;
-    for (const d of g.drives.length ? g.drives : ["(none)"]) {
-      const m = drives.get(d);
-      if (!m) continue;
+    for (const m of [...(g.drives.length ? g.drives : ["(none)"]).map((d) => tally(drives, d)), tally(chains, g.drives.join(" → ") || "(none)")]) {
       m.groups++;
       if (flaky) m.flaky++;
     }
@@ -209,6 +216,7 @@ export function measures(all: LedgerLine[]): Measures {
     gaps: { total: gapsTotal, perJob: round2(jobs.length ? gapsTotal / jobs.length : 0) },
     primitivePrs: { total: prTotal, perJob: round2(jobs.length ? prTotal / jobs.length : 0) },
     drives: [...drives.values()].sort((a, b) => b.runs - a.runs || a.drive.localeCompare(b.drive)),
+    chains: [...chains.values()].sort((a, b) => b.runs - a.runs || a.drive.localeCompare(b.drive)),
     proofs: { runs: proofLines.length, inconclusive: proofLines.filter((p) => p.result === "INCONCLUSIVE").length, flakyGroups, groups: groups.size },
     perPath,
     usd: round4(jobs.reduce((n, j) => n + j.usd, 0)),

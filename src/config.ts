@@ -81,8 +81,17 @@ export const ConfigSchema = z
       .prefault({}),
     automerge: z.enum(["off", "low"]).default("off"),
     protected: z.array(z.string()).default(["kitchen.yaml"]),
+    /**
+     * The retro (src/retro/): every `every_jobs` finished jobs it mutes a review category for a lens after `mute_after`
+     * dismissals (never for the lenses in `never_mute`) and files at most `max_tickets` lesson tickets as drafts.
+     */
     retro: z
-      .object({ every_jobs: z.number().int().positive().default(5) })
+      .object({
+        every_jobs: z.number().int().positive().default(5),
+        mute_after: z.number().int().positive().default(3),
+        max_tickets: z.number().int().min(0).max(10).default(3),
+        never_mute: z.array(z.string()).default(["security"]),
+      })
       .strict()
       .prefault({}),
     checks: z.array(Check).default([]),

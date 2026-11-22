@@ -19,6 +19,7 @@ import { type Forge, forgeFor, isTrusted } from "../forge/forge.ts";
 import { appendLedger } from "../ledger/append.ts";
 import { self } from "../lock.ts";
 import { procsDirOf, reapGroups } from "../procs.ts";
+import { retroDue, runRetro } from "../retro/retro.ts";
 import { GithubSource } from "../sources/github.ts";
 import { PromptSource } from "../sources/prompt.ts";
 import type { TicketSource } from "../sources/source.ts";
@@ -151,6 +152,9 @@ export async function runKitchen(o: RunOpts): Promise<{ steps: number; moves: nu
         await Promise.race([...inFlight.values(), new Promise((r) => setTimeout(r, tickMs))]);
       }
     }
+    // Every retro.every_jobs finished jobs: the retro (src/retro/retro.ts), a stage outside any job.
+    if (!lock.lost() && retroDue(repo, config).due)
+      await runRetro({ repo, agent: deps.agent, forge: deps.forge, source: deps.source, print }).catch((e) => print(`retro: failed: ${(e as Error).message}`));
   } finally {
     // Leaving: give back the slots this runner holds (the next run takes new ones).
     for (const s of listSlots().filter((x) => x.pid === me.pid)) {
