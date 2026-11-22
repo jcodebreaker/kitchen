@@ -53,6 +53,21 @@ export function packageManager(files: (f: string) => boolean): { pm: "npm" | "pn
   return { pm: "npm", locked: files("package-lock.json") || files("npm-shrinkwrap.json") };
 }
 
+/**
+ * Yarn Berry (2+), not Yarn 1: a `.yarnrc.yml`, a `__metadata:` block in yarn.lock, or `packageManager: "yarn@2+"`.
+ * Yarn 1 ignores Berry's install flags (it would run every postinstall while it downloads, review Y1).
+ */
+export function yarnBerry(repo: string): boolean {
+  if (exists(repo, ".yarnrc.yml")) return true;
+  if (/^__metadata:/m.test(read(repo, "yarn.lock") ?? "")) return true;
+  try {
+    const pm = (JSON.parse(read(repo, "package.json") ?? "{}") as { packageManager?: string }).packageManager ?? "";
+    return /^yarn@([2-9]|\d{2,})\./.test(pm);
+  } catch {
+    return false;
+  }
+}
+
 const PLACEHOLDER_TEST = /no test specified/;
 
 function fromPackageJson(repo: string): Detected | null {
@@ -65,7 +80,11 @@ function fromPackageJson(repo: string): Detected | null {
     return null;
   }
   const scripts = pkg.scripts ?? {};
-  const { pm, locked } = packageManager((f) => exists(repo, f));
+  const found = packageManager((f) => exists(repo, f));
+  const { locked } = found;
+  // Yarn 1 fails under the sandbox on reading ~/.npmrc; `npm run` runs the same scripts on the node_modules it made.
+  const classic = found.pm === "yarn" && !yarnBerry(repo);
+  const pm = classic ? "npm" : found.pm;
   const run = (s: string) => (pm === "npm" ? (s === "test" ? "npm test" : `npm run ${s}`) : pm === "bun" ? `bun run ${s}` : `${pm} ${s}`);
   const alias: Record<(typeof ORDER)[number], string[]> = {
     lint: ["lint"],
@@ -86,7 +105,7 @@ function fromPackageJson(repo: string): Detected | null {
   const testCmd = pm === "npm" ? undefined : `${pm === "bun" ? "bun run" : pm} test {file}`;
   return {
     checks,
-    ...(deps && locked ? { install: pm } : {}),
+    ...(deps && locked ? { install: classic ? "yarn-classic" : pm } : {}),
     ...(skipped.length ? { skipped } : {}),
     ...(deps && !locked ? { unlockedDeps: true } : {}),
     ...(testCmd ? { testCmd } : {}),

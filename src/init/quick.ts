@@ -16,7 +16,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { AgentAdapter } from "../agents/adapter.ts";
 import { buildAgentEnv } from "../agents/env.ts";
-import { checksPrepareOf } from "../checks/run-checks.ts";
+import { checksPrepareOf, OFFLINE_REBUILD_NOTE, type PrepareStep, sameDepsAsBase } from "../checks/run-checks.ts";
 import { type Config, loadConfig, tierModel } from "../config.ts";
 import { toolkitAt } from "../engine/base.ts";
 import { openGit, plainCheckout } from "../engine/git.ts";
@@ -182,10 +182,15 @@ export async function quickInit(o: QuickOpts, out: (l: string) => void): Promise
   else if (n) {
     const c0 = Date.now();
     if (prepare && depsMissing(repo)) {
-      out(`  … Installing dependencies (${prepare.steps.map((s) => `${s.cmd}${s.network ? "" : ", offline"}`).join(", then ")})…`);
+      // The person's own checkout against its HEAD: dependency files they haven't changed are as trusted as HEAD (review N1).
+      const same = await sameDepsAsBase(plainCheckout(repo), "HEAD").catch(() => false);
+      const net = (s: PrepareStep) => (s.network === "base-deps" ? same : s.network);
+      out(`  … Installing dependencies (${prepare.steps.map((s) => `${s.cmd}${net(s) ? "" : ", offline"}`).join(", then ")})…`);
       for (const s of prepare.steps) {
-        record.prepare = await run(s.name, s.cmd, 600, s.network);
+        record.prepare = await run(s.name, s.cmd, 600, net(s));
         if (!record.prepare.ok) {
+          if (s.network === "base-deps" && !same)
+            record.prepare.tail = `${OFFLINE_REBUILD_NOTE.replace("this job changed", "you changed")}\n${record.prepare.tail}`;
           failed = record.prepare;
           break;
         }

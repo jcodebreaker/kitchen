@@ -112,7 +112,7 @@ export const ConfigSchema = z
      * runs with the network and no package scripts; the scripts run after in a rebuild, offline unless
      * `checks_network` (run-checks.ts installSteps). Runs before `checks_prepare`.
      */
-    checks_install: z.enum(["npm", "pnpm", "yarn", "bun"]).optional(),
+    checks_install: z.enum(["npm", "pnpm", "yarn", "yarn-classic", "bun"]).optional(),
     /** How a `test <file>` proof runs, in the job worktree with the untrusted env. `{file}` is the test file, shell-quoted. */
     test_cmd: z.string().min(1).default("npm test -- {file}"),
     agent: z
