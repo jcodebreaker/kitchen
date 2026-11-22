@@ -130,12 +130,14 @@ test("stop kills the job's agent process group now and parks the job", async () 
   assert.ok(lines.some((l) => l.includes("killed agent builder")));
 });
 
-test("stop that races the runner's park: the killed agent's runner parks it first, and the stop still succeeds", async () => {
-  const j = await job();
-  const dir = jobDirOf(repo, j.id);
-  // Another process stands in for the agent and its runner: on SIGTERM its step ends and the runner parks
-  // the job (paused, by-you: stopped) before the stop's own move gets the job.
-  const park = `process.on("SIGTERM",()=>{const fs=require("fs"),f=${JSON.stringify(path.join(dir, "job.json"))};const j=JSON.parse(fs.readFileSync(f,"utf8"));Object.assign(j,{stage:"paused",pausedFrom:j.stage,pausedReason:"by-you: stopped",running:null});fs.writeFileSync(f,JSON.stringify(j,null,2));process.exit(0)});console.log("ready");setInterval(()=>{},1000)`;
+/**
+ * Another process stands in for the job's agent and whatever ends its step: on SIGTERM it writes `to`
+ * into job.json (the runner parking it, another tab's pause, the step finishing) before the stop's
+ * own move gets the job.
+ */
+async function agentThatSets(id: string, to: Record<string, unknown>) {
+  const dir = jobDirOf(repo, id);
+  const park = `process.on("SIGTERM",()=>{const fs=require("fs"),f=${JSON.stringify(path.join(dir, "job.json"))};const j=JSON.parse(fs.readFileSync(f,"utf8"));Object.assign(j,{pausedFrom:j.stage,running:null},${JSON.stringify(to)});fs.writeFileSync(f,JSON.stringify(j,null,2));process.exit(0)});console.log("ready");setInterval(()=>{},1000)`;
   const agent = spawn(process.execPath, ["-e", park], { detached: true, stdio: ["ignore", "pipe", "ignore"] });
   await new Promise((r) => agent.stdout?.once("data", r));
   const pgid = agent.pid as number;
@@ -144,10 +146,30 @@ test("stop that races the runner's park: the killed agent's runner parks it firs
     path.join(procsDirOf(dir), `${pgid}.json`),
     JSON.stringify({ pgid, start: processStart(pgid), what: "agent builder", by: process.pid, at: new Date().toISOString() }),
   );
+}
+
+test("stop that races the runner's park: the killed agent's runner parks it first, and the stop still succeeds", async () => {
+  const j = await job();
+  await agentThatSets(j.id, { stage: "paused", pausedReason: "by-you: stopped" });
   assert.equal(await stop(repo, j.id, out), 0, lines.join("\n"));
-  const p = readJobAt(dir);
+  const p = readJobAt(jobDirOf(repo, j.id));
   assert.deepEqual([p.stage, p.pausedReason], ["paused", "by-you: stopped"]);
   assert.ok(lines.includes(`${j.id}  stopped`), lines.join("\n"));
+});
+
+test("stop that races a pause from another tab: the agent was killed, so the job is stopped by you", async () => {
+  const j = await job();
+  await agentThatSets(j.id, { stage: "paused", pausedReason: "by-you" });
+  assert.equal(await stop(repo, j.id, out), 0, lines.join("\n"));
+  assert.equal(readJobAt(jobDirOf(repo, j.id)).pausedReason, "by-you: stopped");
+  assert.ok(lines.includes(`${j.id}  stopped`));
+});
+
+test("a stop the job outran says what the job is now, in a person's words", async () => {
+  const j = await job();
+  await agentThatSets(j.id, { stage: "paused", waitFor: "backoff", pausedReason: "rate limited" });
+  assert.equal(await stop(repo, j.id, out), 1);
+  assert.equal(lines.at(-1), `${j.id}  is waiting (rate limited): nothing to stop`);
 });
 
 function ctxOf(j: Awaited<ReturnType<typeof job>>, agent: FakeAdapter): StageContext {

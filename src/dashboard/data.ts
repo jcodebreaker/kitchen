@@ -69,10 +69,21 @@ export function workStage(j: Pick<Job, "stage" | "pausedFrom" | "escalatedFrom">
 export const phaseOf = (s: Stage): Phase => PHASES.find((p) => (p.stages as readonly Stage[]).includes(s))?.k ?? "intake";
 export const agentOf = (s: Stage): string | null => AGENT[s] ?? null;
 export type JobState = "you" | "run" | "paused" | "done" | "rejected";
-export function stateOf(j: Pick<Job, "stage" | "waitFor">): JobState {
+/** AUTH_FAILURE: the pause reason machine.ts gives a backoff after the agent's login failed. */
+export const AUTH_FAILURE = "auth failure";
+/**
+ * A pause only the person can end, or null: a Toolkit to build (ADR 0010), the agent's login to fix
+ * (a backoff after an auth failure), a Toolkit PR to merge. A rate-limit backoff ends by itself.
+ */
+export function waitYouOf(j: Pick<Job, "stage" | "waitFor" | "pausedReason">): "no-toolkit" | "auth" | "toolkit-pr" | null {
+  if (j.stage !== "paused") return null;
+  if (j.waitFor === "no-toolkit" || j.waitFor === "toolkit-pr") return j.waitFor;
+  return j.waitFor === "backoff" && j.pausedReason === AUTH_FAILURE ? "auth" : null;
+}
+export function stateOf(j: Pick<Job, "stage" | "waitFor" | "pausedReason">): JobState {
   if (j.stage === "needs-info" || j.stage === "needs-human") return "you";
-  // Waiting for the person to build a Toolkit (ADR 0010): theirs to act on, not a pause of theirs.
-  if (j.stage === "paused" && j.waitFor === "no-toolkit") return "you";
+  // Waiting on something only the person can do: theirs to act on, not a pause of theirs.
+  if (waitYouOf(j)) return "you";
   if (j.stage === "paused") return "paused";
   if (j.stage === "done") return "done";
   if (j.stage === "rejected") return "rejected";
@@ -147,7 +158,10 @@ export function questionOf(j: Job, dir: string): string | null {
       if (q) return q;
     } catch {}
   }
-  if (j.stage === "paused" && j.waitFor === "no-toolkit") return j.pausedReason ?? "This ticket needs Kitchen to drive the app; run kitchen toolkit build.";
+  const w = waitYouOf(j);
+  if (w === "no-toolkit") return j.pausedReason ?? "This ticket needs Kitchen to drive the app; run kitchen toolkit build.";
+  if (w === "auth") return "The agent could not log in (auth failure). Log in to its CLI again, then Resume.";
+  if (w === "toolkit-pr") return "Waiting for the Toolkit PR to merge. Merge it and the job goes on by itself, or Resume to try now.";
   return j.stage === "needs-info" || j.stage === "needs-human" ? (j.pausedReason ?? "It needs your answer to go on.") : null;
 }
 /** The agent stream files of one stage entry, oldest first (activity/m<moves>-<role>-<t0>.jsonl). */
@@ -213,6 +227,8 @@ export type JobCard = {
   pausedBy: "pause" | "stop" | null;
   /** Paused no-toolkit (ADR 0010): the person builds the Toolkit, or resumes it to go on with checks and tests only. */
   needsToolkit: boolean;
+  /** Paused on something only the person can do (waitYouOf): a Toolkit to build, a login to fix, a Toolkit PR to merge. */
+  waitYou: "no-toolkit" | "auth" | "toolkit-pr" | null;
   /** The last thing the agent working on it now did. */
   live: Ev | null;
   /** A runner is working on it right now. */
@@ -269,12 +285,12 @@ export function parseVerdict(text: string): { verdict: string | null; criteria: 
   return { verdict, criteria };
 }
 
-function latest(dir: string, re: RegExp): string | null {
+function latest(dir: string, re: RegExp, round?: number): string | null {
   const rounds = path.join(dir, "rounds");
   if (!fs.existsSync(rounds)) return null;
   for (const r of fs
     .readdirSync(rounds)
-    .filter((x) => /^\d+$/.test(x))
+    .filter((x) => /^\d+$/.test(x) && (round === undefined || Number(x) === round))
     .sort((a, b) => Number(b) - Number(a))) {
     const files = fs
       .readdirSync(path.join(rounds, r))
@@ -320,6 +336,8 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
     const dir = jobDirOf(repo, j.id);
     const vf = latest(dir, /^verdict-m\d+\.md$/);
     const v = vf ? parseVerdict(fs.readFileSync(vf, "utf8")) : { verdict: null, criteria: [] };
+    // The proof pill reads this round only: a PASS from an earlier round proves nothing about the code now.
+    const vNow = latest(dir, /^verdict-m\d+\.md$/, j.round);
     const rf = latest(dir, /^review\.json$/);
     let review: JobCard["review"] = null;
     if (rf)
@@ -365,12 +383,13 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
       q: questionOf(j, dir),
       pausedBy: pausedByYou(j) ? (j.pausedReason === BY_YOU_STOPPED ? "stop" : "pause") : null,
       needsToolkit: j.stage === "paused" && j.waitFor === "no-toolkit",
+      waitYou: waitYouOf(j),
       live: (cur ? activityOf(cur.file, [j.worktree, repo]) : []).at(-1) ?? null,
       runnerOn: runningNow(j),
       files: await changesOf(j, now),
       doneAt: j.doneAt ?? null,
       lane: laneOf(j, last?.stage),
-      proof: proofOf(j.stage, v.verdict),
+      proof: proofOf(j.stage, vNow ? parseVerdict(fs.readFileSync(vNow, "utf8")).verdict : null),
     });
   }
   const lock = readRunLock(repo);

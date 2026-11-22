@@ -11,14 +11,15 @@ The structure below still holds. The layout ideas come from super-board's public
 **What changes.** Only the **Board** view of the v4 dashboard (ADR 0009). List view, the job panel, the composer, steering, pause/stop, the token and 127.0.0.1-only all stay as they are.
 
 1. **Columns by stage**, in Kitchen's own words: **Needs you first, on the left** (and first on a phone), then Intake · Build · Check (gate + verify) · Review · Ready · Done. Super-board calls its column Blocked 🙋 and puts it last; the user chose first. Ready means ready to merge. Done holds closed jobs until Kitchen learns about merges, which comes later.
-   - Each column has a 3px top border in its stage colour, a lightly tinted header and a count.
-   - A mono subtitle says who works there: `sonnet`, `engine`, `opus`, `you`.
-2. **Compact cards** in a GitHub Projects-like style:
-   - the job id in mono (`#005`) and the title on two lines at most;
-   - a pill row: risk (`low` / `med` / `high`, chosen by the user so the row doesn't wrap), verdict (pass / fail / not proven), round (`r2`), and cost;
-   - one live evidence line in mono, e.g. `build · Edit src/cli/status.ts`, or `✓ 14/14 tests`, or a red pill `✗ C2 failed`.
-   - A merged-ready card gets a green border; a needs-you card an amber one.
-3. **Neutral palette**: Primer-like greys with each stage colour used only in its column's border, header tint and pills, in light and dark. Base colours: white / `#0d1117`, soft `#f6f8fa` / `#151b23`, borders `#d1d9e0` / `#3d444d`. Stage colours use the same lightness in each theme. The v4 rule that orange means "needs you" still holds: the amber stays reserved for Needs you.
+   - Each lane is a borderless grey surface with a one-line header: its name, a count and who works there (the model kitchen.yaml runs, `engine`, `you`, `closed`). No coloured top bars or tinted headers.
+   - An empty lane folds into a narrow rail; on a phone it is one quiet line.
+2. **Roomy cards** with soft shadows, in the San Francisco system font (SF Mono for ids):
+   - the job id (`#005`), the round when past the first, the time in this stage, and the title on up to three lines;
+   - a pill row of quiet pills: risk (`low` / `med` / `high`, the job's real risk), proof (pass / fail / not proven, from this round's verdict), and the cost;
+   - a two-line live activity line from the agent's own stream, e.g. `Edit src/cli/status.ts +12 −3`, `✓ 14 tests pass`, or `✗ C2 failed` in red text;
+   - a message button that opens the panel with the composer.
+   - A ready card gets a green ring; a needs-you card an amber one.
+3. **Colour only where it means something**: neutral greys, amber only for Needs you, green for Ready and pass, red only for failures, as text. Light and dark.
 4. **Interactions stay v4's.** Clicking a card opens the panel and the composer works from the card; J/K, ⌘K and Esc still work. The columns scroll sideways on narrow screens; at phone width they stack.
 
 **Process.** First a clickable mock-up in `dashboard/mockups/board-projects.html`, with real kitchen-dog jobs and light, dark and 400px. The user approves it, and only then is it wired into the dashboard.

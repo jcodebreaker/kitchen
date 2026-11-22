@@ -15,7 +15,7 @@ import { procsDirOf, reapGroups } from "../procs.ts";
 import { BY_YOU_STOPPED, isActive, type Job, pausedByYou } from "./machine.ts";
 import { addMessage, checkText, type Message } from "./messages.ts";
 import { moveJob } from "./runner.ts";
-import { findJob, jobDirOf, readJobAt, writeAtomic } from "./store.ts";
+import { findJob, jobDirOf, readJobAt, updateJob, writeAtomic } from "./store.ts";
 
 export type Out = (line: string) => void;
 type Control = { pause?: string; stop?: string };
@@ -68,8 +68,9 @@ export const stopRequested = (jobDir: string) => !!readControl(jobDir).stop;
 async function request(repo: string, job: Job, how: "pause" | "stop", out: Out): Promise<number> {
   const jobDir = jobDirOf(repo, job.id);
   await writeControl(jobDir, (c) => ({ ...c, [how]: new Date().toISOString() }));
+  let killed: Awaited<ReturnType<typeof reapGroups>> = [];
   if (how === "stop") {
-    const killed = await reapGroups(procsDirOf(jobDir));
+    killed = await reapGroups(procsDirOf(jobDir));
     for (const g of killed) out(`${job.id}  killed ${g.what} (process group ${g.pgid})`);
     appendLedger(repo, {
       job: job.id,
@@ -83,22 +84,31 @@ async function request(repo: string, job: Job, how: "pause" | "stop", out: Out):
   // Decided under the job lock (moveJob): a runner that took the job a moment ago keeps it, and parks it itself.
   const r = await honorControl(repo, job.id, out);
   if (r === "waits") out(how === "pause" ? `${job.id}  pausing after the current step (${job.stage})` : `${job.id}  stopping: the runner parks it`);
-  // The runner may have parked it first (a killed agent ends its step): already paused by you, as asked, is done.
-  if (r === "none") {
-    const now = readJobAt(jobDir);
-    if (!pausedByYou(now) || (now.pausedReason === BY_YOU_STOPPED) !== (how === "stop")) return 1;
+  if (r !== "none") return 0;
+  // The runner may have parked it first (a killed agent ends its step), or a pause from another tab
+  // did: a job paused by you, with the same intent, is done. A stop that killed the agent of a job
+  // another tab paused meanwhile stopped it all the same, and says so.
+  const now = readJobAt(jobDir);
+  const stopped = now.pausedReason === BY_YOU_STOPPED;
+  if (pausedByYou(now) && (stopped === (how === "stop") || (how === "stop" && killed.length))) {
+    if (how === "stop" && !stopped) await updateJob(repo, job.id, (x) => ({ ...x, pausedReason: BY_YOU_STOPPED }));
     out(`${job.id}  ${how === "stop" ? "stopped" : "paused"}`);
+    return 0;
   }
-  return 0;
+  out(`${job.id}  is ${stateWords(now)}: nothing to ${how}`);
+  return 1;
+}
+
+/** A job's state in a person's words, for a refusal: `paused by you`, `stopped by you`, `waiting (rate limited)`, `done`. */
+function stateWords(j: Job): string {
+  if (pausedByYou(j)) return j.pausedReason === BY_YOU_STOPPED ? "stopped by you" : "paused by you";
+  if (j.stage === "paused") return `waiting (${j.pausedReason ?? j.waitFor ?? "paused"})`;
+  return j.stage;
 }
 
 function parkable(job: Job, how: string, out: Out): boolean {
   if (isActive(job.stage)) return true;
-  out(
-    job.stage === "paused"
-      ? `${job.id}  is already paused (${job.pausedReason ?? job.waitFor}); kitchen resume wakes it`
-      : `${job.id}  is ${job.stage}: nothing running to ${how}`,
-  );
+  out(job.stage === "paused" ? `${job.id}  is already ${stateWords(job)}; kitchen resume wakes it` : `${job.id}  is ${job.stage}: nothing running to ${how}`);
   return false;
 }
 

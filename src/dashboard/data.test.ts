@@ -1,9 +1,13 @@
 // The Board's data shape (ADR 0013): which lane a job sits in, where needs-you jobs go, and the risk its pill shows.
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { test } from "vitest";
 import { parseConfig } from "../config.ts";
 import { BY_YOU, BY_YOU_STOPPED, type Job } from "../engine/machine.ts";
-import { LANES, laneOf, laneWho, proofOf, riskOf } from "./data.ts";
+import { createJob, jobDirOf, updateJob } from "../engine/store.ts";
+import { AUTH_FAILURE, LANES, laneOf, laneWho, proofOf, riskOf, snapshot, stateOf, waitYouOf } from "./data.ts";
 
 const job = (o: Partial<Job>) => ({ stage: "build", ...o }) as Job;
 
@@ -66,4 +70,37 @@ test("each lane's header names who works there, from kitchen.yaml's models", () 
   assert.equal(who.build, "opus");
   assert.equal(who.check, "engine + sonnet");
   assert.equal(laneWho(null).review, "review agents");
+});
+
+test("needs you: a login to fix and a Toolkit PR to merge; a rate-limit backoff stays in its stage's lane", () => {
+  const auth = job({ stage: "paused", waitFor: "backoff", pausedFrom: "build", pausedReason: AUTH_FAILURE });
+  assert.equal(stateOf(auth), "you");
+  assert.equal(laneOf(auth), "you");
+  assert.equal(waitYouOf(auth), "auth");
+  const pr = job({ stage: "paused", waitFor: "toolkit-pr", pausedFrom: "ready", pausedReason: "waiting for the Toolkit PR to merge" });
+  assert.equal(laneOf(pr), "you");
+  assert.equal(waitYouOf(pr), "toolkit-pr");
+  const rate = job({ stage: "paused", waitFor: "backoff", pausedFrom: "build", pausedReason: "rate limited" });
+  assert.equal(stateOf(rate), "paused");
+  assert.equal(laneOf(rate), "build");
+  assert.equal(waitYouOf(rate), null);
+});
+
+test("the proof pill reads this round's verdict only: a PASS in round 1 is not proven once the job is back in build in round 2", async () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "kitchen-data-"));
+  const saved = process.env.KITCHEN_HOME;
+  process.env.KITCHEN_HOME = path.join(repo, ".home");
+  try {
+    const { job: j } = await createJob(repo, { title: "Show the open count", ticket: { source: "prompt", id: "p1" }, body: "x", roundLimit: 3, base: "" });
+    const r1 = path.join(jobDirOf(repo, j.id), "rounds", "1");
+    fs.mkdirSync(r1, { recursive: true });
+    fs.writeFileSync(path.join(r1, "verdict-m4.md"), "VERDICT: PASS\n");
+    await updateJob(repo, j.id, (x) => ({ ...x, stage: "review", round: 1 }));
+    assert.equal((await snapshot(repo)).jobs[0].proof, "pass");
+    await updateJob(repo, j.id, (x) => ({ ...x, stage: "build", round: 2 }));
+    assert.equal((await snapshot(repo)).jobs[0].proof, "not proven");
+  } finally {
+    process.env.KITCHEN_HOME = saved;
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
 });
