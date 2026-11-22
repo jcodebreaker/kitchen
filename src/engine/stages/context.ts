@@ -21,6 +21,12 @@ export function fileBlock(jobDir: string, file: string, title = file): PromptBlo
   return fs.existsSync(p) ? [{ title, body: fs.readFileSync(p, "utf8") }] : [];
 }
 
+/** The ticket as it came in (ticket.md), or "". */
+export function ticketText(jobDir: string): string {
+  const p = path.join(jobDir, "ticket.md");
+  return fs.existsSync(p) ? fs.readFileSync(p, "utf8") : "";
+}
+
 export async function toolkitBlock(job: Job, src: string): Promise<PromptBlock> {
   try {
     return { title: "The Toolkit", body: await toolkitBrief(job, src) };

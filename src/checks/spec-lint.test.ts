@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
+import { type BaseCheck, baseNegativeProblems } from "../engine/stages/base-check.ts";
 import { parseProof } from "../proof/proof-line.ts";
 import { changedExistingDrive, lintFeatureFile } from "./feature-lint.ts";
 import { gateOutcome } from "./gate.ts";
@@ -170,12 +171,13 @@ test("rule 3: judged only for layout, appearance, style, tone or copy quality, w
   assert.match(lint(spec(C("C1", "x", "toolkit settings.toggle-dark --user alice", "theme is dark"))).reason ?? "", /C1: expect/);
 });
 
-test("rule 3: a negative expect needs an earlier step of the same proof that creates what must not show", () => {
+test("rule 3: a negative is backed by a creating step, by a value read after a making step, or else by the base check (benchmark regression)", () => {
   const leak = "toolkit login --as alice ; toolkit open --path /projects";
-  assert.match(
-    lint(spec(C("C1", "Alice doesn't see Bob's project", leak, 'text "Bob plan" not visible'))).reason ?? "",
-    /holds whenever the thing never existed/,
-  );
+  // (c) unbacked: not refused here, left to the base check, which must show the thing on the base.
+  const bare = lint(spec(C("C1", "Alice doesn't see Bob's project", leak, 'text "Bob plan" not visible')));
+  assert.ok(bare.ok);
+  assert.deepEqual(bare.baseNegatives, [{ criterion: "C1", clause: 'text "Bob plan" not visible' }]);
+  // (a) created by an earlier step: nothing left to the base.
   const made = `${spec(
     C(
       "C1",
@@ -184,10 +186,67 @@ test("rule 3: a negative expect needs an earlier step of the same proof that cre
       'text "Bob plan" not visible and text "Onboarding" visible',
     ),
   )}\n## New drives\n- projects.make: sign in as user, create a project named name\n`;
-  assert.equal(lint(made).reason, undefined, "created by an earlier step");
-  assert.match(lint(spec(C("C1", "x", "toolkit settings.toggle-dark --user alice", '$theme != "Light"'))).reason ?? "", /never existed/);
-  assert.match(lint(spec(C("C1", "x", leak, 'not contains "secret"'))).reason ?? "", /never existed/);
+  assert.deepEqual(lint(made).baseNegatives, [], "created by an earlier step");
+  // … or named in it: the row of the task an earlier command added (b-done-many), not a word of a path or selector.
+  const cli = { ...toolkit, primitives: [...toolkit.primitives, "cli"] };
+  const zebra = 'toolkit cli --argv "add Zebra" ; toolkit cli --argv "done 7 99" ; toolkit cli --argv "list --all"';
+  assert.deepEqual(lintSpec(spec(C("C1", "x", zebra, 'not contains "[x]   7  Zebra"')), { kind: "feature", toolkit: cli }).baseNegatives, []);
+  assert.equal(lint(spec(C("C1", "x", leak, 'text "projects" not visible'))).baseNegatives.length, 1);
+  // (b) a value read after a step that makes something (d-discount: the under-100 order's amount is not the discounted one).
+  const order = "toolkit http --method POST --path /orders --body '{\"qty\":3}' ; toolkit read --target amount --save amt";
+  assert.deepEqual(lint(spec(C("C1", "x", order, '$amt != "8910"'))).baseNegatives, []);
+  // … but not a read with nothing made first, nor a drive that saves in one segment.
+  assert.equal(lint(spec(C("C1", "x", `${leak} ; toolkit read --target owner --save o`, '$o != "bob"'))).baseNegatives.length, 1);
+  assert.equal(lint(spec(C("C1", "x", "toolkit settings.toggle-dark --user alice", '$theme != "Light"'))).baseNegatives.length, 1);
+  // (b) for a bug: the wrong value the ticket names.
+  const stats = "toolkit login --as alice ; toolkit read --target overdue --save n";
+  const bug = (ticket: string) => lintSpec(spec(C("C1", "x", stats, '$n != "3 overdue"', true)), { kind: "bug", toolkit, ticket }).baseNegatives.length;
+  assert.equal(bug("stats says 3 overdue when every late task is done"), 0);
+  assert.equal(bug("stats is wrong"), 1);
+  // Equality to empty still needs a making step, refused at once.
+  assert.match(lint(spec(C("C1", "x", `${leak} ; toolkit read --target owner --save o`, '$o == ""'))).reason ?? "", /never existed/);
   assert.ok(lint(spec(C("C1", "x", "cmd node --check server.js", "exit != 1"))).ok, "an exit code is not a negative expect");
+});
+
+test("rule 3 (c): the base check backs a negative only when it is FALSE on the base", () => {
+  const pending = [{ criterion: "C3", clause: 'text "Appearance" not visible' }];
+  const base = (status: string, pass: boolean, skipped = false): BaseCheck => ({
+    head: "b",
+    key: "k",
+    results: skipped ? [] : [{ criterion: "C3", status, evidence: ["e4"], clauses: [{ clause: 'text "Appearance" not visible', pass, got: "" }] }],
+    skipped: skipped ? [{ criterion: "C3", why: "needs what the base doesn't have: x.y" }] : [],
+    passing: [],
+  });
+  assert.deepEqual(
+    baseNegativeProblems(pending, base("assert-fail", false)),
+    [],
+    "the old heading shows on the base: its absence after the change means something",
+  );
+  assert.match(baseNegativeProblems(pending, base("pass", true))[0], /already holds on the base.*\(unchanged\)/);
+  assert.match(baseNegativeProblems(pending, base("step-failed", false))[0], /doesn't run on the base/);
+  assert.match(baseNegativeProblems(pending, base("", false, true))[0], /can't be checked on the base/);
+  assert.deepEqual(baseNegativeProblems(pending, null), [], "no Toolkit: nothing to run");
+});
+
+test("rule 5: a repro can fail as expected; JSON args parse; rule 9: seed users; every problem is reported at once", () => {
+  const D = { kind: "bug", toolkit: { ...toolkit, seedUsers: ["alice", "bob-admin"] } };
+  const post = "toolkit http --method POST --path /orders --expect_status 201 --body '{\"qty\":100}'";
+  assert.match(lintSpec(spec(C("C1", "x", post, "ok", true)), D).reason ?? "", /expect: ok. can never fail as expected/);
+  assert.match(lintSpec(spec(C("C1", "x", `${post} ; toolkit read --target status --equals 201`, "ok and exit 0", true)), D).reason ?? "", /read --equals/);
+  assert.ok(lintSpec(spec(C("C1", "x", "toolkit http --method POST --path /orders ; toolkit read --target status --save code", '$code == "201"', true)), D).ok);
+  const cli = { ...toolkit, primitives: [...toolkit.primitives, "cli"] };
+  assert.match(
+    lintSpec(spec(C("C1", "x", 'toolkit cli --argv ["add","0123456789x"]', 'contains "too long"')), { kind: "feature", toolkit: cli }).reason ?? "",
+    /not valid JSON/,
+  );
+  assert.ok(lintSpec(spec(C("C1", "x", `toolkit cli --argv '["add","0123456789x"]'`, 'contains "too long"')), { kind: "feature", toolkit: cli }).ok);
+  const F = { kind: "feature", toolkit: { ...toolkit, primitives: [...toolkit.primitives, "sql"], seedUsers: ["alice", "bob-admin"] } };
+  assert.match(lintSpec(spec(C("C1", "x", "toolkit login --as bob ; toolkit open --path /", "ok")), F).reason ?? "", /user "bob", who is not a seed user/);
+  assert.match(lintSpec(spec(C("C1", "x", "toolkit sql --query \"SELECT 1 FROM users WHERE username = 'bob'\" --save r", "ok")), F).reason ?? "", /"bob"/);
+  assert.ok(lintSpec(spec(C("C1", "x", "toolkit login --as bob-admin ; toolkit open --path /", "ok")), F).ok);
+  const two = lintSpec(spec(C("C1", "x", "toolkit login --as bob ; toolkit open --path /", "ok"), C("C2", "y", "toolkit nope", "ok")), F);
+  assert.match(two.reason ?? "", /"bob"[\s\S]*\n.*C2 needs primitive nope/, "both problems, one per line");
+  assert.equal(two.missingPrimitive, "nope");
 });
 
 test("rule 4: a cmd proof stays in the worktree: no outside path, home, env dump or network tool", () => {

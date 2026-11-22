@@ -13,8 +13,8 @@ import { nothingPolicy } from "../contract.ts";
 import { ensureUp } from "../instance.ts";
 import { writeAtomic } from "../store.ts";
 import { commitWith, ensureWorktree } from "../worktree.ts";
-import { runBaseCheck } from "./base-check.ts";
-import { fileBlock, humanFeedback, testLayoutBlock, toolkitBlock } from "./context.ts";
+import { baseNegativeProblems, runBaseCheck } from "./base-check.ts";
+import { fileBlock, humanFeedback, testLayoutBlock, ticketText, toolkitBlock } from "./context.ts";
 import { prompt } from "./prompts.ts";
 import { runRole } from "./role.ts";
 import { hasToolkit, toolkitView } from "./toolkit-info.ts";
@@ -60,16 +60,25 @@ export const spec: StageHandler = async (ctx) => {
     protected: ctx.config.protected,
     requirements,
     testLayout: testLayout(job.worktree, ctx.config.test_cmd),
+    ticket: ticketText(ctx.jobDir),
   });
   if (!lint.ok) {
     ctx.log(`spec-lint: ${lint.reason}`);
     writeAtomic(path.join(ctx.jobDir, "spec-refused.md"), `REASON: ${lint.reason}\n\n${r.text}`);
   }
   let { ok, reason } = lint;
-  if (lint.ok && job.kind !== "bug") {
+  if (lint.ok && (job.kind !== "bug" || lint.baseNegatives.length)) {
     const b = await runBaseCheck(ctx, job, lint.criteria);
+    // spec-lint rule 3 (c): a negative no earlier step backs must be false on the base. A refusal like the lint's.
+    const neg = baseNegativeProblems(lint.baseNegatives, b);
+    if (neg.length) {
+      ok = false;
+      reason = neg.join("\n");
+      ctx.log(`spec: ${reason}`);
+      writeAtomic(path.join(ctx.jobDir, "spec-refused.md"), `REASON: ${reason}\n\n${r.text}`);
+    }
     // One retry to strengthen (a refusal re-runs the stage once); after that the job goes on, flagged.
-    if (b?.passing.length && job.attempts.refused === 0) {
+    else if (job.kind !== "bug" && b?.passing.length && job.attempts.refused === 0) {
       ok = false;
       reason = `non-discriminating: ${b.passing.join(", ")} already pass on the current code, before any change (evidence ${b.results
         .filter((x) => b.passing.includes(x.criterion))

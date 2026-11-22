@@ -10,9 +10,20 @@
 //   3. `expect: judged` only for a criterion about layout, appearance, visual
 //      style, tone or copy quality, and its proof takes a screenshot; every other
 //      expect is mechanical and must parse (assert.ts). A negative expect (`not
-//      visible`, `not contains`, `!=`) needs an earlier step of the same proof to
-//      create what must not show (its text is an arg of that step): otherwise it
-//      holds whatever the code does
+//      visible`, `not contains`, `!=`) holds whenever the thing never existed, so
+//      it must be backed (negativeBacking): (a) created: an earlier step of the
+//      same proof makes what must not show (its text is an arg of that step);
+//      (b) a value read: `$v != "…"` / `json … != …` on a value this proof reads
+//      after an earlier step that makes something (a drive, a writing `http`), or,
+//      for a bug, a literal the ticket names; the runtime refuses an unsaved,
+//      empty or failed subject (assert.ts); (c) shown on the base: anything else
+//      is left to the base check (`baseNegatives`): the clause must be FALSE on
+//      the base, the thing is there before the change (base-check.ts
+//      baseNegativeProblems). A repro criterion's expect must be able to be false
+//      with every step run (not `ok` alone, no `read --equals` step), and an arg
+//      that looks like JSON (`[…]`, `{…}`) must parse
+//   9. a seed user a proof names (`--as`, `--user`, `--admin`, `username = '…'`)
+//      is in describe's `seed_users`, or an earlier step of the proof makes it
 //   4. nothing touches a protected path (kitchen.yaml `protected`, the Toolkit's
 //      primitives): no `test` file, `cmd` word or criterion text names one; a
 //      `cmd` stays in the worktree (no absolute or `..` path, `~`, `$HOME`, env
@@ -43,9 +54,23 @@ export type Criterion = { id: string; text: string; proof: string | null; expect
  * same" criterion proves it); `outOfScope`: intake rescoped it away (with a note).
  */
 export type Requirement = { id: string; text: string; negative: boolean; unchanged?: boolean; outOfScope: boolean };
-export type LintResult = { ok: boolean; reason?: string; missingPrimitive?: string; criteria: Criterion[]; newDrives: string[] };
-/** What the Toolkit offers: primitive names, every feature drive's name → its args, and the drives that take a screenshot. */
-export type ToolkitView = { primitives: string[]; drives: Record<string, string[]>; screenshots?: string[] };
+/** A negative clause no earlier step backs: the base check must show it is FALSE there (the thing exists before the change). */
+export type BaseNegative = { criterion: string; clause: string };
+export type LintResult = {
+  ok: boolean;
+  /** Every problem found, one per line (a refused role fixes them all in one retry). */
+  reason?: string;
+  missingPrimitive?: string;
+  criteria: Criterion[];
+  newDrives: string[];
+  /** Rule 3 (c): negatives left to the base check (base-check.ts baseNegativeProblems). */
+  baseNegatives: BaseNegative[];
+};
+/**
+ * What the Toolkit offers: primitive names, every feature drive's name → its args, the drives that take a
+ * screenshot, and describe's `seed_users` (rule 9 runs when it is non-empty).
+ */
+export type ToolkitView = { primitives: string[]; drives: Record<string, string[]>; screenshots?: string[]; seedUsers?: string[] };
 
 /** Criteria lines: `- [C1] text` followed by indented `proof:`, `expect:`, `repro:` lines. */
 export function parseCriteria(md: string): Criterion[] {
@@ -177,12 +202,6 @@ function takesScreenshot(segs: Segment[], view: ToolkitView, newDrives: Record<s
   );
 }
 
-/**
- * A negative clause holds when its thing never existed. So what must not show has to be
- * made by an earlier step of the same proof: its text is an arg value of a segment before
- * the last one (`projects.create --user bob-admin --name "Bob plan" ; … ; open --path /projects`).
- * Returns the clause that isn't backed, or null.
- */
 /** `$x == ""` / `json … == ""`: an empty read holds whenever the element is missing, so the lint treats it as a negative. */
 const emptyEquals = (clauses: Clause[]) => clauses.filter((c) => (c.kind === "json" || c.kind === "var") && c.op === "==" && c.value === "");
 /** The clauses of an expect that assert an absence (the lint's view: negatives plus equality to empty). */
@@ -193,22 +212,55 @@ export const absenceClauses = (expect: string): Clause[] => {
 /** A step that makes something: a feature drive, or an `http` call that writes. */
 const makes = (s: Segment) => s.kind === "toolkit" && (s.drive || (s.name === "http" && /^(POST|PUT|PATCH|DELETE)$/i.test(s.args.method ?? "")));
 
-function unbackedNegative(expect: string, segs: Segment[]): string | null {
+/**
+ * Rule 3: how each negative clause of a toolkit proof is backed. A negative holds whenever its thing never
+ * existed, so it counts only when
+ *  (a) created: what must not show is an arg value of an earlier segment
+ *      (`projects.create --user bob-admin --name "Bob plan" ; … ; open --path /projects`), or names one (a word
+ *      of 5+ letters of such an arg: `cli --argv "add Zebra" ; … ` then `not contains "[x] 7 Zebra"`);
+ *  (b) a value read: `$v != "…"` / `$v not contains "…"` / `json … != …` on a value this proof reads (a
+ *      `--save v` segment, or the last output) after an earlier segment that makes something, or, for a bug,
+ *      whose literal the ticket names (the wrong value it reports). At run time assert.ts fails such a clause
+ *      when the value wasn't saved, is empty or is a failed response, so it can't hold by absence;
+ *  (c) shown on the base: anything else goes to the base check, where it must be FALSE (base-check.ts).
+ * Equality to empty (`$o == ""`) names nothing that must not show: it needs an earlier making step, else it
+ * is refused (`refuse`). Pure.
+ */
+export function negativeBacking(expect: string, segs: Segment[], o: { kind?: string | null; ticket?: string } = {}): { refuse?: string; base: string[] } {
   const clauses = parseExpect(expect);
-  // Equality to empty names nothing that must not show: an earlier step must at least make something for it to be about.
-  for (const c of emptyEquals(clauses)) if (!segs.slice(0, -1).some(makes)) return c.src;
-  const neg = negativeClauses(clauses);
-  if (!neg.length) return null;
+  for (const c of emptyEquals(clauses)) if (!segs.slice(0, -1).some(makes)) return { refuse: c.src, base: [] };
+  const base: string[] = [];
   const earlier = segs
     .slice(0, -1)
     .flatMap((s) => (s.kind === "toolkit" ? Object.values(s.args) : []))
     .map((v) => v.toLowerCase());
-  for (const c of neg) {
+  // Words of what earlier steps that write (a drive, a writing `http`, a `cli` command) were given, not where they went.
+  const madeWords = segs
+    .slice(0, -1)
+    .flatMap((s) => (s.kind === "toolkit" && (makes(s) || s.name === "cli") ? Object.entries(s.args) : []))
+    .filter(([k]) => !/^(path|target|method|as|expect_status|expect_exit)$/.test(k))
+    .flatMap(([, v]) => v.toLowerCase().split(/[^\p{L}\p{N}_-]+/u))
+    .filter((w) => w.length >= 5);
+  const saved = new Map<string, number>();
+  segs.forEach((s, i) => {
+    if (s.kind === "toolkit" && s.save) saved.set(s.save, i);
+  });
+  const ticket = (o.ticket ?? "").toLowerCase();
+  for (const c of negativeClauses(clauses)) {
     const x = absentString(c)?.toLowerCase();
-    if (x === undefined || x === null) continue;
-    if (!earlier.some((v) => v === x || (Math.min(v.length, x.length) >= 3 && (v.includes(x) || x.includes(v))))) return c.src;
+    if (x && earlier.some((v) => v === x || (Math.min(v.length, x.length) >= 3 && (v.includes(x) || x.includes(v))))) continue; // (a)
+    // (a) the absent text names a thing an earlier step made: a word of 5+ letters of its args (`cli --argv "add Zebra"` … `not contains "[x] 7 Zebra"`).
+    if (x && madeWords.some((w) => x.includes(w))) continue;
+    if ((c.kind === "var" || c.kind === "json") && c.value !== null && String(c.value) !== "") {
+      const subject = c.kind === "var" ? c.name : c.subject;
+      const at = subject === null ? segs.length - 1 : saved.get(subject);
+      const lit = String(c.value).toLowerCase();
+      if (at !== undefined && segs.slice(0, at).some(makes)) continue; // (b) read after a making step
+      if (at !== undefined && o.kind === "bug" && lit.length >= 2 && ticket.includes(lit)) continue; // (b) the wrong value the ticket names
+    }
+    base.push(c.src); // (c)
   }
-  return null;
+  return { base };
 }
 
 /** Paths a proof names: the `test` file, path-like words of a `cmd`. */
@@ -226,24 +278,31 @@ export function isProtected(p: string, globs: string[]): boolean {
 }
 
 /**
- * Rule 7: why the criteria don't match intake's requirements, or null. Every criterion covers an R
- * intake listed; every R in scope is covered; a negative R by at least one criterion asserting an absence;
- * an unchanged R (regression guard) by at least one mechanical criterion, positive or negative.
+ * Rule 7: why the criteria don't match intake's requirements, one line per problem ([] when they do). Every
+ * criterion covers an R intake listed; every R in scope is covered; a negative R by at least one criterion
+ * asserting an absence; an unchanged R (regression guard) by at least one mechanical criterion, positive or
+ * negative.
  */
-export function coverageProblem(criteria: Criterion[], reqs: Requirement[]): string | null {
-  if (!reqs.length) return "intake.md lists no requirements (`## Requirements`, `- R1: …`): nothing to check the criteria against";
+export function coverageProblems(criteria: Criterion[], reqs: Requirement[]): string[] {
+  if (!reqs.length) return ["intake.md lists no requirements (`## Requirements`, `- R1: …`): nothing to check the criteria against"];
+  const out: string[] = [];
   const ids = new Set(reqs.map((r) => r.id));
   for (const c of criteria) {
-    if (!c.covers.length) return `${c.id} covers no requirement: add a \`covers: R…\` line naming the requirement(s) of intake.md it proves`;
+    if (!c.covers.length) out.push(`${c.id} covers no requirement: add a \`covers: R…\` line naming the requirement(s) of intake.md it proves`);
     const unknown = c.covers.find((r) => !ids.has(r));
-    if (unknown) return `${c.id} covers ${unknown}, which intake.md does not list (${[...ids].join(", ")})`;
+    if (unknown) out.push(`${c.id} covers ${unknown}, which intake.md does not list (${[...ids].join(", ")})`);
   }
   for (const r of reqs.filter((x) => !x.outOfScope)) {
     const by = criteria.filter((c) => c.covers.includes(r.id));
-    if (!by.length) return `${r.id} ("${r.text}") is covered by no criterion: every requirement of the ticket needs one`;
+    if (!by.length) {
+      out.push(`${r.id} ("${r.text}") is covered by no criterion: every requirement of the ticket needs one`);
+      continue;
+    }
     if (r.unchanged) {
       if (!by.some((c) => !!c.expect && !isJudged(c.expect)))
-        return `${r.id} guards existing behaviour ("${r.text}"): a criterion covering it must show, mechanically, that the old behaviour still gives the same output or exit (\`contains "…"\`, \`exit 0\`, \`$x == …\`)`;
+        out.push(
+          `${r.id} guards existing behaviour ("${r.text}"): a criterion covering it must show, mechanically, that the old behaviour still gives the same output or exit (\`contains "…"\`, \`exit 0\`, \`$x == …\`)`,
+        );
       continue;
     }
     if (!r.negative) continue;
@@ -255,10 +314,14 @@ export function coverageProblem(criteria: Criterion[], reqs: Requirement[]): str
       }
     });
     if (!asserts)
-      return `${r.id} says what must not happen ("${r.text}"), but no criterion covering it asserts an absence (\`text "…" not visible\`, \`not contains "…"\`, \`$x != …\`)`;
+      out.push(
+        `${r.id} says what must not happen ("${r.text}"), but no criterion covering it asserts an absence (\`text "…" not visible\`, \`not contains "…"\`, \`$x != …\`), backed: what must not show is made by an earlier step of the same proof (its text an arg), or is a value read after a step that makes something (\`$amt != "8910"\`), or shows on the current code (the engine runs that proof on the base, every step must run there, and the clause must be false there). If it means existing behaviour stays as it is (nothing else changes, a case the change must leave alone), mark it \`(unchanged)\` instead and prove it positively (the same output or exit, \`$x == …\`)`,
+      );
   }
-  return null;
+  return out;
 }
+/** Rule 7's first problem, or null. */
+export const coverageProblem = (criteria: Criterion[], reqs: Requirement[]): string | null => coverageProblems(criteria, reqs)[0] ?? null;
 
 /**
  * Regression guards: criteria that cover only `(unchanged)` requirements. They hold on the base by
@@ -279,12 +342,15 @@ export function lintSpec(
     requirements?: Requirement[];
     /** The repo's test layout (checks/test-layout.ts): rule 8 runs when given. */
     testLayout?: TestLayout | null;
+    /** The ticket's text: for a bug, a `!=` literal it names backs the negative (rule 3 b). */
+    ticket?: string;
   },
 ): LintResult {
   const criteria = parseCriteria(md);
   const newDriveText = newDriveLines(md);
   const newDrives = Object.keys(newDriveText);
-  const fail = (reason: string, extra: Partial<LintResult> = {}): LintResult => ({ ok: false, reason, criteria, newDrives, ...extra });
+  const baseNegatives: BaseNegative[] = [];
+  const fail = (reason: string, extra: Partial<LintResult> = {}): LintResult => ({ ok: false, reason, criteria, newDrives, baseNegatives, ...extra });
   if (!criteria.length) return fail("no criteria (`- [C1] …` with a `proof:` line)");
   // 6. unique ids
   const seen = new Set<string>();
@@ -292,93 +358,162 @@ export function lintSpec(
     if (seen.has(c.id)) return fail(`duplicate id ${c.id}`);
     seen.add(c.id);
   }
+  // Every problem is collected (the first per criterion), so one retry of the role can fix them all.
+  const problems: string[] = [];
+  let missingPrimitive: string | undefined;
   const parsed = new Map<string, Segment[]>();
-  for (const c of criteria) {
+  const check = (c: Criterion): string | null => {
     // 1. proof kind
-    if (!c.proof) return fail(`${c.id} has no proof`);
+    if (!c.proof) return `${c.id} has no proof`;
     try {
       parsed.set(c.id, parseProof(c.proof));
     } catch (e) {
-      if (e instanceof ProofLineError) return fail(`${c.id}: ${e.message}`);
+      if (e instanceof ProofLineError) return `${c.id}: ${e.message}`;
       throw e;
     }
-    // 3. judged only for visual/wording, with a screenshot; mechanical expects must parse; negatives need a creating step
+    // 3. judged only for visual/wording, with a screenshot; mechanical expects must parse; negatives are backed
     const segs = parsed.get(c.id) ?? [];
     const kindOf = segs[0]?.kind;
     if (isJudged(c.expect)) {
-      if (kindOf !== "toolkit") return fail(`${c.id}: a judged criterion needs a toolkit proof (evidence to look at)`);
+      if (kindOf !== "toolkit") return `${c.id}: a judged criterion needs a toolkit proof (evidence to look at)`;
       if (!isVisualOrWording(c.text))
-        return fail(
-          `${c.id}: expect: judged is only for layout, appearance, visual style, tone or copy quality; make it mechanical (text "…" visible, $var == …)`,
-        );
+        return `${c.id}: expect: judged is only for layout, appearance, visual style, tone or copy quality; make it mechanical (text "…" visible, $var == …)`;
       if (!takesScreenshot(segs, o.toolkit, newDriveText))
-        return fail(
-          `${c.id}: a judged criterion's proof must take a screenshot (a \`screenshot\` step, or a drive that takes one) for the verifier to look at`,
-        );
+        return `${c.id}: a judged criterion's proof must take a screenshot (a \`screenshot\` step, or a drive that takes one) for the verifier to look at`;
     } else if (c.expect) {
       try {
         parseExpect(c.expect);
-        const bare = kindOf === "toolkit" ? unbackedNegative(c.expect, segs) : null;
-        if (bare)
-          return fail(
-            `${c.id}: \`${bare}\` holds whenever the thing never existed; an earlier step of the same proof must create it, with that text as an arg (e.g. \`toolkit <feature>.create --user <other user> --name "<text>" ; … ; open --path /list\`)`,
-          );
+        if (kindOf === "toolkit") {
+          const b = negativeBacking(c.expect, segs, { kind: o.kind, ticket: o.ticket });
+          if (b.refuse)
+            return `${c.id}: \`${b.refuse}\` holds whenever the thing never existed (an empty read); an earlier step of the same proof must make what it reads (a feature drive, a writing \`http\`)`;
+          for (const clause of b.base) baseNegatives.push({ criterion: c.id, clause });
+        }
       } catch (e) {
-        if (e instanceof ExpectError) return fail(`${c.id}: expect ${e.message}`);
+        if (e instanceof ExpectError) return `${c.id}: expect ${e.message}`;
         throw e;
       }
-    } else if (kindOf === "toolkit") return fail(`${c.id}: a toolkit proof needs an expect: line (ok, text … visible, $var == …, judged …)`);
+    } else if (kindOf === "toolkit") return `${c.id}: a toolkit proof needs an expect: line (ok, text … visible, $var == …, judged …)`;
     // 4b. a cmd or test proof stays in the worktree
     for (const s of segs) {
       const why = s.kind === "cmd" ? cmdProblem(s.cmd) : s.kind === "test" ? cmdProblem(s.file) : null;
-      if (why) return fail(`${c.id}: the ${s.kind} proof is refused: ${why}`);
+      if (why) return `${c.id}: the ${s.kind} proof is refused: ${why}`;
       // 8. a test file sits where the repo's runner finds its tests
       if (s.kind === "test" && o.testLayout && !inLayout(s.file, o.testLayout))
-        return fail(
-          `${c.id}: the test file ${s.file} is outside the repo's test layout (${o.testLayout.runner}: ${o.testLayout.globs.join(", ")}, from ${o.testLayout.source}); put it where the repo's tests live (the builder may not change the runner's config to reach it)`,
-        );
+        return `${c.id}: the test file ${s.file} is outside the repo's test layout (${o.testLayout.runner}: ${o.testLayout.globs.join(", ")}, from ${o.testLayout.source}); put it where the repo's tests live (the builder may not change the runner's config to reach it)`;
     }
-    if (c.repro && o.kind !== "bug") return fail(`${c.id}: \`repro: true\` is only for a bug (this ticket is a ${o.kind ?? "ticket of no kind"})`);
-  }
-  // 2. names resolve
-  for (const c of criteria) {
-    for (const s of parsed.get(c.id) ?? []) {
+    if (c.repro && o.kind !== "bug") return `${c.id}: \`repro: true\` is only for a bug (this ticket is a ${o.kind ?? "ticket of no kind"})`;
+    // 5. a repro must be able to fail as expected: every step runs on the buggy base and the expect is false there
+    if (c.repro && c.expect && !isJudged(c.expect)) {
+      const why = reproProblem(c.expect, segs);
+      if (why) return `${c.id}: ${why}`;
+    }
+    // 2. names resolve
+    for (const s of segs) {
       if (s.kind !== "toolkit") continue;
+      const bad = jsonArgProblem(s);
+      if (bad) return `${c.id}: ${bad}`;
       if (!s.drive) {
-        if (!o.toolkit.primitives.includes(s.name)) return fail(`${c.id} needs primitive ${s.name}, which the Toolkit lacks`, { missingPrimitive: s.name });
+        if (!o.toolkit.primitives.includes(s.name)) {
+          missingPrimitive ??= s.name;
+          return `${c.id} needs primitive ${s.name}, which the Toolkit lacks`;
+        }
         try {
           checkPrimArgs(s.name, s.args);
         } catch (e) {
-          if (e instanceof DriveFormatError) return fail(`${c.id}: ${e.message}`);
+          if (e instanceof DriveFormatError) return `${c.id}: ${e.message}`;
           throw e;
         }
         continue;
       }
       const have = o.toolkit.drives[s.name];
       if (!have) {
-        if (!newDrives.includes(s.name)) return fail(`${c.id}: no feature drive ${s.name}; a new one must be listed under "## New drives"`);
+        if (!newDrives.includes(s.name)) return `${c.id}: no feature drive ${s.name}; a new one must be listed under "## New drives"`;
         continue;
       }
       const given = Object.keys(s.args).sort();
       const want = [...have].sort();
       if (given.join() !== want.join())
-        return fail(`${c.id}: ${s.name} takes ${want.map((a) => `--${a}`).join(" ") || "no args"}, got ${given.map((a) => `--${a}`).join(" ") || "none"}`);
+        return `${c.id}: ${s.name} takes ${want.map((a) => `--${a}`).join(" ") || "no args"}, got ${given.map((a) => `--${a}`).join(" ") || "none"}`;
     }
-  }
-  // 4. protected paths
-  for (const c of criteria) {
-    const hit = pathsOf(parsed.get(c.id) ?? []).find((p) => isProtected(p, o.protected ?? []));
-    if (hit) return fail(`${c.id}: the proof touches protected path ${hit}`);
+    // 9. seed users exist
+    const ghost = unknownUser(segs, o.toolkit.seedUsers ?? []);
+    if (ghost)
+      return `${c.id}: the proof uses the user ${JSON.stringify(ghost)}, who is not a seed user (${(o.toolkit.seedUsers ?? []).join(", ")}) and no earlier step makes; use a seed user, or create that user in an earlier step`;
+    // 4. protected paths
+    const hit = pathsOf(segs).find((p) => isProtected(p, o.protected ?? []));
+    if (hit) return `${c.id}: the proof touches protected path ${hit}`;
     const named = (c.text.match(/[\w./-]+\.[\w]+|\.kitchen\/[\w./-]+/g) ?? []).find((p) => isProtected(p, o.protected ?? []));
-    if (named) return fail(`${c.id}: the criterion touches protected path ${named}`);
+    if (named) return `${c.id}: the criterion touches protected path ${named}`;
+    return null;
+  };
+  for (const c of criteria) {
+    const why = check(c);
+    if (why) problems.push(why);
   }
   // 7. the criteria match the ticket's requirements
-  if (o.requirements) {
-    const why = coverageProblem(criteria, o.requirements);
-    if (why) return fail(why);
-  }
+  if (o.requirements) problems.push(...coverageProblems(criteria, o.requirements));
   // 5. a bug has a mechanical repro criterion
   if (o.kind === "bug" && !criteria.some((c) => c.repro && c.expect !== null && !isJudged(c.expect)))
-    return fail("a bug needs a `repro: true` criterion with a mechanical expect");
-  return { ok: true, criteria, newDrives };
+    problems.push("a bug needs a `repro: true` criterion with a mechanical expect");
+  if (problems.length) return fail(problems.join("\n"), missingPrimitive ? { missingPrimitive } : {});
+  return { ok: true, criteria, newDrives, baseNegatives };
+}
+
+/**
+ * Rule 5: why a repro criterion can never "fail as expected" on the buggy base (repro.ts counts only a false
+ * expect after every step ran, or a timed-out wait for what the expect asks), or null. `ok` alone is false only
+ * when a step fails; a `read --equals` step fails the step instead of the expect. Pure.
+ */
+export function reproProblem(expect: string, segs: Segment[]): string | null {
+  const clauses = parseExpect(expect);
+  if (clauses.every((c) => c.kind === "ok"))
+    return "a repro's `expect: ok` can never fail as expected (ok is false only when a step fails, which is a broken proof, not a reproduction): save what the bug gets wrong (`--save x`) and assert the right value (`$x == …`, `json .status == 201`)";
+  const eq = segs.find((s) => s.kind === "toolkit" && !s.drive && s.name === "read" && s.args.equals !== undefined);
+  if (eq)
+    return "a repro's `read --equals` fails the step on the buggy base, before the expect is read: `read --target … --save x`, then assert it in the expect (`$x == …`)";
+  return null;
+}
+
+/** Args a primitive reads as JSON when they look like it (the cli's `argv` list, an `http` `body`). */
+const JSON_ARGS = new Set(["argv", "body"]);
+/** A JSON arg that looks like a list or object but doesn't parse (`--argv ["add","x"]` lost its quotes as shell words do), or null. Pure. */
+export function jsonArgProblem(s: Extract<Segment, { kind: "toolkit" }>): string | null {
+  for (const [k, v] of Object.entries(s.args)) {
+    const t = v.trim();
+    if (!JSON_ARGS.has(k) || t.includes("$")) continue;
+    if (!/^\[.*\]$|^\{.*\}$/s.test(t)) continue;
+    try {
+      JSON.parse(t);
+    } catch {
+      return `${s.name} --${k} ${t.length > 60 ? `${t.slice(0, 60)}…` : t} is not valid JSON (the proof line reads quotes as a shell does, so the inner "…" were dropped): put the JSON in '…' (--${k} '["add","Buy milk"]'), or give a list arg as one shell line (--${k} "add 'Buy milk'")`;
+    }
+  }
+  return null;
+}
+
+/** Args that name an existing user; SQL that picks one by name. */
+const USER_ARGS = new Set(["as", "user", "admin"]);
+const SQL_USER = /\busername\s*=\s*'([^']+)'/gi;
+/**
+ * Rule 9: a user a proof names (a primitive's `--as`, `--user` or `--admin`; `username = '…'` in a query or cmd; a feature drive's args may make one) that isn't a
+ * seed user and isn't an arg value of an earlier segment (made there), or null. Only when describe lists seed users. Pure.
+ */
+export function unknownUser(segs: Segment[], seedUsers: string[]): string | null {
+  if (!seedUsers.length) return null;
+  const known = new Set(seedUsers);
+  const made = new Set<string>();
+  for (const s of segs) {
+    const named: string[] = [];
+    if (s.kind === "toolkit") {
+      for (const [k, v] of Object.entries(s.args)) {
+        if (!s.drive && USER_ARGS.has(k) && !v.includes("$")) named.push(v);
+        for (const m of v.matchAll(SQL_USER)) named.push(m[1]);
+      }
+    } else if (s.kind === "cmd") for (const m of s.cmd.matchAll(SQL_USER)) named.push(m[1]);
+    const ghost = named.find((u) => !known.has(u) && !made.has(u));
+    if (ghost) return ghost;
+    if (s.kind === "toolkit") for (const v of Object.values(s.args)) made.add(v);
+  }
+  return null;
 }

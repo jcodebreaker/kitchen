@@ -13,10 +13,16 @@ import type { Job } from "../machine.ts";
 export const hasToolkit = (job: Job) => !!job.toolkitBin && fs.existsSync(job.toolkitBin);
 export const FEATURES_DIR = ".kitchen/toolkit/features";
 
-export async function primitives(job: Job, src = job.worktree || process.cwd()): Promise<{ list: string[]; sha: string }> {
-  if (!hasToolkit(job)) return { list: [], sha: "" };
+export async function primitives(job: Job, src = job.worktree || process.cwd()): Promise<{ list: string[]; sha: string; seedUsers: string[] }> {
+  if (!hasToolkit(job)) return { list: [], sha: "", seedUsers: [] };
   const d = await describeToolkit(job.toolkitBin, src);
-  return { list: d.primitives, sha: job.toolkitRef };
+  return { list: d.primitives, sha: job.toolkitRef, seedUsers: seedUsersOf(d.raw) };
+}
+
+/** describe's `seed_users` (the Toolkit contract's name; `seedUsers` read too). */
+export function seedUsersOf(raw: Record<string, unknown>): string[] {
+  const v = raw.seed_users ?? raw.seedUsers;
+  return Array.isArray(v) ? v.map(String) : [];
 }
 
 /**
@@ -65,7 +71,8 @@ export async function described(job: Job, src = job.worktree || process.cwd()): 
 /** What spec-lint checks a contract against: describe's primitives and the feature drives in `src`. */
 export async function toolkitView(job: Job, src: string): Promise<ToolkitView> {
   const f = featureDrives(src);
-  return { primitives: (await primitives(job, src)).list, drives: f.drives, screenshots: f.screenshots };
+  const p = await primitives(job, src);
+  return { primitives: p.list, drives: f.drives, screenshots: f.screenshots, seedUsers: p.seedUsers };
 }
 
 /** The Toolkit as a role sees it: primitives (from describe) and the feature drives in `src`. */
@@ -81,7 +88,10 @@ export async function toolkitBrief(job: Job, src: string): Promise<string> {
   );
   const f = featureDrives(src);
   const drives = Object.entries(f.drives).map(([n, args]) => `- ${n} ${args.map((a) => `--${a} <value>`).join(" ")}  (${f.files[n]})`);
-  const seed = Array.isArray(d.raw.seedUsers) ? `Seed users: ${(d.raw.seedUsers as string[]).join(", ")}` : "";
+  const users = seedUsersOf(d.raw);
+  const seed = users.length
+    ? `Seed users (describe's seed_users; a proof signs in, or picks rows by username, only as one of these or as a user an earlier step makes): ${users.join(", ")}`
+    : "";
   return [
     "Primitives (`bin/dev describe`; the engine passes id/src/out itself):",
     ...prims,

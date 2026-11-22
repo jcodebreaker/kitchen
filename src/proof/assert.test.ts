@@ -105,6 +105,10 @@ test("a negative expect fails on an error page, a failed response or an empty re
   for (const t of ["Fixture A Home Not found", "Fixture A Admins only", "404 Page Not Found", "Forbidden", ""])
     assert.equal(check('text "Bob plan" not visible', page(t)).pass, false, JSON.stringify(t));
   assert.equal(check('text "Not found" visible', page("Fixture A Not found")).pass, true, "asserting the error itself is fine");
+  // a-invite-case: the error the expect asks for is the outcome, so a negative beside it is judged (it was refused 3 rounds running).
+  const used = o({ output: "Invite code not found or already used" });
+  assert.equal(check('contains "not found or already used" and not contains "Invite accepted"', used).pass, true);
+  assert.equal(check('not contains "Invite accepted"', used).pass, false, "without the positive clause it is still an error page");
   assert.equal(check('not contains "secret"', o({ output: JSON.stringify({ status: 403, body: { error: "no" } }) })).pass, false);
   assert.equal(check('not contains "secret"', o({ output: JSON.stringify({ status: 200, body: [] }) })).pass, true);
   assert.equal(check('$theme != "Light"', o({ vars: { theme: "" } })).pass, false, "an empty read differs from everything");

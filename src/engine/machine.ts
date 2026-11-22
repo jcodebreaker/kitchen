@@ -96,6 +96,8 @@ export type Job = {
     /** Runner bookkeeping: consecutive adapter/engine errors and refused moves in this stage. */
     errors: number;
     refused: number;
+    /** The repro sent the contract back to its author (intake or spec) once: its proof can't show the bug on the base. */
+    contract?: number;
   };
   smith: { attempts: number; toolkitPr: number | null };
   toolkitTicketRef: string | null;
@@ -147,7 +149,8 @@ export type Facts = {
   /** `kitchen feedback --to <stage>`: where a needs-human job goes instead of the stage it escalated from. */
   feedbackTo?: Stage;
   spec?: Lint;
-  repro?: { failedAsExpected: boolean; onBase: boolean; committed: boolean; missingPrimitive?: string };
+  /** contractProblem: the proof ran on the base and can't show the bug as written (a step failed before the expect, or it held). */
+  repro?: { failedAsExpected: boolean; onBase: boolean; committed: boolean; missingPrimitive?: string; contractProblem?: string };
   /** syncRefused: base-changed files of a sync merge the layer rules would have put back to ours (silently dropping the base's change). */
   build?: { status: "READY" | "BLOCKED"; committed: boolean; pushed: boolean; pr: number | null; localForge: boolean; syncRefused?: string[] };
   gate?: { head: string; currentHead: string; result: "PASS" | "FAIL"; riskFloor?: Risk | null };
@@ -429,6 +432,26 @@ export const TABLE: readonly Row[] = [
     ),
     apply: (j, f) => toToolkit("repro", f.repro?.missingPrimitive)(j),
   },
+  ...(["intake", "spec"] as const).map(
+    (to): Row => ({
+      id: `repro>${to}`,
+      from: "repro",
+      to,
+      when: `the repro proof can't show the bug as written (a step failed before the expect, or it held on the base): the contract goes back once to ${to === "intake" ? "intake (risk low: inline criteria)" : "spec (risk medium/high)"} with the evidence`,
+      guard: all(
+        check((_j, f) => !!f.repro?.contractProblem && !f.repro.failedAsExpected && !f.repro.missingPrimitive, "the repro names no contract problem"),
+        check((j) => (j.attempts.contract ?? 0) === 0, "the contract was already sent back once"),
+        check(
+          (j) => (j.risk === "low") === (to === "intake"),
+          (j) => `risk ${j.risk}: the contract is ${j.risk === "low" ? "intake's" : "the spec's"}`,
+        ),
+      ),
+      apply: (j) => {
+        j.attempts.contract = (j.attempts.contract ?? 0) + 1;
+        j.attempts.repro = 0;
+      },
+    }),
+  ),
   {
     id: "repro>repro",
     from: "repro",

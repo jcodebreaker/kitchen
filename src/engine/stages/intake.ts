@@ -1,12 +1,16 @@
 // intake: read tier, before any worktree. Decides ACCEPT / NEEDS-INFO / REJECT,
 // rates kind and risk; a low-risk ticket carries inline criteria, which must
 // pass the full spec-lint against the Toolkit as it is on the repo's checkout.
+// A negative those criteria leave to the base (spec-lint rule 3 c) is checked
+// here, on the job's worktree at the base: the only time intake needs one.
 import path from "node:path";
 import { lintSpec, parseRequirements } from "../../checks/spec-lint.ts";
 import { testLayout } from "../../checks/test-layout.ts";
 import type { Kind, Risk } from "../machine.ts";
 import { writeAtomic } from "../store.ts";
-import { fileBlock, testLayoutBlock, toolkitBlock } from "./context.ts";
+import { ensureWorktree } from "../worktree.ts";
+import { baseNegativeProblems, runBaseCheck } from "./base-check.ts";
+import { fileBlock, testLayoutBlock, ticketText, toolkitBlock } from "./context.ts";
 import { prompt } from "./prompts.ts";
 import { headers, runRole } from "./role.ts";
 import { hasToolkit, toolkitView } from "./toolkit-info.ts";
@@ -53,8 +57,16 @@ export const intake: StageHandler = async (ctx) => {
           protected: ctx.config.protected,
           requirements,
           testLayout: testLayout(ctx.repo, ctx.config.test_cmd),
+          ticket: ticketText(ctx.jobDir),
         })
       : undefined;
+  // spec-lint rule 3 (c): a negative no earlier step backs must be false on the base. The inline criteria
+  // run on the base now (the worktree at the base, a fresh app); build reuses the result for the same criteria.
+  if (criteria?.ok && decision === "ACCEPT" && criteria.baseNegatives.length && hasToolkit(ctx.job)) {
+    const job = await ensureWorktree(ctx.repo, ctx.refresh());
+    const neg = baseNegativeProblems(criteria.baseNegatives, await runBaseCheck(ctx, job, criteria.criteria));
+    if (neg.length) Object.assign(criteria, { ok: false, reason: neg.join("\n") });
+  }
   const refusal =
     criteria && !criteria.ok
       ? `inline criteria refused by spec-lint: ${criteria.reason}`
