@@ -5,7 +5,9 @@
 //   toolkit        one bin/dev command (lifecycle or primitive) in the bridge's own slot
 //   toolkit_check  the real `kitchen toolkit check` on the worktree
 // The bin/dev it runs is the one in the setup worktree, with the untrusted env
-// (no credentials), exactly as `toolkit check` will run it after the commit.
+// (no credentials), exactly as `toolkit check` will run it after the commit,
+// and on macOS under sandbox-exec (ADR 0008: the agent wrote that code; it may
+// not read ~/.ssh, cloud and gh credentials, agent auth or $KITCHEN_HOME).
 // Engine flags (id, src, out, ports) are the bridge's; the agent can't pass them.
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
@@ -15,9 +17,10 @@ import type { BridgeServer } from "../agents/adapter.ts";
 import { CONTROL_PLANE } from "../agents/env.ts";
 import { kitchenHome } from "../home.ts";
 import { RESERVED_ARGS } from "../proof/drive-format.ts";
-import { runToolkitCheck } from "../toolkit/check.ts";
+import { PREPARE_STALL_MS, runToolkitCheck } from "../toolkit/check.ts";
 import { runToolkit } from "../toolkit/run.ts";
 import { acquireSlot, releaseSlot, type Slot } from "../toolkit/slots.ts";
+import { sandboxedBin } from "./sandbox.ts";
 
 const CLI = path.resolve(import.meta.dirname, "..", `cli${path.extname(import.meta.filename)}`);
 const PROTOCOL = "2025-06-18";
@@ -78,6 +81,8 @@ export function makeSetupBridge(o: SetupBridgeOpts) {
   const scratch = path.join(repo, ".kitchen", "init", "bridge");
   let slot: Slot | null = null;
   let up = false;
+  /** bin/dev as the bridge runs it: wrapped in the sandbox where the OS has one. */
+  const exe = () => sandboxedBin(bin).bin;
   let n = 0;
   let chain: Promise<unknown> = Promise.resolve();
   const serial = <T>(fn: () => Promise<T>): Promise<T> => {
@@ -99,7 +104,7 @@ export function makeSetupBridge(o: SetupBridgeOpts) {
     if (!fs.existsSync(bin)) return text({ ok: false, refused: `${path.relative(wt, bin)} doesn't exist yet` }, true);
     if (o.staticOnly && command !== "describe")
       return text({ ok: false, refused: "this machine can't run the app's stack: only describe is allowed (static setup)" }, true);
-    if (!slot) slot = (await acquireSlot({ id: `setup-${randomBytes(3).toString("hex")}`, toolkitBin: bin, src: wt })).slot;
+    if (!slot) slot = (await acquireSlot({ id: `setup-${randomBytes(3).toString("hex")}`, toolkitBin: exe(), src: wt })).slot;
     const flags = Object.entries(args).map(([k, v]) => `--${k}=${typeof v === "object" ? JSON.stringify(v) : String(v)}`);
     let argv: string[];
     if (command === "prepare" || command === "describe") argv = [command, `--src=${wt}`];
@@ -113,7 +118,11 @@ export function makeSetupBridge(o: SetupBridgeOpts) {
     }
     if (command === "up") up = true;
     if (command === "down") up = false;
-    const r = await runToolkit(bin, argv, { src: wt, timeoutMs: command === "prepare" ? 30 * 60_000 : 5 * 60_000 });
+    const r = await runToolkit(exe(), argv, {
+      src: wt,
+      timeoutMs: command === "prepare" ? 30 * 60_000 : 5 * 60_000,
+      ...(command === "prepare" ? { stallMs: PREPARE_STALL_MS } : {}),
+    });
     return text(
       {
         exit: r.exit,
@@ -133,7 +142,7 @@ export function makeSetupBridge(o: SetupBridgeOpts) {
     const lines: string[] = [];
     const r = await runToolkitCheck({
       repo,
-      toolkitBin: bin,
+      toolkitBin: exe(),
       src: wt,
       feature: a.feature ? String(a.feature) : undefined,
       prepare: a.prepare !== false,
@@ -148,7 +157,7 @@ export function makeSetupBridge(o: SetupBridgeOpts) {
 
   async function close() {
     if (!slot) return;
-    if (up) await runToolkit(bin, ["down", `--id=${slot.id}`], { src: wt, timeoutMs: 120_000 }).catch(() => {});
+    if (up) await runToolkit(exe(), ["down", `--id=${slot.id}`], { src: wt, timeoutMs: 120_000 }).catch(() => {});
     await releaseSlot(slot.id);
   }
 
@@ -188,7 +197,13 @@ export function makeSetupBridge(o: SetupBridgeOpts) {
 
 export async function serveSetupBridge(o: SetupBridgeOpts): Promise<void> {
   const b = makeSetupBridge(o);
-  console.error(`[setup-mcp] worktree ${o.worktree} pid ${process.pid}`);
+  console.error(
+    `[setup-mcp] worktree ${o.worktree} pid ${process.pid}; bin/dev ${
+      sandboxedBin(path.join(o.worktree, ".kitchen", "toolkit", "bin", "dev")).sandboxed
+        ? "runs under sandbox-exec (ADR 0008)"
+        : "runs UNSANDBOXED: no OS sandbox on this platform (ADR 0008)"
+    }`,
+  );
   const rl = readline.createInterface({ input: process.stdin });
   const send = (m: unknown) => process.stdout.write(`${JSON.stringify(m)}\n`);
   const pending: Promise<unknown>[] = [];

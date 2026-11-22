@@ -154,8 +154,8 @@ export function planProbes(d: DescribeOut, drives: { drive: Drive; args: Record<
     for (const { drive, args } of drives)
       for (const s of drive.steps) {
         if (s.kind !== "prim" || s.name !== name) continue;
-        const a = substitute(s.args, args);
-        if (!varsIn(a).length) return a;
+        // A step that needs a value saved by an earlier step ($invite) can't run alone: try the next.
+        if (varsIn(s.args).every((v) => v in args)) return substitute(s.args, args);
       }
     return null;
   };

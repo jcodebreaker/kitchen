@@ -66,8 +66,6 @@ export type CheckOpts = {
   timeouts?: { prepareMs?: number; upMs?: number; prepareStallMs?: number };
   /** The commit whose tracked files every feature `paths` glob must match (default: the main repo's HEAD, the base). */
   pathsRev?: string;
-  /** Run bin/dev under this sandbox-exec profile (the setup bridge, macOS). */
-  sandboxProfile?: string;
 };
 
 /** prepare fails when it prints nothing for this long (a hung download), long before its 30-minute deadline. */
@@ -118,7 +116,6 @@ export async function runToolkitCheck(o: CheckOpts): Promise<CheckReport> {
     const r = await runToolkit(o.toolkitBin, [c, ...argv], {
       src,
       timeoutMs,
-      sandboxProfile: o.sandboxProfile,
       ...(c === "prepare" ? { stallMs: o.timeouts?.prepareStallMs ?? PREPARE_STALL_MS } : {}),
     });
     const line = oneJsonLine(r.stdout);
@@ -150,7 +147,7 @@ export async function runToolkitCheck(o: CheckOpts): Promise<CheckReport> {
       const out = path.join(dir, `p${++n}`);
       fs.mkdirSync(out, { recursive: true });
       const argv = [p.primitive, `--id=${s.id}`, `--src=${src}`, `--out=${out}`, ...toFlags(p.args), ...(p.dupFlag ? [`--id=${s.id}`] : [])];
-      const r = await runToolkit(o.toolkitBin, argv, { src, timeoutMs: 120_000, sandboxProfile: o.sandboxProfile });
+      const r = await runToolkit(o.toolkitBin, argv, { src, timeoutMs: 120_000 });
       const label = `${p.primitive} ${JSON.stringify(p.args)}${p.dupFlag ? " with --id twice" : ""}`;
       if (r.timedOut) {
         bad.push(`${label}: timed out`);
@@ -362,7 +359,7 @@ export async function runToolkitCheck(o: CheckOpts): Promise<CheckReport> {
     return report;
   } finally {
     for (const s of held) {
-      if (up.has(s.id)) await runToolkit(o.toolkitBin, ["down", `--id=${s.id}`], { src, timeoutMs: 120_000, sandboxProfile: o.sandboxProfile }).catch(() => {});
+      if (up.has(s.id)) await runToolkit(o.toolkitBin, ["down", `--id=${s.id}`], { src, timeoutMs: 120_000 }).catch(() => {});
       await releaseSlot(s.id);
     }
     report.secs = (Date.now() - t0) / 1000;

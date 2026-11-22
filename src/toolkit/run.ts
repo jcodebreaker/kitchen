@@ -30,8 +30,6 @@ export type ToolkitRunOpts = {
   jobDir?: string;
   /** Kill the call when it prints nothing (stdout or stderr) for this long (prepare: a hung download). */
   stallMs?: number;
-  /** Run bin/dev under this macOS sandbox-exec profile (the setup bridge: agent-written code). */
-  sandboxProfile?: string;
 };
 
 const MAX_BUF = 16 << 20;
@@ -41,8 +39,8 @@ export const TIMEOUT_EXIT = 124;
 
 export async function runToolkit(bin: string, argv: string[], o: ToolkitRunOpts): Promise<ToolkitCall> {
   const timeoutMs = o.timeoutMs ?? 120_000;
-  const [cmd, args] = o.sandboxProfile ? ["/usr/bin/sandbox-exec", ["-f", o.sandboxProfile, bin, ...argv]] : [bin, argv];
-  const child = spawn(cmd, args, { env: toolkitEnv(o.src), stdio: ["ignore", "pipe", "pipe"], detached: true });
+
+  const child = spawn(bin, argv, { env: toolkitEnv(o.src), stdio: ["ignore", "pipe", "pipe"], detached: true });
   const untrack = trackGroup(o.jobDir ? procsDirOf(o.jobDir) : undefined, child.pid, `toolkit ${argv[0] ?? ""}`, { keepLeftovers: true });
   let stdout = "";
   let stderr = "";
