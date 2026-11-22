@@ -35,3 +35,37 @@ One entry per wave: what was built, review rounds and scores, what is proven, an
 - `kitchen run --detach` started from the user's own session is not yet proven (Wave 2).
 - In the last Codex rerun the model chose not to attempt rewriting `.git` with its file tool. The previous round showed that attempt being refused.
 - Linux sandboxes are untested.
+
+## Wave 1: engine skeleton (in review)
+
+**Review rounds so far:** 7.
+
+**Built**
+- `src/config.ts`: the kitchen.yaml schema.
+- `src/engine/machine.ts`: the full transition table as one data table, plus a pure `move()`. Every row has a legal and a refused test.
+- `store.ts`: job storage, with ids like `NNN-slug` and atomic writes.
+- `lock.ts`: a run lock with a heartbeat.
+- `runner.ts`: slots, `--once` and `--detach`.
+- `worktree.ts`.
+- Eleven thin stage handlers.
+- `src/ledger/`.
+- `src/sources/prompt.ts`.
+- `src/forge/`: local and fake forges.
+- CLI: `ticket`, `run`, `status`, `resume`, `feedback`, `reject`, `report`.
+- A bridge `checks` tool that runs with the untrusted env.
+
+**Proven**
+- Spikes, run with a fake adapter:
+  - every stage path: 47/47;
+  - kill and resume: 20/20;
+  - `--detach`: 8/8;
+  - bridge checks: 7/7.
+- One real call on each tool moved a job from intake to build.
+
+**Review round 1 (7/10) found:**
+- refused human commands escalated running jobs;
+- an agent left running after a kill could run alongside a fresh one;
+- one corrupt job.json stopped everything;
+- backoff never grew;
+- Verify accepted a PASS with no citations.
+A fixer is working on all of them.
