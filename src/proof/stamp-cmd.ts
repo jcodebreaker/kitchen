@@ -11,6 +11,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execa } from "execa";
 import { untrustedEnv } from "../agents/env.ts";
+import { appUrlOf } from "../engine/instance.ts";
 import { procsDirOf, trackGroup } from "../procs.ts";
 import { evidenceDir, jobGit, readJob, sealOf, storeHead, withJobLock } from "./job.ts";
 import { appendEntry, nextId, verifyManifest } from "./manifest.ts";
@@ -62,6 +63,9 @@ export function stampCommand(o: {
     fs.mkdirSync(dir, { recursive: true });
     const t0 = Date.now();
     const env = untrustedEnv(src.worktree);
+    // The running app's URL (the job's slot, recorded by `up`), so a test can reach it instead of guessing a port.
+    const appUrl = appUrlOf(o.jobDir, job.slotId);
+    if (appUrl) env.KITCHEN_APP_URL = appUrl;
     // The job folders (evidence, job.json) and the repo's shared config (a remote URL may hold a token) are denied too.
     const common = src.gitDir ? path.resolve(src.gitDir, "..", "..") : null;
     // Its own temp dir, the only writable temp under the profile (not /tmp: another job's worktree may live there).

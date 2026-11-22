@@ -19,6 +19,18 @@ export type UpResult = { ok: boolean; why?: string; secs: number; prepared: bool
 const PREPARE_MS = 20 * 60_000;
 const UP_MS = 5 * 60_000;
 const marker = (jobDir: string) => path.join(jobDir, "prepared.json");
+/** The URL `up` gave for the job's slot: cmd and test proofs get it as KITCHEN_APP_URL (stamp-cmd.ts). */
+export const appFile = (jobDir: string) => path.join(jobDir, "app.json");
+
+/** The app URL recorded for this slot by its last ready `up`, if any. */
+export function appUrlOf(jobDir: string, slotId: string): string | undefined {
+  try {
+    const a = JSON.parse(fs.readFileSync(appFile(jobDir), "utf8")) as { url?: string; slotId?: string };
+    return a.slotId === slotId && typeof a.url === "string" ? a.url : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /** Prepared for this source with this bin/dev (a new toolkitRef's checkout needs its own Toolkit deps). */
 function preparedFor(jobDir: string, src: string, bin: string): boolean {
@@ -41,6 +53,7 @@ export async function doctorOk(job: InstanceJob, jobDir?: string): Promise<boole
 export async function down(job: InstanceJob, jobDir?: string): Promise<void> {
   if (!job.toolkitBin || !fs.existsSync(job.toolkitBin)) return;
   await runToolkit(job.toolkitBin, ["down", `--id=${job.slotId}`], { src: job.worktree || process.cwd(), jobDir, timeoutMs: UP_MS });
+  if (jobDir) fs.rmSync(appFile(jobDir), { force: true });
 }
 
 async function prepare(job: InstanceJob, jobDir: string, log: (m: string) => void): Promise<ToolkitCall> {
@@ -86,6 +99,7 @@ export async function bringUp(job: InstanceJob, jobDir: string, o: { fresh: bool
     await down(job, jobDir);
     throw new Error(`up failed: ${why(u)}`);
   }
+  if (typeof u.json?.url === "string") fs.writeFileSync(appFile(jobDir), JSON.stringify({ url: u.json.url, slotId: job.slotId, at: new Date().toISOString() }));
   const secs = (Date.now() - t0) / 1000;
   log(`app ${o.fresh ? "fresh " : ""}up from the worktree in ${secs.toFixed(1)}s${prepared ? " (prepared)" : ""}`);
   return { ok: true, secs, prepared, fresh: true };
