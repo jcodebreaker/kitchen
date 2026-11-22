@@ -11,8 +11,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { openGit, plainCheckout } from "../engine/git.ts";
 import { kitchenDir, writeAtomic } from "../engine/store.ts";
-import { loadDrive } from "../proof/drive-format.ts";
 import { runDrive, toFlags } from "../proof/drive.ts";
+import { loadDrive } from "../proof/drive-format.ts";
 import { createJob, evidenceDir, readJob, sealOf } from "../proof/job.ts";
 import { verifyManifest } from "../proof/manifest.ts";
 import { markPrepared, toolkitCheckout } from "./checkout.ts";
@@ -21,8 +21,8 @@ import {
   type DescribeOut,
   type Feature,
   oneJsonLine,
-  type Probe,
   PrimitiveOut,
+  type Probe,
   parseFeature,
   planProbes,
   primitiveNames,
@@ -362,8 +362,7 @@ export async function runToolkitCheck(o: CheckOpts): Promise<CheckReport> {
     return report;
   } finally {
     for (const s of held) {
-      if (up.has(s.id))
-        await runToolkit(o.toolkitBin, ["down", `--id=${s.id}`], { src, timeoutMs: 120_000, sandboxProfile: o.sandboxProfile }).catch(() => {});
+      if (up.has(s.id)) await runToolkit(o.toolkitBin, ["down", `--id=${s.id}`], { src, timeoutMs: 120_000, sandboxProfile: o.sandboxProfile }).catch(() => {});
       await releaseSlot(s.id);
     }
     report.secs = (Date.now() - t0) / 1000;
@@ -412,7 +411,12 @@ export async function checkAtRef(
   const co = await toolkitCheckout(repo, o.rev ?? "HEAD");
   o.print?.(`toolkit check: Toolkit ${co.sha.slice(0, 12)} (${path.relative(repo, co.dir)}), source ${o.src ? path.resolve(o.src) : "the same checkout"}`);
   const src = o.src ?? co.dir;
-  const r = await runToolkitCheck({ repo, toolkitBin: co.bin, src, feature: o.feature, print: o.print, pathsRev: co.sha });
+  let r: CheckReport;
+  try {
+    r = await runToolkitCheck({ repo, toolkitBin: co.bin, src, feature: o.feature, print: o.print, pathsRev: co.sha });
+  } finally {
+    co.release();
+  }
   if (r.prepareSecs !== undefined && r.steps.some((s) => s.step === "prepare" && s.ok)) markPrepared(repo, co.sha, src, r.prepareSecs);
   if (r.ok && !o.src && !o.feature) {
     const proven: Proven = {

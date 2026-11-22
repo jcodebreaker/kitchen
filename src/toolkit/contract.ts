@@ -165,7 +165,8 @@ export function planProbes(d: DescribeOut, drives: { drive: Drive; args: Record<
     else if (name === "login" && d.seed_users[0]) probes.push({ primitive: name, args: { as: d.seed_users[0] }, expect: "shape", why: "login answers" });
     else probes.push({ primitive: name, args: fromDrives(name) ?? {}, expect: "shape", why: `${name} answers` });
   }
-  if (names.includes("read")) probes.push({ primitive: "read", args: { target: MISSING_TARGET }, expect: "refuse", why: "read of a missing target is ok:false" });
+  if (names.includes("read"))
+    probes.push({ primitive: "read", args: { target: MISSING_TARGET }, expect: "refuse", why: "read of a missing target is ok:false" });
   for (const p of ["open", "http"] as const)
     if (names.includes(p))
       for (const url of FOREIGN)

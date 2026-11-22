@@ -9,6 +9,7 @@
 //   badUrl      up says url:"x"
 //   noChecks    doctor says checks:[]
 const FAULTS = new Set([]);
+
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -47,7 +48,12 @@ switch (cmd) {
   case "describe": {
     const src = flags.src || path.resolve(import.meta.dirname, "..", "..", "..");
     const fdir = path.join(src, ".kitchen", "toolkit", "features");
-    const features = fs.existsSync(fdir) ? fs.readdirSync(fdir).filter((f) => f.endsWith(".md") && f !== "README.md").map((f) => `features/${f}`) : [];
+    const features = fs.existsSync(fdir)
+      ? fs
+          .readdirSync(fdir)
+          .filter((f) => f.endsWith(".md") && f !== "README.md")
+          .map((f) => `features/${f}`)
+      : [];
     const d = { contract: 1, surface: "web", primitives: prims, features, seed_users: ["alice"], externals: [], ports: { needs: 1 }, parallel: true };
     if (FAULTS.has("twoDescribe")) process.stdout.write(`${JSON.stringify({ ...d, toolkit: "draft" })}\n`);
     say(d);
@@ -71,8 +77,10 @@ switch (cmd) {
   default: {
     if (!prims.includes(cmd) || (cmd === "frobnicate" && FAULTS.has("frobnicate"))) say({ status: "fail", why: `unknown command ${cmd}` }, 2);
     if (FAULTS.has("okAll")) say({ ok: true, out: "ok", files: [] });
-    if (cmd === "read") say(flags.target === "body" || flags.target === undefined ? { ok: true, out: "hello", files: [] } : { ok: false, out: "no such element", files: [] });
-    if (cmd === "open" || cmd === "http") say(sameOrigin(String(flags.path ?? "/")) ? { ok: true, out: "/", files: [] } : { ok: false, out: "leaves the app: refused", files: [] });
+    if (cmd === "read")
+      say(flags.target === "body" || flags.target === undefined ? { ok: true, out: "hello", files: [] } : { ok: false, out: "no such element", files: [] });
+    if (cmd === "open" || cmd === "http")
+      say(sameOrigin(String(flags.path ?? "/")) ? { ok: true, out: "/", files: [] } : { ok: false, out: "leaves the app: refused", files: [] });
     if (cmd === "screenshot") {
       fs.writeFileSync(path.join(String(flags.out), "shot.png"), "png");
       say({ ok: true, out: "shot.png", files: ["shot.png"] });

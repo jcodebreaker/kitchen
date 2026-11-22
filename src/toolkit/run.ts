@@ -75,9 +75,12 @@ export async function runToolkit(bin: string, argv: string[], o: ToolkitRunOpts)
       finish({ exit: TIMEOUT_EXIT, timedOut: why });
     };
     timers.push(setTimeout(() => kill("timeout"), timeoutMs));
-    const stall = setInterval(() => {
-      if (o.stallMs && Date.now() - lastOutput > o.stallMs) kill("stall");
-    }, Math.min(1000, o.stallMs ?? 1000));
+    const stall = setInterval(
+      () => {
+        if (o.stallMs && Date.now() - lastOutput > o.stallMs) kill("stall");
+      },
+      Math.min(1000, o.stallMs ?? 1000),
+    );
     child.once("error", (e) => {
       stderr += `\n[kitchen] could not start ${bin}: ${e.message}`;
       finish({ exit: 127 });

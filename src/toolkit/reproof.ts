@@ -98,7 +98,11 @@ export async function beforeNewWork(o: { repo: string; forge: Forge; print: (l: 
     if (full) r = await checkAtRef(repo, { print: prefixed });
     else {
       const co = await toolkitCheckout(repo, base);
-      r = await runToolkitCheck({ repo, toolkitBin: co.bin, src: co.dir, smoke: true, prepare: !isPrepared(repo, co.sha, co.dir), print: prefixed });
+      try {
+        r = await runToolkitCheck({ repo, toolkitBin: co.bin, src: co.dir, smoke: true, prepare: !isPrepared(repo, co.sha, co.dir), print: prefixed });
+      } finally {
+        co.release();
+      }
       if (r.ok) {
         const next: Proven = { ...proven, sha: base, at: new Date().toISOString(), secs: r.secs };
         delete next.branch;

@@ -56,7 +56,14 @@ const run = (label: string, faults: string[], paths?: string) => {
 };
 
 const clean = run("clean", []);
-check("the fake without faults passes (probe included)", clean.code === 0 && /contract probe ok/.test(clean.out), clean.out.split("\n").filter((l) => /probe|PASS|FAIL/.test(l)).join(" | "));
+check(
+  "the fake without faults passes (probe included)",
+  clean.code === 0 && /contract probe ok/.test(clean.out),
+  clean.out
+    .split("\n")
+    .filter((l) => /probe|PASS|FAIL/.test(l))
+    .join(" | "),
+);
 
 const all = run("reviewer", ["okAll", "stdoutLogs", "twoDescribe", "frobnicate", "badUrl", "noChecks"]);
 check("the reviewer's fake bin/dev fails", all.code === 1 && all.fail === "describe", all.reason);
@@ -78,9 +85,7 @@ for (const [label, faults, at, why, paths] of cases) {
 const ok = run("ok-to-everything-2", ["okAll"]);
 check(
   "ok-to-everything: every refusal is named (missing read, both foreign origins on open and http, duplicated flag)",
-  /missing target/.test(ok.reason) &&
-    (ok.reason.match(/another origin/g) ?? []).length === 4 &&
-    /flag given twice \(--id\) is refused/.test(ok.reason),
+  /missing target/.test(ok.reason) && (ok.reason.match(/another origin/g) ?? []).length === 4 && /flag given twice \(--id\) is refused/.test(ok.reason),
   ok.reason.slice(0, 400),
 );
 finish("w2 probe");

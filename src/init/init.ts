@@ -386,7 +386,7 @@ export async function initCmd(o: InitOpts, out: Out): Promise<number> {
     if (o.generateOnly && !done("check")) {
       const sha = st.steps.commit?.sha ?? base;
       const co = await toolkitCheckout(repo, sha);
-      const r = await runToolkitCheck({ repo, toolkitBin: co.bin, src: co.dir, staticOnly: true, print: (l) => out(`  ${l}`) });
+      const r = await runToolkitCheck({ repo, toolkitBin: co.bin, src: co.dir, staticOnly: true, print: (l) => out(`  ${l}`) }).finally(co.release);
       st.steps.check = { ok: r.ok, sha, secs: r.secs, failed: r.failed, parallel: r.describe?.parallel !== false, static: true };
       save();
       say(
