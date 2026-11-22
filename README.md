@@ -209,4 +209,4 @@ Every key, with its default:
 
 ## License
 
-MIT. See `LICENSE`; third-party notices are in `NOTICE`.
+Apache-2.0. See `LICENSE`; third-party notices are in `NOTICE`.
