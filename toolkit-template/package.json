@@ -2,7 +2,7 @@
   "name": "kitchen-toolkit",
   "private": true,
   "version": "0.0.0",
-  "description": "Kitchen Toolkit (bin/dev). Its own dependencies (e.g. playwright) live here, never in the app.",
+  "description": "Kitchen Toolkit (bin/dev). Its own dependencies live here, never in the app. playwright is for lib/browser.mjs: keep 1.65.0 (its browser is cached), drop it if the app has no web UI.",
   "type": "module",
-  "dependencies": {}
+  "dependencies": { "playwright": "1.65.0" }
 }
