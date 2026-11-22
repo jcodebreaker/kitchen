@@ -14,7 +14,7 @@ node spikes/w2/superchat.ts [scratch]                     # the superchat-lite m
 node spikes/w2/timeout.ts [scratch]   # free: bin/dev timeout/stall kills the group although a child holds stdout
 node spikes/w2/probe.ts [scratch]     # free: the reviewer's broken fake Toolkit and each fault alone fail toolkit check, named; a correct one passes; toolkit up|down
 node spikes/w2/gc.ts [scratch]        # free: Toolkit-checkout GC skips leased checkouts and ones a live slot runs
-node spikes/w2/sandbox.ts [scratch]   # macOS + Docker: the setup bridge's bin/dev can't read ~/.ssh, gh, agent auth, the engine key; fixture A still passes
+node spikes/w2/sandbox.ts [scratch]   # macOS + Docker: the setup bridge's bin/dev, and init's check of the unmerged kitchen/setup, can't read ~/.ssh, gh, agent auth, the engine key; fixture A still passes
 node spikes/w2/inside.ts claude e [scratch]   # REAL: /kitchen setup inside `claude -p`, fixture E (a question only the team can answer), two turns
 node spikes/w2/inside.ts codex b [scratch]    # REAL: /kitchen setup inside `codex exec`, fixture B
 ```

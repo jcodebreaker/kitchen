@@ -14,6 +14,18 @@ kitchen status
 kitchen toolkit check             # prove the Toolkit end to end
 ```
 
+## Known limitations (v0.1)
+
+- **Linux: the setup bridge runs unsandboxed.** `kitchen init`'s setup agent
+  writes the Toolkit's `bin/dev`, and Kitchen runs it before anyone has
+  reviewed it (through the setup bridge, and for init's own check of the
+  `kitchen/setup` commit). On macOS those runs go through `sandbox-exec`,
+  which keeps them away from your SSH keys, cloud and GitHub credentials,
+  agent logins and Kitchen's own key. On Linux there is no sandbox yet: they
+  run as you, and Kitchen logs `runs UNSANDBOXED` when they start. Review
+  `kitchen/setup` before you merge it either way. Details and the residual
+  risks on macOS: `docs/adr/0008-setup-bridge.md`.
+
 ## Credits
 
 - The Toolkit's shape (Launch, Doctor, Drive, Evidence, Cleanup, the feature

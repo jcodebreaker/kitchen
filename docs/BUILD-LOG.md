@@ -68,7 +68,9 @@ One entry per wave: what was built, review rounds and scores, what is proven, an
 **Known gap:** when the loop stops because it lost the lock, it frees the slots of stages that are still finishing.
 
 
-## Wave 2: Toolkit and setup (review fixes done, awaiting re-review)
+## Wave 2: Toolkit and setup (review round 2 fixes done, awaiting re-review)
+
+**Score status:** Claude complete; Codex fixture D and /kitchen-inside-Codex owed when the Codex quota resets (2026-12-21): run `spikes/w2/inside.ts codex b` and `init-fixture.ts d-api codex` first in W3b.
 
 **Built**
 - `src/toolkit/contract.ts`: zod schemas for every command's JSON line and `describe` (`contract: 1`, surface, primitives, features, `seed_users`, externals, `ports.needs`, parallel), and the parser for a feature file's `kitchen` block (mapped `paths`, `check` args).
@@ -89,9 +91,15 @@ One entry per wave: what was built, review rounds and scores, what is proven, an
 - Real runs: a real survey asked a question (fixture E: which catalog the team uses) and the whole `/kitchen` setup ran inside `claude -p` (detach, poll, relay the question, answer on resume, done), about $1.14 on sonnet. Two findings from it fixed: Claude Code refuses `sleep 60` between polls (now `--status --wait`), and `--status` exiting 3 made the agent chain a fallback (now exit 0).
 - New: `npm test` 250/250; spikes `timeout.ts` 6/6, `probe.ts` 14/14, `gc.ts` 6/6, `sandbox.ts` 9/9, `codex-sandbox.ts` 3/3, `flow.ts` 36/36, `inside.ts claude e` 11/11, `spikes/w1/paths.ts` 54/54.
 
+**Review round 2 (fixed, `spikes/w2/results.md` "W2 review round 2")**
+- Major: init's own check of `kitchen/setup`, its fix rounds and `toolkit check --rev` ran agent-written `bin/dev` unsandboxed. Every run of a sha not merged into the base (not an ancestor of `HEAD`) now goes through the setup bridge's `sandbox-exec` profile (`toolkitCheckout`). `sandbox.ts`: a planted, working Toolkit that writes a marker when it can read `~/.ssh` or the engine key leaves none through `kitchen init` or `toolkit check --rev kitchen/setup`, and leaves one after the merge (the control). ADR 0008 now names the Docker daemon as outside the sandbox (`docker run -v $HOME:/h`) and the planned W3b+ bind-mount rule.
+- Found while proving it: a Toolkit commit without `.env.kitchen` staged nothing (a git 2.39 pathspec quirk); fixed.
+- Minor: an uncovered primitive must answer `ok:true` with no args, or is probed with its declared args (`probe.ts`: the reviewer's `frobnicate` stub fails, named); secret scan adds `sk-ant-`, `sk-proj-`, long bare `sk-`, `github_pat_`, `AIza`, `glpat-`, `npm_`; the sandbox denies `~/.npmrc`, `~/.pypirc`; the README states Linux runs the setup bridge unsandboxed (v0.1).
+- New: `npm test` 276/276, typecheck, lint; `probe.ts` 16/16, `sandbox.ts` 14/14, `flow.ts` 36/36.
+
 **Open**
 - Codex: the account hit its usage limit (until 2026-12-21) mid-run: D on Codex stopped after its survey, and the `/kitchen` setup inside `codex exec` (`inside.ts codex b`) has not run. What Codex needs approved is shown without a model (`codex-sandbox.ts`); that an execpolicy `allow` rule runs `kitchen init` outside the sandbox is unproven.
-- The sandbox covers the setup bridge only; `toolkit check` after the commit and every job's Toolkit calls run unsandboxed (ADR 0006/0008). Linux has no sandbox at all.
+- The sandbox covers agent-written code until it is merged (the bridge, init's checks, `--rev` of an unmerged sha); merged Toolkits (every job's Toolkit calls, the re-proof) run unsandboxed (ADR 0006/0008). Containers started through the Docker daemon are outside it. Linux has no sandbox at all.
 - superchat-lite's Toolkit has never run (W3b's first step, on a machine with the Docker budget).
 - Jobs still use the repo's own `bin/dev` (W1); moving them onto the engine-owned checkout comes with the smith and PR pinning (W3b).
 - `toolkit up|down|maintain` are not built.
