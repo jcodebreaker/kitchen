@@ -216,7 +216,7 @@ console.log(`turn 1: exit ${t1.code} in ${Math.round(t1.secs)}s; commands: ${t1.
 if (reuse) console.log("(reused the repo of an earlier run: its init was already under way)");
 let s = status();
 if (fx === "e") {
-  check("the real setup survey asked a question: init stopped with questions (exit 3)", s.status === 3, s.stdout.split("\n")[0]);
+  check("the real setup survey asked a question: init stopped with questions (init exit 3)", /^init: questions/.test(s.stdout), s.stdout.split("\n")[0]);
   const qs = fs.existsSync(path.join(r.dir, ".kitchen", "setup-questions.json"))
     ? readJson<{ questions: { question: string }[] }>(path.join(r.dir, ".kitchen", "setup-questions.json")).questions
     : [];
@@ -229,7 +229,7 @@ if (fx === "e") {
     "the outer agent relayed it to the user and stopped (no answer of its own)",
     /catalog/i.test(t1.result) && !fs.existsSync(path.join(r.dir, ".kitchen", "setup-answers.json")),
   );
-  if (s.status !== 3 || t1.code !== 0) {
+  if (!/^init: questions/.test(s.stdout) || t1.code !== 0) {
     finish(`w2 inside ${tool} ${fx} (stopped after turn 1: no question to answer; not looping)`);
     process.exit(1);
   }
@@ -251,10 +251,15 @@ if (fx === "e") {
     Object.values(state.steps.answers ?? {}).some((a) => /\beu\b/i.test(a)),
     JSON.stringify(state.steps.answers),
   );
+  const envK = path.join(r.dir, ".worktrees", "_setup", ".env.kitchen");
+  check(
+    "the answer shaped the Toolkit: .env.kitchen on kitchen/setup says CATALOG=eu",
+    fs.existsSync(envK) && /^CATALOG=eu$/m.test(fs.readFileSync(envK, "utf8")),
+  );
 }
 check(
-  `${tool}: init done (status exit 0), the Toolkit proven`,
-  s.status === 0 && fs.existsSync(path.join(r.dir, ".kitchen", "toolkit.proven")),
+  `${tool}: init done (status says done), the Toolkit proven`,
+  /^init: done/.test(s.stdout) && fs.existsSync(path.join(r.dir, ".kitchen", "toolkit.proven")),
   s.stdout.split("\n")[0],
 );
 const all = turns.flatMap((t) => t.commands);

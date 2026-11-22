@@ -133,14 +133,18 @@ export function detachInit(repo: string, cli: string, argv: string[], out: (l: s
   return 0;
 }
 
-/** Pure: what `--status` prints for a status (and whether its process lives), and the exit code. */
+/**
+ * Pure: what `--status` prints for a status (and whether its process lives).
+ * The exit code is 0 for every state: the state is the first word after
+ * `init:`. (A non-zero code for "questions" made agents chain `|| <fallback>`.)
+ */
 export function statusReport(s: InitStatus | null, alive: boolean, now = Date.now()): { lines: string[]; code: number } {
-  if (!s) return { lines: ["init: not started here (kitchen init --detach)"], code: 1 };
+  if (!s) return { lines: ["init: not started here (kitchen init --detach)"], code: 0 };
   const mins = (iso: string) => `${Math.max(0, Math.round((now - Date.parse(iso)) / 60_000))}m`;
   if (s.state === "running" && !alive)
     return {
       lines: [`init: failed: the init process (pid ${s.pid}) is gone without a result (killed?); run kitchen init --detach again (it resumes)`, ...tail(s)],
-      code: 1,
+      code: 0,
     };
   const head =
     s.state === "running"
@@ -150,6 +154,6 @@ export function statusReport(s: InitStatus | null, alive: boolean, now = Date.no
         : s.state === "questions"
           ? `init: questions: ${s.questions?.length ?? "?"} question(s) in .kitchen/setup-questions.json; answer them, then kitchen init --answers <file> --detach`
           : `init: failed (exit ${s.exit ?? "?"})${s.error ? `: ${s.error.split("\n")[0]}` : ""}`;
-  return { lines: [head, ...tail(s)], code: s.state === "questions" ? 3 : s.state === "failed" ? 1 : 0 };
+  return { lines: [head, ...tail(s)], code: 0 };
 }
 const tail = (s: InitStatus) => s.last.map((l) => `  | ${l}`);

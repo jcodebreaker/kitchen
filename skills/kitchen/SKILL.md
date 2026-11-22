@@ -60,9 +60,9 @@ Docker containers and network calls, so, like a queue drain:
    one call that waits for the whole setup. Keep polling until it ends, in this
    same turn: setup is what the user asked for. Relay a short progress line
    now and then, not every poll. It ends in one of:
-   - `init: done` (exit 0): relay the last lines (the next steps).
-   - `init: questions` (exit 3): see Questions.
-   - `init: failed …` (exit 1): show its lines and stop. Don't retry in a loop;
+   - `init: done`: relay the last lines (the next steps).
+   - `init: questions`: see Questions.
+   - `init: failed …`: show its lines and stop. Don't retry in a loop;
      `kitchen init --detach` again resumes where it stopped, if the user wants.
    - `init: running …`: poll again.
 

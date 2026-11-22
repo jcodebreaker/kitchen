@@ -32,7 +32,7 @@ let s = status(["--wait", "60"]);
 console.log(`status: ${s.stdout.trim().split("\n").slice(0, 8).join("\n  ")}`);
 check(
   "kitchen init inside Codex's workspace sandbox does not get through setup (so the skill escalates it)",
-  x.status !== 0 || s.status !== 0,
+  x.status !== 0 || /^init: failed/.test(s.stdout),
   s.stdout.split("\n")[0],
 );
 const ro = inSandbox(["init", "--status"]);
@@ -43,5 +43,5 @@ fs.writeFileSync(path.join(root, "answers.json"), JSON.stringify({ answers: {} }
 const y = spawnSync(process.execPath, [CLI, "init", "--answers", path.join(root, "answers.json"), "--detach"], { cwd: r.dir, env: r.env, encoding: "utf8" });
 s = status(["--wait", "110"]);
 while (/^init: running/.test(s.stdout)) s = status(["--wait", "110"]);
-check("outside the sandbox (the approved call) the same init finishes: done", y.status === 0 && s.status === 0, s.stdout.split("\n")[0]);
+check("outside the sandbox (the approved call) the same init finishes: done", y.status === 0 && /^init: done/.test(s.stdout), s.stdout.split("\n")[0]);
 finish("w2 codex-sandbox");
