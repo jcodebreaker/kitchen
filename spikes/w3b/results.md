@@ -9,13 +9,28 @@ All on 2026-11-22, macOS, Claude Code 2.1 (`/opt/homebrew/bin/claude`), Docker D
 | A job needing a new primitive: spec → toolkit (smith on Claude) → Toolkit PR (shim) → pinned → paused(toolkit-pr) at Ready → shim merges → toolkitRef moves → drives/verify re-run → report → done | **PASS** (19/19 + 1 creation check) | `toolkit.ts claude`: below |
 | The same with a scripted smith (plumbing, free) | **PASS** 19/19 | `toolkit.ts fake` |
 | Ready: CI pending → paused(ci) → back; red CI → build; sync conflict → build (the builder resolves, the engine concludes the merge) → … → done with report, evidence branch, PR comment, PR ready | **PASS** 19/19 | `ready.ts` |
-| GitHub forge + issue source + evidence branch against the shim | **PASS** 35/35 | `forge.ts` |
+| GitHub forge + issue source + evidence branch against the shim | **PASS** 35/35, 37/37 after the W4 merge | `forge.ts` |
 | Benchmark oracles discriminate (FAIL on the base; planted bugs' oracles PASS with the plant out) | **PASS** 20/20 | `oracles.ts` (B, D, A, C, run in four groups; c-unused-invites re-checked after its rewrite) |
 | SMOKE tier on Claude | run 1: 2/5 (a Toolkit template bug, fixed); after the fix 5/5 | `bench/results/2026-11-22-smoke-claude-run1.md`, `…-smoke-claude.md` |
 | FULL set on Claude, ≤ $25 and ~3 h at concurrency 2 | pass 1: 14/15 (the miss a bench defect, fixed); passes 2–3: below | `bench/results/2026-11-22-full-claude-pass1.md`, `…-full-claude.md` |
 | One superchat-lite ticket end to end | **NOT RUN** (owed) | its stack is over this laptop's Docker budget (W2) |
-| `npm test` / typecheck / lint | 306/306, clean, clean | |
+| `npm test` / typecheck / lint | 306/306 before the W4 merge, 326/326 after; clean, clean | |
 | Earlier spikes still pass with jobs on the engine-owned checkout | w1 paths 34/34, w1 faults 27/27 | the W1 feature path no longer expects a refused report (the report is an engine template until W4) |
+
+## After merging main (W4)
+
+W4 merged to main during this wave; main is merged into this branch. W4 owns `report.ts`, `review.ts` and the evidence branch (`evidence-branch.ts`, bundles redacted by the report stage); this wave's placeholder report and own evidence module were dropped for them. `src/forge/github.ts` implements W4's `Forge` (`publishEvidence`, `label`, `reviewComments`, `openPr`, plus W3b's `openToolkitPr` with branch/head and `markReady`). Re-run on the merged code:
+
+| spike | result |
+|---|---|
+| `forge.ts` (adds publishEvidence on top of the remote's branch, prune, idempotent re-publish, reviewComments with author_association, label, openPr) | **37/37** |
+| `ready.ts` (W4 report role and lenses, scripted) | **19/19** |
+| `toolkit.ts fake` (the high-risk path now needs `<section id="human-check">`; the scripted report writes it) | **19/19** |
+| `http-status.ts` (new: `http --expect_status 403`) | **3/3** |
+| `spikes/w1/paths.ts` (its scripted report gained `<section id="summary">`, which W4's renderer requires; it failed 12 checks on main for that) | **34/34** |
+| `npm test` / typecheck / lint | 326/326, clean, clean |
+
+Found while merging: W4's `evidence-branch.ts` had the `.git/`-prefix bug `forge.ts` found in mine (`ls-tree -d --name-only <commit>` and `rm --cached -- <dir>` run with `cwd` = the gitdir inside the work tree match nothing, so retention never pruned); fixed with `--full-tree` and `:(top)`. The benchmark numbers below were measured **before** the merge (W3a-era review lenses, the placeholder report); the toolkit-stage and Ready proofs were re-run after it.
 
 ## The new-primitive job on Claude (`toolkit.ts claude`)
 
@@ -75,8 +90,29 @@ Claude, sonnet for strong roles (intake, spec, builder, smith), haiku for medium
 
 The c-unused-invites miss is a **bench defect**, not Kitchen's: the ticket planted two invites in the seed, but fixture C's W2-generated Toolkit `reset` truncates `invites` (its feature file says none are seeded). Intake wrote criteria from the seed ("1 unused invite"), the builder's change was right (`count(*) … WHERE accepted_at IS NULL`; the oracle run on its branch shows the count working), and every Verify after a `reset` read 0, three rounds, needs-human. The ticket now has no plant and its oracle makes two invites and accepts one (`oracle-on.ts` checks an oracle on any branch).
 
-PASSES_2_3
+**Full, passes 2 and 3** (all 20 tickets twice; 34/40, $6.83, 40 min wall; `bench/results/2026-11-22-full-claude-passes2-3.md`, where `#1`/`#2` are passes 2/3). The six misses, none of them a wrong PR:
+
+| run | expected | actual | why (from the job folder) |
+|---|---|---|---|
+| a-invite-case, pass 3 | done | needs-info | the repro didn't find the lower-case trigger in 2 tries (it is the "hard to reproduce" bug: pass 1 and 2 found it) |
+| a-chore, pass 2 | done | needs-human | the review lens kept blocking a one-word rename for 3 rounds (round limit) |
+| b-done-many, pass 2 | done | needs-human | intake's inline criteria read `json .open` on a `cli` step whose output wraps stdout; the builder said BLOCKED with that reason |
+| b-control-long-title, pass 2 | done | needs-human | the verifier could not write a passing drive in 2 attempts (a 201-character argv) |
+| b-control-long-title, pass 3 | done | needs-info | intake rated a control a bug; no repro in 2 tries |
+| d-qty-100, pass 3 | done | needs-info | the repro didn't reproduce in 2 tries |
+
+**The three-run picture** (run 1 = smoke with the template fix + full pass 1; runs 2–3 = passes 2–3; 60 runs):
+
+| §0.2 measure | target | measured |
+|---|---|---|
+| runs ending in the correct outcome | ≥ 85% | **53/60 = 88%** (89.8% without the bench-defect run) |
+| every planted trap caught in all 3 runs | all | **not met as scored**: a-trap-slug 3/3, d-discount 3/3, b-done-many 2/3, c-unused-invites 2/3 (+1 bench defect). But no trap ever escaped: in all 60 runs **no `done` job failed its oracle**; the trap misses ended in needs-human, never in a wrong PR |
+| false FAILs on the 2 controls × 3 runs | ≤ 1 | **0** Verify FAILs (a-control-desc 3/3 done; b-control-long-title 1/3 done: two runs stopped before Verify, see above) |
+| held-out within 15 points of tuned | ≥ tuned − 15 | held-out **17/18 = 94%**, tuned 36/42 = 86% |
+| median time / cost per ticket | record | 58–65 s and $0.15 per ticket (passes); the new-primitive ticket 233–243 s and $0.49–0.53 |
+
+Intake-only outcomes (too big, needs info, reject) were right 15/15, in 6–14 s for $0.04–0.07. The misses cluster in two places outside this wave's code: intake's inline criteria and the repro/drives writing for CLI tickets (`cli` output shapes), which is the W3a roles' ground; recorded here, not tuned (W3a fixer).
 
 ## Cost and time
 
-Real-agent spend this wave: toolkit spike $0.61, smoke $0.87 + B rerun $0.56, the first bench try $0.18, full pass 1 $2.56, PASSES_COST. The scripted-agent spikes cost nothing.
+Real-agent spend this wave: toolkit spike $0.61, smoke $0.87 + B rerun $0.56, the first bench try $0.18, full pass 1 $2.56, passes 2–3 $6.83: **$11.61 in all** (plus $0.17 for the first harness try), about 1 h 25 min of benchmark wall clock at concurrency 2 (one Docker fixture at a time). The scripted-agent spikes cost nothing.

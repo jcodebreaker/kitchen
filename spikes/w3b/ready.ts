@@ -103,7 +103,7 @@ const p = shimState(shim).prs.find((x) => x.number === pr);
 const comment = p?.comments.find((c) => c.body.includes(`kitchen:${id}/report-comment`));
 check(
   "PR comment: one table of criterion, verdict and evidence links",
-  !!comment && /\| C1 \| PASS \|/.test(comment.body) && comment.body.includes("kitchen-evidence"),
+  !!comment && /\| C1 [^|]*\|[^|]*\| engine \| PASS \|/.test(comment.body) && comment.body.includes("kitchen-evidence"),
   comment?.body.split("\n").slice(0, 8).join(" / "),
 );
 check("the PR is marked ready for review", p?.isDraft === false);

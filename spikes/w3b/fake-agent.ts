@@ -45,6 +45,7 @@ const PRIM_SPEC = `## Criteria
 - [C1] Signing in records the time on the user's row
   proof: toolkit login --as alice ; toolkit sql --query "SELECT CASE WHEN last_login_at IS NULL THEN 'never' ELSE 'seen' END AS s FROM users WHERE username = 'alice'" --save rows
   expect: $rows contains "seen"
+  covers: R1
 ## Out of scope
 - showing it anywhere
 `;
@@ -52,7 +53,10 @@ const LOGIN_FROM = 'await pool.query("INSERT INTO sessions (token, user_id) VALU
 
 function primitiveScenario(req: AgentRequest): FakeStep | null {
   if (req.role === "intake")
-    return { file: "DECISION: ACCEPT\nKIND: feature\nRISK: high\nSURFACES: none\nREASON: a schema change and the sign-in path\n", line: "ACCEPT feature high" };
+    return {
+      file: "DECISION: ACCEPT\nKIND: feature\nRISK: high\nSURFACES: none\nREASON: a schema change and the sign-in path\n\n## Requirements\n- R1: a successful sign-in stores its time on the user\n",
+      line: "ACCEPT feature high",
+    };
   if (req.role === "spec") return { file: PRIM_SPEC, line: "spec: 1 criterion (needs sql)" };
   if (req.role === "builder") {
     fs.writeFileSync(path.join(req.cwd, "db", "003_last_login.sql"), "ALTER TABLE users ADD COLUMN last_login_at timestamptz;\n");
@@ -72,7 +76,8 @@ export default async function script(req: AgentRequest): Promise<FakeStep> {
     // W4's report role: cite what the engine listed (like spikes/w4/fake-agent.ts, without its planted bad id).
     const listed = [...(/# Evidence you may cite[\s\S]*?(?=\n# |$)/.exec(req.prompt)?.[0] ?? "").matchAll(/^- (e\d+):/gm)].map((m) => m[1]);
     const cite = [listed[0], listed.at(-1)].filter(Boolean).map((id) => `{{${id}}}`);
-    return { file: `<section id="summary"><p>Done as the ticket asked. ${cite.join(" ")}</p></section>\n`, line: `report: cites ${cite.join(" ")}` };
+    const human = /human-check/.test(req.prompt) ? `<section id="human-check"><p>Check the migration and the sign-in path.</p></section>\n` : "";
+    return { file: `${human}<section id="summary"><p>Done as the ticket asked. ${cite.join(" ")}</p></section>\n`, line: `report: cites ${cite.join(" ")}` };
   }
   if (/scenario: primitive/.test(req.prompt)) {
     const r = req.role === "smith" ? null : primitiveScenario(req);
