@@ -1,0 +1,9 @@
+{
+  "name": "fixture-a-web",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Kitchen fixture A: small Node web app with Postgres and local sign-in",
+  "type": "module",
+  "scripts": { "start": "node server.js" },
+  "dependencies": { "pg": "8.16.3" }
+}

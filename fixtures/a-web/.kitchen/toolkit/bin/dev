@@ -1,0 +1,291 @@
+#!/usr/bin/env node
+// Kitchen Toolkit for fixture A. Contract: docs/PLAN.md §2 "Toolkit contract".
+// Every command prints exactly one JSON line on stdout; logs go to stderr.
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import {
+  CONTAINER_PREFIX,
+  DEFAULT_SRC,
+  PG_IMAGE,
+  TOOLKIT_DIR,
+  alive,
+  checkId,
+  containerName,
+  httpJson,
+  killGroup,
+  log,
+  must,
+  out,
+  parseArgs,
+  psql,
+  readEnvFile,
+  readState,
+  run,
+  spawnDetached,
+  stateDir,
+  statePath,
+  waitFor,
+  writeState,
+} from "../lib/common.mjs";
+
+// Primitives the engine may call from a feature drive. `describe` is built from this table.
+const PRIMITIVES = {
+  login: { args: { as: "seed username" }, does: "sign in through the real sign-in page" },
+  press: { args: { target: "CSS/test-id selector" }, does: "click the first match and let any navigation land" },
+  type: { args: { target: "selector", text: "string" }, does: "replace the field's value" },
+  read: { args: { target: "selector (default body)", attr: "optional attribute" }, does: "inner text or attribute of the first match" },
+  screenshot: { args: { name: "file stem" }, does: "full-page PNG into --out" },
+  http: { args: { method: "GET|POST…", path: "/api/…", body: "optional JSON" }, does: "request as the signed-in browser user" },
+};
+const LIFECYCLE = ["prepare", "up", "doctor", "reset", "down", "describe"];
+
+const t0 = Date.now();
+const secs = () => Math.round((Date.now() - t0) / 100) / 10;
+const { flags, pos } = parseArgs(process.argv.slice(2));
+const cmd = pos[0];
+
+function srcOf(f) {
+  const src = path.resolve(String(f.src || DEFAULT_SRC));
+  if (!fs.existsSync(path.join(src, "server.js"))) throw new Error(`--src ${src} is not fixture A (no server.js)`);
+  return src;
+}
+
+function snapshotTag(src) {
+  const h = createHash("sha256").update(PG_IMAGE);
+  for (const f of fs.readdirSync(path.join(src, "db")).sort()) h.update(f).update(fs.readFileSync(path.join(src, "db", f)));
+  h.update(fs.readFileSync(path.join(src, ".env.kitchen")));
+  return `kitchen-a-web-seed:${h.digest("hex").slice(0, 12)}`;
+}
+
+const imageExists = (tag) => run("docker", ["image", "inspect", tag], { quiet: true }).code === 0;
+
+// ---------- prepare ----------
+async function prepare() {
+  const src = srcOf(flags);
+  const envFile = path.join(src, ".env.kitchen");
+  if (!fs.existsSync(envFile)) throw new Error(".env.kitchen missing in --src");
+  const env = readEnvFile(envFile);
+
+  // App deps and Toolkit deps (npm's cache in ~/.npm is shared across worktrees).
+  log("npm ci (app)");
+  must("npm", ["ci", "--prefer-offline", "--no-audit", "--no-fund", "--loglevel=error"], { cwd: src });
+  log("npm ci (toolkit)");
+  must("npm", ["ci", "--prefer-offline", "--no-audit", "--no-fund", "--loglevel=error"], { cwd: TOOLKIT_DIR });
+  log("playwright chromium (headless shell only; cached per version)");
+  must(path.join(TOOLKIT_DIR, "node_modules/.bin/playwright"), ["install", "--only-shell", "chromium"], { cwd: TOOLKIT_DIR });
+
+  // Seed snapshot: a Postgres image with migrations + seed baked in, plus an
+  // `app_seed` template database so `reset` is a cheap clone.
+  const tag = snapshotTag(src);
+  let cached = imageExists(tag);
+  if (!cached) {
+    if (!imageExists(PG_IMAGE)) must("docker", ["pull", PG_IMAGE]);
+    const tmp = `${CONTAINER_PREFIX}snapbuild-${process.pid}`;
+    log(`building seed snapshot ${tag}`);
+    try {
+      must("docker", [
+        "run", "-d", "--name", tmp, "--label", "kitchen.toolkit=a-web",
+        "-e", `POSTGRES_USER=${env.POSTGRES_USER}`, "-e", `POSTGRES_PASSWORD=${env.POSTGRES_PASSWORD}`,
+        "-e", `POSTGRES_DB=${env.POSTGRES_DB}`, "-e", "PGDATA=/pgdata", PG_IMAGE,
+      ]);
+      // TCP readiness: the init-time server listens on the socket only, so this waits for the real one.
+      await waitFor(() => run("docker", ["exec", tmp, "pg_isready", "-h", "127.0.0.1", "-U", env.POSTGRES_USER], { quiet: true }).code === 0, {
+        timeoutMs: 60000,
+        what: "postgres in snapshot builder",
+      });
+      for (const f of fs.readdirSync(path.join(src, "db")).filter((f) => f.endsWith(".sql")).sort()) {
+        log(`apply ${f}`);
+        must("docker", [
+          "exec", "-i", tmp, "psql", "-U", env.POSTGRES_USER, "-d", env.POSTGRES_DB, "-v", "ON_ERROR_STOP=1", "-q",
+          "-v", `alice_pw=${env.SEED_ALICE_PASSWORD}`, "-v", `bob_pw=${env.SEED_BOB_ADMIN_PASSWORD}`, "-f", "-",
+        ], { input: fs.readFileSync(path.join(src, "db", f)) });
+      }
+      const r = psql(tmp, env, `CREATE DATABASE app_seed TEMPLATE ${env.POSTGRES_DB}`);
+      if (r.code !== 0) throw new Error(r.stderr);
+      must("docker", ["stop", "-t", "20", tmp]);
+      must("docker", ["commit", tmp, tag]);
+    } finally {
+      run("docker", ["rm", "-f", tmp], { quiet: true });
+    }
+  }
+  out({ status: "ok", secs: secs(), snapshot: tag, snapshotCached: cached });
+}
+
+// ---------- up ----------
+async function up() {
+  const id = checkId(flags.id);
+  const src = srcOf(flags);
+  const ports = String(flags.ports || "").split(",").map(Number).filter(Boolean);
+  if (ports.length < 3) throw new Error("--ports needs at least 3 ports (app, postgres, browser driver)");
+  const [appPort, pgPort, driverPort] = ports;
+  const existing = readState(id);
+  if (existing) return out({ status: "fail", why: `id ${id} is already up (run down first)` });
+
+  const env = readEnvFile(path.join(src, ".env.kitchen"));
+  const tag = snapshotTag(src);
+  if (!imageExists(tag)) return out({ status: "fail", why: `seed snapshot ${tag} missing: run prepare --src ${src}` });
+  if (!fs.existsSync(path.join(TOOLKIT_DIR, "node_modules/playwright"))) return out({ status: "fail", why: "toolkit deps missing: run prepare" });
+
+  const dir = stateDir(id);
+  fs.mkdirSync(dir, { recursive: true });
+  const state = { id, src, ports, container: containerName(id), snapshot: tag, url: `http://127.0.0.1:${appPort}`, startedAt: new Date().toISOString() };
+  writeState(id, state);
+  try {
+    const timings = {};
+    let t = Date.now();
+    run("docker", ["rm", "-f", state.container], { quiet: true }); // leftover from a crashed run of this id
+    must("docker", [
+      "run", "-d", "--name", state.container, "--label", "kitchen.toolkit=a-web", "--label", `kitchen.id=${id}`,
+      "-p", `127.0.0.1:${pgPort}:5432`, "--memory", "256m", tag,
+    ]);
+    await waitFor(() => psql(state.container, env, "SELECT count(*) FROM users", env.POSTGRES_DB).stdout.trim() !== "", {
+      timeoutMs: 30000,
+      what: "postgres from snapshot",
+    });
+    timings.postgres = (Date.now() - t) / 1000;
+
+    t = Date.now();
+    state.appPid = spawnDetached(process.execPath, ["server.js"], {
+      cwd: src,
+      env: { ...process.env, PORT: String(appPort), DATABASE_URL: `postgres://${env.POSTGRES_USER}:${env.POSTGRES_PASSWORD}@127.0.0.1:${pgPort}/${env.POSTGRES_DB}` },
+      logFile: path.join(dir, "app.log"),
+    });
+    writeState(id, state);
+    await waitFor(async () => (await httpJson(`${state.url}/healthz`, undefined, 2000)).body?.db === true, { timeoutMs: 15000, what: "app /healthz" });
+    timings.app = (Date.now() - t) / 1000;
+
+    t = Date.now();
+    state.driverUrl = `http://127.0.0.1:${driverPort}`;
+    state.driverPid = spawnDetached(process.execPath, [path.join(TOOLKIT_DIR, "lib/driver.mjs"), "--port", String(driverPort), "--base", state.url, "--src", src], {
+      cwd: TOOLKIT_DIR,
+      env: process.env,
+      logFile: path.join(dir, "driver.log"),
+    });
+    writeState(id, state);
+    await waitFor(async () => (await httpJson(state.driverUrl, { op: "ping" }, 2000)).body?.ok === true, { timeoutMs: 20000, what: "browser driver" });
+    timings.browser = (Date.now() - t) / 1000;
+    out({ status: "ready", url: state.url, secs: secs(), timings });
+  } catch (e) {
+    log("up failed, cleaning up:", e.message);
+    await teardown(id);
+    out({ status: "fail", why: e.message, secs: secs() });
+  }
+}
+
+// ---------- doctor ----------
+async function doctor() {
+  const id = checkId(flags.id);
+  const s = readState(id);
+  if (!s) return out({ status: "fail", checks: [{ name: "state", ok: false, why: `id ${id} is not up` }] });
+  const env = readEnvFile(path.join(s.src, ".env.kitchen"));
+  const checks = [];
+  const check = async (name, fn) => {
+    try {
+      const r = await fn();
+      checks.push({ name, ok: r === true, ...(r === true ? {} : { why: String(r) }) });
+    } catch (e) {
+      checks.push({ name, ok: false, why: e.message });
+    }
+  };
+  await check("container running", () => {
+    const r = run("docker", ["inspect", "-f", "{{.State.Running}} {{index .Config.Labels \"kitchen.id\"}}", s.container], { quiet: true });
+    return r.stdout.trim() === `true ${id}` || r.stdout.trim() || "missing";
+  });
+  await check("seed users present", () => {
+    const n = psql(s.container, env, "SELECT count(*) FROM users WHERE username IN ('alice','bob-admin')", env.POSTGRES_DB).stdout.trim();
+    return n === "2" || `found ${n || "none"}`;
+  });
+  await check("app process alive", () => alive(s.appPid) || `pid ${s.appPid} dead`);
+  await check("app healthz on our port", async () => {
+    const r = await httpJson(`${s.url}/healthz`, undefined, 3000);
+    return (r.status === 200 && r.body?.db === true) || JSON.stringify(r);
+  });
+  await check("browser driver alive", async () => (await httpJson(s.driverUrl, { op: "ping" }, 3000)).body?.ok === true || "no ping");
+  out({ status: checks.every((c) => c.ok) ? "ok" : "fail", checks, secs: secs() });
+}
+
+// ---------- reset ----------
+async function reset() {
+  const id = checkId(flags.id);
+  const s = readState(id);
+  if (!s) return out({ status: "fail", why: `id ${id} is not up` });
+  const env = readEnvFile(path.join(s.src, ".env.kitchen"));
+  for (const sql of [`DROP DATABASE ${env.POSTGRES_DB} WITH (FORCE)`, `CREATE DATABASE ${env.POSTGRES_DB} TEMPLATE app_seed`]) {
+    const r = psql(s.container, env, sql);
+    if (r.code !== 0) return out({ status: "fail", why: r.stderr.trim(), secs: secs() });
+  }
+  const d = await httpJson(s.driverUrl, { op: "reset" });
+  if (!d.body?.ok) return out({ status: "fail", why: "browser reset failed", secs: secs() });
+  await waitFor(async () => (await httpJson(`${s.url}/healthz`, undefined, 2000)).body?.db === true, { timeoutMs: 10000, what: "app after reset" });
+  out({ status: "ok", secs: secs() });
+}
+
+// ---------- down ----------
+async function teardown(id) {
+  const s = readState(id) || {};
+  const stopped = [];
+  if (await killGroup(s.driverPid)) stopped.push("browser");
+  if (await killGroup(s.appPid)) stopped.push("app");
+  if (run("docker", ["rm", "-f", s.container || containerName(id)], { quiet: true }).stdout.trim()) stopped.push("postgres");
+  // Logs stay next to the state for post-mortems; only the live-state marker goes.
+  fs.rmSync(statePath(id), { force: true });
+  return stopped;
+}
+async function down() {
+  const id = checkId(flags.id);
+  const stopped = await teardown(id);
+  out({ status: "ok", stopped, logs: stateDir(id), secs: secs() });
+}
+
+// ---------- describe (generated from code + files, never hand-kept) ----------
+function describe() {
+  const src = path.resolve(String(flags.src || DEFAULT_SRC));
+  const seed = fs.readFileSync(path.join(src, "db/002_seed.sql"), "utf8");
+  const seedUsers = [...seed.matchAll(/\('([a-z0-9-]+)', crypt/g)].map((m) => m[1]);
+  const featuresDir = path.join(src, ".kitchen/toolkit/features");
+  const features = fs.existsSync(featuresDir)
+    ? fs.readdirSync(featuresDir).filter((f) => f.endsWith(".md")).flatMap((f) => {
+        const text = fs.readFileSync(path.join(featuresDir, f), "utf8");
+        return [...text.matchAll(/```drive\n([\s\S]*?)```/g)].map((m) => ({
+          drive: m[1].match(/^drive:\s*(\S+)/m)?.[1],
+          args: m[1].match(/^args:\s*\[(.*)\]/m)?.[1].split(",").map((a) => a.trim()).filter(Boolean) ?? [],
+          file: `features/${f}`,
+        }));
+      })
+    : [];
+  out({
+    status: "ok",
+    toolkit: "fixture-a-web",
+    lifecycle: LIFECYCLE,
+    primitives: Object.entries(PRIMITIVES).map(([name, p]) => ({ name, ...p })),
+    ports: { needs: 3, order: ["app", "postgres", "browser-driver"] },
+    features,
+    seedUsers,
+    externals: [],
+    parallel: true,
+  });
+}
+
+// ---------- primitives ----------
+async function primitive(op) {
+  const id = checkId(flags.id);
+  const s = readState(id);
+  if (!s) return out({ ok: false, out: `id ${id} is not up`, files: [] });
+  const { id: _i, src: _s, out: outDir, ...args } = flags;
+  if (op === "screenshot") args.out = path.resolve(String(outDir || path.join(stateDir(id), "shots")));
+  if (op === "http" && typeof args.body === "string") args.body = JSON.parse(args.body);
+  log(op, JSON.stringify(args));
+  const r = await httpJson(s.driverUrl, { op, args });
+  out({ ok: r.body?.ok === true, out: r.body?.out ?? null, files: r.body?.files ?? [] });
+}
+
+const COMMANDS = { prepare, up, doctor, reset, down, describe };
+try {
+  if (COMMANDS[cmd]) await COMMANDS[cmd]();
+  else if (PRIMITIVES[cmd]) await primitive(cmd);
+  else out({ status: "fail", why: `unknown command ${JSON.stringify(cmd)}; try describe` }, 2);
+} catch (e) {
+  const isPrim = Boolean(PRIMITIVES[cmd]);
+  out(isPrim ? { ok: false, out: e.message, files: [] } : { status: "fail", why: e.message, secs: secs() }, 1);
+}

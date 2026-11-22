@@ -1,0 +1,8 @@
+{
+  "name": "fixture-a-web-toolkit",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Kitchen Toolkit for fixture A (bin/dev). Playwright lives here, never in Kitchen.",
+  "type": "module",
+  "dependencies": { "playwright": "1.65.0" }
+}
