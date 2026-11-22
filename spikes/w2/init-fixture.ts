@@ -8,7 +8,7 @@
 // resumes, and says so. Writes spikes/w2/runs/<fixture>-<tool>.json.
 import fs from "node:fs";
 import path from "node:path";
-import { check, finish, fixtureRepo, git, HERE, kitchen, kitchenLive, ourContainers, readJson } from "./lib.ts";
+import { check, finish, fixtureRepo, git, HERE, kitchenLive, ourContainers, readJson } from "./lib.ts";
 
 const [fixture, tool = "claude", scratch] = process.argv.slice(2);
 if (!fixture || !["claude", "codex"].includes(tool)) throw new Error("usage: init-fixture.ts <a-web|b-cli|c-adopt|d-api> <claude|codex> [scratch]");
