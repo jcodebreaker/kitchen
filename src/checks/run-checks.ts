@@ -22,8 +22,12 @@ import { type StampedCmd, stampCommand } from "../proof/stamp-cmd.ts";
 export type ChecksResult = { ok: boolean; sha: string | null; results: StampedCmd[] };
 export type ChecksPrepare = { cmd: string; network: boolean };
 
-export const checksPrepareOf = (cfg: Pick<Config, "checks_prepare" | "checks_network">): ChecksPrepare | undefined =>
-  cfg.checks_prepare ? { cmd: cfg.checks_prepare, network: cfg.checks_network } : undefined;
+/**
+ * The prepare step always has the network (it downloads the dependencies, ADR 0010); the checks and proofs
+ * after it get it only with `checks_network: true`, so builder code never reaches the network by default.
+ */
+export const checksPrepareOf = (cfg: Pick<Config, "checks_prepare">): ChecksPrepare | undefined =>
+  cfg.checks_prepare ? { cmd: cfg.checks_prepare, network: true } : undefined;
 
 /** Dependency manifests and lockfiles at the worktree root: a change to one runs `checks_prepare` again. */
 export const DEPENDENCY_FILES = [

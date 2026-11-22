@@ -9,6 +9,10 @@ import { checksPrepareOf, prepareKey } from "./run-checks.ts";
 test("checks_prepare: off by default; when set it runs with checks_network", () => {
   assert.equal(checksPrepareOf(parseConfig("")), undefined);
   assert.deepEqual(checksPrepareOf(parseConfig("checks_prepare: npm ci\nchecks_network: true\n")), { cmd: "npm ci", network: true });
+  // ADR 0010 review H2: the install downloads, the checks after it stay offline unless the person says otherwise.
+  const offline = parseConfig("checks_prepare: npm ci\n");
+  assert.equal(offline.checks_network, false);
+  assert.deepEqual(checksPrepareOf(offline), { cmd: "npm ci", network: true });
 });
 
 test("a prepared worktree is prepared again only when the command or a dependency file changes", () => {

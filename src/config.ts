@@ -99,12 +99,12 @@ export const ConfigSchema = z
       .strict()
       .prefault({}),
     checks: z.array(Check).default([]),
-    /** Checks run under the proof sandbox; true allows them outbound network (a package install). The filesystem rules stay. */
+    /** Checks run under the proof sandbox; true allows the checks themselves outbound network. The filesystem rules stay. */
     checks_network: z.boolean().default(false),
     /**
      * Readies a worktree for the checks and `test` proofs (`npm ci`, `pip install -r requirements.txt`): a fresh
-     * job worktree has no node_modules. Run in the worktree under the same sandbox as the checks (network only with
-     * `checks_network`), before the first check or test proof, and again only when it or a lockfile changes.
+     * job worktree has no node_modules. Run in the worktree under the same sandbox as the checks (always with the network, to download; ADR 0010
+     * review H2), before the first check or test proof, and again only when it or a lockfile changes.
      */
     checks_prepare: z.string().min(1).optional(),
     /** How a `test <file>` proof runs, in the job worktree with the untrusted env. `{file}` is the test file, shell-quoted. */
