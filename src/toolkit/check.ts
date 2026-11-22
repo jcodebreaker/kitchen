@@ -46,6 +46,8 @@ export type CheckOpts = {
   prepare?: boolean;
   /** The light re-proof: only the first check line's drive, no reset round, no second slot. */
   smoke?: boolean;
+  /** Only describe and the feature files (no app is started): for machines that can't run the stack. */
+  staticOnly?: boolean;
   print?: (line: string) => void;
   timeouts?: { prepareMs?: number; upMs?: number };
 };
@@ -160,6 +162,10 @@ export async function runToolkitCheck(o: CheckOpts): Promise<CheckReport> {
     )
       return fail("features");
 
+    if (o.staticOnly) {
+      report.ok = true;
+      return report;
+    }
     // 2. prepare (timed)
     if (o.prepare !== false) {
       const p = await cmd("prepare", [`--src=${src}`], "prepare", o.timeouts?.prepareMs ?? 30 * 60_000);

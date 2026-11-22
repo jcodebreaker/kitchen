@@ -24,7 +24,9 @@ export function finish(label: string) {
 }
 
 export const git = (cwd: string, ...a: string[]) =>
-  execFileSync("git", ["-c", "user.name=spike", "-c", "user.email=s@example.invalid", ...a], { cwd, stdio: "pipe" }).toString().trim();
+  execFileSync("git", ["-c", "user.name=spike", "-c", "user.email=s@example.invalid", ...a], { cwd, stdio: "pipe" })
+    .toString()
+    .trim();
 
 export type Repo = { dir: string; home: string; env: NodeJS.ProcessEnv };
 
@@ -68,7 +70,11 @@ export function kitchen(r: Repo, args: string[], o: { timeoutMs?: number; env?: 
 }
 
 /** The same, streaming every line to our stdout as it comes (long agent runs). */
-export function kitchenLive(r: Repo, args: string[], o: { env?: NodeJS.ProcessEnv; logFile?: string } = {}): Promise<{ out: string; code: number; secs: number }> {
+export function kitchenLive(
+  r: Repo,
+  args: string[],
+  o: { env?: NodeJS.ProcessEnv; logFile?: string } = {},
+): Promise<{ out: string; code: number; secs: number }> {
   const t0 = Date.now();
   return new Promise((resolve) => {
     const p = spawn(process.execPath, [CLI, ...args, "--repo", r.dir], { env: { ...r.env, ...(o.env ?? {}) }, stdio: ["ignore", "pipe", "pipe"] });
@@ -88,9 +94,7 @@ export function kitchenLive(r: Repo, args: string[], o: { env?: NodeJS.ProcessEn
 /** Containers and slots this spike's Toolkits may have left (by Kitchen's labels/prefixes). */
 export function ourContainers(): string[] {
   const r = spawnSync("docker", ["ps", "-a", "--format", "{{.Names}}"], { encoding: "utf8" });
-  return (r.stdout || "")
-    .split("\n")
-    .filter((n) => /^kitchen[-_]/.test(n));
+  return (r.stdout || "").split("\n").filter((n) => /^kitchen[-_]/.test(n));
 }
 
 export const readJson = <T>(f: string): T => JSON.parse(fs.readFileSync(f, "utf8")) as T;

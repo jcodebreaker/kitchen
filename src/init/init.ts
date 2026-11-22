@@ -16,7 +16,8 @@ import { adapterFor } from "../engine/runner.ts";
 import { writeAtomic } from "../engine/store.ts";
 import { kitchenHome } from "../home.ts";
 import { appendLedger } from "../ledger/append.ts";
-import { checkAtRef } from "../toolkit/check.ts";
+import { checkAtRef, runToolkitCheck } from "../toolkit/check.ts";
+import { toolkitCheckout } from "../toolkit/checkout.ts";
 import { reclaimStaleSlots } from "../toolkit/slots.ts";
 import { setupBridgeServer } from "./bridge.ts";
 
@@ -28,12 +29,7 @@ export const SETUP_BRANCH = "kitchen/setup";
 const WT_ID = "_setup";
 const IDENTITY = { GIT_AUTHOR_NAME: "Kitchen", GIT_AUTHOR_EMAIL: "kitchen@localhost", GIT_COMMITTER_NAME: "Kitchen", GIT_COMMITTER_EMAIL: "kitchen@localhost" };
 /** Never committed from the setup worktree, whatever the repo's .gitignore says. */
-const NOT_COMMITTED = [
-  ":(exclude,glob)**/node_modules/**",
-  ":(exclude,glob)**/__pycache__/**",
-  ":(exclude,glob)**/.venv/**",
-  ":(exclude).kitchen/checks/**",
-];
+const NOT_COMMITTED = [":(exclude,glob)**/node_modules/**", ":(exclude,glob)**/__pycache__/**", ":(exclude,glob)**/.venv/**", ":(exclude).kitchen/checks/**"];
 const TOOLKIT_PATHS = [".kitchen/toolkit", ".env.kitchen"];
 
 export const GITIGNORE = [
@@ -54,7 +50,16 @@ export const GITIGNORE = [
   ".worktrees/",
 ];
 
-export type InitOpts = { repo: string; answers?: string; tool?: "claude" | "codex"; model?: string; effort?: string; maxFix?: number };
+export type InitOpts = {
+  repo: string;
+  answers?: string;
+  tool?: "claude" | "codex";
+  model?: string;
+  effort?: string;
+  maxFix?: number;
+  /** The machine can't run the app's stack: generate and check statically (describe + feature files), prove nothing. */
+  generateOnly?: boolean;
+};
 type Out = (l: string) => void;
 
 export type Question = { id: string; question: string; why?: string; default?: string };
@@ -83,7 +88,7 @@ export type InitState = {
     answers?: Record<string, string>;
     build?: { status: string; sessionId?: string };
     commit?: { sha: string; commits: string[] };
-    check?: { ok: boolean; sha: string; secs: number; failed?: string; parallel: boolean };
+    check?: { ok: boolean; sha: string; secs: number; failed?: string; parallel: boolean; static?: boolean };
   };
   fixes: number;
   runs: RunRecord[];
@@ -247,7 +252,7 @@ export async function initCmd(o: InitOpts, out: Out): Promise<number> {
       maxTurns: Math.max(config.agent.max_turns, 250),
       outFile,
       env: buildAgentEnv(path.join(kitchenHome(), "agent-scrub")),
-      ...(mode === "survey" ? {} : { bridge: setupBridgeServer({ repo, worktree: wtGit.workTree }) }),
+      ...(mode === "survey" ? {} : { bridge: setupBridgeServer({ repo, worktree: wtGit.workTree, staticOnly: o.generateOnly }) }),
       ...(resume ? { resumeSession: resume } : {}),
       effort,
     };
@@ -328,7 +333,12 @@ export async function initCmd(o: InitOpts, out: Out): Promise<number> {
     }
     // 8. build: same session, with the answers and the bridge
     if (!done("build")) {
-      const { r, text } = await runSetup("build", buildPrompt(st.steps.answers ?? {}, qs), "setup.md", st.steps.survey?.sessionId);
+      const { r, text } = await runSetup(
+        "build",
+        buildPrompt(st.steps.answers ?? {}, qs) + (o.generateOnly ? STATIC : ""),
+        "setup.md",
+        st.steps.survey?.sessionId,
+      );
       if (!r.ok || text === null) throw new Error(`setup build failed: ${r.error ?? "no setup.md written"} (rerun kitchen init to retry)`);
       const status = /^STATUS:\s*(\S+)/m.exec(text)?.[1] ?? "?";
       st.steps.build = { status, sessionId: r.sessionId };
@@ -348,6 +358,17 @@ export async function initCmd(o: InitOpts, out: Out): Promise<number> {
       st.steps.commit = c;
       save();
       say(c.commits.length ? `committed on ${SETUP_BRANCH}: ${c.commits.join(", ")}` : "nothing new to commit");
+    }
+    if (o.generateOnly && !done("check")) {
+      const sha = st.steps.commit?.sha ?? base;
+      const co = await toolkitCheckout(repo, sha);
+      const r = await runToolkitCheck({ repo, toolkitBin: co.bin, src: co.dir, staticOnly: true, print: (l) => out(`  ${l}`) });
+      st.steps.check = { ok: r.ok, sha, secs: r.secs, failed: r.failed, parallel: r.describe?.parallel !== false, static: true };
+      save();
+      say(
+        `generated only (--generate-only): describe and the feature files ${r.ok ? "pass" : `fail at ${r.failed}`}; the Toolkit is NOT proven (no toolkit.proven)`,
+      );
+      return r.ok ? 0 : 1;
     }
     if (!done("check")) {
       const sha = st.steps.commit?.sha ?? base;
@@ -463,6 +484,13 @@ or build, which template modules), and then **one** fenced \`json\` block with
 the questions only the developer can answer, at most 3, each
 \`{"id":"q1","question":"…","why":"what in the repo left it open","default":"what you'll do if they don't say"}\`.
 Ask nothing the repo answers. Most repos need no questions: then the block is \`[]\`.`;
+
+const STATIC = `
+
+**This machine can't run the app's stack** (too heavy for its Docker budget). Write the
+whole Toolkit as you would, but don't start anything: the \`toolkit\` tool only allows
+\`describe\`, and \`toolkit_check\` only checks describe and the feature files. Say in
+setup.md which steps are unproven (CHECK: NOT-RUN).`;
 
 function buildPrompt(answers: Record<string, string>, qs: Question[]): string {
   const qa = qs.map((q) => `- ${q.question}\n  answer: ${answers[q.id] || q.default || "(no answer: use your default)"}`).join("\n");

@@ -10,7 +10,11 @@ import type { FakeScript } from "../../src/agents/fake.ts";
 const A = path.resolve(import.meta.dirname, "../../fixtures/a-web");
 
 const script: FakeScript = (req) => {
-  if (process.env.W2_FAKE_LOG) fs.appendFileSync(process.env.W2_FAKE_LOG, `${JSON.stringify({ role: req.role, file: req.outFile, resume: req.resumeSession ?? null, prompt: req.prompt })}\n`);
+  if (process.env.W2_FAKE_LOG)
+    fs.appendFileSync(
+      process.env.W2_FAKE_LOG,
+      `${JSON.stringify({ role: req.role, file: req.outFile, resume: req.resumeSession ?? null, prompt: req.prompt })}\n`,
+    );
   if (req.role === "setup" && req.outFile === "survey.md")
     return {
       line: "survey done, 1 question",

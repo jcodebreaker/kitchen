@@ -37,16 +37,17 @@ export async function w2(name: string, argv: string[]): Promise<number> {
   const out = (l: string) => console.log(l);
   if (name === "setup-mcp") {
     const { flags } = parseFlags(argv, ["repo", "worktree"]);
+    const staticOnly = flags.static === true;
     const repo = str(flags.repo);
     const wt = str(flags.worktree);
     if (!repo || !wt) throw new Error("usage: kitchen setup-mcp --repo <dir> --worktree <setup worktree>");
-    await serveSetupBridge({ repo: path.resolve(repo), worktree: path.resolve(wt) });
+    await serveSetupBridge({ repo: path.resolve(repo), worktree: path.resolve(wt), staticOnly });
     return 0;
   }
   if (name === "init") {
     const { flags } = parseFlags(argv, ["repo", "answers", "tool", "model", "effort", "max-fix"]);
     for (const k of Object.keys(flags))
-      if (!["repo", "answers", "tool", "model", "effort", "max-fix", "yes"].includes(k)) throw new Error(`kitchen init: unknown flag --${k}`);
+      if (!["repo", "answers", "tool", "model", "effort", "max-fix", "generate-only"].includes(k)) throw new Error(`kitchen init: unknown flag --${k}`);
     return initCmd(
       {
         repo: path.resolve(str(flags.repo) ?? process.cwd()),
@@ -55,6 +56,7 @@ export async function w2(name: string, argv: string[]): Promise<number> {
         model: str(flags.model),
         effort: str(flags.effort),
         maxFix: flags["max-fix"] ? Number(flags["max-fix"]) : undefined,
+        generateOnly: flags["generate-only"] === true,
       },
       out,
     );

@@ -22,7 +22,7 @@ import { acquireSlot, releaseSlot, type Slot } from "../toolkit/slots.ts";
 const CLI = path.resolve(import.meta.dirname, "..", `cli${path.extname(import.meta.filename)}`);
 const PROTOCOL = "2025-06-18";
 
-export type SetupBridgeOpts = { repo: string; worktree: string };
+export type SetupBridgeOpts = { repo: string; worktree: string; staticOnly?: boolean };
 
 export function setupBridgeServer(o: SetupBridgeOpts, parent: NodeJS.ProcessEnv = process.env): BridgeServer {
   const env: Record<string, string> = { KITCHEN_HOME: kitchenHome() };
@@ -30,7 +30,11 @@ export function setupBridgeServer(o: SetupBridgeOpts, parent: NodeJS.ProcessEnv 
     const v = parent[k];
     if (v) env[k] = v;
   }
-  return { command: process.execPath, args: [CLI, "setup-mcp", "--repo", path.resolve(o.repo), "--worktree", path.resolve(o.worktree)], env };
+  return {
+    command: process.execPath,
+    args: [CLI, "setup-mcp", "--repo", path.resolve(o.repo), "--worktree", path.resolve(o.worktree), ...(o.staticOnly ? ["--static"] : [])],
+    env,
+  };
 }
 
 type Rpc = { jsonrpc: "2.0"; id?: number | string | null; method?: string; params?: Record<string, unknown> };
@@ -93,6 +97,8 @@ export function makeSetupBridge(o: SetupBridgeOpts) {
       if (!/^[a-z][a-z0-9_]*$/.test(k)) return text({ ok: false, refused: `bad arg name ${k}` }, true);
     }
     if (!fs.existsSync(bin)) return text({ ok: false, refused: `${path.relative(wt, bin)} doesn't exist yet` }, true);
+    if (o.staticOnly && command !== "describe")
+      return text({ ok: false, refused: "this machine can't run the app's stack: only describe is allowed (static setup)" }, true);
     if (!slot) slot = (await acquireSlot({ id: `setup-${randomBytes(3).toString("hex")}`, toolkitBin: bin, src: wt })).slot;
     const flags = Object.entries(args).map(([k, v]) => `--${k}=${typeof v === "object" ? JSON.stringify(v) : String(v)}`);
     let argv: string[];
@@ -131,6 +137,7 @@ export function makeSetupBridge(o: SetupBridgeOpts) {
       src: wt,
       feature: a.feature ? String(a.feature) : undefined,
       prepare: a.prepare !== false,
+      staticOnly: o.staticOnly,
       print: (l) => {
         lines.push(l);
         console.error(`[setup-mcp] ${l}`);
