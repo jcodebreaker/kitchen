@@ -67,10 +67,12 @@ async function pool<T>(items: T[], n: number, fn: (x: T) => Promise<void>): Prom
 
 /** Screenshots the engine or the verifier stamped for this HEAD (Verify's evidence), newest last. Pure. */
 export function screenshotsOf(entries: Entry[], head: string): { id: string; criterion: string; file: string }[] {
-  return entries
+  const all = entries
     .filter((e) => e.sha === head && ["engine", "verifier"].includes(String(e.role)) && e.phase !== "base")
-    .flatMap((e) => e.files.filter((f) => f.path.endsWith(".png")).map((f) => ({ id: e.id, criterion: e.criterion, file: f.path })))
-    .slice(-MAX_SHOTS);
+    .flatMap((e) => e.files.filter((f) => f.path.endsWith(".png")).map((f) => ({ id: e.id, criterion: e.criterion, file: f.path })));
+  // A criterion's own screenshots when there are any; the drives stage's check runs only otherwise.
+  const proofs = all.filter((s) => /^C\d+$/.test(s.criterion));
+  return (proofs.length ? proofs : all).slice(-MAX_SHOTS);
 }
 
 /** The newest verdict file of a round (verdict-m<N>.md, highest N), or null. */

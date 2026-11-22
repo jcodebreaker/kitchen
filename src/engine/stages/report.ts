@@ -10,7 +10,7 @@
 // Forge.comment). Two refused renders send the job to needs-human.
 import fs from "node:fs";
 import path from "node:path";
-import { prComment, type ReportEntry, type ReportFacts, renderReport } from "../../checks/report-render.ts";
+import { prComment, type ReportEntry, type ReportFacts, renderReport, shortCmd } from "../../checks/report-render.ts";
 import { parseRequirements } from "../../checks/spec-lint.ts";
 import { readLedger } from "../../ledger/append.ts";
 import { stageCosts } from "../../ledger/report.ts";
@@ -147,7 +147,7 @@ async function factsOf(repoDir: string, jobDir: string, job: Job, head: string, 
 function factsText(f: ReportFacts, entries: ReportEntry[], shots: Map<string, string>): string {
   const ev = (id: string) => {
     const e = entries.find((x) => x.id === id);
-    return e ? `${id} (${e.cmd}${shots.has(id) ? `, screenshot: ${shots.get(id)}` : ""})` : id;
+    return e ? `${id} (${shortCmd(e.cmd)}${shots.has(id) ? `, screenshot: ${shots.get(id)}` : ""})` : id;
   };
   return [
     `Verdict: ${f.verdict}. Risk: ${f.job.risk}. Round ${f.job.round}. HEAD ${f.head}.`,
@@ -168,6 +168,17 @@ function factsText(f: ReportFacts, entries: ReportEntry[], shots: Map<string, st
     ),
     ...(f.seeds ? ["", `Seed data / migrations changed: ${f.seeds.files.join(", ")}`] : []),
   ].join("\n");
+}
+
+/** What an entry showed, in a few words (its call.json `result.out`, or its exit code). */
+function outOf(jobDir: string, e: ReportEntry): string {
+  try {
+    const c = JSON.parse(fs.readFileSync(path.join(evidenceDir(jobDir), e.id, "call.json"), "utf8")) as { result?: { ok?: boolean; out?: unknown } };
+    const out = typeof c.result?.out === "string" ? c.result.out : JSON.stringify(c.result?.out ?? null);
+    return `${c.result?.ok === false ? "FAILED " : ""}${out.replace(/\s+/g, " ").slice(0, 100)}`;
+  } catch {
+    return `exit ${e.exit}`;
+  }
 }
 
 const refusedBlock = (o: { prev?: string }) => (o.prev ? [{ title: "Your last report.src.html was refused (fix this)", body: o.prev }] : []);
@@ -192,8 +203,10 @@ export const report: StageHandler = async (ctx) => {
     return refused(`the manifest does not verify: ${(e as Error).message}`);
   }
   const facts = await factsOf(ctx.repo, ctx.jobDir, job, head, humanMustCheck);
-  // Only entries stamped for this HEAD may be cited; the screenshots among them are copied where the role can open them.
-  const citable = entries.filter((e) => e.sha === head && e.phase !== "base");
+  // Only entries stamped for this HEAD may be cited. The role is shown the ones worth citing (the verdict's and the
+  // review views'), each with what it showed; their screenshots are copied where it can open them.
+  const verdictIds = new Set(facts.criteria.flatMap((c) => c.evidence));
+  const citable = entries.filter((e) => e.sha === head && e.phase !== "base" && (verdictIds.has(e.id) || String(e.criterion).startsWith("view:")));
   const packet = path.join(job.worktree, ".kitchen-out", "report");
   fs.rmSync(packet, { recursive: true, force: true });
   const shots = new Map<string, string>();
@@ -225,7 +238,10 @@ export const report: StageHandler = async (ctx) => {
             title: "Evidence you may cite (stamped for this HEAD), as {{e<N>}}",
             body:
               citable
-                .map((e) => `- ${e.id}: ${e.criterion} · ${String(e.role)} · ${e.cmd} · exit ${e.exit}${shots.has(e.id) ? ` · ${shots.get(e.id)}` : ""}`)
+                .map(
+                  (e) =>
+                    `- ${e.id}: ${e.criterion} · ${String(e.role)} · ${shortCmd(e.cmd)} → ${outOf(ctx.jobDir, e)}${shots.has(e.id) ? ` · screenshot ${shots.get(e.id)}` : ""}`,
+                )
                 .join("\n") || "none",
           },
           {

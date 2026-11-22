@@ -81,6 +81,14 @@ const ANY = /\{\{([\s\S]*?)\}\}/g;
 
 export const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
+/** A stamped command as a person reads it: `bin/dev login --id=… --src=… --out=… --as=alice` → `login --as=alice`. Pure. */
+export function shortCmd(cmd: string): string {
+  return cmd
+    .replace(/^\S*bin\/dev\s+/, "")
+    .replace(/\s--(id|src|out|ports)=(?:'[^']*'|\S+)/g, "")
+    .trim();
+}
+
 /** Ids the source cites, in order, once each. */
 export function citedIds(src: string): string[] {
   return [...new Set([...src.matchAll(ID)].map((m) => m[1]))];
@@ -135,8 +143,8 @@ function cite(e: ReportEntry, file: RenderInput["file"]): string {
   const img = e.files.find((f) => isImage(f.path));
   const uri = img ? dataUri(img.path, file) : null;
   return uri
-    ? `<a class="ev-thumb" href="#ev-${e.id}" title="${esc(`${e.id} · ${e.criterion} · ${e.cmd}`)}"><img src="${uri}" alt="${e.id}"><span>${e.id}</span></a>`
-    : `<a class="ev" href="#ev-${e.id}" title="${esc(`${e.criterion} · ${e.cmd}`)}">${e.id}</a>`;
+    ? `<a class="ev-thumb" href="#ev-${e.id}" title="${esc(`${e.id} · ${e.criterion} · ${shortCmd(e.cmd)}`)}"><img src="${uri}" alt="${e.id}"><span>${e.id}</span></a>`
+    : `<a class="ev" href="#ev-${e.id}" title="${esc(`${e.criterion} · ${shortCmd(e.cmd)}`)}">${e.id}</a>`;
 }
 
 const TEXT_FILES = ["stdout.txt", "out.txt", "stderr.txt", "call.json"];
@@ -157,7 +165,7 @@ function appendix(e: ReportEntry, file: RenderInput["file"]): string {
       return `<p class="muted">${esc(f.path)}</p><pre>${esc(t.length > 4000 ? `${t.slice(0, 4000)}\n… (${t.length - 4000} more characters on the evidence branch)` : t)}</pre>`;
     }),
   ].join("\n");
-  return `<details id="ev-${e.id}"><summary><b>${e.id}</b> · ${esc(e.criterion)} · ${esc(String(e.role ?? ""))} · <code>${esc(e.cmd)}</code> · exit ${e.exit} · ${e.sha.slice(0, 8)} r${e.round}</summary>${body}</details>`;
+  return `<details id="ev-${e.id}"><summary><b>${e.id}</b> · ${esc(e.criterion)} · ${esc(String(e.role ?? ""))} · <code>${esc(shortCmd(e.cmd))}</code> · exit ${e.exit} · ${e.sha.slice(0, 8)} r${e.round}</summary>${body}</details>`;
 }
 
 const badge = (r: string) => `<span class="badge ${/PASS/.test(r) ? "ok" : /FAIL|BLOCK/.test(r) ? "bad" : "warn"}">${esc(r)}</span>`;
@@ -286,6 +294,15 @@ export function prComment(f: ReportFacts, o: { url: string; entries: ReportEntry
   const shot = (id: string) => byId.get(id)?.files.find((x) => isImage(x.path))?.path;
   const cell = (s: string) => s.replace(/\|/g, "\\|").replace(/\n/g, " ");
   const blocking = f.review.findings.filter((x) => x.blocks).length;
+  /** Screenshots first (linked into the published folder, up to 3), then a count of the other entries. */
+  const evidenceCell = (ids: string[]) => {
+    const shots = ids.filter((id) => shot(id));
+    const rest = ids.length - Math.min(shots.length, 3);
+    const linked = shots.slice(0, 3).map((id) => `[${id}](${o.url}evidence/${shot(id)})`);
+    const plain = shots.length ? [] : ids.slice(0, 3);
+    const more = rest - plain.length;
+    return [...linked, ...plain, ...(more > 0 ? [`+${more} more`] : [])].join(" ");
+  };
   return [
     `### Kitchen report: ${f.job.title}`,
     "",
@@ -296,10 +313,7 @@ export function prComment(f: ReportFacts, o: { url: string; entries: ReportEntry
     "|---|---|---|---|---|",
     ...f.criteria.map(
       (c) =>
-        `| ${c.id} ${cell(c.text)}${c.nonDiscriminating ? " (NON-DISCRIMINATING)" : ""} | ${c.covers.join(", ")} | ${c.decidedBy} | ${c.result} | ${c.evidence
-          .slice(0, 6)
-          .map((id) => (shot(id) ? `[${id}](${o.url}evidence/${shot(id)})` : id))
-          .join(" ")}${c.evidence.length > 6 ? " …" : ""} |`,
+        `| ${c.id} ${cell(c.text)}${c.nonDiscriminating ? " (NON-DISCRIMINATING)" : ""} | ${c.covers.join(", ")} | ${c.decidedBy} | ${c.result} | ${evidenceCell(c.evidence)} |`,
     ),
     "",
     `Review (${f.review.lenses.join(", ") || "no lenses"}): ${blocking} blocking, ${f.review.findings.length - blocking} note(s).`,

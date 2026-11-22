@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
-import { prComment, type ReportEntry, type ReportFacts, renderRefusal, renderReport, sanitize } from "./report-render.ts";
+import { prComment, type ReportEntry, type ReportFacts, renderRefusal, renderReport, sanitize, shortCmd } from "./report-render.ts";
 
 const HEAD = "a".repeat(40);
 const OLD = "b".repeat(40);
@@ -97,4 +97,10 @@ test("the PR comment: one row per criterion, screenshot links into the published
   assert.match(c, /\| C1 theme is Dark after reload \| R1 \| engine \| PASS \| e2 \|/);
   assert.match(c, /Human review required/);
   assert.match(c, /Full report: https:\/\/x\/blob\/kitchen-evidence\/007-dark\/report\.html/);
+});
+
+test("stamped commands read without the engine's own flags", () => {
+  assert.equal(shortCmd("/r/.kitchen/toolkit/bin/dev read --id=7 --src=/w --out=/o/e1 --target=body"), "read --target=body");
+  assert.equal(shortCmd("bin/dev login --id=001-ab --src=/a --out=/x --as=alice"), "login --as=alice");
+  assert.equal(shortCmd("node --check server.js"), "node --check server.js");
 });
