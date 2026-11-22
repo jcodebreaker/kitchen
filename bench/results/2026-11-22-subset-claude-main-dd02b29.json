@@ -1,0 +1,701 @@
+{
+  "runId": "2026-11-22-full-claude-35210",
+  "kitchen": {
+    "sha": "dd02b29650252cc0782be395083d7c0eaeff3364",
+    "dirty": false
+  },
+  "tier": "full",
+  "tool": "claude",
+  "results": [
+    {
+      "ticket": "a-invite-case",
+      "fixture": "a-web",
+      "set": "tuned",
+      "kind": "bug",
+      "trap": false,
+      "control": false,
+      "run": 1,
+      "expected": [
+        "done"
+      ],
+      "job": "001-some-people-can-t-join-with-their-invite",
+      "outcome": "done",
+      "oracle": "pass",
+      "oracleDetail": "C1 pass",
+      "toolkitPr": false,
+      "correct": true,
+      "drives": [
+        {
+          "drive": "invites.generate-and-join",
+          "verifies": 1,
+          "inconclusive": 0,
+          "runs": 1,
+          "passed": 1,
+          "failed": 0,
+          "flaky": false
+        },
+        {
+          "drive": "primitive:open",
+          "verifies": 2,
+          "inconclusive": 0,
+          "runs": 5,
+          "passed": 5,
+          "failed": 0,
+          "flaky": false
+        },
+        {
+          "drive": "primitive:press",
+          "verifies": 2,
+          "inconclusive": 0,
+          "runs": 5,
+          "passed": 5,
+          "failed": 0,
+          "flaky": false
+        },
+        {
+          "drive": "primitive:read",
+          "verifies": 2,
+          "inconclusive": 0,
+          "runs": 5,
+          "passed": 5,
+          "failed": 0,
+          "flaky": false
+        },
+        {
+          "drive": "primitive:type",
+          "verifies": 2,
+          "inconclusive": 0,
+          "runs": 5,
+          "passed": 5,
+          "failed": 0,
+          "flaky": false
+        }
+      ],
+      "rounds": 1,
+      "verifyFails": 0,
+      "proofRuns": 3,
+      "inconclusive": 0,
+      "flaky": 0,
+      "secs": 80,
+      "usd": 0.165,
+      "path": "intake → repro → build → gate → drives → verify → review → ready → report → done"
+    },
+    {
+      "ticket": "a-trap-slug",
+      "fixture": "a-web",
+      "set": "tuned",
+      "kind": "feature",
+      "trap": true,
+      "control": false,
+      "run": 1,
+      "expected": [
+        "done"
+      ],
+      "job": "001-when-a-new-project-s-slug-is-already-tak",
+      "outcome": "done",
+      "oracle": "pass",
+      "oracleDetail": "C1 pass",
+      "toolkitPr": false,
+      "correct": true,
+      "drives": [
+        {
+          "drive": "projects.try-taken",
+          "verifies": 1,
+          "inconclusive": 0,
+          "runs": 7,
+          "passed": 7,
+          "failed": 0,
+          "flaky": false
+        }
+      ],
+      "rounds": 1,
+      "verifyFails": 0,
+      "proofRuns": 1,
+      "inconclusive": 0,
+      "flaky": 0,
+      "secs": 116,
+      "usd": 0.176,
+      "path": "intake → build → gate → drives → verify → review → ready → report → done"
+    },
+    {
+      "ticket": "a-chore",
+      "fixture": "a-web",
+      "set": "tuned",
+      "kind": "chore",
+      "trap": false,
+      "control": false,
+      "run": 1,
+      "expected": [
+        "done"
+      ],
+      "job": "001-rename-the-appearance-heading-on-the-set",
+      "outcome": "done",
+      "oracle": "pass",
+      "oracleDetail": "C1 pass",
+      "toolkitPr": false,
+      "correct": true,
+      "drives": [
+        {
+          "drive": "primitive:login",
+          "verifies": 2,
+          "inconclusive": 0,
+          "runs": 6,
+          "passed": 6,
+          "failed": 0,
+          "flaky": false
+        },
+        {
+          "drive": "primitive:open",
+          "verifies": 2,
+          "inconclusive": 0,
+          "runs": 6,
+          "passed": 6,
+          "failed": 0,
+          "flaky": false
+        },
+        {
+          "drive": "primitive:read",
+          "verifies": 2,
+          "inconclusive": 0,
+          "runs": 6,
+          "passed": 6,
+          "failed": 0,
+          "flaky": false
+        }
+      ],
+      "rounds": 1,
+      "verifyFails": 0,
+      "proofRuns": 2,
+      "inconclusive": 0,
+      "flaky": 0,
+      "secs": 74,
+      "usd": 0.143,
+      "path": "intake → build → gate → drives → verify → review → ready → report → done"
+    },
+    {
+      "ticket": "a-primitive",
+      "fixture": "a-web",
+      "set": "tuned",
+      "kind": "primitive",
+      "trap": false,
+      "control": false,
+      "run": 1,
+      "expected": [
+        "done"
+      ],
+      "job": "001-record-when-each-user-last-signed-in-eve",
+      "outcome": "needs-human",
+      "reason": "refused: spec → build: spec-lint fails: C3: `$r not contains \"2026\"` holds whenever the thing never existed; an earlier step of the same proof must create it, with that text as an arg (e.g. `toolkit <feature>.create --user <other user> --name \"<text>\" ; … ; open --path /list`)",
+      "oracle": "n/a",
+      "toolkitPr": true,
+      "correct": false,
+      "miss": "ended needs-human, expected done",
+      "drives": [
+        {
+          "drive": "primitive:sql",
+          "verifies": 0,
+          "inconclusive": 0,
+          "runs": 1,
+          "passed": 1,
+          "failed": 0,
+          "flaky": false
+        }
+      ],
+      "rounds": 1,
+      "verifyFails": 0,
+      "proofRuns": 0,
+      "inconclusive": 0,
+      "flaky": 0,
+      "secs": 215,
+      "usd": 0.546,
+      "path": "intake → spec → toolkit → spec → needs-human"
+    },
+    {
+      "ticket": "b-done-many",
+      "fixture": "b-cli",
+      "set": "tuned",
+      "kind": "feature",
+      "trap": true,
+      "control": false,
+      "run": 1,
+      "expected": [
+        "done"
+      ],
+      "job": "001-tasks-done-should-accept-several-ids-at",
+      "outcome": "done",
+      "oracle": "pass",
+      "oracleDetail": "C1 pass",
+      "toolkitPr": false,
+      "correct": true,
+      "drives": [
+        {
+          "drive": "primitive:cli",
+          "verifies": 4,
+          "inconclusive": 0,
+          "runs": 18,
+          "passed": 18,
+          "failed": 0,
+          "flaky": false
+        },
+        {
+          "drive": "primitive:seed",
+          "verifies": 4,
+          "inconclusive": 0,
+          "runs": 12,
+          "passed": 12,
+          "failed": 0,
+          "flaky": false
+        }
+      ],
+      "rounds": 1,
+      "verifyFails": 0,
+      "proofRuns": 4,
+      "inconclusive": 0,
+      "flaky": 0,
+      "secs": 62,
+      "usd": 0.199,
+      "path": "intake → build → gate → drives → verify → review → ready → report → done"
+    },
+    {
+      "ticket": "b-control-long-title",
+      "fixture": "b-cli",
+      "set": "tuned",
+      "kind": "control",
+      "trap": false,
+      "control": true,
+      "run": 1,
+      "expected": [
+        "done"
+      ],
+      "job": "001-tasks-add-should-refuse-a-title-longer-t",
+      "outcome": "done",
+      "oracle": "pass",
+      "oracleDetail": "C1 pass",
+      "toolkitPr": false,
+      "correct": true,
+      "drives": [],
+      "rounds": 1,
+      "verifyFails": 0,
+      "proofRuns": 2,
+      "inconclusive": 0,
+      "flaky": 0,
+      "secs": 65,
+      "usd": 0.16,
+      "path": "intake → build → gate → drives → gate → drives → verify → review → ready → report → done"
+    },
+    {
+      "ticket": "d-status-filter",
+      "fixture": "d-api",
+      "set": "heldout",
+      "kind": "feature",
+      "trap": false,
+      "control": false,
+      "run": 1,
+      "expected": [
+        "done"
+      ],
+      "job": "001-get-orders-should-accept-an-optional-sta",
+      "outcome": "done",
+      "oracle": "pass",
+      "oracleDetail": "C1 pass",
+      "toolkitPr": false,
+      "correct": true,
+      "drives": [
+        {
+          "drive": "primitive:http",
+          "verifies": 3,
+          "inconclusive": 0,
+          "runs": 15,
+          "passed": 14,
+          "failed": 1,
+          "flaky": true
+        },
+        {
+          "drive": "primitive:read",
+          "verifies": 2,
+          "inconclusive": 0,
+          "runs": 6,
+          "passed": 6,
+          "failed": 0,
+          "flaky": false
+        },
+        {
+          "drive": "read-orders.list",
+          "verifies": 1,
+          "inconclusive": 0,
+          "runs": 3,
+          "passed": 3,
+          "failed": 0,
+          "flaky": false
+        }
+      ],
+      "rounds": 1,
+      "verifyFails": 0,
+      "proofRuns": 4,
+      "inconclusive": 0,
+      "flaky": 0,
+      "secs": 62,
+      "usd": 0.178,
+      "path": "intake → build → gate → drives → verify → review → ready → report → done"
+    },
+    {
+      "ticket": "d-qty-100",
+      "fixture": "d-api",
+      "set": "heldout",
+      "kind": "bug",
+      "trap": false,
+      "control": false,
+      "run": 1,
+      "expected": [
+        "done"
+      ],
+      "job": "001-an-order-for-exactly-100-of-one-item-is",
+      "outcome": "done",
+      "oracle": "pass",
+      "oracleDetail": "C1 pass",
+      "toolkitPr": false,
+      "correct": true,
+      "drives": [
+        {
+          "drive": "primitive:http",
+          "verifies": 3,
+          "inconclusive": 0,
+          "runs": 5,
+          "passed": 5,
+          "failed": 0,
+          "flaky": false
+        },
+        {
+          "drive": "primitive:read",
+          "verifies": 3,
+          "inconclusive": 0,
+          "runs": 5,
+          "passed": 5,
+          "failed": 0,
+          "flaky": false
+        }
+      ],
+      "rounds": 1,
+      "verifyFails": 0,
+      "proofRuns": 3,
+      "inconclusive": 0,
+      "flaky": 0,
+      "secs": 37,
+      "usd": 0.138,
+      "path": "intake → repro → build → gate → drives → verify → review → ready → report → done"
+    },
+    {
+      "ticket": "d-discount",
+      "fixture": "d-api",
+      "set": "heldout",
+      "kind": "feature",
+      "trap": true,
+      "control": false,
+      "run": 1,
+      "expected": [
+        "done"
+      ],
+      "job": "001-orders-of-100-00-or-more-get-10-off-the",
+      "outcome": "done",
+      "oracle": "pass",
+      "oracleDetail": "C1 pass",
+      "toolkitPr": false,
+      "correct": true,
+      "drives": [
+        {
+          "drive": "create-order.place",
+          "verifies": 1,
+          "inconclusive": 0,
+          "runs": 2,
+          "passed": 2,
+          "failed": 0,
+          "flaky": false
+        },
+        {
+          "drive": "primitive:db_order",
+          "verifies": 1,
+          "inconclusive": 0,
+          "runs": 2,
+          "passed": 2,
+          "failed": 0,
+          "flaky": false
+        },
+        {
+          "drive": "primitive:http",
+          "verifies": 3,
+          "inconclusive": 0,
+          "runs": 7,
+          "passed": 7,
+          "failed": 0,
+          "flaky": false
+        },
+        {
+          "drive": "primitive:mail",
+          "verifies": 2,
+          "inconclusive": 0,
+          "runs": 4,
+          "passed": 4,
+          "failed": 0,
+          "flaky": false
+        },
+        {
+          "drive": "primitive:order",
+          "verifies": 2,
+          "inconclusive": 0,
+          "runs": 4,
+          "passed": 4,
+          "failed": 0,
+          "flaky": false
+        },
+        {
+          "drive": "primitive:payments",
+          "verifies": 1,
+          "inconclusive": 0,
+          "runs": 3,
+          "passed": 2,
+          "failed": 1,
+          "flaky": false
+        },
+        {
+          "drive": "primitive:read",
+          "verifies": 3,
+          "inconclusive": 0,
+          "runs": 15,
+          "passed": 15,
+          "failed": 0,
+          "flaky": false
+        }
+      ],
+      "rounds": 1,
+      "verifyFails": 0,
+      "proofRuns": 4,
+      "inconclusive": 0,
+      "flaky": 0,
+      "secs": 87,
+      "usd": 0.279,
+      "path": "intake → spec → build → gate → drives → verify → review → ready → report → done"
+    },
+    {
+      "ticket": "d-chore-subject",
+      "fixture": "d-api",
+      "set": "heldout",
+      "kind": "chore",
+      "trap": false,
+      "control": false,
+      "run": 1,
+      "expected": [
+        "done"
+      ],
+      "job": "001-change-the-subject-of-the-order-received",
+      "outcome": "needs-human",
+      "reason": "refused: intake → build: inline criteria fail spec-lint: C1: `not contains \"received\"` holds whenever the thing never existed; an earlier step of the same proof must create it, with that text as an arg (e.g. `toolkit <feature>.create --user <other user> --name \"<text>\" ; … ; open --path /list`)",
+      "oracle": "n/a",
+      "toolkitPr": false,
+      "correct": false,
+      "miss": "ended needs-human, expected done",
+      "drives": [],
+      "rounds": 1,
+      "verifyFails": 0,
+      "proofRuns": 0,
+      "inconclusive": 0,
+      "flaky": 0,
+      "secs": 35,
+      "usd": 0.168,
+      "path": "intake → needs-human"
+    }
+  ],
+  "skipped": [],
+  "summary": {
+    "runs": 10,
+    "correct": 8,
+    "rate": 0.8,
+    "traps": {
+      "runs": 3,
+      "caught": 3
+    },
+    "controls": {
+      "runs": 1,
+      "falseFails": 0
+    },
+    "tuned": {
+      "runs": 6,
+      "correct": 5
+    },
+    "heldout": {
+      "runs": 4,
+      "correct": 3
+    },
+    "usd": 2.152,
+    "secs": 833,
+    "proofs": {
+      "runs": 23,
+      "inconclusive": 0,
+      "flaky": 0
+    },
+    "oracleRetries": 0,
+    "drives": [
+      {
+        "fixture": "a-web",
+        "drive": "invites.generate-and-join",
+        "jobs": 1,
+        "verifies": 1,
+        "inconclusive": 0,
+        "runs": 1,
+        "flakyJobs": 0
+      },
+      {
+        "fixture": "a-web",
+        "drive": "primitive:login",
+        "jobs": 1,
+        "verifies": 2,
+        "inconclusive": 0,
+        "runs": 6,
+        "flakyJobs": 0
+      },
+      {
+        "fixture": "a-web",
+        "drive": "primitive:open",
+        "jobs": 2,
+        "verifies": 4,
+        "inconclusive": 0,
+        "runs": 11,
+        "flakyJobs": 0
+      },
+      {
+        "fixture": "a-web",
+        "drive": "primitive:press",
+        "jobs": 1,
+        "verifies": 2,
+        "inconclusive": 0,
+        "runs": 5,
+        "flakyJobs": 0
+      },
+      {
+        "fixture": "a-web",
+        "drive": "primitive:read",
+        "jobs": 2,
+        "verifies": 4,
+        "inconclusive": 0,
+        "runs": 11,
+        "flakyJobs": 0
+      },
+      {
+        "fixture": "a-web",
+        "drive": "primitive:sql",
+        "jobs": 1,
+        "verifies": 0,
+        "inconclusive": 0,
+        "runs": 1,
+        "flakyJobs": 0
+      },
+      {
+        "fixture": "a-web",
+        "drive": "primitive:type",
+        "jobs": 1,
+        "verifies": 2,
+        "inconclusive": 0,
+        "runs": 5,
+        "flakyJobs": 0
+      },
+      {
+        "fixture": "a-web",
+        "drive": "projects.try-taken",
+        "jobs": 1,
+        "verifies": 1,
+        "inconclusive": 0,
+        "runs": 7,
+        "flakyJobs": 0
+      },
+      {
+        "fixture": "b-cli",
+        "drive": "primitive:cli",
+        "jobs": 1,
+        "verifies": 4,
+        "inconclusive": 0,
+        "runs": 18,
+        "flakyJobs": 0
+      },
+      {
+        "fixture": "b-cli",
+        "drive": "primitive:seed",
+        "jobs": 1,
+        "verifies": 4,
+        "inconclusive": 0,
+        "runs": 12,
+        "flakyJobs": 0
+      },
+      {
+        "fixture": "d-api",
+        "drive": "create-order.place",
+        "jobs": 1,
+        "verifies": 1,
+        "inconclusive": 0,
+        "runs": 2,
+        "flakyJobs": 0
+      },
+      {
+        "fixture": "d-api",
+        "drive": "primitive:db_order",
+        "jobs": 1,
+        "verifies": 1,
+        "inconclusive": 0,
+        "runs": 2,
+        "flakyJobs": 0
+      },
+      {
+        "fixture": "d-api",
+        "drive": "primitive:http",
+        "jobs": 3,
+        "verifies": 9,
+        "inconclusive": 0,
+        "runs": 27,
+        "flakyJobs": 1
+      },
+      {
+        "fixture": "d-api",
+        "drive": "primitive:mail",
+        "jobs": 1,
+        "verifies": 2,
+        "inconclusive": 0,
+        "runs": 4,
+        "flakyJobs": 0
+      },
+      {
+        "fixture": "d-api",
+        "drive": "primitive:order",
+        "jobs": 1,
+        "verifies": 2,
+        "inconclusive": 0,
+        "runs": 4,
+        "flakyJobs": 0
+      },
+      {
+        "fixture": "d-api",
+        "drive": "primitive:payments",
+        "jobs": 1,
+        "verifies": 1,
+        "inconclusive": 0,
+        "runs": 3,
+        "flakyJobs": 0
+      },
+      {
+        "fixture": "d-api",
+        "drive": "primitive:read",
+        "jobs": 3,
+        "verifies": 8,
+        "inconclusive": 0,
+        "runs": 26,
+        "flakyJobs": 0
+      },
+      {
+        "fixture": "d-api",
+        "drive": "read-orders.list",
+        "jobs": 1,
+        "verifies": 1,
+        "inconclusive": 0,
+        "runs": 3,
+        "flakyJobs": 0
+      }
+    ]
+  }
+}

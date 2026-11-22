@@ -483,6 +483,13 @@ export function reproProblem(expect: string, segs: Segment[]): string | null {
   const eq = segs.find((s) => s.kind === "toolkit" && !s.drive && s.name === "read" && s.args.equals !== undefined);
   if (eq)
     return "a repro's `read --equals` fails the step on the buggy base, before the expect is read: `read --target … --save x`, then assert it in the expect (`$x == …`)";
+  // Pinning the bug's own outcome on a step (`--expect_status 400`, `--expect_exit 1`) makes the step pass on the base
+  // and fail once the bug is fixed: the repro then can never pass (d-qty-100).
+  const pin = segs.find(
+    (s) => s.kind === "toolkit" && ((Number(s.args.expect_status) >= 400 && !s.drive) || (s.args.expect_exit !== undefined && s.args.expect_exit !== "0")),
+  );
+  if (pin)
+    return 'a repro pins an error outcome on a step (`--expect_status 4xx/5xx` or `--expect_exit` other than 0): that step passes on the buggy base and fails once the bug is fixed. Don\'t pin it: save it (`toolkit read --target status --save code`) and assert the right value in the expect (`$code == "201"`, `exit 0`)';
   return null;
 }
 

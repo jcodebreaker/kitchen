@@ -7,13 +7,13 @@
 // if it still passes after that, the job goes on and Verify flags it.
 import fs from "node:fs";
 import path from "node:path";
-import { lintSpec, parseRequirements, withSpecMarks } from "../../checks/spec-lint.ts";
+import { guardCriteria, lintSpec, parseRequirements, withSpecMarks } from "../../checks/spec-lint.ts";
 import { testLayout } from "../../checks/test-layout.ts";
 import { nothingPolicy } from "../contract.ts";
 import { ensureUp } from "../instance.ts";
 import { writeAtomic } from "../store.ts";
 import { commitWith, ensureWorktree } from "../worktree.ts";
-import { baseNegativeProblems, runBaseCheck } from "./base-check.ts";
+import { baseNegativeProblems, guardBaseProblems, runBaseCheck } from "./base-check.ts";
 import { fileBlock, humanFeedback, testLayoutBlock, toolkitBlock } from "./context.ts";
 import { prompt } from "./prompts.ts";
 import { runRole } from "./role.ts";
@@ -67,10 +67,12 @@ export const spec: StageHandler = async (ctx) => {
     writeAtomic(path.join(ctx.jobDir, "spec-refused.md"), `REASON: ${lint.reason}\n\n${r.text}`);
   }
   let { ok, reason } = lint;
-  if (lint.ok && (job.kind !== "bug" || lint.baseNegatives.length)) {
+  const guards = lint.ok ? guardCriteria(lint.criteria, requirements) : [];
+  if (lint.ok && (job.kind !== "bug" || lint.baseNegatives.length || guards.length)) {
     const b = await runBaseCheck(ctx, job, lint.criteria);
-    // spec-lint rule 3 (c): a negative no earlier step backs must be false on the base. A refusal like the lint's.
-    const neg = baseNegativeProblems(lint.baseNegatives, b);
+    // spec-lint rule 3 (c): a negative no earlier step backs must be false on the base, and a regression guard
+    // must hold there. A refusal like the lint's.
+    const neg = [...baseNegativeProblems(lint.baseNegatives, b), ...guardBaseProblems(guards, b)];
     if (neg.length) {
       ok = false;
       reason = neg.join("\n");

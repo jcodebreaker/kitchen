@@ -76,6 +76,21 @@ export function baseNegativeProblems(pending: BaseNegative[], b: BaseCheck | nul
   return out;
 }
 
+/**
+ * A regression guard (a criterion covering only `(unchanged)` requirements) states what the current code
+ * already does, so it must hold on the base. One that fails there misreads the current behaviour (the wrong
+ * output shape, a value the code never gives) and would fail a correct build: one line per such guard. Pure.
+ */
+export function guardBaseProblems(guards: string[], b: BaseCheck | null): string[] {
+  if (!b) return [];
+  return b.results
+    .filter((r) => guards.includes(r.criterion) && r.status !== "pass")
+    .map(
+      (r) =>
+        `${r.criterion} guards existing behaviour (it covers only \`(unchanged)\` requirements) but fails on the current code (${r.why ?? r.status}; evidence ${r.evidence.join(" ")}): a guard must hold before the change. Assert what the current code really gives: read the proof's last output as it is (an \`http\` step's output is \`{status, body}\`: \`json .body.ok\`; a drive's output is its last step's), and use the values the current code shows`,
+    );
+}
+
 export const baseCheckFile = (jobDir: string) => path.join(jobDir, "base-check.json");
 const keyOf = (criteria: Criterion[]) => JSON.stringify(criteria.map((c) => [c.id, c.proof, c.expect]));
 

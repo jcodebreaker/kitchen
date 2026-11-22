@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
-import { type BaseCheck, baseNegativeProblems } from "../engine/stages/base-check.ts";
+import { type BaseCheck, baseNegativeProblems, guardBaseProblems } from "../engine/stages/base-check.ts";
 import { parseProof } from "../proof/proof-line.ts";
 import { changedExistingDrive, lintFeatureFile } from "./feature-lint.ts";
 import { gateOutcome } from "./gate.ts";
@@ -233,6 +233,9 @@ test("rule 3 (c): the base check backs a negative only when it is FALSE on the b
   assert.match(baseNegativeProblems(pending, base("step-failed", false))[0], /doesn't run on the base/);
   assert.match(baseNegativeProblems(pending, base("", false, true))[0], /can't be checked on the base/);
   assert.deepEqual(baseNegativeProblems(pending, null), [], "no Toolkit: nothing to run");
+  // A regression guard must hold on the base (d-control-version: `json .ok` on an http step's {status, body}).
+  assert.match(guardBaseProblems(["C3"], base("assert-fail", false))[0], /guards existing behaviour .* fails on the current code/);
+  assert.deepEqual(guardBaseProblems(["C3"], base("pass", true)), []);
 });
 
 test("rule 5: a repro can fail as expected; JSON args parse; rule 9: seed users; every problem is reported at once", () => {
@@ -241,6 +244,14 @@ test("rule 5: a repro can fail as expected; JSON args parse; rule 9: seed users;
   assert.match(lintSpec(spec(C("C1", "x", post, "ok", true)), D).reason ?? "", /expect: ok. can never fail as expected/);
   assert.match(lintSpec(spec(C("C1", "x", `${post} ; toolkit read --target status --equals 201`, "ok and exit 0", true)), D).reason ?? "", /read --equals/);
   assert.ok(lintSpec(spec(C("C1", "x", "toolkit http --method POST --path /orders ; toolkit read --target status --save code", '$code == "201"', true)), D).ok);
+  assert.match(
+    lintSpec(
+      spec(C("C1", "x", "toolkit http --method POST --path /orders --expect_status 400 ; toolkit read --target status --save code", '$code == "201"', true)),
+      D,
+    ).reason ?? "",
+    /pins an error outcome/,
+    "d-qty-100: the bug's own status pinned passes on the base and fails once fixed",
+  );
   const cli = { ...toolkit, primitives: [...toolkit.primitives, "cli"] };
   assert.match(
     lintSpec(spec(C("C1", "x", 'toolkit cli --argv ["add","0123456789x"]', 'contains "too long"')), { kind: "feature", toolkit: cli }).reason ?? "",

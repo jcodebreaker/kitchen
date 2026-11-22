@@ -4,12 +4,12 @@
 // A negative those criteria leave to the base (spec-lint rule 3 c) is checked
 // here, on the job's worktree at the base: the only time intake needs one.
 import path from "node:path";
-import { lintSpec, parseRequirements } from "../../checks/spec-lint.ts";
+import { guardCriteria, lintSpec, parseRequirements } from "../../checks/spec-lint.ts";
 import { testLayout } from "../../checks/test-layout.ts";
 import type { Kind, Risk } from "../machine.ts";
 import { writeAtomic } from "../store.ts";
 import { ensureWorktree } from "../worktree.ts";
-import { baseNegativeProblems, runBaseCheck } from "./base-check.ts";
+import { baseNegativeProblems, guardBaseProblems, runBaseCheck } from "./base-check.ts";
 import { fileBlock, testLayoutBlock, toolkitBlock } from "./context.ts";
 import { prompt } from "./prompts.ts";
 import { headers, runRole } from "./role.ts";
@@ -59,12 +59,15 @@ export const intake: StageHandler = async (ctx) => {
           testLayout: testLayout(ctx.repo, ctx.config.test_cmd),
         })
       : undefined;
-  // spec-lint rule 3 (c): a negative no earlier step backs must be false on the base. The inline criteria
-  // run on the base now (the worktree at the base, a fresh app); build reuses the result for the same criteria.
-  if (criteria?.ok && decision === "ACCEPT" && criteria.baseNegatives.length && hasToolkit(ctx.job)) {
+  // spec-lint rule 3 (c): a negative no earlier step backs must be false on the base, and a regression guard must
+  // hold there. The inline criteria run on the base now (the worktree at the base, a fresh app); build reuses the
+  // result for the same criteria.
+  const guards = criteria?.ok ? guardCriteria(criteria.criteria, requirements) : [];
+  if (criteria?.ok && decision === "ACCEPT" && (criteria.baseNegatives.length || guards.length) && hasToolkit(ctx.job)) {
     const job = await ensureWorktree(ctx.repo, ctx.refresh());
-    const neg = baseNegativeProblems(criteria.baseNegatives, await runBaseCheck(ctx, job, criteria.criteria));
-    if (neg.length) Object.assign(criteria, { ok: false, reason: neg.join("\n") });
+    const b = await runBaseCheck(ctx, job, criteria.criteria);
+    const why = [...baseNegativeProblems(criteria.baseNegatives, b), ...guardBaseProblems(guards, b)];
+    if (why.length) Object.assign(criteria, { ok: false, reason: why.join("\n") });
   }
   const refusal =
     criteria && !criteria.ok
