@@ -12,7 +12,9 @@ describe("github forge (pure)", () => {
     expect(ciOf([{ bucket: "pass" }, { bucket: "skipping" }])).toBe("pass");
     expect(ciOf([{ bucket: "pass" }, { bucket: "pending" }])).toBe("pending");
     expect(ciOf([{ bucket: "pending" }, { bucket: "fail" }])).toBe("fail");
-    expect(ciOf([{ bucket: "cancel" }])).toBe("fail");
+    expect(ciOf([{ bucket: "cancel" }])).toBe("cancelled");
+    expect(ciOf([{ bucket: "cancel" }, { bucket: "pending" }])).toBe("pending");
+    expect(ciOf([{ bucket: "cancel" }, { bucket: "fail" }])).toBe("fail");
   });
   it("marks Kitchen's comments with their key", () => {
     expect(marker("001-x/report-comment")).toBe("<!-- kitchen:001-x/report-comment -->");

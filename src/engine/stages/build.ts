@@ -117,7 +117,10 @@ export const build: StageHandler = async (ctx) => {
   const status = h.STATUS === "READY" ? "READY" : "BLOCKED";
   job = ctx.refresh();
   const localForge = ctx.forge.kind === "local";
-  if (status === "BLOCKED") return { to: "needs-human", facts: { build: { status, committed: false, pushed: false, pr: null, localForge }, why: h.REASON } };
+  if (status === "BLOCKED") {
+    if (syncing) await (await jobGitOf(job)).run(["merge", "--abort"]).catch(() => {}); // no half-resolved merge left behind
+    return { to: "needs-human", facts: { build: { status, committed: false, pushed: false, pr: null, localForge }, why: h.REASON } };
+  }
   const pkgs: string[] = [];
   for (const f of (await pendingFiles(job)).filter((x) => path.basename(x) === "package.json")) {
     const now = fs.existsSync(path.join(job.worktree, f)) ? fs.readFileSync(path.join(job.worktree, f), "utf8") : null;
@@ -129,19 +132,36 @@ export const build: StageHandler = async (ctx) => {
   const fromBase = new Set(syncing?.fromBase ?? []);
   const atBase = new Map<string, string | null>();
   for (const f of fromBase) atBase.set(f, await fileAtHead(job, f, syncing?.base));
+  const textOf = (file: string) => {
+    const p = path.join(job.worktree, file);
+    return fs.existsSync(p) ? fs.readFileSync(p, "utf8") : null;
+  };
+  const decide = (file: string, status: string) => (fromBase.has(file) && textOf(file) === atBase.get(file) ? null : policy(file, status));
+  // A refused file is put back to HEAD (ours). In a sync merge, a file the base changed would lose the base's
+  // change that way, silently: abort the merge instead, and let a person resolve it.
+  if (syncing) {
+    const cut: string[] = [];
+    for (const f of fromBase) {
+      const ours = await fileAtHead(job, f);
+      const now = textOf(f);
+      if (now === ours) continue; // nothing to commit for it
+      const why = decide(f, ours === null ? "A" : now === null ? "D" : "M");
+      if (why) cut.push(`${f} (${why})`);
+    }
+    if (cut.length) {
+      await (await jobGitOf(job)).run(["merge", "--abort"]);
+      fs.rmSync(syncFile(ctx.jobDir), { force: true });
+      const why = `sync with the base ${syncing.base.slice(0, 12)} aborted: the resolution changes files the layer rules keep at this branch's version, which would drop the base's change: ${cut.join("; ")}. Merge the base into ${job.branch} by hand, then \`kitchen feedback ${job.id}\``;
+      ctx.log(why);
+      return { to: "needs-human", facts: { build: { status, committed: false, pushed: false, pr: job.pr, localForge, syncRefused: cut }, why } };
+    }
+  }
   const c = await commitWith(
     job,
     syncing
       ? `kitchen(${job.id}): sync with the base ${syncing.base.slice(0, 12)}, round ${job.round}`
       : `kitchen(${job.id}): round ${job.round}\n\n${job.title}`,
-    (file, status) => {
-      if (fromBase.has(file)) {
-        const p = path.join(job.worktree, file);
-        const now = fs.existsSync(p) ? fs.readFileSync(p, "utf8") : null;
-        if (now === atBase.get(file)) return null;
-      }
-      return policy(file, status);
-    },
+    decide,
   );
   if (syncing) {
     await updateJob(ctx.repo, job.id, (j) => {

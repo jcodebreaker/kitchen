@@ -10,17 +10,21 @@
 //
 // The laptop: at most `concurrency` jobs at once and at most one Docker fixture (A, C)
 // at a time. `--max-usd` stops starting new tickets once the spent total reaches it.
-// A failing ticket is recorded as a result, never retried in a loop.
-import { spawn } from "node:child_process";
+// A failing ticket is recorded as a result, never retried in a loop; only an oracle's
+// infrastructure error (app startup, an unwell app) gets one more try, recorded.
+// Every result names the Kitchen commit it ran on, and tallies Verify INCONCLUSIVEs and
+// flakes per drive from the job folders (tally.ts).
+import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import type { Job } from "../engine/machine.ts";
 import { readLocalForge } from "../forge/forge.ts";
 import { appendLedger, readLedger } from "../ledger/append.ts";
 import { measures } from "../ledger/measures.ts";
-import { runOracle } from "./oracle.ts";
+import { runOracleRetrying } from "./oracle.ts";
 import { agentYaml, FIXTURES, makeBenchRepo, mergeToolkitBranch } from "./repo.ts";
 import { type BenchTicket, loadSet, pick, type Tier } from "./set.ts";
+import { type DriveSummary, type DriveTally, readJobDrives, sumDrives } from "./tally.ts";
 
 export type BenchOpts = {
   kitchenRoot: string;
@@ -52,8 +56,14 @@ export type RunResult = {
   reason?: string;
   oracle: "pass" | "fail" | "n/a" | "error";
   oracleDetail?: string;
+  /** The oracle hit an infrastructure error and ran once more; this was the first error. */
+  oracleRetried?: string;
   toolkitPr: boolean;
   correct: boolean;
+  /** Why the run is not correct (expectationMet). */
+  miss?: string;
+  /** Per-drive Verify INCONCLUSIVEs and flakes in this job (tally.ts). */
+  drives?: DriveTally[];
   rounds: number;
   verifyFails: number;
   /** Verify proof runs (W5 `proof` ledger lines), how many were INCONCLUSIVE, and the (HEAD, criterion) groups that both passed and failed: a flaky drive. */
@@ -103,8 +113,35 @@ function jobIdOf(repo: string): string | null {
   return fs.existsSync(d) ? (fs.readdirSync(d).find((x) => /^\d{3,}-/.test(x)) ?? null) : null;
 }
 
+/** Pure: is a run what its ticket expects? The outcome, the oracle, the Toolkit PR, and no stage it must never enter. */
+export function expectationMet(
+  expect: BenchTicket["expect"],
+  r: { outcome: string; oracle: RunResult["oracle"]; toolkitPr: boolean; stages: string[] },
+): { correct: boolean; miss?: string } {
+  const miss = [
+    ...(expect.outcome.includes(r.outcome as never) ? [] : [`ended ${r.outcome}, expected ${expect.outcome.join(" / ")}`]),
+    ...(r.oracle === "pass" || r.oracle === "n/a" ? [] : [`oracle ${r.oracle}`]),
+    ...(expect.toolkit_pr && !r.toolkitPr ? ["no Toolkit PR"] : []),
+    ...(expect.never ?? []).filter((s) => r.stages.includes(s)).map((s) => `went through ${s}`),
+  ];
+  return miss.length ? { correct: false, miss: miss.join("; ") } : { correct: true };
+}
+
+/** The Kitchen commit the bench runs on (its own repo, read plainly): the sha, and whether the tree has changes. */
+export function kitchenRev(kitchenRoot: string): { sha: string; dirty: boolean } {
+  const git = (...a: string[]) => execFileSync("git", ["-C", kitchenRoot, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  try {
+    return { sha: git("rev-parse", "HEAD"), dirty: git("status", "--porcelain").length > 0 };
+  } catch {
+    return { sha: "unknown", dirty: true };
+  }
+}
+
 /** Ledger facts of one job: cost, the stage path, verify FAILs, INCONCLUSIVE and flaky proofs. */
-function jobFacts(repo: string, id: string): { usd: number; path: string; verifyFails: number; proofRuns: number; inconclusive: number; flaky: number } {
+function jobFacts(
+  repo: string,
+  id: string,
+): { usd: number; path: string; stages: string[]; verifyFails: number; proofRuns: number; inconclusive: number; flaky: number } {
   const lines = readLedger(repo).filter((l) => l.job === id);
   const m = measures(lines);
   const usd = lines.filter((l) => l.event === "agent").reduce((n, l) => n + (l.usd ?? 0), 0);
@@ -116,7 +153,7 @@ function jobFacts(repo: string, id: string): { usd: number; path: string; verify
     for (const r of fs.readdirSync(rounds))
       for (const f of fs.readdirSync(path.join(rounds, r)).filter((x) => /^verdict-m\d+\.md$/.test(x)))
         if (/^VERDICT:\s*FAIL/m.test(fs.readFileSync(path.join(rounds, r, f), "utf8"))) verifyFails++;
-  return { usd, path: stages.join(" → "), verifyFails, proofRuns: m.proofs.runs, inconclusive: m.proofs.inconclusive, flaky: m.proofs.flakyGroups };
+  return { usd, path: stages.join(" → "), stages, verifyFails, proofRuns: m.proofs.runs, inconclusive: m.proofs.inconclusive, flaky: m.proofs.flakyGroups };
 }
 
 async function runOne(o: BenchOpts, t: BenchTicket, n: number, home: string): Promise<RunResult> {
@@ -196,13 +233,15 @@ async function runOne(o: BenchOpts, t: BenchTicket, n: number, home: string): Pr
   const facts = jobFacts(repo, id);
   let oracle: RunResult["oracle"] = "n/a";
   let oracleDetail: string | undefined;
+  let oracleRetried: string | undefined;
   if (outcome === "done" && t.oracle) {
-    const r = await runOracle({ kitchenRoot: o.kitchenRoot, repo, branch: job.branch, ticket: t, testCmd: FIXTURES[t.fixture].testCmd, log: say });
+    const r = await runOracleRetrying({ kitchenRoot: o.kitchenRoot, repo, branch: job.branch, ticket: t, testCmd: FIXTURES[t.fixture].testCmd, log: say });
     oracle = r.error ? "error" : r.pass ? "pass" : "fail";
     oracleDetail = r.error ?? r.results.map((x) => `${x.id} ${x.status}${x.why ? `: ${x.why}` : ""}`).join("; ");
+    oracleRetried = r.retried;
   }
   const toolkitPr = job.smith.toolkitPr !== null;
-  const correct = t.expect.outcome.includes(outcome as never) && (oracle === "pass" || oracle === "n/a") && (!t.expect.toolkit_pr || toolkitPr);
+  const { correct, miss } = expectationMet(t.expect, { outcome, oracle, toolkitPr, stages: facts.stages });
   return {
     ...base,
     job: id,
@@ -210,8 +249,11 @@ async function runOne(o: BenchOpts, t: BenchTicket, n: number, home: string): Pr
     reason: job.pausedReason,
     oracle,
     oracleDetail,
+    oracleRetried,
     toolkitPr,
     correct,
+    miss,
+    drives: readJobDrives(path.join(repo, ".kitchen", "jobs", id)),
     rounds: job.round,
     verifyFails: facts.verifyFails,
     proofRuns: facts.proofRuns,
@@ -236,6 +278,10 @@ export type Summary = {
   secs: number;
   /** Over the runs that recorded proof lines (W5 on); null when none did. */
   proofs: { runs: number; inconclusive: number; flaky: number } | null;
+  /** Oracles run a second time after an infrastructure error. */
+  oracleRetries: number;
+  /** Per fixture and drive, across every run: Verify INCONCLUSIVEs and jobs where it flaked. */
+  drives: DriveSummary[];
 };
 
 /** Pure: the §0.2 numbers from the results. */
@@ -260,6 +306,8 @@ export function summarize(rs: RunResult[]): Summary {
           flaky: rs.reduce((n, r) => n + (r.flaky ?? 0), 0),
         }
       : null,
+    oracleRetries: rs.filter((r) => r.oracleRetried).length,
+    drives: sumDrives(rs),
   };
 }
 
@@ -270,12 +318,25 @@ export function proofsLine(p: Summary["proofs"]): string {
   return `INCONCLUSIVE ${p.inconclusive}/${p.runs} proof runs (${pc(p.inconclusive)}), flaky ${p.flaky} (${pc(p.flaky)})`;
 }
 
+export const revLabel = (k: { sha: string; dirty: boolean }) => `${k.sha}${k.dirty ? " (dirty: uncommitted changes)" : ""}`;
+
 /** Pure: the results page. */
-export function resultsMarkdown(o: { tier: string; tool: string; date: string; results: RunResult[]; skipped: string[]; wallSecs: number }): string {
+export function resultsMarkdown(o: {
+  tier: string;
+  tool: string;
+  date: string;
+  kitchen: { sha: string; dirty: boolean };
+  results: RunResult[];
+  skipped: string[];
+  wallSecs: number;
+}): string {
   const s = summarize(o.results);
   const pct = (a: number, b: number) => (b ? `${Math.round((100 * a) / b)}%` : "n/a");
+  const cell = (x: string, n: number) => x.replace(/\|/g, "/").slice(0, n);
   return [
     `# Bench ${o.tier} on ${o.tool}, ${o.date}`,
+    "",
+    `Kitchen ${revLabel(o.kitchen)}`,
     "",
     `${s.correct}/${s.runs} runs correct (${pct(s.correct, s.runs)}). Traps caught ${s.traps.caught}/${s.traps.runs}. False FAILs on controls: ${s.controls.falseFails} over ${s.controls.runs} runs. Tuned ${pct(s.tuned.correct, s.tuned.runs)} (${s.tuned.correct}/${s.tuned.runs}), held-out ${pct(s.heldout.correct, s.heldout.runs)} (${s.heldout.correct}/${s.heldout.runs}). ${proofsLine(s.proofs)}. Agent cost $${s.usd.toFixed(2)}; ticket time ${Math.round(s.secs / 60)} min; wall clock ${Math.round(o.wallSecs / 60)} min.`,
     "",
@@ -283,9 +344,26 @@ export function resultsMarkdown(o: { tier: string; tool: string; date: string; r
     "|---|---|---|---|---|---|---|---|---|---|---|---|",
     ...o.results.map(
       (r) =>
-        `| ${r.ticket}${r.run > 1 ? ` #${r.run}` : ""} | ${r.set} | ${r.kind}${r.trap ? " (trap)" : ""} | ${r.expected.join(" / ")} | ${r.outcome}${r.reason ? ` (${r.reason.replace(/\|/g, "/").slice(0, 80)})` : ""}${r.note ? ` [${r.note}]` : ""} | ${r.oracle}${r.oracle === "fail" || r.oracle === "error" ? `: ${(r.oracleDetail ?? "").replace(/\|/g, "/").slice(0, 120)}` : ""} | ${r.correct ? "yes" : "**no**"} | ${r.rounds} | ${r.verifyFails} | ${Math.round(r.secs)} s | $${r.usd.toFixed(3)} | ${r.path} |`,
+        `| ${r.ticket}${r.run > 1 ? ` #${r.run}` : ""} | ${r.set} | ${r.kind}${r.trap ? " (trap)" : ""} | ${r.expected.join(" / ")} | ${r.outcome}${r.reason ? ` (${cell(r.reason, 80)})` : ""}${r.note ? ` [${r.note}]` : ""} | ${r.oracle}${r.oracle === "fail" || r.oracle === "error" ? `: ${cell(r.oracleDetail ?? "", 120)}` : ""}${r.oracleRetried ? ` (retried after: ${cell(r.oracleRetried, 80)})` : ""} | ${r.correct ? "yes" : `**no**${r.miss ? ` (${cell(r.miss, 80)})` : ""}`} | ${r.rounds} | ${r.verifyFails} | ${Math.round(r.secs)} s | $${r.usd.toFixed(3)} | ${r.path} |`,
     ),
     ...(o.skipped.length ? ["", `Not run (budget or --only): ${o.skipped.join(", ")}`] : []),
+    "",
+    "## Drives",
+    "",
+    "Per drive, across every run: how often Verify gave INCONCLUSIVE on a criterion that ran it, and in how many jobs it flaked (on the same source tree, one run's steps all ran and another's failed).",
+    "",
+    ...(s.drives.length
+      ? [
+          "| fixture | drive | jobs | runs | Verify rows | INCONCLUSIVE | flaky jobs |",
+          "|---|---|---|---|---|---|---|",
+          ...s.drives.map(
+            (d) =>
+              `| ${d.fixture} | ${d.drive} | ${d.jobs} | ${d.runs} | ${d.verifies} | ${d.inconclusive} (${pct(d.inconclusive, d.verifies)}) | ${d.flakyJobs} (${pct(d.flakyJobs, d.jobs)}) |`,
+          ),
+        ]
+      : ["No drive ran."]),
+    "",
+    `Oracles retried after an infrastructure error: ${s.oracleRetries}.`,
     "",
   ].join("\n");
 }
@@ -296,6 +374,8 @@ export async function runBench(o: BenchOpts): Promise<{ results: RunResult[]; sk
   for (let n = 1; n <= o.runs; n++) for (const t of all) queue.push({ t, n });
   const date = new Date().toISOString().slice(0, 10);
   const runId = `${date}-${o.tier}-${o.tool}-${process.pid}`;
+  // Read once, before anything runs: every result says which Kitchen it measured.
+  const kitchen = kitchenRev(o.kitchenRoot);
   fs.mkdirSync(o.out, { recursive: true });
   const home = path.join(o.out, "kitchen-home");
   fs.mkdirSync(home, { recursive: true, mode: 0o700 });
@@ -305,6 +385,7 @@ export async function runBench(o: BenchOpts): Promise<{ results: RunResult[]; sk
   let spent = 0;
   let dockerBusy = 0;
   const inFlight = new Set<Promise<void>>();
+  o.print(`bench ${o.tier}: Kitchen ${revLabel(kitchen)}`);
   o.print(`bench ${o.tier}: ${queue.length} runs on ${o.tool}, concurrency ${o.concurrency} (≤1 Docker fixture at a time), budget $${o.maxUsd}`);
   const start = (q: { t: BenchTicket; n: number }) => {
     const docker = FIXTURES[q.t.fixture].docker;
@@ -350,7 +431,7 @@ export async function runBench(o: BenchOpts): Promise<{ results: RunResult[]; sk
           agent: o.tool,
           secs: r.secs,
           usd: r.usd,
-          detail: { ...r, tier: o.tier, runId },
+          detail: { ...r, tier: o.tier, runId, kitchen },
         });
       });
     const w = p.finally(() => inFlight.delete(w));
@@ -376,10 +457,10 @@ export async function runBench(o: BenchOpts): Promise<{ results: RunResult[]; sk
   const resultsDir = path.join(o.kitchenRoot, "bench", "results");
   fs.mkdirSync(resultsDir, { recursive: true });
   const file = path.join(resultsDir, `${date}-${o.tier}-${o.tool}.md`);
-  fs.writeFileSync(file, resultsMarkdown({ tier: o.tier, tool: o.tool, date, results, skipped, wallSecs: (Date.now() - t0) / 1000 }));
+  fs.writeFileSync(file, resultsMarkdown({ tier: o.tier, tool: o.tool, date, kitchen, results, skipped, wallSecs: (Date.now() - t0) / 1000 }));
   fs.writeFileSync(
     file.replace(/\.md$/, ".json"),
-    `${JSON.stringify({ runId, tier: o.tier, tool: o.tool, results, skipped, summary: summarize(results) }, null, 2)}\n`,
+    `${JSON.stringify({ runId, kitchen, tier: o.tier, tool: o.tool, results, skipped, summary: summarize(results) }, null, 2)}\n`,
   );
   o.print(`bench: ${file}`);
   return { results, skipped, file };
@@ -389,10 +470,12 @@ export async function runBench(o: BenchOpts): Promise<{ results: RunResult[]; sk
 export function benchReport(repo: string): string[] {
   const lines = readLedger(repo).filter((l) => l.event === "bench");
   const byRun = new Map<string, RunResult[]>();
+  const revOf = new Map<string, string>();
   for (const l of lines) {
-    const d = l.detail as unknown as RunResult & { runId: string; tier: string };
+    const d = l.detail as unknown as RunResult & { runId: string; tier: string; kitchen?: { sha: string; dirty: boolean } };
     const k = `${d.runId}`;
     byRun.set(k, [...(byRun.get(k) ?? []), d]);
+    if (d.kitchen) revOf.set(k, `${d.kitchen.sha.slice(0, 12)}${d.kitchen.dirty ? "+dirty" : ""}`);
   }
   if (!byRun.size) return ["no bench runs in the ledger (kitchen bench smoke|full)"];
   const out: string[] = [];
@@ -400,7 +483,7 @@ export function benchReport(repo: string): string[] {
     const s = summarize(rs);
     const med = (xs: number[]) => (xs.length ? [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)] : 0);
     out.push(
-      `${runId}: ${s.correct}/${s.runs} correct, traps ${s.traps.caught}/${s.traps.runs}, control false FAILs ${s.controls.falseFails}, tuned ${s.tuned.correct}/${s.tuned.runs}, held-out ${s.heldout.correct}/${s.heldout.runs}, $${s.usd.toFixed(2)} total, median ${med(rs.map((r) => r.secs))} s and $${med(rs.map((r) => r.usd)).toFixed(3)} per ticket; ${proofsLine(s.proofs)}`,
+      `${runId}${revOf.has(runId) ? ` (Kitchen ${revOf.get(runId)})` : ""}: ${s.correct}/${s.runs} correct, traps ${s.traps.caught}/${s.traps.runs}, control false FAILs ${s.controls.falseFails}, tuned ${s.tuned.correct}/${s.tuned.runs}, held-out ${s.heldout.correct}/${s.heldout.runs}, $${s.usd.toFixed(2)} total, median ${med(rs.map((r) => r.secs))} s and $${med(rs.map((r) => r.usd)).toFixed(3)} per ticket; ${proofsLine(s.proofs)}`,
     );
     for (const r of rs)
       out.push(

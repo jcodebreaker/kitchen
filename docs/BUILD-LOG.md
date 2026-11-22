@@ -161,12 +161,16 @@ One entry per wave: what was built, review rounds and scores, what is proven, an
 **Owed**
 - superchat-lite: the end-to-end ticket of the W3b exit and the 6-replay held-out set (its stack is over this laptop's Docker budget). Codex: everything Codex in W2/W3a/W3b (quota until 2026-12-21), and the §0.3 subset.
 - `spikes/w3b/github-live.ts` against a real throwaway repo (user approval).
-- `spikes/w3a/paths.ts gap` not re-run after its scripted smith moved to its own worktree (one-line change; `toolkit.ts fake` covers the same stage).
 - `test` proofs get no app URL (W4 found it: they assumed port 3000). `proof/prove.ts`/`stamp-cmd.ts` are the W3a fixer's files; the fix is to record `up`'s url per slot and pass it as `KITCHEN_APP_URL` to cmd/test proofs.
 - The benchmark numbers predate W4's review lenses and report role; re-run `kitchen bench full --runs 3` on the merged code.
 - Misses worth a role look (W3a/W4 roles): intake's inline criteria on `cli` output shapes, repro/drives writing for CLI tickets, a review lens blocking a one-word rename for 3 rounds.
-- The Docker bind-mount rule of ADR 0008 (a sandboxed unmerged Toolkit can still `docker run -v $HOME:…`).
 - Dogfooding has not started.
+
+**W3b review fixes** (`spikes/w3b/results.md` "Review fixes", PLAN "Changes from the Wave 3b review"):
+- B1: the smith's proof is judged against the base's own check (once per base sha, cached; drives that already fail on the base are tolerated as known and named in the PR; the contract probe, every drive using the new primitive and every drive passing on the base must pass); a base that can't run its drives is an engine error. `toolkit → toolkit` gives the smith its second try from its first commit with `toolkit-check-<n-1>.json`. w3a `gap` 5/5 (was 2/5), `toolkit.ts buggy` 9/9.
+- M1 Ready publishes HEAD before reading CI; M2 a sync resolution that would drop a base change aborts → needs-human; M3 "merged" on the GitHub forge = in the fetched `refs/kitchen/base` only; M4 `Forge.prState`, a closed Toolkit PR → needs-human, closed job PRs never reused; M5 the ADR 0008 Docker guard (validating proxy outside the sandbox, daemon sockets denied inside, `docker` shim), whose two proxy bugs the fixture's real runs found; M6 a behavioural a-primitive oracle.
+- Minors: CI grace window for "no checks yet" and one re-read of a cancelled run (`ci_grace_sec`); issues edited after their label event are not taken in; replies by thread position; bench (a-too-big never builds, per-drive tally, oracle infra retry, sha label); stale git comment; pruning ≠ deletion (ADR 0006). The README line on pruning is left to W5 (it owns the README).
+- Found while proving: concurrent spikes from other agents in other `KITCHEN_HOME`s collide on slot ports (each home has its own slot registry; the port probe races Colima's forwarder). Not a product bug for one Kitchen per machine; reruns were sequential.
 
 **Review round 2 fixes** (`spikes/w3a/results.md` "Review round 2 fixes", PLAN "Changes from the Wave 3a review (round 2)"):
 - The spec must match the ticket, by structure (ADR 0003): intake writes `## Requirements` (R1..Rn, negatives and rescopes marked), every criterion `covers:` some, and spec-lint rule 7 refuses an uncovered requirement, a criterion covering nothing, or a negative requirement no covering criterion asserts an absence for. The reviewer's ticket, verbatim, on Claude: intake split it into R1–R4 (two negative), the spec's R4 criterion refuses "alice" in alice's own project list, PASS to review ($0.382); `wrong.ts owner` (owner shown to everyone, per-user list kept) FAILs exactly that criterion.

@@ -15,7 +15,7 @@ import type { Config } from "../config.ts";
 import { ghHelper, remoteUrl } from "../engine/base.ts";
 import { fetchFrom, GitError, openGit, plainCheckout, pushTo } from "../engine/git.ts";
 import { commitEvidence, EVIDENCE_BRANCH } from "./evidence-branch.ts";
-import type { CiState, Forge, PrComment, Published, ToolkitPrRequest } from "./forge.ts";
+import type { CiState, Forge, PrComment, PrState, Published, ToolkitPrRequest } from "./forge.ts";
 
 export const REVIEW_REQUIRED = "kitchen:review-required";
 export const TOOLKIT_LABEL = "kitchen-toolkit";
@@ -43,12 +43,17 @@ export function numberOf(url: string): number {
   return Number(m[1]);
 }
 
-/** Pure: `gh pr checks --json bucket` rows → one CI state. No rows: none. */
+/**
+ * Pure: `gh pr checks --json bucket` rows → one CI state. No rows: none. A failure wins; then
+ * pending; a cancelled run (a newer push or a concurrency group cancels the older one) is not a
+ * failure: Ready reads it again once before it counts as red.
+ */
 export function ciOf(rows: { bucket?: string; state?: string }[]): CiState {
   if (!rows.length) return "none";
   const b = rows.map((r) => (r.bucket ?? r.state ?? "").toLowerCase());
-  if (b.some((x) => x === "fail" || x === "cancel" || x === "failure" || x === "error")) return "fail";
+  if (b.some((x) => x === "fail" || x === "failure" || x === "error")) return "fail";
   if (b.some((x) => x === "pending" || x === "queued" || x === "in_progress")) return "pending";
+  if (b.some((x) => x === "cancel" || x === "cancelled")) return "cancelled";
   return "pass";
 }
 
@@ -71,10 +76,11 @@ export class GithubForge implements Forge {
     await pushTo(git, { url: remoteUrl(this.cfg), refspecs: [`+${head}:refs/heads/${branch}`], helper: ghHelper(this.cfg) });
   }
 
+  /** The branch's open PR. A closed or merged one is never reused: the branch gets a new PR. */
   private async prFor(branch: string): Promise<number | null> {
-    const r = await gh(["pr", "list", ...this.R(), "--head", branch, "--state", "all", "--json", "number,state"], { json: true });
+    const r = await gh(["pr", "list", ...this.R(), "--head", branch, "--state", "open", "--json", "number,state"], { json: true });
     const rows = (r.data as { number: number; state: string }[]) ?? [];
-    return rows.find((x) => x.state === "OPEN")?.number ?? rows[0]?.number ?? null;
+    return rows.find((x) => x.state === "OPEN")?.number ?? null;
   }
 
   private async labelPr(pr: number, label: string, color: string) {
@@ -109,10 +115,11 @@ export class GithubForge implements Forge {
     return ciOf((r.data as { bucket?: string; state?: string }[]) ?? []);
   }
 
-  async prMerged(pr: number): Promise<boolean> {
+  async prState(pr: number): Promise<PrState> {
     const r = await gh(["pr", "view", String(pr), ...this.R(), "--json", "state,mergedAt"], { json: true });
     const d = r.data as { state?: string; mergedAt?: string | null };
-    return d.state === "MERGED" || !!d.mergedAt;
+    if (d.state === "MERGED" || d.mergedAt) return "merged";
+    return d.state === "CLOSED" ? "closed" : "open";
   }
 
   async openToolkitPr(o: ToolkitPrRequest): Promise<number> {

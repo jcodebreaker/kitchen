@@ -65,7 +65,7 @@ export async function runKitchen(o: RunOpts): Promise<{ steps: number; moves: nu
     config,
     agent: await adapterFor(repo, config),
     forge: forgeFor(repo, config),
-    source: config.source.kind === "github" ? new GithubSource(config) : new PromptSource(repo),
+    source: config.source.kind === "github" ? new GithubSource(config, repo) : new PromptSource(repo),
     holdsLock: () => !lock.lost(),
   };
   const me = self();
@@ -248,9 +248,14 @@ async function checkWaits(repo: string, d: Deps, print: (l: string) => void, wan
     if (job.stage === "paused" && job.pausedFrom) {
       let cleared = false;
       if (job.waitFor === "backoff") cleared = !job.until || Date.now() >= Date.parse(job.until);
-      else if (job.waitFor === "toolkit-pr") cleared = job.smith.toolkitPr !== null && (await d.forge.prMerged(job.smith.toolkitPr));
-      else if (job.waitFor === "ci") cleared = (await d.forge.checks(job.pr)) !== "pending";
-      else if (job.waitFor === "toolkit-ticket") cleared = !!job.toolkitTicketRef && (await d.forge.ticketClosed(job.toolkitTicketRef));
+      // Merged, or closed without merging (Ready then sends the job to needs-human, naming the PR).
+      else if (job.waitFor === "toolkit-pr") cleared = job.smith.toolkitPr !== null && (await d.forge.prState(job.smith.toolkitPr)) !== "open";
+      else if (job.waitFor === "ci") {
+        // Within Ready's window (no checks yet after a push, or a cancelled run): only a real result ends it early.
+        const ci = await d.forge.checks(job.pr);
+        const waiting = !!job.until && Date.now() < Date.parse(job.until);
+        cleared = ci !== "pending" && (!waiting || ci === "pass" || ci === "fail");
+      } else if (job.waitFor === "toolkit-ticket") cleared = !!job.toolkitTicketRef && (await d.forge.ticketClosed(job.toolkitTicketRef));
       if (cleared) await moveJob(repo, job, { to: job.pausedFrom, facts: { waitCleared: true }, note: `${job.waitFor} cleared` }, print);
     } else if (job.stage === "needs-info" && (await d.source.replies(job)).length) {
       await moveJob(repo, job, { to: "intake", facts: { replied: true }, note: "the author replied" }, print);
