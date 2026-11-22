@@ -35,6 +35,11 @@ const note = (k: string, v: unknown) => {
   fs.writeFileSync(stateFile(), JSON.stringify(s, null, 2));
 };
 
+/** The evidence ids of the views the engine ran for this lens (one per run, though each lists several files). */
+const viewIds = (prompt: string) => [
+  ...new Set([...(/# The views you asked for[\s\S]*?(?=\n# |$)/.exec(prompt)?.[0] ?? "").matchAll(/\b(e\d+): \//g)].map((m) => m[1])),
+];
+
 export default async function script(req: AgentRequest): Promise<FakeStep> {
   const round = Number(/Round: (\d+)/.exec(req.prompt)?.[1] ?? 1);
   const job = /^Job: (\S+)/m.exec(req.prompt)?.[1] ?? "?";
@@ -135,10 +140,39 @@ export default async function script(req: AgentRequest): Promise<FakeStep> {
     note(`${job}/code-r${round}-${req.outFile}`, true);
     return { file: "VERDICT: BLOCKING\n\nThe theme handling is wrong somewhere around the update; I'd block this.\n", line: "VERDICT: BLOCKING" };
   }
+  if (req.role === "reviewer-security") {
+    if (round > 1) return { file: "VERDICT: PASS\n\nChecked the theme route reads the user from the session.\n", line: "VERDICT: PASS" };
+    if (req.outFile === "review-security.md")
+      return { file: "VERDICT: PASS\nVIEW: /settings --as alice\n\nAsked for the settings page as alice.\n", line: "VIEW /settings" };
+    const ids = viewIds(req.prompt);
+    note(`${job}/security-view-ids-r${round}`, ids);
+    // A Verify run of C3 (covers R2): HEAD-stamped, but it shows nothing about R1.
+    const c3 = /^\|\s*C3\s*\|[^|]*\|[^|]*\|([^|]*)\|/m.exec(req.prompt)?.[1]?.match(/\be\d+\b/)?.[0] ?? "";
+    note(`${job}/security-c3-r${round}`, c3);
+    return {
+      file: `VERDICT: BLOCKING
+
+### F1: the dark settings page is served to a signed-in user without a theme check
+- kind: blocking
+- confidence: high
+- requirement: R2
+- evidence: ${ids.join(" ")}
+- why: the view (run for this lens) shows it
+
+### F2: the theme is not tied to the signed-in user
+- kind: blocking
+- confidence: high
+- requirement: R1
+- evidence: ${c3}
+- why: cites a run of C3, which covers R2, not R1
+`,
+      line: "VERDICT: BLOCKING F1 (view evidence)",
+    };
+  }
   if (req.role === "reviewer-ux") {
     if (req.outFile === "review-ux.md")
       return { file: "VERDICT: PASS\nVIEW: /settings --as alice\n\nAsked for the settings page as alice.\n", line: "VIEW /settings" };
-    const ids = [...(/# The views you asked for[\s\S]*?(?=\n# |$)/.exec(req.prompt)?.[0] ?? "").matchAll(/\b(e\d+): \//g)].map((m) => m[1]);
+    const ids = viewIds(req.prompt);
     note(`${job}/ux-view-ids-r${round}`, ids);
     return {
       file: `VERDICT: PASS\n\n### F1: the dark settings page has low contrast on the save status\n- kind: note\n- confidence: medium\n- requirement: R2\n- evidence: ${ids.join(" ")}\n- why: seen on the view\n`,

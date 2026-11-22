@@ -3,7 +3,7 @@
 // fake forge.
 //   node spikes/w4/scripted.ts <scratch>
 // What it proves (PASS/FAIL lines, exit 1 on any miss):
-// - review routes code + ux + ui (medium, surfaces ui); a demonstrable blocking finding
+// - review routes code + security + ux + ui (medium: code, security; surfaces ui); a demonstrable blocking finding
 //   sends the job back to build; a "blocking" finding with no anchor, one past the end
 //   of the file, a low-confidence one, one on a file the change didn't touch (README)
 //   and one naming only a requirement whose criteria discriminate don't block (notes,
@@ -15,6 +15,8 @@
 // - VERDICT: BLOCKING with no readable finding is refused once, then needs-human;
 // - the UX lens's VIEW line runs through the engine (stamped evidence, role reviewer-ux)
 //   and the lens is re-run once with it; ux and ui findings on the same requirement merge;
+// - the security lens asks for a VIEW too (any lens may): its R2 finding citing its own view
+//   blocks; its R1 finding citing a Verify run of C3 (covers R2, not R1) is a note;
 // - per-lens stats in the ledger; `kitchen dismiss` records a dismissal per lens;
 // - report: a planted {{e99999}} is refused (report → report), the second render passes,
 //   report.html is self-contained (data: URIs, no script, no remote URL); the evidence is
@@ -38,6 +40,8 @@ round_limit: 4
 agent: { tool: fake, script: ${JSON.stringify(path.join(HERE, "fake-agent.ts"))} }
 checks:
   - { name: syntax, run: "node --check server.js" }
+paths:
+  medium: { spec: full, verify: full, review: [code, security] }
 forge: { kind: fake }
 feedback: { trusted: [maintainer-alice], trust_associations: [OWNER] }
 `;
@@ -91,7 +95,11 @@ const r1 = JSON.parse(read("rounds/1/review.json") || "{}") as {
     evidence: string[];
   }[];
 };
-check("lenses: code, ux, ui (medium risk, surface ui)", JSON.stringify(r1.lenses) === '["code","ux","ui"]', JSON.stringify(r1.lenses));
+check(
+  "lenses: code, security, ux, ui (medium risk: code + security, surface ui)",
+  JSON.stringify(r1.lenses) === '["code","security","ux","ui"]',
+  JSON.stringify(r1.lenses),
+);
 const f = (fid: string) => r1.findings?.find((x) => x.id === fid || x.also.includes(fid));
 check("round 1: the anchored, confident finding (server.js:<the UPDATE line>) blocks", f("code-1-1")?.blocks === true, JSON.stringify(f("code-1-1")));
 check(
@@ -130,6 +138,33 @@ check(
     ?.filter((x) => x.requirement === "R1")
     .map((x) => `${x.id}:${x.blocks}`)
     .join(" "),
+);
+// The security lens's VIEW (any lens may ask for one) and what its evidence can anchor.
+const secRec = fs.readdirSync(path.join(dir, "rounds", "1")).find((x) => /^views-security-m\d+\.json$/.test(x));
+const secViews = JSON.parse(secRec ? read(`rounds/1/${secRec}`) : "[]") as { view: string; ok: boolean; evidence: string[] }[];
+const secIds = (state()[`${id}/security-view-ids-r1`] as string[]) ?? [];
+const secEntries = manifest(r, id).filter((e) => secIds.includes(e.id));
+check(
+  "round 1: the security lens's VIEW ran through the engine (stamped reviewer-security, view:security) and the lens ran again with it",
+  secViews[0]?.ok === true &&
+    secIds.length > 0 &&
+    secEntries.length === secIds.length &&
+    secEntries.every((e) => e.role === "reviewer-security" && e.criterion === "view:security") &&
+    fs.existsSync(path.join(dir, "rounds/1/review-security-views.md")),
+  `${secViews[0]?.view} → ${secIds.join(" ")}`,
+);
+const secView = byTitle(/served to a signed-in user/);
+check(
+  "round 1: the security finding on R2 citing its own view's evidence blocks",
+  secView?.blocks === true && secView.lenses.includes("security") && secIds.every((x) => secView.evidence.includes(x)),
+  JSON.stringify({ blocks: secView?.blocks, evidence: secView?.evidence, downgraded: secView?.downgraded }),
+);
+const c3 = String(state()[`${id}/security-c3-r1`] ?? "");
+const secOff = byTitle(/not tied to the signed-in user/);
+check(
+  "round 1: the security finding on R1 citing a Verify run of C3 (covers R2, stamped for HEAD) is a note: that evidence doesn't show R1",
+  !!c3 && secOff?.blocks === false && new RegExp(`evidence ${c3} doesn't show R1`).test(secOff?.downgraded ?? ""),
+  secOff?.downgraded,
 );
 const fb2 = String(state()[`${id}/builder-review-r2`] ?? "");
 check(
@@ -290,6 +325,7 @@ check(
   jobOf(r, id).stage === "done" &&
     /c1 by drive-by \(CONTRIBUTOR\) ignored/.test(o1.out) &&
     /c0 by maintainer-alice ignored: written .*before the job was done/.test(o1.out) &&
+    o1.out.includes(`before the job was done (${jobOf(r, id).doneAt})`) &&
     !/PR comment kitchen-/.test(o1.out) &&
     readFakeForge(forgeFile).comments.some((c) => c.body.startsWith("<!-- kitchen:report -->")) &&
     ledger(r).some((l) => l.event === "pr-comment-ignored"),
