@@ -37,6 +37,8 @@ export type DriveOpts = {
   criterion: string;
   /** Who asked: engine, builder, verifier… Stamped, so a Verdict can tell self-checks from proofs. */
   role: string;
+  /** Extra fields stamped on every entry (e.g. `phase: "repro"`). Can't override the stamp's own fields. */
+  tag?: Record<string, string>;
   log?: (msg: string) => void;
 };
 
@@ -141,6 +143,7 @@ async function runLocked(o: DriveOpts): Promise<DriveResult> {
       ev,
       job.manifestHead,
       {
+        ...o.tag,
         sha: source.sha,
         dirty: source.dirty,
         tree: source.tree,

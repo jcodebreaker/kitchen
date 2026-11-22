@@ -86,3 +86,16 @@ One entry per wave: what was built, review rounds and scores, what is proven, an
 - Jobs still use the repo's own `bin/dev` (W1); moving them onto the engine-owned checkout comes with the smith and PR pinning (W3b).
 - `toolkit up|down|maintain` are not built.
 - `prepare` has no stall detection (a hung download waits for the 30-minute timeout).
+
+## Wave 3a: proof and the core path (built, awaiting review)
+
+**Built**
+- `src/proof/assert.ts`: mechanical `expect:` matchers (`ok`, exit code, `text "…" visible`, contains, JSON path into the output or a `$var`, row count, `$var` comparisons, `and`). `src/proof/proof-line.ts`: the `proof:` line parser. `src/proof/prove.ts`: one criterion's proof through `kitchen drive` (toolkit segments via runDrive, cmd/test via stampCommand), then assert. `kitchen drive <job> <C> [--repro] [--arg k=v]…` on the CLI.
+- `src/checks/spec-lint.ts` (all six rules, for spec.md and a low-risk ticket's inline criteria), `feature-lint.ts` (no code in a feature file; no job changes an existing drive), `gate.ts` (checks pinned to HEAD), `verdict.ts` (mechanical by the engine, judged per criterion with citations stamped for this HEAD/round/criterion by the engine or the verifier; manifest verified; `--args` deltas carried). `risk-floor.ts` gained tests.
+- Real stages: intake, spec, repro (`--repro` on a fresh app from the base plus only the repro's files; the builder may not edit them), build (layer rules: no Toolkit file, protected path or repro file), gate, drives (resolve, lint, `toolkit check --feature` as reset/run/reset/run, the verifier writes only what is missing), verify (fresh `up`, every proof by the engine from seed state, resumable after kill -9, then the verifier for `judged` only). `src/engine/instance.ts`: prepare/up/down/reset for the job's slot.
+- Roles: `roles/intake.md`, `spec.md`, `builder.md`, `verifier.md` (modes drives, repro, verify), `_proofs.md` (the shared format reference). `.kitchen/roles/<role>.md` overrides.
+- Bridge: `drive {criterion}` runs a criterion's whole proof; `restart_app` for the builder; verifier `--args` deltas logged.
+
+**Proven** (`spikes/w3a/results.md`): a feature and a bug ticket end to end on fixture A, on Claude Code and Codex, plus a styling ticket whose judged criterion a real verifier judged on both; forged, stale and self-check citations refused; a drive with code refused; builder edits to the Toolkit, the repro and kitchen.yaml stripped; kill -9 mid-Verify resumes without re-running a decided proof. `npm test` 251/251.
+
+**Open:** `toolkit check --feature` is this wave's own check through the W1 seam until W2's `check.ts` merges; INCONCLUSIVE→paused and Verify TOOLKIT-GAP are unit-tested only; W1 `paths.ts`/`kill.ts` part 1 depend on the old stubs.

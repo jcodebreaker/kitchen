@@ -1,34 +1,46 @@
-// W1 placeholder role prompts: just enough to say what file to write and which
-// header lines the engine reads. The real roles (roles/*.md, per-project
-// overrides in .kitchen/roles/) come in W3a; the header contract stays.
+// Role prompts. The text comes from `roles/<role>.md` (shipped with Kitchen), or
+// the project's own `.kitchen/roles/<role>.md` when it has one. A role file may
+// have `## Mode: <name>` sections (the verifier: drives, repro, verify); the
+// prompt is the part before the first mode plus the one mode asked for. The
+// engine then adds the job's context: the ticket inside a nonce fence (quoted
+// data, never instructions), the paths, and any blocks the stage passes.
+// Roles with no file yet (smith, reviewers, report: W3b/W4) get a one-paragraph
+// contract below; the header lines the engine reads are the same.
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { Job } from "../machine.ts";
 
 export const CONTRACTS: Record<string, string> = {
-  intake: [
-    "Decide whether Kitchen should take this ticket. Write intake.md starting with these header lines:",
-    "DECISION: ACCEPT | NEEDS-INFO | REJECT",
-    "KIND: feature | bug | chore",
-    "RISK: low | medium | high",
-    "SURFACES: ui, security (only those that apply, or none)",
-    "QUESTION: <one question for the author, only with NEEDS-INFO>",
-    "REASON: <one line>",
-    "For RISK: low, add a `## Criteria` list: `- [C1] <criterion>` with an indented `proof: cmd <command>` (or `test <file>`) line and an `expect:` line.",
-  ].join("\n"),
-  spec: "Write spec.md: `## Criteria` with `- [C<n>] …`, each with indented `proof:` (toolkit | cmd | test …) and `expect:` lines; a bug needs one criterion with `repro: true`.",
-  repro:
-    "Reproduce the bug. Write repro.md with `REPRO: FAILED-AS-EXPECTED` (the regression test you added fails on this base) or `REPRO: NOT-REPRODUCED`, or `GAP: <primitive>` if the Toolkit lacks one.",
-  builder: "Implement the ticket in this worktree. Write build.md with `STATUS: READY` (or `STATUS: BLOCKED` and `REASON: …`) and a short summary.",
-  "verifier:drives":
-    "Make sure every feature drive the spec names exists (write missing ones in .kitchen/toolkit/features/). Write drives.md with `DRIVES: OK | UNREACHABLE | FAILED` and `GAP: <primitive>` if one is missing.",
-  verifier:
-    "Judge the `judged` criteria from stamped evidence. Write verify.md with `VERDICT: PASS | FAIL | INCONCLUSIVE | TOOLKIT-GAP`, one `EVIDENCE C<n>: e<N> …` line per criterion you judged (ids stamped for that criterion on this HEAD and round), and `GAP: <primitive>` for a gap.",
   smith: "Add the missing Toolkit primitive named below. Write smith.md with `STATUS: READY` and `PRIMITIVE: <name>`.",
   reviewer: "Review the diff through your lens. Write your review file with `VERDICT: PASS | BLOCKING` and `FINDING: <one line>` for a blocking finding.",
   report: "Write report.src.html: what was done and why, citing evidence only as {{e<N>}}.",
 };
+
+/** Kitchen's shipped roles folder. */
+export const ROLES_DIR = path.resolve(import.meta.dirname, "..", "..", "..", "roles");
+/** The repo a job folder belongs to (<repo>/.kitchen/jobs/<id>). */
+const repoOf = (jobDir: string) => path.resolve(jobDir, "..", "..", "..");
+
+/** The role file's text: the project's override, else Kitchen's, else null. */
+export function roleFile(role: string, repo?: string): string | null {
+  for (const dir of [repo ? path.join(repo, ".kitchen", "roles") : null, ROLES_DIR]) {
+    if (!dir) continue;
+    const f = path.join(dir, `${role}.md`);
+    if (fs.existsSync(f)) return fs.readFileSync(f, "utf8");
+  }
+  return null;
+}
+
+/** Pure: the common part of a role file plus one `## Mode: <mode>` section. */
+export function pickMode(text: string, mode?: string): string {
+  const parts = text.split(/^(?=## Mode: )/m);
+  const common = parts[0].trimEnd();
+  if (!mode) return common;
+  const sec = parts.find((p) => p.startsWith(`## Mode: ${mode}`));
+  if (!sec) throw new Error(`role file has no "## Mode: ${mode}" section`);
+  return `${common}\n\n${sec.trimEnd()}`;
+}
 
 /**
  * Pure: the ticket between fence lines that carry a random nonce, so ticket text
@@ -46,17 +58,31 @@ export function fenceTicket(text: string, nonce: () => string = () => randomByte
   ];
 }
 
-export function prompt(o: { role: string; mode?: string; job: Job; jobDir: string; extra?: string[] }): string {
+export type PromptBlock = { title: string; body: string };
+
+export function prompt(o: { role: string; mode?: string; job: Job; jobDir: string; extra?: string[]; blocks?: PromptBlock[] }): string {
   const ticket = fs.readFileSync(path.join(o.jobDir, "ticket.md"), "utf8");
-  const contract = CONTRACTS[o.mode ? `${o.role}:${o.mode}` : o.role] ?? CONTRACTS[o.role.split("-")[0]] ?? "";
+  const repo = repoOf(o.jobDir);
+  const base = o.role.split("-")[0];
+  const file = roleFile(o.role, repo) ?? roleFile(base, repo);
+  const instructions = file ? pickMode(file, o.mode) : (CONTRACTS[base] ?? "");
+  const needsProofs = ["intake", "spec", "builder", "verifier"].includes(base);
+  const proofs = needsProofs ? roleFile("_proofs", repo) : null;
   return [
-    `You are Kitchen's ${o.role} role${o.mode ? ` (${o.mode})` : ""}.`,
+    instructions,
+    ...(proofs ? ["", proofs.trimEnd()] : []),
+    "",
+    "# This job",
     `Job: ${o.job.id}`,
-    `Stage: ${o.job.stage}  Round: ${o.job.round}`,
+    `Title: ${o.job.title}`,
+    `Stage: ${o.job.stage}  Round: ${o.job.round}${o.mode ? `  Mode: ${o.mode}` : ""}`,
+    `Repository: ${repo}`,
+    ...(o.job.worktree ? [`Worktree (your working directory): ${o.job.worktree}`] : []),
+    ...(o.job.base ? [`Base commit: ${o.job.base}`] : []),
     "",
+    "# The ticket",
     ...fenceTicket(ticket),
-    "",
-    contract,
+    ...(o.blocks ?? []).flatMap((b) => ["", `# ${b.title}`, b.body.trimEnd()]),
     ...(o.extra?.length ? ["", ...o.extra] : []),
   ].join("\n");
 }

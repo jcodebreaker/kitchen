@@ -10,7 +10,25 @@ import { updateJob, worktreeOf } from "./store.ts";
 
 const IDENTITY = { GIT_AUTHOR_NAME: "Kitchen", GIT_AUTHOR_EMAIL: "kitchen@localhost", GIT_COMMITTER_NAME: "Kitchen", GIT_COMMITTER_EMAIL: "kitchen@localhost" };
 /** Agents' one-file outbox: never committed. */
-const NOT_COMMITTED = [":(exclude).kitchen-out", ":(exclude).kitchen-out/**"];
+const OUTBOX = ".kitchen-out";
+type Git = Awaited<ReturnType<typeof openGit>>;
+/**
+ * Stage everything but the outbox. Not an `:(exclude)` pathspec: when the repo's
+ * .gitignore names .kitchen-out (fixture A does), `git add` refuses an exclude
+ * pathspec that matches an ignored path, so it is unstaged afterwards instead.
+ */
+async function addAll(git: Git) {
+  await git.run(["add", "-A", "--", "."]);
+  await git.run(["rm", "-r", "--cached", "--quiet", "--ignore-unmatch", "--", OUTBOX]);
+}
+/** `git status --porcelain` lines outside the outbox: empty means clean. */
+async function dirtyLines(git: Git): Promise<string> {
+  const out = (await git.run(["status", "--porcelain", "--untracked-files=all", "--", "."])).stdout;
+  return out
+    .split("\n")
+    .filter((l) => l.trim() && l.slice(3) !== OUTBOX && !l.slice(3).startsWith(`${OUTBOX}/`))
+    .join("\n");
+}
 
 export async function mainHead(repo: string): Promise<string> {
   const git = await openGit(plainCheckout(repo));
@@ -51,6 +69,16 @@ export async function ensureWorktree(repo: string, job: Job, now = new Date()): 
 }
 
 const gitOf = (job: Job) => openGit({ gitDir: job.gitDir, workTree: job.worktree });
+
+/** A file's text at HEAD, or null when HEAD has no such file. */
+export async function fileAtHead(job: Job, rel: string): Promise<string | null> {
+  try {
+    return (await (await gitOf(job)).run(["show", `HEAD:${rel}`])).stdout;
+  } catch (e) {
+    if (e instanceof GitError) return null;
+    throw e;
+  }
+}
 
 export async function headOf(job: Job): Promise<string> {
   return (await (await gitOf(job)).run(["rev-parse", "--verify", "HEAD^{commit}"])).stdout.trim();
@@ -94,7 +122,7 @@ export async function stripToolkitEdits(job: Job): Promise<string[]> {
 export async function commitAll(job: Job, message: string): Promise<{ committed: boolean; head: string; ahead: boolean; clean: boolean; stripped: string[] }> {
   const git = await gitOf(job);
   const stripped = await stripToolkitEdits(job);
-  await git.run(["add", "-A", "--", ".", ...NOT_COMMITTED]);
+  await addAll(git);
   let staged = false;
   try {
     await git.run(["diff", "--cached", "--quiet", "--no-ext-diff"]);
@@ -104,8 +132,54 @@ export async function commitAll(job: Job, message: string): Promise<{ committed:
   }
   if (staged) await git.run(["commit", "--quiet", "--no-verify", "-m", message], { env: IDENTITY });
   const head = (await git.run(["rev-parse", "HEAD"])).stdout.trim();
-  const status = (await git.run(["status", "--porcelain", "--untracked-files=all", "--", ".", ...NOT_COMMITTED])).stdout.trim();
+  const status = await dirtyLines(git);
   return { committed: staged, head, ahead: head !== job.base, clean: status === "", stripped };
+}
+
+/** What a role may leave in the worktree for the engine to commit (PLAN §2 layer rules). */
+export type CommitPolicy = (file: string, status: "A" | "M" | "D" | string) => string | null;
+
+/**
+ * Commit what a role left, after putting back every change `policy` refuses (it
+ * returns the reason): a tracked file goes back to HEAD, an added one is removed.
+ * `refused` lists `path: reason` for the log and the facts. .kitchen-out/ is never committed.
+ */
+export async function commitWith(
+  job: Job,
+  message: string,
+  policy: CommitPolicy,
+): Promise<{ committed: boolean; head: string; ahead: boolean; clean: boolean; refused: string[]; files: string[] }> {
+  const git = await gitOf(job);
+  await addAll(git);
+  const rows = (await git.run(["diff", "--cached", "--name-status", "--no-renames", "-z", "HEAD"])).stdout.split("\0").filter(Boolean);
+  const changes: { status: string; file: string }[] = [];
+  for (let i = 0; i + 1 < rows.length; i += 2) changes.push({ status: rows[i], file: rows[i + 1] });
+  const refused: string[] = [];
+  const restore: string[] = [];
+  const drop: string[] = [];
+  for (const c of changes) {
+    const why = policy(c.file, c.status);
+    if (!why) continue;
+    refused.push(`${c.file}: ${why}`);
+    (c.status === "A" ? drop : restore).push(c.file);
+  }
+  if (restore.length) await git.run(["restore", "--source=HEAD", "--staged", "--worktree", "--", ...restore]);
+  if (drop.length) {
+    await git.run(["rm", "--cached", "--quiet", "-f", "--", ...drop]);
+    for (const p of drop) fs.rmSync(path.join(job.worktree, p), { force: true });
+  }
+  let staged = false;
+  try {
+    await git.run(["diff", "--cached", "--quiet", "--no-ext-diff"]);
+  } catch (e) {
+    if (!(e instanceof GitError) || e.exitCode !== 1) throw e;
+    staged = true;
+  }
+  if (staged) await git.run(["commit", "--quiet", "--no-verify", "-m", message], { env: IDENTITY });
+  const head = (await git.run(["rev-parse", "HEAD"])).stdout.trim();
+  const status = await dirtyLines(git);
+  const files = changes.filter((c) => !refused.some((r) => r.startsWith(`${c.file}: `))).map((c) => c.file);
+  return { committed: staged, head, ahead: head !== job.base, clean: status === "", refused, files };
 }
 
 export async function changedFiles(job: Job, from: string, to = "HEAD"): Promise<string[]> {

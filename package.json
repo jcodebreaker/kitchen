@@ -8,7 +8,8 @@
     "kitchen": "dist/cli.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "roles"
   ],
   "engines": {
     "node": ">=20"

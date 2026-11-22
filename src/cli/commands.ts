@@ -3,15 +3,19 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { loadConfig } from "../config.ts";
+import { contractOf, specArgsOf } from "../engine/contract.ts";
+import { ensureUp, freshUp } from "../engine/instance.ts";
 import { readRunLock, staleReason } from "../engine/lock.ts";
 import { feedbackTarget, type Job, roundsUsed, STAGES, type Stage } from "../engine/machine.ts";
 import { moveJob, runKitchen } from "../engine/runner.ts";
 import { createJob, findJob, jobDirOf, kitchenDir, scanJobs, writeAtomic } from "../engine/store.ts";
-import { mainHead } from "../engine/worktree.ts";
+import { changedFiles, headOf, mainHead } from "../engine/worktree.ts";
 import { readLedger } from "../ledger/append.ts";
 import { formatCounts, summarize } from "../ledger/report.ts";
+import { prove } from "../proof/prove.ts";
 import { PromptSource } from "../sources/prompt.ts";
 import { queueLine } from "../toolkit/reproof.ts";
+import { acquireSlot, downSlot, listSlots, releaseSlot } from "../toolkit/slots.ts";
 
 export type Out = (line: string) => void;
 
@@ -132,4 +136,77 @@ export async function reject(repo: string, ref: string, out: Out): Promise<numbe
 export function report(repo: string, out: Out): number {
   out(formatCounts(summarize(readLedger(repo))));
   return 0;
+}
+
+/**
+ * `kitchen drive <job> <C> [--repro] [--arg k=v]… [--role r]`: run one criterion's proof
+ * the way the stages do (prove.ts), stamped with `role` (default operator, which no
+ * Verdict may cite). `--arg` gives concrete feature drive args over the spec's; the
+ * difference is logged against the spec. `--repro`: only on a branch whose diff from
+ * the base is the repro's own files, on a fresh app, and it reports whether the proof
+ * failed as expected. Uses the job's slot, or takes one for the call.
+ * Prints one JSON line; exit 0 when the expect holds (with --repro: when it failed as expected).
+ */
+export async function drive(
+  repo: string,
+  ref: string,
+  criterion: string,
+  o: { repro: boolean; args: Record<string, string>; role: string },
+  out: Out,
+): Promise<number> {
+  const cfg = loadConfig(repo);
+  const job = findJob(repo, ref);
+  const jobDir = jobDirOf(repo, job.id);
+  const c = contractOf(jobDir)?.criteria.find((x) => x.id === criterion);
+  if (!c) throw new Error(`${job.id} has no criterion ${criterion}`);
+  if (!job.worktree) throw new Error(`${job.id} has no worktree yet`);
+  if (o.repro) {
+    const diff = await changedFiles(job, job.base, await headOf(job));
+    const extra = diff.filter((f) => !(job.reproFiles ?? []).includes(f));
+    if (extra.length) throw new Error(`--repro runs on the base: the branch also changes ${extra.join(", ")}`);
+  }
+  let took = false;
+  let slot = listSlots().find((x) => x.id === job.slotId);
+  if (!slot) {
+    slot = (await acquireSlot({ id: job.slotId, toolkitBin: job.toolkitBin, src: job.worktree, pid: process.pid })).slot;
+    took = true;
+  }
+  const inst = { ...job, slot: { n: slot.n, ports: slot.ports } };
+  try {
+    await (o.repro || took ? freshUp : ensureUp)(inst, jobDir, (m) => console.error(`[kitchen drive] ${m}`));
+    const p = await prove({
+      jobDir,
+      criterion: c,
+      role: o.role,
+      testCmd: cfg.test_cmd,
+      argsOverride: o.args,
+      ...(o.repro ? { tag: { phase: "repro" } } : {}),
+      log: (m) => console.error(`[kitchen drive] ${m}`),
+    });
+    for (const d of p.driveArgs) {
+      if (JSON.stringify(Object.entries(d.used).sort()) === JSON.stringify(Object.entries(specArgsOf(c, d.drive) ?? {}).sort())) continue;
+      const f = path.join(jobDir, "rounds", String(job.round), "args-deltas.jsonl");
+      fs.mkdirSync(path.dirname(f), { recursive: true });
+      fs.appendFileSync(f, `${JSON.stringify({ criterion, drive: d.drive, spec: d.spec, used: d.used, by: o.role, at: new Date().toISOString() })}\n`);
+    }
+    const holds = p.status === "pass";
+    const failedAsExpected = p.status === "assert-fail";
+    out(
+      JSON.stringify({
+        job: job.id,
+        criterion,
+        status: p.status,
+        ...(o.repro ? { failedAsExpected } : { holds }),
+        ...(p.why ? { why: p.why } : {}),
+        vars: p.outcome.vars,
+        evidence: p.evidence,
+      }),
+    );
+    return (o.repro ? failedAsExpected : holds) ? 0 : 1;
+  } finally {
+    if (took) {
+      await downSlot(slot);
+      await releaseSlot(job.slotId);
+    }
+  }
 }

@@ -13,9 +13,28 @@ import { evidenceDir, jobGit, readJob, sealOf, storeHead, withJobLock } from "./
 import { appendEntry, nextId, verifyManifest } from "./manifest.ts";
 import { sourceStamp } from "./source-stamp.ts";
 
-export type StampedCmd = { id: string; name: string; cmd: string; exit: number; ok: boolean; secs: number; tail: string; sha: string; timedOut: boolean };
+export type StampedCmd = {
+  id: string;
+  name: string;
+  cmd: string;
+  exit: number;
+  ok: boolean;
+  secs: number;
+  tail: string;
+  sha: string;
+  dirty: boolean;
+  timedOut: boolean;
+};
 
-export function stampCommand(o: { jobDir: string; name: string; cmd: string; role: string; criterion: string; timeoutSec: number }): Promise<StampedCmd> {
+export function stampCommand(o: {
+  jobDir: string;
+  name: string;
+  cmd: string;
+  role: string;
+  criterion: string;
+  timeoutSec: number;
+  tag?: Record<string, string>;
+}): Promise<StampedCmd> {
   return withJobLock(o.jobDir, async () => {
     const job = readJob(o.jobDir);
     const seal = sealOf(job);
@@ -55,6 +74,7 @@ export function stampCommand(o: { jobDir: string; name: string; cmd: string; rol
       ev,
       job.manifestHead,
       {
+        ...o.tag,
         sha: source.sha,
         dirty: source.dirty,
         tree: source.tree,
@@ -71,6 +91,17 @@ export function stampCommand(o: { jobDir: string; name: string; cmd: string; rol
     );
     job.manifestHead = head;
     storeHead(o.jobDir, job);
-    return { id, name: o.name, cmd: o.cmd, exit, ok: exit === 0, secs, tail: String(r.all ?? "").slice(-800), sha: source.sha, timedOut: !!r.timedOut };
+    return {
+      id,
+      name: o.name,
+      cmd: o.cmd,
+      exit,
+      ok: exit === 0,
+      secs,
+      tail: String(r.all ?? "").slice(-800),
+      sha: source.sha,
+      dirty: source.dirty,
+      timedOut: !!r.timedOut,
+    };
   });
 }
