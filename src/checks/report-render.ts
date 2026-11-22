@@ -62,6 +62,8 @@ export type ReportFacts = {
   verdict: string;
   /** `human: always` on the job's risk path: the report must open with what a human must check. */
   humanMustCheck: boolean;
+  /** The job ran without a Toolkit (ADR 0010): proven by checks and tests only, no app driven. */
+  noToolkit?: boolean;
   requirements: RequirementRow[];
   criteria: CriterionRow[];
   /** `earlier`: what blocked in earlier rounds (the findings that sent the job back to build), oldest first. */
@@ -342,7 +344,14 @@ function appendix(e: ReportEntry, file: RenderInput["file"]): string {
   return `<details id="ev-${e.id}"><summary><b>${e.id}</b> · ${esc(e.criterion)} · ${esc(String(e.role ?? ""))} · <code>${esc(shortCmd(e.cmd))}</code> · exit ${e.exit} · ${e.sha.slice(0, 8)} r${e.round}</summary>${body}</details>`;
 }
 
-const badge = (r: string) => `<span class="badge ${/PASS/.test(r) ? "ok" : /FAIL|BLOCK/.test(r) ? "bad" : "warn"}">${esc(r)}</span>`;
+const badge = (r: string) =>
+  r === "NO-TOOLKIT"
+    ? '<span class="badge warn">NOT PROVEN (NO TOOLKIT)</span>'
+    : `<span class="badge ${/PASS/.test(r) ? "ok" : /FAIL|BLOCK/.test(r) ? "bad" : "warn"}">${esc(r)}</span>`;
+
+/** What a job without a Toolkit can claim (ADR 0010), in the page and the PR comment. */
+export const NO_TOOLKIT_CLAIM =
+  "Proven by checks and tests only: no app was driven, because this repository has no Toolkit yet. Criteria that need the running app are marked not proven (no Toolkit), never passed. `kitchen toolkit build` teaches Kitchen to drive the app.";
 
 function requirementsSection(f: ReportFacts, byId: Map<string, ReportEntry>, file: RenderInput["file"]): string {
   const rows = f.requirements.map((r) => {
@@ -454,6 +463,7 @@ export function renderReport(i: RenderInput): { html: string; cited: string[]; w
 <body><main>
 <header><p class="meta">Kitchen report · <code>${esc(j.id)}</code> · ${esc(j.kind)} · risk ${esc(j.risk)} · round ${j.round} · HEAD <code>${f.head.slice(0, 10)}</code>${j.pr !== null ? ` · PR #${j.pr}` : ""} · branch <code>${esc(j.branch)}</code></p>
 <h1>${esc(j.title)}</h1><p>Verdict ${badge(f.verdict)} ${f.review.findings.some((x) => x.blocks) ? badge("REVIEW BLOCKING") : badge("REVIEW PASS")}${f.humanMustCheck ? ` ${badge("HUMAN REVIEW REQUIRED")}` : ""}</p></header>
+${f.noToolkit ? `<section id="no-toolkit" class="lead"><p><span class="badge warn">CHECKS AND TESTS ONLY</span> ${esc(NO_TOOLKIT_CLAIM).replace(/`([^`]+)`/g, "<code>$1</code>")}</p></section>` : ""}
 ${warnings.length ? `<section id="citation-warnings" class="lead"><p><span class="badge warn">CITATION</span> The engine checked the text's citations: ${warnings.map(esc).join("; ")}.</p></section>` : ""}
 ${f.humanMustCheck ? part("human-check", "What a human must check", "lead") : ""}
 ${part("summary", "Summary", f.humanMustCheck ? "" : "lead")}
@@ -506,12 +516,13 @@ export function prComment(f: ReportFacts, o: { url: string; entries: ReportEntry
     "",
     `**Verdict ${f.verdict}** · ${f.job.kind} · risk ${f.job.risk} · round ${f.job.round} · HEAD \`${f.head.slice(0, 10)}\``,
     ...(f.humanMustCheck ? ["", "**Human review required** (`kitchen:review-required`): the report opens with what a human must check."] : []),
+    ...(f.noToolkit ? ["", `**${NO_TOOLKIT_CLAIM.split(":")[0]}:**${NO_TOOLKIT_CLAIM.slice(NO_TOOLKIT_CLAIM.indexOf(":") + 1)}`] : []),
     "",
     "| criterion | covers | decided by | result | evidence |",
     "|---|---|---|---|---|",
     ...f.criteria.map(
       (c) =>
-        `| ${c.id} ${cell(c.text)}${c.nonDiscriminating ? " (NON-DISCRIMINATING)" : ""} | ${c.covers.join(", ")} | ${c.decidedBy} | ${c.result} | ${evidenceCell(c.evidence)} |`,
+        `| ${c.id} ${cell(c.text)}${c.nonDiscriminating ? " (NON-DISCRIMINATING)" : ""} | ${c.covers.join(", ")} | ${c.decidedBy} | ${c.result === "NO-TOOLKIT" ? "not proven (no Toolkit)" : c.result} | ${evidenceCell(c.evidence)} |`,
     ),
     "",
     `Review (${f.review.lenses.join(", ") || "no lenses"}): ${blocking} blocking, ${f.review.findings.length - blocking} note(s).`,

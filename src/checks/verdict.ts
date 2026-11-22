@@ -14,7 +14,9 @@
 import type { Entry } from "../proof/manifest.ts";
 import type { Criterion } from "./spec-lint.ts";
 
-export type Result = "PASS" | "FAIL" | "INCONCLUSIVE" | "TOOLKIT-GAP";
+/** NO-TOOLKIT: the criterion drives the app and the repo has no Toolkit, so nothing proved it (ADR 0010). Never a pass, never a failure. */
+export type Result = "PASS" | "FAIL" | "INCONCLUSIVE" | "TOOLKIT-GAP" | "NO-TOOLKIT";
+export const NOT_PROVEN_NO_TOOLKIT = "not proven (no Toolkit): it needs Kitchen to drive the app";
 /** What the engine found running one criterion's proof (prove.ts). */
 export type ProofRecord = {
   criterion: string;
@@ -27,7 +29,7 @@ export type ProofRecord = {
 export type ArgsDelta = { criterion: string; drive: string; spec: Record<string, string>; used: Record<string, string>; by: string; at: string };
 export type CriterionVerdict = { id: string; judged: boolean; result: Result; why?: string; evidence: string[] };
 export type Verdict = {
-  verdict: Result;
+  verdict: Exclude<Result, "NO-TOOLKIT">;
   criteria: CriterionVerdict[];
   manifestOk: boolean;
   citationsOk: boolean;
@@ -107,8 +109,10 @@ export function citationProblem(judged: string[], cited: Map<string, string[]>, 
   return null;
 }
 
-const RANK: Result[] = ["PASS", "INCONCLUSIVE", "TOOLKIT-GAP", "FAIL"];
-const worst = (rs: Result[]): Result => rs.reduce<Result>((a, b) => (RANK.indexOf(b) > RANK.indexOf(a) ? b : a), "PASS");
+// NO-TOOLKIT ranks below PASS: it neither fails a job nor counts as proof (the Report says which criteria it is).
+const RANK: Result[] = ["NO-TOOLKIT", "PASS", "INCONCLUSIVE", "TOOLKIT-GAP", "FAIL"];
+const worst = (rs: Result[]): Verdict["verdict"] =>
+  rs.reduce<Verdict["verdict"]>((a, b) => (b !== "NO-TOOLKIT" && RANK.indexOf(b) > RANK.indexOf(a) ? b : a), "PASS");
 
 export function decideVerdict(o: {
   criteria: Pick<Criterion, "id" | "expect">[];

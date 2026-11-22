@@ -34,6 +34,7 @@ import { takeTicket } from "./base.ts";
 import { ensureJobToolkit } from "./job-toolkit.ts";
 import { acquireRunLock } from "./lock.ts";
 import { type Facts, isActive, type Job, move, type Stage } from "./machine.ts";
+import { wakeWithToolkit } from "./no-toolkit.ts";
 import { HANDLERS } from "./stages/index.ts";
 import { hasToolkit } from "./stages/toolkit-info.ts";
 import { LockLost, type Proposal, RoleFailure, type StageContext } from "./stages/types.ts";
@@ -262,6 +263,7 @@ async function checkWaits(repo: string, d: Deps, print: (l: string) => void, wan
   for (const job of listJobs(repo).filter(wanted)) {
     if (job.stage === "paused" && job.pausedFrom) {
       let cleared = false;
+      let wake: Facts["wake"];
       if (job.waitFor === "backoff") cleared = !job.until || Date.now() >= Date.parse(job.until);
       // Merged, or closed without merging (Ready then sends the job to needs-human, naming the PR).
       else if (job.waitFor === "toolkit-pr") cleared = job.smith.toolkitPr !== null && (await d.forge.prState(job.smith.toolkitPr)) !== "open";
@@ -271,7 +273,19 @@ async function checkWaits(repo: string, d: Deps, print: (l: string) => void, wan
         const waiting = !!job.until && Date.now() < Date.parse(job.until);
         cleared = ci !== "pending" && (!waiting || ci === "pass" || ci === "fail");
       } else if (job.waitFor === "toolkit-ticket") cleared = !!job.toolkitTicketRef && (await d.forge.ticketClosed(job.toolkitTicketRef));
-      if (cleared) await moveJob(repo, job, { to: job.pausedFrom, facts: { waitCleared: true }, note: `${job.waitFor} cleared` }, print);
+      // The Toolkit reached the base (kitchen/setup merged): the job takes it and goes on (no-toolkit.ts).
+      else if (job.waitFor === "no-toolkit") {
+        const w = await wakeWithToolkit(repo, d.config, job).catch((e) => {
+          print(`${job.id}  no-toolkit: ${(e as Error).message}`);
+          return { toolkit: false } as const;
+        });
+        if (w.toolkit) {
+          cleared = true;
+          wake = w.facts;
+        }
+      }
+      if (cleared)
+        await moveJob(repo, job, { to: job.pausedFrom, facts: { waitCleared: true, ...(wake ? { wake } : {}) }, note: `${job.waitFor} cleared` }, print);
     } else if (job.stage === "needs-info" && (await d.source.replies(job)).length) {
       await moveJob(repo, job, { to: "intake", facts: { replied: true }, note: "the author replied" }, print);
     } else if (job.stage === "done" && job.pr !== null) {

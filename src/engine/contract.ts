@@ -30,6 +30,12 @@ const segmentsOf = (c: Criterion): ToolkitSegment[] => {
   }
 };
 
+/** A criterion whose proof drives the running app (a toolkit segment): it needs a Toolkit (ADR 0010). */
+export const needsApp = (c: Criterion): boolean => segmentsOf(c).length > 0;
+
+/** The criteria a job can prove: all of them with a Toolkit, only the test/cmd ones without. */
+export const provable = (criteria: Criterion[], toolkit: boolean): Criterion[] => (toolkit ? criteria : criteria.filter((c) => !needsApp(c)));
+
 /** Feature drives the contract names, each with the args of its first use (for `toolkit check --feature`). */
 export function namedDrives(criteria: Criterion[]): Map<string, Record<string, string>> {
   const out = new Map<string, Record<string, string>>();

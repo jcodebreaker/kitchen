@@ -46,7 +46,8 @@ export const intake: StageHandler = async (ctx) => {
     .split(/[\s,]+/)
     .filter((s): s is "ui" | "security" => s === "ui" || s === "security");
   if (!decision) return { to: "needs-info", facts: {}, note: `intake.md has no DECISION line (${h.DECISION ?? "missing"})` };
-  const view = hasToolkit(ctx.job) ? await toolkitView(ctx.job, ctx.repo) : { primitives: [], drives: {} };
+  const noToolkit = !hasToolkit(ctx.job);
+  const view = noToolkit ? { primitives: [], drives: {} } : await toolkitView(ctx.job, ctx.repo);
   // The ticket's requirements, which the criteria (inline here, or the spec's) must cover: spec-lint rule 7.
   const requirements = parseRequirements(r.text);
   const criteria =
@@ -57,13 +58,17 @@ export const intake: StageHandler = async (ctx) => {
           protected: ctx.config.protected,
           requirements,
           testLayout: testLayout(ctx.repo, ctx.config.test_cmd),
+          noToolkit,
         })
       : undefined;
+  // No Toolkit (ADR 0010): a criterion that drives the app pauses the job before anything is built, unless the person chose checks only.
+  const needsApp = criteria?.needsApp ?? [];
+  const waits = noToolkit && criteria?.ok && decision === "ACCEPT" && needsApp.length > 0 && !ctx.job.checksOnly;
   // spec-lint rule 3 (c): a negative no earlier step backs must be false on the base, and a regression guard must
   // hold there. The inline criteria run on the base now (the worktree at the base, a fresh app); build reuses the
   // result for the same criteria.
-  const guards = criteria?.ok ? guardCriteria(criteria.criteria, requirements) : [];
-  if (criteria?.ok && decision === "ACCEPT" && (criteria.baseNegatives.length || guards.length)) {
+  const guards = criteria?.ok ? guardCriteria(criteria.criteria, requirements).filter((g) => !needsApp.includes(g)) : [];
+  if (criteria?.ok && decision === "ACCEPT" && !waits && (criteria.baseNegatives.length || guards.length)) {
     const job = await ensureWorktree(ctx.repo, ctx.refresh());
     const b = await runBaseCheck(ctx, job, criteria.criteria);
     const why = [...baseNegativeProblems(criteria.baseNegatives, b, guards), ...guardBaseProblems(guards, b)];
@@ -80,12 +85,24 @@ export const intake: StageHandler = async (ctx) => {
     writeAtomic(path.join(ctx.jobDir, "intake-refused.md"), `REASON: ${refusal}\n\n${r.text}`);
   }
   if (decision === "NEEDS-INFO") await ctx.source.ask(ctx.job, { key: `ask/m${ctx.job.moves}`, text: h.QUESTION ?? h.REASON ?? r.text });
-  const to = decision === "REJECT" ? "rejected" : decision === "NEEDS-INFO" ? "needs-info" : risk !== "low" ? "spec" : kind === "bug" ? "repro" : "build";
+  if (waits) ctx.log(`no Toolkit, and ${needsApp.join(", ")} drive${needsApp.length === 1 ? "s" : ""} the app: waiting for kitchen toolkit build`);
+  const to = waits
+    ? "paused"
+    : decision === "REJECT"
+      ? "rejected"
+      : decision === "NEEDS-INFO"
+        ? "needs-info"
+        : risk !== "low"
+          ? "spec"
+          : kind === "bug"
+            ? "repro"
+            : "build";
   return {
     to,
     facts: {
       intake: { decision, kind, risk, surfaces, requirements: requirements.length, criteria: criteria && { ok: criteria.ok, reason: criteria.reason } },
       why: h.QUESTION ?? h.REASON,
+      ...(noToolkit ? { noToolkit: { needsApp, highRisk: false } } : {}),
     },
   };
 };
