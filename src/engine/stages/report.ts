@@ -86,6 +86,15 @@ async function factsOf(repoDir: string, jobDir: string, job: Job, head: string, 
   const rows = verdictRows(vText);
   const rRound = [...rs].reverse().find((r) => fs.existsSync(path.join(roundDir(jobDir, r), "review.json")));
   const rev = rRound !== undefined ? (JSON.parse(fs.readFileSync(path.join(roundDir(jobDir, rRound), "review.json"), "utf8")) as ReviewJson) : null;
+  const where = (x: ReviewJson["findings"][number]) =>
+    [x.at ? `${x.at.file}:${x.at.line}` : "", x.requirement ?? "", x.evidence.join(" ")].filter(Boolean).join(" · ");
+  const earlier = rs
+    .filter((r) => r !== rRound && fs.existsSync(path.join(roundDir(jobDir, r), "review.json")))
+    .flatMap((r) =>
+      (JSON.parse(fs.readFileSync(path.join(roundDir(jobDir, r), "review.json"), "utf8")) as ReviewJson).findings
+        .filter((x) => x.blocks)
+        .map((x) => ({ round: r, x })),
+    );
   const blockingRounds = rs.filter((r) =>
     /^REVIEW: BLOCKING/m.test(
       fs.existsSync(path.join(roundDir(jobDir, r), "review.md")) ? fs.readFileSync(path.join(roundDir(jobDir, r), "review.md"), "utf8") : "",
@@ -126,12 +135,23 @@ async function factsOf(repoDir: string, jobDir: string, job: Job, head: string, 
     review: {
       lenses: rev?.lenses ?? [],
       blockingRounds,
+      earlier: earlier.map(({ round, x }) => ({
+        round,
+        id: x.id,
+        lenses: x.lenses,
+        blocks: true,
+        confidence: x.confidence,
+        where: where(x),
+        title: x.title,
+        why: x.why,
+        ...(dismissed.has(x.id) ? { dismissed: dismissed.get(x.id) } : {}),
+      })),
       findings: (rev?.findings ?? []).map((x) => ({
         id: x.id,
         lenses: x.lenses,
         blocks: x.blocks,
         confidence: x.confidence,
-        where: [x.at ? `${x.at.file}:${x.at.line}` : "", x.requirement ?? "", x.evidence.join(" ")].filter(Boolean).join(" · "),
+        where: where(x),
         title: x.title,
         why: x.why,
         ...(x.downgraded ? { downgraded: x.downgraded } : {}),
@@ -164,6 +184,8 @@ function factsText(f: ReportFacts, entries: ReportEntry[], shots: Map<string, st
     ),
     "",
     `Review lenses: ${f.review.lenses.join(", ") || "none"}; sent back to build ${f.review.blockingRounds} time(s).`,
+    ...(f.review.earlier ?? []).map((x) => `- round ${x.round} blocked: ${x.id} [${x.lenses.join("+")}] ${x.where}: ${x.title}${x.why ? ` — ${x.why}` : ""}`),
+    "Last round's findings:",
     ...f.review.findings.map(
       (x) =>
         `- ${x.id} [${x.blocks ? "BLOCKS" : "note"}, ${x.confidence}, ${x.lenses.join("+")}] ${x.where}: ${x.title}${x.why ? ` — ${x.why}` : ""}${x.downgraded ? ` (kept as a note: ${x.downgraded})` : ""}`,

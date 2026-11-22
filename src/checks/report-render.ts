@@ -64,7 +64,8 @@ export type ReportFacts = {
   humanMustCheck: boolean;
   requirements: RequirementRow[];
   criteria: CriterionRow[];
-  review: { lenses: string[]; findings: FindingRow[]; blockingRounds: number };
+  /** `earlier`: what blocked in earlier rounds (the findings that sent the job back to build), oldest first. */
+  review: { lenses: string[]; findings: FindingRow[]; blockingRounds: number; earlier?: (FindingRow & { round: number })[] };
   /** seed-diff.md and the patch of those files, or null. */
   seeds: { files: string[]; patch: string } | null;
   costs: StageCost[];
@@ -383,6 +384,15 @@ function reviewSection(f: ReportFacts): string {
   }${blocking.length ? `<b>${blocking.length} blocking</b>, ` : ""}${r.findings.length - blocking.length} note(s). A finding blocks only when it is demonstrable (a line at HEAD, a requirement, stamped evidence) and not low confidence.</p>${
     rows.length
       ? `<table><thead><tr><th>id</th><th>lens</th><th></th><th>confidence</th><th>where</th><th>finding</th></tr></thead><tbody>${rows.join("")}</tbody></table>`
+      : ""
+  }${
+    r.earlier?.length
+      ? `<p class="muted">What blocked earlier rounds (the builder fixed these, then review ran again):</p><ul>${r.earlier
+          .map(
+            (x) =>
+              `<li>round ${x.round} · <code>${esc(x.id)}</code> ${esc(x.lenses.join("+"))} · <code>${esc(x.where)}</code> · <b>${esc(x.title)}</b>${x.why ? `: ${esc(x.why)}` : ""}${x.dismissed ? ` <span class="muted">(dismissed: ${esc(x.dismissed)})</span>` : ""}</li>`,
+          )
+          .join("")}</ul>`
       : ""
   }</section>`;
 }

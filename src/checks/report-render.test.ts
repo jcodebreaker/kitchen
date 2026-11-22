@@ -123,6 +123,27 @@ test("a human-check section hidden in a comment doesn't count; refusal runs on w
   assert.equal(renderRefusal(`${SRC}<!-- {{e99}} -->`, entries, HEAD, false), null, "an id the page won't show is not cited");
 });
 
+test("the review section lists what blocked earlier rounds", () => {
+  const earlier = [
+    {
+      round: 1,
+      id: "security-1-1",
+      lenses: ["security"],
+      blocks: true,
+      confidence: "high",
+      where: "server.js:264",
+      title: "description rendered raw",
+      why: "XSS",
+    },
+  ];
+  const r = renderReport({ src: SRC, facts: facts({ review: { ...facts().review, earlier } }), entries, file });
+  assert.ok("html" in r);
+  assert.match(
+    r.html,
+    /What blocked earlier rounds.*round 1 · <code>security-1-1<\/code> security · <code>server\.js:264<\/code> · <b>description rendered raw<\/b>: XSS/,
+  );
+});
+
 test("a cited id outside the verdict's and views' ids renders with a warning", () => {
   const src = `${SRC.replace("{{ e3 }}", "")}<section id="notes"><p>{{e3}}</p></section>`;
   const r = renderReport({ src, facts: facts(), entries, file, citable: ["e2"] });
