@@ -90,6 +90,8 @@ export async function runRole(
   ctx.log(`${o.role}: ${ctx.agent.name} ${model} (${o.tier}) → ${o.file}`);
   const r = await ctx.agent.run(req);
   const secs = (Date.now() - t0) / 1000;
+  // A wrapper (a scripted adapter passing a real run through) reports what really ran.
+  const ran = r.ran ?? { adapter: ctx.agent.name, model };
   // A bridge killed with its agent's group (SIGKILL: no exit handler) leaves the checks
   // and Toolkit calls it started running; they must not outlive the stage (src/procs.ts).
   for (const g of await reapGroups(procsDirOf(ctx.jobDir), { deadOwners: true })) {
@@ -108,8 +110,8 @@ export async function runRole(
     role: o.role,
     stage: job.stage,
     round: job.round,
-    adapter: ctx.agent.name,
-    model,
+    adapter: ran.adapter,
+    model: ran.model,
     sessionId: r.sessionId,
     ok: r.ok && !!r.outPath,
     line: r.line,
@@ -125,8 +127,8 @@ export async function runRole(
     key: `${job.id}/${key}/${run.ok ? "ok" : `fail-${t0}`}`,
     result: run.ok ? "ok" : r.rateLimited ? "rate-limited" : "error",
     role: o.role,
-    agent: ctx.agent.name,
-    model,
+    agent: ran.adapter,
+    model: ran.model,
     secs,
     usd: r.usage?.usd,
     detail: { line: r.line, sessionId: r.sessionId, error: r.error, inTok: r.usage?.inTok, outTok: r.usage?.outTok },

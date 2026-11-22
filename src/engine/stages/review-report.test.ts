@@ -88,6 +88,17 @@ test("cost and time per stage from the ledger; evidence folders past keep days; 
     { stage: "build", round: 1, secs: 120, usd: 0.3, roles: "builder (sonnet)" },
     { stage: "gate", round: 1, secs: 30, usd: 0, roles: "" },
   ]);
+  // The adapter that ran (a scripted wrapper passing a real Claude run through records claude + its model); the fake adapter alone reads (fake).
+  const named = stageCosts(
+    [
+      l("2026-11-22T10:01:00Z", "agent", "build", { role: "builder", agent: "claude", model: "sonnet", usd: 0.3 }),
+      l("2026-11-22T10:01:30Z", "agent", "build", { role: "checker", agent: "fake", model: "fake" }),
+      l("2026-11-22T10:02:00Z", "move", "build", { result: "done" }),
+    ],
+    "j",
+    "2026-11-22T10:00:00Z",
+  );
+  assert.equal(named[0].roles, "builder (claude sonnet), checker (fake)");
   const now = new Date("2026-11-22T00:00:00Z");
   assert.deepEqual(
     expired(

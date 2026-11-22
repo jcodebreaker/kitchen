@@ -48,6 +48,8 @@ export type AgentResult = {
   /** Absolute path of the role's file, when the agent wrote it. The engine copies it, then deletes it. */
   outPath?: string;
   error?: string;
+  /** What ran: the real adapter and model. A scripted wrapper that passes a real adapter's run through keeps it, so the ledger and the report name the agent that did the work. */
+  ran?: { adapter: string; model: string };
 };
 
 export interface AgentAdapter {

@@ -57,7 +57,9 @@ export function stageCosts(lines: LedgerLine[], job: string, startedAt: string, 
     const r = rows.get(`${a.stage}/${a.round}`);
     if (!r) continue;
     r.usd += a.usd ?? 0;
-    r.set.add(`${a.role}${a.model ? ` (${a.model})` : ""}`);
+    // `builder (claude sonnet)`; the fake adapter's runs read `builder (fake)`.
+    const who = [a.agent, a.model].filter((x, i, xs) => !!x && xs.indexOf(x) === i).join(" ");
+    r.set.add(`${a.role}${who ? ` (${who})` : ""}`);
   }
   return [...rows.values()].map(({ set, ...r }) => ({ ...r, secs: Math.round(r.secs), usd: Math.round(r.usd * 10000) / 10000, roles: [...set].join(", ") }));
 }

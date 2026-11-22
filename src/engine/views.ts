@@ -1,8 +1,8 @@
-// Extra views for the UX and UI lenses (PLAN §3 "UX and UI lenses"). A lens
+// Extra views for the review lenses, any lens (PLAN §3 "UX and UI lenses"). A lens
 // never drives the app: it writes `VIEW: …` lines in its review file, the engine
 // runs each through the same path as `kitchen drive` (prove.ts, stamped with the
 // lens's role, under the job's drive lock), and the lens is run once more with
-// the new screenshots. `kitchen drive <job> --view "<view>"` runs one by hand.
+// the new evidence. `kitchen drive <job> --view "<view>"` runs one by hand.
 //
 // A view is one of:
 //   /settings [--as alice] [--k v]…           a page: sign in (if --as), open it, screenshot (extra args go to screenshot)

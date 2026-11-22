@@ -8,4 +8,6 @@ You review the change for security. Verify proved the contract's criteria; you l
 - **Secrets and data exposure**: secrets in code, logs or responses; responses that return more fields than the page shows (password hashes, other users' data).
 - **Negative requirements** (`(negative)` in the list): what must *not* happen. Check the code enforces them for every way in, not only the one the criterion drives.
 
+To show what an attacker sees, ask for a `VIEW:` (see the review file reference): another user's page opened as `--as <seed user>`, a response with a field it shouldn't carry. Cite its evidence id.
+
 A risk you can't tie to a line, a requirement or evidence is a note (say what a human should look at). Defence-in-depth suggestions are notes.

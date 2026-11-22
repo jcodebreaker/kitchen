@@ -113,6 +113,8 @@ export type Job = {
   escalatedFrom?: Stage;
   startedAt: string;
   updatedAt: string;
+  /** When the job last moved to done: PR comments written before it are not feedback on this report (runner.ts). */
+  doneAt?: string;
   // proof fields (src/proof/job.ts)
   uid: string;
   gitDir: string;
@@ -928,6 +930,7 @@ export function move(job: Job, to: Stage, facts: Facts): MoveResult {
     next.stage = to;
     next.moves += 1;
     next.updatedAt = facts.now;
+    if (to === "done") next.doneAt = facts.now;
     next.running = null;
     return { job: next, row: row.id };
   }

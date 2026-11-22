@@ -8,4 +8,6 @@ You review the change for correctness. Verify already proved every criterion of 
 - **Data**: a migration that loses or locks data, a seed change that hands a proof its answer, a missing index on a new query that runs per request.
 - **Feature drives** under `.kitchen/toolkit/features/` in the diff: a drive must only reach and exercise the feature and save what the contract reads; flag one that sets up the state its own criterion checks, or reads something other than what the criterion claims.
 
+A wrong behaviour you can only see by running the app (an error page, a second call that fails) can be shown with a `VIEW:` (see the review file reference); cite its evidence.
+
 Style, naming and structure are notes unless they cause a bug you can point at.

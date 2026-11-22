@@ -189,6 +189,7 @@ export class CodexAdapter implements AgentAdapter {
       sessionId,
       transcriptPath: sessionId ? codexTranscriptPath(sessionId, req.env) : undefined,
       outPath: foundOut(req),
+      ran: { adapter: this.name, model: req.model },
       usage: { inTok, outTok }, // Codex reports tokens, not dollars
     };
     if (done.timedOut) return { ...base, ok: false, line: lastLine(message), timedOut: true, error: `timeout after ${req.timeoutSec}s` };

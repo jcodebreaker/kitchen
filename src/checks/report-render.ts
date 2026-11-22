@@ -402,7 +402,7 @@ function seedsSection(f: ReportFacts): string {
   return `<section id="seeds"><h2>Seed data and migrations</h2><p>This change touches what every proof's app is built from: ${f.seeds.files.map((x) => `<code>${esc(x)}</code>`).join(", ")}. Check nothing here seeds an answer a proof reads.</p><pre class="diff">${esc(f.seeds.patch)}</pre></section>`;
 }
 
-function costSection(f: ReportFacts): string {
+export function costSection(f: Pick<ReportFacts, "costs">): string {
   const t = f.costs.reduce((a, c) => ({ secs: a.secs + c.secs, usd: a.usd + c.usd }), { secs: 0, usd: 0 });
   const mm = (s: number) => (s >= 90 ? `${Math.round(s / 60)} min` : `${Math.round(s)} s`);
   return `<section id="cost"><h2>Cost and time</h2><table><thead><tr><th>stage</th><th>round</th><th>time</th><th>cost</th><th>agents</th></tr></thead><tbody>${f.costs

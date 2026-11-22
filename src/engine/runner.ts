@@ -269,7 +269,8 @@ async function prCommentsBack(repo: string, job: Job, d: Deps, print: (l: string
   const unseen = (await d.forge.reviewComments(job.pr)).filter((c) => !job.filed.includes(`pr-comment/${c.id}`) && !c.body.includes(KITCHEN_MARKER));
   if (!unseen.length) return;
   const head = await headTime(job).catch(() => "");
-  const since = [job.updatedAt, head].filter((t) => Number.isFinite(Date.parse(t))).reduce((a, t) => (Date.parse(t) > Date.parse(a) ? t : a), job.updatedAt);
+  const done = job.doneAt ?? job.updatedAt;
+  const since = [done, head].filter((t) => Number.isFinite(Date.parse(t))).reduce((a, t) => (Date.parse(t) > Date.parse(a) ? t : a), done);
   const before = unseen.filter((c) => !(Date.parse(c.at) > Date.parse(since)));
   const fresh = unseen.filter((c) => !before.includes(c));
   for (const c of before) {

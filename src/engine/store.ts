@@ -124,6 +124,7 @@ export const JobSchema = z.looseObject({
   escalatedFrom: Stage.optional(),
   startedAt: z.string(),
   updatedAt: z.string(),
+  doneAt: z.string().optional(),
   uid: z.string().min(1),
   gitDir: z.string(),
   toolkitBin: z.string(),

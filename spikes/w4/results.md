@@ -82,3 +82,17 @@ Each finding of the independent W4 review, the fix (PLAN "Changes from the Wave 
 Claude spend for the review round: **$0.365** (budget about $2). No Codex (quota until 2026-12-21).
 
 `npm test` 329/329 (one file at a time), typecheck and lint clean.
+
+## Review round 2 (2026-11-22): small fixes
+
+| Finding | Fix | Proof |
+|---|---|---|
+| A requirement-only finding could block on any HEAD-stamped evidence (e.g. a Verify PASS of another criterion) | with `requirement:` and no `at:`, every cited id must be this lens's own view (`view:<lens>`, run as `reviewer-<lens>`) or a run stamped for a criterion whose `covers:` includes that requirement; otherwise a note "evidence eN doesn't show Rn" | `findings.test.ts` (own view, another lens's view, a view:code stamped by another role, C1's run for R2, mixed ids, `at:` carries it); `scripted.ts`: the security lens's R1 finding citing C3's Verify run (e73, C3 covers R2) is a note with that reason |
+| Only ux/ui could ask for views, so runtime-only code/security findings could never be demonstrable | every lens's `VIEW:` lines run (views.ts, stamped `view:<lens>`); every lens gets the Toolkit block; the second pass gets every file of the view's runs, not only screenshots; `roles/_review.md` has the shared "Asking for a view" section, code/security roles point to it | `scripted.ts` (lenses now code, security, ux, ui): the security lens's `VIEW: /settings --as alice` ran (e81–e83, `reviewer-security`, `view:security`), the lens ran again, its R2 finding citing them blocks and reaches round 2's builder |
+| Re-raise matching muted a different finding within ±3 lines | same lens and the same file:line ±1, or the same requirement and a similar title (≥ 50% of the longer title's significant words shared) | `findings.test.ts` (±1 muted, 3 lines away not, similar title on R1 muted even on another line, another title or requirement or lens not); `scripted.ts` round 2: the re-raised F6 is still a note |
+| PR-comment cutoff used `updatedAt` (any later move or write shifts it) | `doneAt` stamped by `move()` on every move to done (job.json schema); the runner's cutoff is `doneAt` (falls back to `updatedAt` for older jobs) | `machine.test.ts` (stamped, kept through done → build, restamped on the next done); `scripted.ts`: "before the job was done (<doneAt>)" |
+| The cost table said `(fake)` for a wrapper's real Claude runs | adapters return `ran: { adapter, model }`; a scripted wrapper passing a real run through keeps it; role.ts logs that (ledger `agent`/`model`, `agentRuns`); the table reads `builder (claude sonnet)` | `review-report.test.ts`; `reports/xss-planted.*` re-rendered without an agent call: the saved job's ledger (scratch) with each `fake` line set to claude + `modelFor(role)` from xss-agent.ts's fixed config (strong sonnet, medium haiku), `stageCosts` + `costSection` swapped into the saved report.html; costs and times unchanged (the json's), only labels; the HTML's cost table now also has the report stage's own $0.004 (it was rendered before that run) |
+
+| run | result | wall | cost |
+|---|---|---|---|
+| `scripted.ts` | 38/38 | 150 s | $0 (3 new checks: security VIEW stamped and re-run, its own-view finding blocks, the C3-evidence finding is a note; the doneAt cutoff is in the before-done check) |
