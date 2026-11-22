@@ -1,0 +1,18 @@
+{
+  "name": "kitchen",
+  "version": "0.1.0",
+  "description": "Kitchen turns tickets into pull requests proven by driving your real app, with Claude Code or Codex doing the judgment.",
+  "author": {
+    "name": "Kitchen contributors"
+  },
+  "homepage": "https://github.com/jcodebreaker/kitchen",
+  "repository": "https://github.com/jcodebreaker/kitchen",
+  "license": "Apache-2.0",
+  "keywords": [
+    "kitchen",
+    "pull-requests",
+    "verification",
+    "agents",
+    "software-factory"
+  ]
+}
