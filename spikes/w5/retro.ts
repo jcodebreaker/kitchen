@@ -119,7 +119,8 @@ for (const [i, job] of ids.entries()) {
     fs.writeFileSync(path.join(rd, "review.json"), JSON.stringify({ head: "h1", round: 1, lenses: ["code", "security"], findings, stats: [] }));
   }
   await updateJob(dir, job, (j) => {
-    j.stage = escalated || i === 2 || i === 3 ? "needs-human" : "done";
+    // The PRs (jobs 2 and 3) are on done jobs: the retro reads replies of done jobs only (retro.lookback_days).
+    j.stage = escalated ? "needs-human" : "done";
     j.pr = i === 2 || i === 3 ? 10 + i : null;
     return j;
   });
@@ -127,11 +128,14 @@ for (const [i, job] of ids.entries()) {
 // Dismissals: two by hand, one trusted and one untrusted reply on PRs (fake forge), three on security.
 kitchen("dismiss", ids[0], "code-1-1", "--reason", "a rename is not worth a round");
 kitchen("dismiss", ids[1], "code-1-1");
-for (const j of ids.slice(0, 3)) kitchen("dismiss", j, "security-1-1");
+for (const j of ids.slice(0, 3)) kitchen("dismiss", j, "security-1-1", "--reason", "the variable is never logged or sent");
+const noReason = kitchen("dismiss", ids[3], "security-1-1");
 editForge((s) => {
   s.reviewComments.push(
     { id: "c1", pr: 12, author: "maintainer-alice", association: "NONE", body: "code-1-1 is not useful", at: "2026-11-22T09:30:00Z" },
     { id: "c2", pr: 13, author: "drive-by", association: "NONE", body: "code-1-1 not useful", at: "2026-11-22T09:31:00Z" },
+    // A trusted thumbs-down on a security finding, with no reason: not a dismissal.
+    { id: "c3", pr: 13, author: "maintainer-alice", association: "NONE", body: "👎 security-1-1", at: "2026-11-22T09:32:00Z" },
   );
 });
 
@@ -159,6 +163,15 @@ check(
   forgeDis.map((l) => `${l.job} ${l.detail?.reason}`).join("; "),
 );
 check("security is never muted, after 3 dismissals", !st1.mutes.some((m) => m.lens === "security"));
+check(
+  "a security finding is dismissed only with a reason: kitchen dismiss refuses without one, and so does the retro for a PR reply",
+  noReason.code !== 0 &&
+    /needs a reason|only with a reason/.test(noReason.out) &&
+    !led1.some((l) => l.event === "finding-dismissed" && l.job === ids[3]) &&
+    /security-1-1 \(security\) not dismissed: a security finding needs a reason/.test(run1.out) &&
+    led1.filter((l) => l.event === "finding-dismissed" && l.detail?.lens === "security").every((l) => !!l.detail?.reason),
+  noReason.out.trim().split("\n")[0],
+);
 const why = mutedFinding(dir, { lens: "code", title: "Rename `x` to `y`" });
 check("review's mute check: a code naming finding is a note, with the reason", !!why?.includes("kitchen retro unmute code/naming"), why ?? "");
 check(

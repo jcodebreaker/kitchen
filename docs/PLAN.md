@@ -860,3 +860,20 @@ History: all of these are now part of §2 and §3, which are the current contrac
 | `test` proofs get no app URL (W3b open) | `up`'s url is kept per slot in the job folder (`app.json`, removed by `down`); cmd/test proofs get `KITCHEN_APP_URL` |
 | Two jobs reporting at once raced on the evidence branch | `commitEvidence` under a per-repo file lock |
 | npm 0.1.0 | `files` allowlist (dist/*.js, roles, skills, toolkit-template, dashboard.html, README, LICENSE); npm drops `.gitignore` files, so init writes the template's; `kitchen --help`/`--version`; `kitchen init --skill` so `/kitchen` setup can start inside Claude Code or Codex; `kitchen bench` refuses to run from the package. Publishing is by hand: `docs/RELEASE.md` |
+
+## Changes from the Wave 5 review (spikes/w5/results.md "Review round")
+
+| Finding | Change |
+|---|---|
+| M1: the dashboard spike rotted at the merge (it reused W4's scripted agent, whose round 3 became "VERDICT: BLOCKING" with no finding, so its jobs ended `review-unparseable`) | `spikes/w5/dashboard-agent.ts`: its own scripted agent (W4's script frozen at 828a05d). Every W5 spike re-run on main; screenshots go to the scratch folder unless `--update-screens` |
+| M2: keyword muting silenced security-relevant code findings | A `category:` line in the findings format (`roles/_review.md`, each lens role): security, correctness, performance, naming, style, types, tests, docs, ux, ui; parsed into the finding, keywords only as the fallback (security terms first). A **security veto** for every lens (`securityVeto`, `src/retro/categories.ts`): a finding that is `security` or mentions auth, token, session, permission, ownership, inject, sql, xss, csrf, leak, secret, password, credential, "delete another" or access is never muted and its dismissals never count toward a mute. `never_mute` names lenses or categories |
+| M3: `dismissedIn` took every id in the comment | `dismissalsIn`: only ids in the same sentence (of a line) as a trigger ("not useful", a sentence starting with 👎) are dismissed; the rest of the comment is returned. The runner drops a comment only when it is purely a dismissal (a thank-you aside); otherwise the rest goes to the builder as feedback. A security finding (security lens, or `category: security`) is dismissed only with an explicit reason (after "because"/"since"/"reason:" or a colon after "not useful"; `kitchen dismiss --reason`), recorded with it |
+| GitHub lesson drafts deduped by a marker anyone could paste | `gh issue list --author @me`: only issues Kitchen's gh user opened |
+| `migrate` inserted the version line by text, before `---`/`%YAML`, outside flow maps, and lost CRLF | The migration is placed by the parsed YAML document (value replaced in place, or the first key of the top-level map, block or flow); CRLF kept; a top level that isn't a map is refused |
+| Retro only after the drain loop (a paused job keeps a runner alive for days) | Checked every tick too, one at a time beside the jobs |
+| The retro read every PR's comments forever | Only done jobs of the last `retro.lookback_days` (30) |
+| Measures: wall clock only; "needs-info needs-info"; quadratic list building | Agent seconds (sum of agent runs) beside wall clock, per job and path; the reason code is printed only when it differs from the stage; lists built in place |
+| Dashboard: CSP in a meta tag, no X-Frame-Options; cards showed `#001` | CSP (with `frame-ancestors 'none'`) and `X-Frame-Options: DENY` as HTTP headers on every response; cards show the full job id, "last moved N ago" (server clock) and the last step (a proof with its result and drives, an agent, a move) |
+| RELEASE.md: `npm version 0.1.0` on 0.1.0 fails; `git commit -am` with nothing to commit fails | First release: publish and tag only; later releases: `npm version patch`, commit, publish, tag |
+| No NOTICE | `NOTICE`: pstack's MIT notice for the ported Toolkit shape and roles; zazencodes credited for ideas only (GPL, no code); in the package |
+| `kitchen <cmd> --help` ran the command | It prints that command's usage and runs nothing |

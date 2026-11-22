@@ -129,9 +129,9 @@ Risk decides how heavy the path is: low-risk tickets get inline criteria and a l
 
 ## Learning: report, dashboard, retro
 
-- `kitchen report` prints the measures Kitchen keeps from its first run: merge-ready rate over tickets taken in, first-pass verdict rate, rounds per job, escalation reasons, Toolkit gaps per job, INCONCLUSIVE and flake rate per drive, time and cost per job and per risk path, findings dismissed per review lens, primitive PRs per job. `--json` for the numbers.
-- `kitchen dashboard` serves the board (stage columns, each job's risk, round, verdict chips, cost, time, Report link) on 127.0.0.1 only, read-only. Light and dark.
-- **Retro.** Every 5 finished jobs (`retro.every_jobs`), Kitchen looks back. A review finding you dismiss (`kitchen dismiss <job> <finding> --reason "…"`, or a "not useful" reply naming the finding on the PR) counts against its lens and category; after 3 (`retro.mute_after`) that category stops blocking for that lens (it is still shown as a note). Security findings are never muted. `kitchen retro status` lists mutes; `kitchen retro unmute <lens>/<category>` lifts one. The retro also proposes up to 3 lesson tickets (a lint rule, a check, a Toolkit fix, or an AGENTS.md note) as **drafts**: Kitchen never works on its own proposal until you approve it (`kitchen retro approve <n>`, or on GitHub, add the `kitchen` label to the issue). It never edits Kitchen's own prompts.
+- `kitchen report` prints the measures Kitchen keeps from its first run: merge-ready rate over tickets taken in, first-pass verdict rate, rounds per job, escalation reasons, Toolkit gaps per job, INCONCLUSIVE and flake rate per drive, time (agent time and wall clock) and cost per job and per risk path, findings dismissed per review lens, primitive PRs per job. `--json` for the numbers.
+- `kitchen dashboard` serves the board (stage columns, each job's full id, risk, round, when it last moved and what it last did, verdict chips, cost, time, Report link) on 127.0.0.1 only, read-only. Light and dark.
+- **Retro.** Every 5 finished jobs (`retro.every_jobs`), Kitchen looks back. A review finding you dismiss (`kitchen dismiss <job> <finding> --reason "…"`, or a "not useful" reply naming the finding on the PR, in the same sentence) counts against its lens and its category (each finding has one: security, correctness, performance, naming, style, types, tests, docs, ux, ui); after 3 (`retro.mute_after`) that category stops blocking for that lens (it is still shown as a note). Security findings are never muted, in any lens: neither one in the `security` category nor one that mentions auth, a token, a session, permissions, ownership, injection, SQL, XSS, CSRF, a leak, a secret, a password, a credential or access. A security finding is dismissed only with a reason ("security-1-2 is not useful because …", or `--reason`). The rest of a PR comment that dismisses something is still feedback; a comment that only dismisses is not. PR replies are read for jobs done in the last 30 days (`retro.lookback_days`). `kitchen retro status` lists mutes; `kitchen retro unmute <lens>/<category>` lifts one. The retro also proposes up to 3 lesson tickets (a lint rule, a check, a Toolkit fix, or an AGENTS.md note) as **drafts**: Kitchen never works on its own proposal until you approve it (`kitchen retro approve <n>`, or on GitHub, add the `kitchen` label to the issue). It never edits Kitchen's own prompts.
 
 ## Configuration
 
@@ -168,7 +168,7 @@ Every key, with its default:
 | `risk_floor` | `{ diff_lines_medium: 300, diff_lines_high: 1000 }` | diff size that raises risk |
 | `automerge` | `off` | reserved: v0.1 never merges, whatever this says |
 | `protected` | `[kitchen.yaml]` | files no builder may change |
-| `retro` | `{ every_jobs: 5, mute_after: 3, max_tickets: 3, never_mute: [security] }` | see Retro above |
+| `retro` | `{ every_jobs: 5, mute_after: 3, max_tickets: 3, never_mute: [security], lookback_days: 30 }` | see Retro above; `never_mute` names lenses or categories |
 | `backoff` | `{ base_sec: 60, max_sec: 3600 }` | waits after a rate limit |
 | `evidence_keep_days` | `30` | Reports older than this are pruned from `kitchen-evidence` |
 | `maintain_churn_lines` | `300` | changed lines in feature code that start `kitchen toolkit maintain` |

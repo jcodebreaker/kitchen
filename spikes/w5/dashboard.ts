@@ -1,8 +1,9 @@
 // W5 dashboard spike: real fixture jobs from a quick scripted run, the dashboard served
 // by the real `kitchen dashboard`, screenshots in light and dark.
-//   node spikes/w5/dashboard.ts [scratch]
+//   node spikes/w5/dashboard.ts [scratch] [--update-screens]
+// Screenshots go to <scratch>/screens; only --update-screens overwrites the committed ones.
 // A copy of fixture A with its planted dark-mode bug, its real Toolkit (Docker, Postgres),
-// the W4 scripted agent (no model), the fake forge, concurrency 2. Three tickets:
+// its own scripted agent (dashboard-agent.ts, no model), the fake forge, concurrency 2. Three tickets:
 //   - the W4 dark-mode ticket (honest roles; review blocks once, round 2, report, done)
 //   - the same bug with `scenario: backoff` (the builder is rate limited once: paused, then on)
 //   - `scenario: inconclusive` (Verify INCONCLUSIVE twice: a Toolkit ticket, paused until the
@@ -18,15 +19,16 @@ import { readFakeForge } from "../../src/forge/forge.ts";
 import { CLI, check, finish, makeFixtureRepo, sleep, ticket } from "../w3a/lib.ts";
 
 const HERE = import.meta.dirname;
-const root = path.resolve(process.argv[2] ?? path.join(HERE, ".work"));
+const args = process.argv.slice(2);
+const root = path.resolve(args.find((a) => !a.startsWith("--")) ?? path.join(HERE, ".work"));
 fs.mkdirSync(root, { recursive: true });
-const SCREENS = path.join(HERE, "screens");
+const SCREENS = args.includes("--update-screens") ? path.join(HERE, "screens") : path.join(root, "screens");
 fs.mkdirSync(SCREENS, { recursive: true });
 const CHROME = process.env.CHROME_BIN ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const PORT = 7393;
 const yaml = `concurrency: 2
 round_limit: 4
-agent: { tool: fake, script: ${JSON.stringify(path.join(HERE, "..", "w4", "fake-agent.ts"))} }
+agent: { tool: fake, script: ${JSON.stringify(path.join(HERE, "dashboard-agent.ts"))} }
 checks:
   - { name: syntax, run: "node --check server.js" }
 forge: { kind: fake }
@@ -94,6 +96,11 @@ try {
     done.map((j) => `${j.id.slice(0, 3)} ${j.criteria.map((c) => `${c.id}:${c.result}`).join(" ")} ${j.review?.result} ${j.report}`).join("; "),
   );
   check(
+    "every card carries its full job id, when it last moved and what it last did",
+    d.jobs.every((j) => /^\d{3}-/.test(j.id) && Number.isFinite(Date.parse(j.movedAt)) && !!j.step),
+    d.jobs.map((j) => `${j.id} moved ${j.movedAt} · ${j.step}`).join("; "),
+  );
+  check(
     "the summary has the §0 numbers",
     d.summary.takenIn >= 3 && d.summary.proofRuns > 0,
     JSON.stringify({ ...d.summary, escalations: d.summary.escalations.length }),
@@ -108,6 +115,13 @@ try {
       `${rep.status}`,
     );
   }
+  const page = await fetch(`${base}/`);
+  const csp = page.headers.get("content-security-policy") ?? "";
+  check(
+    "the page's CSP and X-Frame-Options are HTTP headers",
+    /frame-ancestors 'none'/.test(csp) && /default-src 'none'/.test(csp) && page.headers.get("x-frame-options") === "DENY",
+    `${csp} | ${page.headers.get("x-frame-options")}`,
+  );
   const post = await fetch(`${base}/data.json`, { method: "POST" });
   check("read-only: POST is refused", post.status === 405);
   const host = spawnSync("curl", ["-s", "-o", "/dev/null", "-w", "%{http_code}", "-H", "Host: attacker.example", `${base}/data.json`], {
