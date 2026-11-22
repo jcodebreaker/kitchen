@@ -7,6 +7,9 @@
 // A tiny hand-rolled JSON-RPC 2.0 server: newline-delimited messages on stdin/stdout.
 import path from "node:path";
 import readline from "node:readline";
+import type { BridgeServer } from "../agents/adapter.ts";
+import { CONTROL_PLANE } from "../agents/env.ts";
+import { kitchenHome } from "../home.ts";
 import { type DriveRequest, runDrive } from "../proof/drive.ts";
 import { DriveFormatError } from "../proof/drive-format.ts";
 import { readJob } from "../proof/job.ts";
@@ -18,6 +21,26 @@ const JOB_ID = /^[a-z0-9][a-z0-9._-]{0,80}$/;
 const PROTOCOL = "2025-06-18";
 
 export type BridgeOpts = { repo: string; job: string; role: string };
+
+/** What the engine runs this file with: `node src/cli.ts` today, `dist/cli.js` once built. */
+const CLI = path.resolve(import.meta.dirname, "..", `cli${path.extname(import.meta.filename)}`);
+
+/**
+ * How an adapter starts the bridge (AgentRequest.bridge). The env is built here,
+ * explicitly, from the engine's own env: the agent tool would otherwise hand the
+ * server its scrubbed env (Claude) or a handful of variables (Codex), and the
+ * bridge needs Docker (DOCKER_HOST/DOCKER_CONTEXT, or the default context under
+ * HOME) and KITCHEN_HOME (engine key, slots). None of it reaches the agent:
+ * the agent only sees the tools' results.
+ */
+export function bridgeServer(o: BridgeOpts, parent: NodeJS.ProcessEnv = process.env): BridgeServer {
+  const env: Record<string, string> = { KITCHEN_HOME: kitchenHome() };
+  for (const k of ["PATH", "HOME", "USER", "LANG", "TMPDIR", "TZ", ...CONTROL_PLANE, "KITCHEN_TOOLKIT_STATE"]) {
+    const v = parent[k];
+    if (v) env[k] = v;
+  }
+  return { command: process.execPath, args: [CLI, "mcp", "--job", o.job, "--role", o.role, "--repo", path.resolve(o.repo)], env };
+}
 
 type Rpc = {
   jsonrpc: "2.0";

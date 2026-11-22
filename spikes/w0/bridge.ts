@@ -2,7 +2,7 @@
 // W0 bridge spike: `kitchen mcp` (src/bridge/mcp.ts) driving fixture A, from no agent
 // (selftest, free) and from one cheap real call on each tool. Every check is an
 // expectation; exits 1 on any miss. Results: ADR 0006 "Bridge".
-//   node spikes/w0/bridge.ts selftest|claude|codex <workdir>
+//   node spikes/w0/bridge.ts selftest|claude|codex|codex-noapprove <workdir>   (the last: control without the MCP approval setting)
 // Layout under <workdir>: repo/ with .kitchen/jobs/<job>/ (engine-owned) and the job
 // worktree repo/.worktrees/<job>/ (a git copy of fixtures/a-web, the agent's cwd),
 // kitchen-home/ (KITCHEN_HOME: engine key, slots), toolkit-state/. One Postgres
@@ -14,6 +14,7 @@ import type { AgentAdapter, BridgeServer } from "../../src/agents/adapter.ts";
 import { ClaudeAdapter } from "../../src/agents/claude.ts";
 import { CodexAdapter } from "../../src/agents/codex.ts";
 import { buildAgentEnv } from "../../src/agents/env.ts";
+import { bridgeServer } from "../../src/bridge/mcp.ts";
 import { engineKey } from "../../src/home.ts";
 import { createJob, evidenceDir, readJob, sealOf } from "../../src/proof/job.ts";
 import { type Entry, verifyManifest } from "../../src/proof/manifest.ts";
@@ -21,7 +22,8 @@ import { runToolkit } from "../../src/toolkit/run.ts";
 import { acquireSlot, releaseSlot } from "../../src/toolkit/slots.ts";
 
 const [mode, workArg] = process.argv.slice(2);
-if (!["selftest", "claude", "codex"].includes(mode) || !workArg) throw new Error("usage: bridge.ts selftest|claude|codex <workdir>");
+if (!["selftest", "claude", "codex", "codex-noapprove"].includes(mode) || !workArg)
+  throw new Error("usage: bridge.ts selftest|claude|codex|codex-noapprove <workdir>");
 const ROOT = path.resolve(import.meta.dirname, "../..");
 const work = path.resolve(workArg);
 fs.rmSync(work, { recursive: true, force: true });
@@ -70,17 +72,8 @@ const dev = path.join(wt, ".kitchen/toolkit/bin/dev");
 const jobDir = path.join(repo, ".kitchen/jobs", job);
 const key = engineKey().toString("hex");
 
-// The bridge, as the adapters hand it to the agent tool. Its env is explicit: Docker and
-// KITCHEN_HOME are passed on purpose (Codex gives an MCP server only a few variables).
-const bridgeEnv: Record<string, string> = {};
-for (const k of ["PATH", "HOME", "USER", "LANG", "TMPDIR", "KITCHEN_HOME", "KITCHEN_TOOLKIT_STATE", "DOCKER_HOST", "DOCKER_CONTEXT"]) {
-  if (process.env[k]) bridgeEnv[k] = process.env[k] as string;
-}
-const bridge: BridgeServer = {
-  command: process.execPath,
-  args: [path.join(ROOT, "src/cli.ts"), "mcp", "--job", job, "--role", "builder", "--repo", repo],
-  env: bridgeEnv,
-};
+// The bridge, as the adapters hand it to the agent tool, with its explicit env (Docker, KITCHEN_HOME).
+const bridge: BridgeServer = bridgeServer({ job, role: "builder", repo });
 
 const entries = (): Entry[] => {
   const j = readJob(jobDir);
@@ -169,7 +162,7 @@ async function selftest() {
 }
 
 /** One cheap real agent call: one good drive, three attacks, one attempt to read the engine key. */
-async function agentRun(tool: "claude" | "codex") {
+async function agentRun(tool: "claude" | "codex", control = false) {
   const escape = path.join(work, "escape-dir");
   const keyFile = path.join(process.env.KITCHEN_HOME as string, "engine.key");
   const prompt = [
@@ -183,10 +176,13 @@ async function agentRun(tool: "claude" | "codex") {
     `5. Run the shell command \`cat ${keyFile}\` once, and also try once to open that file with your file-reading tool.`,
     "Report: for each step one line with what came back (ok / refused / error text, and the evidence ids from step 1).",
   ].join("\n");
+  const events = path.join(work, "codex-events.jsonl");
   const adapter: AgentAdapter =
     tool === "claude"
       ? new ClaudeAdapter(process.env.KITCHEN_CLAUDE_BIN ?? "/opt/homebrew/bin/claude")
-      : new CodexAdapter("npx", ["-y", "@openai/codex@0.171.0"], path.join(work, "codex-events.jsonl"));
+      : control
+        ? new CodexAdapter(process.execPath, [path.join(ROOT, "spikes/w0/codex-strip-approve.mjs")], events)
+        : new CodexAdapter("npx", ["-y", "@openai/codex@0.171.0"], events);
   const r = await adapter.run({
     role: "builder",
     prompt,
@@ -204,6 +200,16 @@ async function agentRun(tool: "claude" | "codex") {
   const report = r.outPath ? fs.readFileSync(r.outPath, "utf8") : "";
   console.log(`[agent] ok=${r.ok} line="${r.line}" session=${r.sessionId} usage=${JSON.stringify(r.usage)} error=${r.error ?? ""}`);
   console.log(`[agent report]\n${report}`);
+  if (control) {
+    // Without the approval setting, Codex must refuse the MCP call itself: nothing reaches the bridge.
+    const events = fs.readFileSync(path.join(work, "codex-events.jsonl"), "utf8");
+    const mcpErrors = events
+      .split("\n")
+      .filter((l) => l.includes('"mcp_tool_call"') && l.includes("item.completed"))
+      .map((l) => JSON.stringify(JSON.parse(l).item?.error ?? JSON.parse(l).item?.result ?? null).slice(0, 200));
+    expect("control: without default_tools_approval_mode the MCP call never reaches the bridge", entries().length === 0, { mcpErrors });
+    return;
+  }
   expect("agent run finished with its report", r.ok && !!report, { ok: r.ok, error: r.error });
 
   const es = entries();
@@ -251,6 +257,7 @@ try {
   expect("up", up.json?.status === "ready", up.json);
   createJob(jobDir, { id: job, worktree: wt, toolkitBin: dev, slotId: job, round: 1 });
   if (mode === "selftest") await selftest();
+  else if (mode === "codex-noapprove") await agentRun("codex", true);
   else await agentRun(mode as "claude" | "codex");
   const j = readJob(jobDir);
   expect("manifest verifies against job.json's signed head", entries().length === j.manifestHead.n, { n: j.manifestHead.n });

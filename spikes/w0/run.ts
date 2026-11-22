@@ -88,8 +88,14 @@ function req(tool: Tool, l: Layout, over: Partial<AgentRequest>): AgentRequest {
 function judgeProbe(tool: string, l: Layout, out: string, sandboxed: boolean) {
   const pf = probeLine(out, "a-push-file");
   const pushed = git(l.bare, "branch", "--list", "agent-push").trim() !== "";
-  // without a sandbox a file:// push has no credential to stop it; that is what the control shows
-  verdict(tool, "a git push (file remote)", sandboxed ? exitOf(pf) !== 0 && !pushed : pushed, `${pf} ; branch in bare remote: ${pushed}`);
+  // A local-path push needs no credential. Since the W0 review the scrubbed env itself rewrites every
+  // push URL to an unknown transport (env.ts), so it fails even in the no-sandbox control.
+  verdict(
+    tool,
+    "a git push (file remote)",
+    exitOf(pf) !== 0 && !pushed,
+    `${pf} ; branch in bare remote: ${pushed}${sandboxed ? "" : " (no sandbox: the env blocks it)"}`,
+  );
   const ps = probeLine(out, "a-push-ssh");
   verdict(tool, "a git push (ssh remote)", exitOf(ps) !== 0, ps);
   const ph = probeLine(out, "a-push-https");
@@ -146,7 +152,8 @@ async function integrity(tool: Tool) {
   verdict(tool, "d role file in .kitchen-out returned", outOk, `outPath=${r.outPath} ; line="${r.line}"`);
   verdict(tool, "session id + usage reported", !!r.sessionId, `session=${r.sessionId} usage=${JSON.stringify(r.usage)} transcript=${r.transcriptPath}`);
   const dock = probeLine(readFileSync(probe, "utf8"), "f-docker");
-  console.log(`${exitOf(dock) === 0 ? "PASS" : "FAIL"} ${tool} f docker from inside the sandbox: ${dock}`);
+  // ADR 0006: Docker is not reachable from either sandbox, so the Toolkit runs in the engine. Expected: blocked.
+  verdict(tool, "f docker not reachable from inside the sandbox", exitOf(dock) !== 0, dock);
 }
 
 async function readtier(tool: Tool) {
@@ -222,3 +229,6 @@ const main = {
 if (!main) throw new Error(`unknown command ${cmd}`);
 await main();
 writeFileSync(join(WORK, `last-${cmd}-${tool ?? "none"}.txt`), `${lines.join("\n")}\n`);
+const failed = lines.filter((l) => l.startsWith("FAIL"));
+console.log(failed.length ? `\n${failed.length} check(s) FAILED` : `\nall ${lines.length} checks passed`);
+process.exitCode = failed.length || !lines.length ? 1 : 0;
