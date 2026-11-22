@@ -68,7 +68,13 @@ One entry per wave: what was built, review rounds and scores, what is proven, an
 **Known gap:** when the loop stops because it lost the lock, it frees the slots of stages that are still finishing.
 
 
-## Wave 2: Toolkit and setup (review round 2 fixes done, awaiting re-review)
+## Wave 2: Toolkit and setup (done, 9/10: Claude complete, Codex proofs owed)
+
+**Review rounds:** 6 → 8 → 9.
+
+**Conditional on Codex:** the Codex account hit its usage limit and resets on 2026-12-21. When it does, run `spikes/w2/init-fixture.ts d-api codex` and `spikes/w2/inside.ts codex b`, and re-check one Codex-generated Toolkit against the stricter probe. If any of those fails, Wave 2 drops back to 8.
+
+**Final review:** all four Claude-generated Toolkits (fixtures A–D) pass the stricter contract probe.
 
 **Score status:** Claude complete; Codex fixture D and /kitchen-inside-Codex owed when the Codex quota resets (2026-12-21): run `spikes/w2/inside.ts codex b` and `init-fixture.ts d-api codex` first in W3b.
 
