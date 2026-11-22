@@ -73,7 +73,7 @@ export const spec: StageHandler = async (ctx) => {
         [
           `REASON: ${reason}`,
           "",
-          "A criterion that already holds before the change can't tell the change from no change. Strengthen each one so it fails on the current code and passes once the ticket is done: create the data it is about in an earlier step of the same proof, read what the change adds, or assert what must be different. Keep one unchanged only if it guards existing behaviour the change must not break (say so in its text); it will be flagged as non-discriminating.",
+          "A criterion that already holds before the change can't tell the change from no change. Strengthen each one so it fails on the current code and passes once the ticket is done: create the data it is about in an earlier step of the same proof, read what the change adds, or assert what must be different. A criterion that guards existing behaviour the change must not break covers only intake's `(unchanged)` requirements and is not counted here; any other one that stays will be flagged as non-discriminating.",
           "",
           r.text,
         ].join("\n"),

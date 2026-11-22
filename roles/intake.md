@@ -35,7 +35,9 @@ REASON: <one line: why this decision and rating>
 
 Then a short paragraph: what the ticket asks, where in the code it lands, and what you are unsure about.
 
-**With ACCEPT, always** add a `## Requirements` section: every requirement the ticket states, numbered `R1`, `R2`, …, one per line, each a short quote or a faithful paraphrase of **one** thing the ticket asks. Split a sentence that asks two things into two requirements ("admins see every user's projects with the owner shown" is R1 every user's projects, R2 the owner shown). Keep what the ticket says must stay or must not happen, and mark it `(negative)`: "regular users still see only their own, with no owner shown" is `R3 (negative): regular users see only their own projects` and `R4 (negative): no owner is shown to regular users`. Add nothing the ticket doesn't ask. If you rescope (a part Kitchen shouldn't do, or one you can't check), keep its line, mark it `(out of scope)` and say why after a ` — `. The criteria (yours below, or the spec's later) must each say which requirements they prove, and the engine refuses a contract that leaves one uncovered, so this list is what "done" means.
+**With ACCEPT, always** add a `## Requirements` section: every requirement the ticket states, numbered `R1`, `R2`, …, one per line, each a short quote or a faithful paraphrase of **one** thing the ticket asks. Split a sentence that asks two things into two requirements ("admins see every user's projects with the owner shown" is R1 every user's projects, R2 the owner shown). Keep what the ticket says must not happen or must stay, and mark it by which it is:
+- `(negative)`: something must **not appear or happen** (a leak, a field shown to the wrong person, an output that must be absent): "regular users still see only their own, with no owner shown" is `R3 (negative): regular users see only their own projects` and `R4 (negative): no owner is shown to regular users`. It is proven by asserting the absence of a thing that exists.
+- `(unchanged)`: a **regression guard**, existing behaviour stays as it is ("`kitchen status` without `--json` keeps its table", "other commands still exit 0"). It is proven positively: the old behaviour still gives the same output or exit. Don't mark these `(negative)`: there is nothing to show absent. Add nothing the ticket doesn't ask. If you rescope (a part Kitchen shouldn't do, or one you can't check), keep its line, mark it `(out of scope)` and say why after a ` — `. The criteria (yours below, or the spec's later) must each say which requirements they prove, and the engine refuses a contract that leaves one uncovered, so this list is what "done" means.
 
 ```
 ## Requirements
@@ -43,10 +45,11 @@ Then a short paragraph: what the ticket asks, where in the code it lands, and wh
 - R2: each project shows its owner to admins
 - R3 (negative): regular users see only their own projects
 - R4 (negative): no owner is shown to regular users
-- R5 (out of scope): "and email them weekly" — no mail in this repo; asked in REASON
+- R5 (unchanged): the projects page keeps its current columns for regular users
+- R6 (out of scope): "and email them weekly" — no mail in this repo; asked in REASON
 ```
 
-**Only when RISK is low**, add the verification contract inline as a `## Criteria` section, in the exact format of the reference above (one to four criteria, mechanical expects, existing drives and primitives, or new drives declared under `## New drives`). Each criterion has a `covers:` line naming the requirements it proves; together they cover every requirement in scope, and each `(negative)` one is covered by a criterion whose expect asserts the absence. A low-risk bug needs one criterion with `repro: true` whose proof runs on the current code and whose expect is false there. Medium and high risk get a full spec later: write no criteria then.
+**Only when RISK is low**, add the verification contract inline as a `## Criteria` section, in the exact format of the reference above (one to four criteria, mechanical expects, existing drives and primitives, or new drives declared under `## New drives`). Each criterion has a `covers:` line naming the requirements it proves; together they cover every requirement in scope, each `(negative)` one is covered by a criterion whose expect asserts the absence, and each `(unchanged)` one by a mechanical criterion showing the old behaviour still holds (same output, same exit). A low-risk bug needs one criterion with `repro: true` whose proof runs on the current code and whose expect is false there. Medium and high risk get a full spec later: write no criteria then.
 
 ## What you return
 

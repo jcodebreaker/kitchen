@@ -11,9 +11,11 @@
 // checkout of the base code plus only the new drive and test files
 // (`<repo>/.worktrees/<id>.base`, same slot, fresh app, stamped `phase: base`):
 // one that already holds there is NON-DISCRIMINATING too (`afterDrives`).
+// A regression guard (a criterion covering only `(unchanged)` requirements of
+// intake.md) holds on the base by design: it runs, but is never counted.
 import fs from "node:fs";
 import path from "node:path";
-import type { Criterion } from "../../checks/spec-lint.ts";
+import { type Criterion, guardCriteria, parseRequirements } from "../../checks/spec-lint.ts";
 import { isJudged } from "../../proof/assert.ts";
 import { prove } from "../../proof/prove.ts";
 import { namedDrives, testFilesOf } from "../contract.ts";
@@ -37,6 +39,12 @@ export type BaseCheck = {
   /** After the drives stage: the criteria that needed new drives or tests, run on the base plus those files only. */
   afterDrives?: { head: string; files: string[]; results: BaseResult[]; passing: string[] };
 };
+
+/** The contract's regression guards, from intake.md's `(unchanged)` requirements. */
+function guardsOf(jobDir: string, criteria: Criterion[]): string[] {
+  const f = path.join(jobDir, "intake.md");
+  return guardCriteria(criteria, parseRequirements(fs.existsSync(f) ? fs.readFileSync(f, "utf8") : ""));
+}
 
 export const baseCheckFile = (jobDir: string) => path.join(jobDir, "base-check.json");
 const keyOf = (criteria: Criterion[]) => JSON.stringify(criteria.map((c) => [c.id, c.proof, c.expect]));
@@ -91,6 +99,7 @@ export async function runBaseCheckAfterDrives(ctx: StageContext, job: Job, crite
   await remove(); // a crash may have left one
   await main.run(["worktree", "add", "--quiet", "--detach", dir, job.base]);
   const out: NonNullable<BaseCheck["afterDrives"]> = { head, files, results: [], passing: [] };
+  const guards = guardsOf(ctx.jobDir, criteria);
   // `prepare` is cached per source folder: keep the job worktree's marker, so Verify doesn't prepare again.
   const marker = path.join(ctx.jobDir, "prepared.json");
   const kept = fs.existsSync(marker) ? fs.readFileSync(marker, "utf8") : null;
@@ -116,7 +125,7 @@ export async function runBaseCheckAfterDrives(ctx: StageContext, job: Job, crite
           log: (m) => ctx.log(`[base after drives] ${m}`),
         });
         out.results.push({ criterion: c.id, status: p.status, ...(p.why ? { why: p.why } : {}), evidence: p.evidence });
-        if (p.status === "pass") out.passing.push(c.id);
+        if (p.status === "pass" && !guards.includes(c.id)) out.passing.push(c.id);
       }
     }
   } finally {
@@ -144,6 +153,7 @@ export async function runBaseCheck(ctx: StageContext, job: Job, criteria: Criter
   if (prev && prev.key === key && prev.head === head) return prev;
   const have = featureDrives(job.worktree).drives;
   const out: BaseCheck = { head, key, results: [], skipped: [], passing: [] };
+  const guards = guardsOf(ctx.jobDir, criteria);
   const todo: Criterion[] = [];
   for (const c of criteria) {
     if (isJudged(c.expect)) continue;
@@ -166,7 +176,7 @@ export async function runBaseCheck(ctx: StageContext, job: Job, criteria: Criter
         log: (m) => ctx.log(`[base] ${m}`),
       });
       out.results.push({ criterion: c.id, status: p.status, ...(p.why ? { why: p.why } : {}), evidence: p.evidence });
-      if (p.status === "pass") out.passing.push(c.id);
+      if (p.status === "pass" && !guards.includes(c.id)) out.passing.push(c.id);
     }
   }
   writeAtomic(baseCheckFile(ctx.jobDir), `${JSON.stringify(out, null, 2)}\n`);

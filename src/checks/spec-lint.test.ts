@@ -4,7 +4,7 @@ import { parseProof } from "../proof/proof-line.ts";
 import { changedExistingDrive, lintFeatureFile } from "./feature-lint.ts";
 import { gateOutcome } from "./gate.ts";
 import { riskFloor, seedTouched } from "./risk-floor.ts";
-import { lintSpec, newDrivesOf, parseRequirements } from "./spec-lint.ts";
+import { guardCriteria, lintSpec, newDrivesOf, parseCriteria, parseRequirements } from "./spec-lint.ts";
 
 test('rule 3: `$x == ""` counts as a negative: an earlier step must make something', () => {
   const read = 'toolkit login --as alice ; toolkit read --target "[data-testid=owner]" --save owner';
@@ -45,6 +45,41 @@ test("rule 7: criteria cover intake's requirements; a negative one needs a crite
   assert.match(L(spec(`${pos}\n  covers: R1`, `${posOnly}\n  covers: R2`)).reason ?? "", /R2 says what must not happen/);
   assert.equal(L(spec(`${pos}\n  covers: R1`, `${neg}\n  covers: R2  # the negative`)).reason, undefined, "R3 is out of scope");
   assert.match(lintSpec(spec(`${pos}\n  covers: R1`), { kind: "feature", toolkit, requirements: [] }).reason ?? "", /lists no requirements/);
+});
+
+test("rule 7: an (unchanged) requirement is a regression guard, proven positively; only a true (negative) needs an absence (dogfood: 5 of 6 intakes deadlocked)", () => {
+  const intake = [
+    "## Requirements",
+    "- R1: `kitchen status --json` prints the jobs as JSON",
+    "- R2 (unchanged): `kitchen status` without --json prints the same table as before",
+    "- R3 (negative): no ANSI colour codes in the JSON output",
+    "- R4 (negative, unchanged): marked both, it stays a negative",
+  ].join("\n");
+  const reqs = parseRequirements(intake);
+  assert.deepEqual(
+    reqs.map((r) => [r.id, r.negative, !!r.unchanged]),
+    [
+      ["R1", false, false],
+      ["R2", false, true],
+      ["R3", true, false],
+      ["R4", true, false],
+    ],
+  );
+  const three = reqs.slice(0, 3);
+  const L = (md: string) => lintSpec(md, { kind: "feature", toolkit, protected: [], requirements: three });
+  const json = `${C("C1", "status --json is JSON", "cmd node src/cli.ts status --json", 'json .jobs != ""')}\n  covers: R1`;
+  const noAnsi = `${C("C3", "no colour codes", "cmd node src/cli.ts status --json", 'not contains "\\u001b["')}\n  covers: R3`;
+  // A positive "unchanged" criterion: the old command still prints the same header, exit 0.
+  const same = `${C("C2", "plain status prints the table as before", "cmd node src/cli.ts status", 'contains "ID  STAGE" and exit 0')}\n  covers: R2`;
+  assert.equal(L(spec(json, same, noAnsi)).reason, undefined, "a positive criterion covers the guard");
+  const judgedGuard = `${C("C2", "plain status table layout looks as before", "toolkit screenshot --name s", "judged")}\n  covers: R2`;
+  assert.match(L(spec(json, judgedGuard, noAnsi)).reason ?? "", /R2 guards existing behaviour/);
+  // The true negative still needs its absence.
+  const noAnsiPositive = `${C("C3", "json parses", "cmd node src/cli.ts status --json", "exit 0")}\n  covers: R3`;
+  assert.match(L(spec(json, same, noAnsiPositive)).reason ?? "", /R3 says what must not happen/);
+  // Only a criterion that covers guards alone is a guard for the base check.
+  const both = `${C("C4", "x", "cmd node src/cli.ts status", 'contains "ID"')}\n  covers: R1, R2`;
+  assert.deepEqual(guardCriteria(parseCriteria(spec(json, same, noAnsi, both)), three), ["C2"]);
 });
 
 const toolkit = { primitives: ["login", "press", "read", "open", "reload", "screenshot", "http", "type"], drives: { "settings.toggle-dark": ["user"] } };

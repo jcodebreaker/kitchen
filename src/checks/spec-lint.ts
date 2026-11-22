@@ -21,18 +21,27 @@
 //   6. ids are unique
 //   7. the spec matches the ticket, structurally (ADR 0003: no agent checks the
 //      spec): intake.md lists the ticket's requirements (`## Requirements`, R1…Rn,
-//      each a quote or faithful paraphrase, negative ones marked); every criterion
-//      `covers:` at least one R, every R in scope is covered by a criterion, and a
-//      negative R ("no owner shown for regular users") is covered by at least one
-//      criterion whose mechanical expect asserts an absence
+//      each a quote or faithful paraphrase, negative and unchanged ones marked);
+//      every criterion `covers:` at least one R, every R in scope is covered by a
+//      criterion, a negative R ("no owner shown for regular users": something must
+//      not appear) by at least one criterion whose mechanical expect asserts an
+//      absence, and an unchanged R (a regression guard: "`list` output stays the
+//      same") by a mechanical criterion, positive or negative: the old behaviour
+//      still produces the same output or exit
+//   8. a `test` proof's file is where the repo's tests live (the test runner's own
+//      globs, checks/test-layout.ts), when the layout is known
 import path from "node:path";
 import { absentString, type Clause, ExpectError, isJudged, negativeClauses, parseExpect } from "../proof/assert.ts";
 import { checkPrimArgs, DriveFormatError } from "../proof/drive-format.ts";
 import { ProofLineError, parseProof, type Segment, words } from "../proof/proof-line.ts";
 
 export type Criterion = { id: string; text: string; proof: string | null; expect: string | null; repro: boolean; covers: string[] };
-/** One requirement intake read in the ticket. `negative`: it says what must not happen; `outOfScope`: intake rescoped it away (with a note). */
-export type Requirement = { id: string; text: string; negative: boolean; outOfScope: boolean };
+/**
+ * One requirement intake read in the ticket. `negative`: it says something must not appear or happen (needs an
+ * absence assertion); `unchanged`: a regression guard, existing behaviour stays as it is (a positive "still the
+ * same" criterion proves it); `outOfScope`: intake rescoped it away (with a note).
+ */
+export type Requirement = { id: string; text: string; negative: boolean; unchanged?: boolean; outOfScope: boolean };
 export type LintResult = { ok: boolean; reason?: string; missingPrimitive?: string; criteria: Criterion[]; newDrives: string[] };
 /** What the Toolkit offers: primitive names, every feature drive's name → its args, and the drives that take a screenshot. */
 export type ToolkitView = { primitives: string[]; drives: Record<string, string[]>; screenshots?: string[] };
@@ -74,8 +83,9 @@ function stripTrailingComment(s: string): string {
 }
 
 /**
- * intake.md's `## Requirements`: `- R1: …`, a negative one `- R3 (negative): …`, one intake
- * rescoped away `- R5 (out of scope): … — why`. Any other line in the section is a note.
+ * intake.md's `## Requirements`: `- R1: …`, a negative one `- R3 (negative): …`, a regression
+ * guard `- R4 (unchanged): …`, one intake rescoped away `- R5 (out of scope): … — why`. Any other
+ * line in the section is a note. Marked both negative and unchanged, it is negative (the stricter).
  */
 export function parseRequirements(md: string): Requirement[] {
   const out: Requirement[] = [];
@@ -89,10 +99,12 @@ export function parseRequirements(md: string): Requirement[] {
     const m = inSection ? /^\s*[-*]\s*\[?(R\d+)\]?\s*((?:\([^)]*\)\s*)*)[:.\u2013\u2014-]\s*(.*)$/i.exec(line) : null;
     if (!m || out.some((r) => r.id === m[1].toUpperCase())) continue;
     const marks = m[2].toLowerCase();
+    const negative = /\b(negative|must not|not)\b/.test(marks);
     out.push({
       id: m[1].toUpperCase(),
       text: m[3].trim(),
-      negative: /\b(negative|must not|not)\b/.test(marks),
+      negative,
+      unchanged: !negative && /\b(unchanged|regression guard|guard|stays)\b/.test(marks),
       outOfScope: /out of scope|rescoped|dropped/.test(marks),
     });
   }
@@ -214,7 +226,8 @@ export function isProtected(p: string, globs: string[]): boolean {
 
 /**
  * Rule 7: why the criteria don't match intake's requirements, or null. Every criterion covers an R
- * intake listed; every R in scope is covered; a negative R by at least one criterion asserting an absence.
+ * intake listed; every R in scope is covered; a negative R by at least one criterion asserting an absence;
+ * an unchanged R (regression guard) by at least one mechanical criterion, positive or negative.
  */
 export function coverageProblem(criteria: Criterion[], reqs: Requirement[]): string | null {
   if (!reqs.length) return "intake.md lists no requirements (`## Requirements`, `- R1: …`): nothing to check the criteria against";
@@ -227,6 +240,11 @@ export function coverageProblem(criteria: Criterion[], reqs: Requirement[]): str
   for (const r of reqs.filter((x) => !x.outOfScope)) {
     const by = criteria.filter((c) => c.covers.includes(r.id));
     if (!by.length) return `${r.id} ("${r.text}") is covered by no criterion: every requirement of the ticket needs one`;
+    if (r.unchanged) {
+      if (!by.some((c) => !!c.expect && !isJudged(c.expect)))
+        return `${r.id} guards existing behaviour ("${r.text}"): a criterion covering it must show, mechanically, that the old behaviour still gives the same output or exit (\`contains "…"\`, \`exit 0\`, \`$x == …\`)`;
+      continue;
+    }
     if (!r.negative) continue;
     const asserts = by.some((c) => {
       try {
@@ -239,6 +257,15 @@ export function coverageProblem(criteria: Criterion[], reqs: Requirement[]): str
       return `${r.id} says what must not happen ("${r.text}"), but no criterion covering it asserts an absence (\`text "…" not visible\`, \`not contains "…"\`, \`$x != …\`)`;
   }
   return null;
+}
+
+/**
+ * Regression guards: criteria that cover only `(unchanged)` requirements. They hold on the base by
+ * design (the old behaviour stays), so the base check doesn't count them as non-discriminating. Pure.
+ */
+export function guardCriteria(criteria: Criterion[], reqs: Requirement[]): string[] {
+  const guard = new Set(reqs.filter((r) => r.unchanged && !r.outOfScope).map((r) => r.id));
+  return criteria.filter((c) => c.covers.length > 0 && c.covers.every((r) => guard.has(r))).map((c) => c.id);
 }
 
 export function lintSpec(
