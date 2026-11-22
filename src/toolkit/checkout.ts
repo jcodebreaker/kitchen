@@ -73,15 +73,19 @@ export async function resolveRev(repo: string, rev: string): Promise<string> {
   return (await git.run(["rev-parse", "--verify", `${rev}^{commit}`])).stdout.trim();
 }
 
-/** Whether `sha` is merged: an ancestor of the base (the main checkout's HEAD), so a human has taken it in. */
+/**
+ * Whether `sha` is merged: an ancestor of the base, so a human has taken it in. The base is the
+ * main checkout's HEAD, or (GitHub forge) the remote base the engine last fetched, `refs/kitchen/base`.
+ */
 export async function mergedIntoBase(repo: string, sha: string): Promise<boolean> {
   const git = await openGit(plainCheckout(repo));
-  try {
-    await git.run(["merge-base", "--is-ancestor", sha, "HEAD"]);
-    return true;
-  } catch {
-    return false; // exit 1 (not an ancestor), or no HEAD: not merged either way
+  for (const base of ["HEAD", "refs/kitchen/base"]) {
+    try {
+      await git.run(["merge-base", "--is-ancestor", sha, base]);
+      return true;
+    } catch {} // exit 1 (not an ancestor), or no such ref: not merged there
   }
+  return false;
 }
 
 /**

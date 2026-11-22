@@ -1,8 +1,7 @@
 // What the stages ask the Toolkit (through src/toolkit/run.ts, untrusted env).
 // No Toolkit: no primitives, no drives, doctor not ok.
-// W3b: W1/W3a run the repo's own .kitchen/toolkit/bin/dev; W3b runs the engine-owned
-// checkout at the job's toolkitRef.
-import { createHash } from "node:crypto";
+// bin/dev is the engine-owned checkout at the job's toolkitRef (job.toolkitBin,
+// src/engine/job-toolkit.ts); feature files come from `--src`.
 import fs from "node:fs";
 import path from "node:path";
 import type { ToolkitView } from "../../checks/spec-lint.ts";
@@ -17,10 +16,7 @@ export const FEATURES_DIR = ".kitchen/toolkit/features";
 export async function primitives(job: Job, src = job.worktree || process.cwd()): Promise<{ list: string[]; sha: string }> {
   if (!hasToolkit(job)) return { list: [], sha: "" };
   const d = await describeToolkit(job.toolkitBin, src);
-  // W3b: `sha` must be the Toolkit PR's commit sha (toolkitRef pins the proofs to it).
-  // W1 has no Toolkit PR branch, so this is a hash of `describe` output: it changes when
-  // the primitive list changes, and pins nothing.
-  return { list: d.primitives, sha: createHash("sha256").update(JSON.stringify(d.raw)).digest("hex").slice(0, 12) };
+  return { list: d.primitives, sha: job.toolkitRef };
 }
 
 /**

@@ -3,13 +3,15 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { loadConfig } from "../config.ts";
+import { takeTicket } from "../engine/base.ts";
 import { contractOf, specArgsOf } from "../engine/contract.ts";
 import { ensureUp, freshUp } from "../engine/instance.ts";
+import { ensureJobToolkit } from "../engine/job-toolkit.ts";
 import { readRunLock, staleReason } from "../engine/lock.ts";
 import { feedbackTarget, type Job, roundsUsed, STAGES, type Stage } from "../engine/machine.ts";
 import { moveJob, runKitchen } from "../engine/runner.ts";
-import { createJob, findJob, jobDirOf, kitchenDir, scanJobs, writeAtomic } from "../engine/store.ts";
-import { changedFiles, headOf, mainHead } from "../engine/worktree.ts";
+import { findJob, jobDirOf, kitchenDir, scanJobs, writeAtomic } from "../engine/store.ts";
+import { changedFiles, headOf } from "../engine/worktree.ts";
 import { readLedger } from "../ledger/append.ts";
 import { formatCounts, summarize } from "../ledger/report.ts";
 import { prove } from "../proof/prove.ts";
@@ -19,21 +21,11 @@ import { acquireSlot, downSlot, listSlots, releaseSlot } from "../toolkit/slots.
 
 export type Out = (line: string) => void;
 
-const toolkitBinOf = (repo: string) => {
-  const b = path.join(repo, ".kitchen", "toolkit", "bin", "dev");
-  return fs.existsSync(b) ? b : "";
-};
-
 export async function ticket(repo: string, text: string, out: Out): Promise<number> {
   const cfg = loadConfig(repo);
   const t = PromptSource.ticket(text);
-  let base = "";
-  try {
-    base = await mainHead(repo);
-  } catch {
-    out(`warning: ${repo} has no commit yet; the job can't get a worktree until it has one`);
-  }
-  const { job } = await createJob(repo, { title: t.title, ticket: t.ref, body: t.body, roundLimit: cfg.round_limit, base, toolkitBin: toolkitBinOf(repo) });
+  const { job, warning } = await takeTicket(repo, cfg, t);
+  if (warning) out(`warning: ${warning}`);
   out(`ticket ${job.id}  "${job.title}"  → intake`);
   return 0;
 }
@@ -155,7 +147,7 @@ export async function drive(
   out: Out,
 ): Promise<number> {
   const cfg = loadConfig(repo);
-  const job = findJob(repo, ref);
+  const job = await ensureJobToolkit(repo, findJob(repo, ref));
   const jobDir = jobDirOf(repo, job.id);
   const c = contractOf(jobDir)?.criteria.find((x) => x.id === criterion);
   if (!c) throw new Error(`${job.id} has no criterion ${criterion}`);

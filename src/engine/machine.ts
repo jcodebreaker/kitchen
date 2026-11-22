@@ -162,6 +162,10 @@ export type Facts = {
     gatePass: boolean;
     baseMoved: boolean;
     recheckFailed: boolean;
+    /** The base tip the job branch was just synced with (the job's base from now on). */
+    newBase?: string;
+    /** toolkitRef after the sync: the new base when it has a Toolkit and no Toolkit PR is still open. */
+    toolkitRef?: string;
   };
   report?: { rendered: boolean; idsResolved: boolean; evidencePushed: boolean; commented: boolean; localForge: boolean; refusal?: string };
   /** paused: the waitFor condition cleared. */
@@ -257,6 +261,11 @@ const verdictIs =
   (v: Verdict): Guard =>
   (_j, f) =>
     need(f.verify, "verify") ?? (f.verify?.verdict === v ? null : `verdict is ${f.verify?.verdict}, not ${v}`);
+/** Ready synced the branch with a moved base: the job's base, and its toolkitRef when it moves with it (PLAN §2 lifecycle). */
+const synced = (j: Job, f: Facts) => {
+  if (f.ready?.newBase) j.base = f.ready.newBase;
+  if (f.ready?.toolkitRef) j.toolkitRef = f.ready.toolkitRef;
+};
 const pause = (waitFor: WaitFor, why: string) => (j: Job, f: Facts) => {
   j.pausedFrom = j.stage;
   j.waitFor = waitFor;
@@ -692,8 +701,9 @@ export const TABLE: readonly Row[] = [
     id: "ready>gate",
     from: "ready",
     to: "gate",
-    when: "gate is not PASS on this HEAD (commits since gate.md touch more than features/*.md): Gate runs again",
+    when: "gate is not PASS on this HEAD (commits since gate.md touch more than features/*.md, e.g. a sync with a moved base): Gate runs again",
     guard: check((_j, f) => !!f.ready && !f.ready.gatePass && !f.ready.conflict, "gate is PASS on this HEAD"),
+    apply: (j, f) => synced(j, f),
   },
   {
     id: "ready>drives",
@@ -701,6 +711,7 @@ export const TABLE: readonly Row[] = [
     to: "drives",
     when: "base (or toolkitRef) moved since verify: drives (a check) and Verify re-run on the synced HEAD",
     guard: check((_j, f) => !!f.ready?.baseMoved && !f.ready.conflict, "base did not move"),
+    apply: (j, f) => synced(j, f),
   },
   {
     id: "ready>paused",

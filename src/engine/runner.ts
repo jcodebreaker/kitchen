@@ -18,11 +18,14 @@ import { type Forge, forgeFor } from "../forge/forge.ts";
 import { appendLedger } from "../ledger/append.ts";
 import { self } from "../lock.ts";
 import { procsDirOf, reapGroups } from "../procs.ts";
+import { GithubSource } from "../sources/github.ts";
 import { PromptSource } from "../sources/prompt.ts";
 import type { TicketSource } from "../sources/source.ts";
 import { effectiveConcurrency, readProven } from "../toolkit/check.ts";
 import { beforeNewWork } from "../toolkit/reproof.ts";
 import { acquireSlot, downSlot, listSlots, reclaimStaleSlots, releaseSlot } from "../toolkit/slots.ts";
+import { takeTicket } from "./base.ts";
+import { ensureJobToolkit } from "./job-toolkit.ts";
 import { acquireRunLock } from "./lock.ts";
 import { type Facts, isActive, type Job, move, type Stage } from "./machine.ts";
 import { HANDLERS } from "./stages/index.ts";
@@ -56,7 +59,7 @@ export async function runKitchen(o: RunOpts): Promise<{ steps: number; moves: nu
     config,
     agent: await adapterFor(repo, config),
     forge: forgeFor(repo, config),
-    source: new PromptSource(repo),
+    source: config.source.kind === "github" ? new GithubSource(config) : new PromptSource(repo),
     holdsLock: () => !lock.lost(),
   };
   const me = self();
@@ -107,6 +110,7 @@ export async function runKitchen(o: RunOpts): Promise<{ steps: number; moves: nu
     };
 
     if (o.once) {
+      await takeNew(repo, deps, print);
       await checkWaits(repo, deps, print, wanted);
       const queue = listJobs(repo)
         .filter((j) => wanted(j) && isActive(j.stage))
@@ -125,6 +129,7 @@ export async function runKitchen(o: RunOpts): Promise<{ steps: number; moves: nu
           print("run: lost the run lock to another runner, stopping");
           break;
         }
+        await takeNew(repo, deps, print);
         await checkWaits(repo, deps, print, wanted);
         const jobs = listJobs(repo).filter(wanted);
         const runnable = jobs.filter((j) => isActive(j.stage) && !inFlight.has(j.id)).sort(byOldest);
@@ -203,6 +208,21 @@ async function resumeAll(repo: string, pid: number, print: (l: string) => void, 
   }
 }
 
+/** New tickets from the source (GitHub issues with the label); a ticket already taken in is skipped (createJob looks it up). */
+async function takeNew(repo: string, d: Deps, print: (l: string) => void) {
+  let incoming: Awaited<ReturnType<TicketSource["poll"]>> = [];
+  try {
+    incoming = await d.source.poll();
+  } catch (e) {
+    print(`source: ${d.source.kind} poll failed: ${(e as Error).message}`);
+    return;
+  }
+  for (const t of incoming) {
+    const r = await takeTicket(repo, d.config, t);
+    if (r.created) print(`ticket ${r.job.id}  "${r.job.title}"  (${t.ref.source} ${t.ref.id}) → intake`);
+  }
+}
+
 /** Paused jobs whose condition cleared go back to pausedFrom; needs-info jobs with a reply go back to intake. */
 async function checkWaits(repo: string, d: Deps, print: (l: string) => void, wanted: (j: Job) => boolean) {
   for (const job of listJobs(repo).filter(wanted)) {
@@ -238,6 +258,12 @@ async function step(repo: string, start: Job, d: Deps, print: (l: string) => voi
   if (!handler) return;
   const jobDir = jobDirOf(repo, job.id);
   const log = (m: string) => print(`${short(job)}  ${job.stage}: ${m}`);
+  // The job's Toolkit: the engine-owned checkout at its toolkitRef (job-toolkit.ts).
+  try {
+    job = await ensureJobToolkit(repo, job, log);
+  } catch (e) {
+    log(`Toolkit checkout at ${job.toolkitRef.slice(0, 12)} failed: ${(e as Error).message}`);
+  }
   // Also when job.json still names a slot: a runner killed mid-stage leaves it there while its
   // registry entry was reclaimed at start-up, and this runner must own the slot to free it on exit.
   if (hasToolkit(job) && (!job.slot || !listSlots().some((s) => s.id === job.slotId))) {

@@ -204,3 +204,52 @@ export async function diffStat(job: Job): Promise<{ file: string; lines: number 
       return { file, lines: (Number(a) || 0) + (Number(d) || 0) };
     });
 }
+
+/**
+ * The smith's own worktree (PLAN §2 Toolkit layers): `.worktrees/_smith-<job>-<n>` on the
+ * Toolkit branch `kitchen/toolkit/<job>-<n>`, started from the Toolkit the job runs now. The
+ * smith's edits land there, never on the job branch. Idempotent like ensureWorktree; its
+ * gitdir is resolved engine side. Returns a Job-shaped view for commitWith.
+ */
+export async function ensureSmithWorktree(repo: string, job: Job, n: number, from: string): Promise<Job> {
+  const id = `_smith-${job.id}-${n}`;
+  const wt = path.join(repo, ".worktrees", id);
+  const branch = `kitchen/toolkit/${job.id}-${n}`;
+  const main = await openGit(plainCheckout(repo));
+  let linked: { gitDir: string; workTree: string } | null = null;
+  if (fs.existsSync(wt)) {
+    try {
+      linked = linkedWorktree(repo, id, wt);
+    } catch {
+      fs.renameSync(wt, `${wt}.stray-${Date.now()}`);
+    }
+  }
+  if (!linked) {
+    await main.run(["worktree", "prune"]);
+    let hasBranch = true;
+    try {
+      await main.run(["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]);
+    } catch {
+      hasBranch = false;
+    }
+    await main.run(hasBranch ? ["worktree", "add", "--quiet", wt, branch] : ["worktree", "add", "--quiet", "-b", branch, wt, from]);
+    linked = linkedWorktree(repo, id, wt);
+  }
+  return { ...job, worktree: linked.workTree, gitDir: linked.gitDir, base: from, branch };
+}
+
+/** Remove the smith's worktree (its branch stays: it is the Toolkit PR's head). */
+export async function removeSmithWorktree(repo: string, job: Job, n: number): Promise<void> {
+  const wt = path.join(repo, ".worktrees", `_smith-${job.id}-${n}`);
+  if (!fs.existsSync(wt)) return;
+  const main = await openGit(plainCheckout(repo));
+  try {
+    await main.run(["worktree", "remove", "--force", "--force", wt]);
+  } catch {
+    fs.rmSync(wt, { recursive: true, force: true });
+    await main.run(["worktree", "prune"]);
+  }
+}
+
+/** The job's worktree as an engine git handle (Ready's sync). */
+export const jobGitOf = (job: Job) => gitOf(job);

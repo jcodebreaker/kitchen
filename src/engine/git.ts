@@ -116,7 +116,7 @@ export type GitRun = { stdout: string; stderr: string };
 export type GitOpts = {
   /** Extra variables for this call (e.g. GIT_INDEX_FILE). */
   env?: Record<string, string>;
-  input?: string;
+  input?: string | Buffer;
   /** Credentials: `push` only (W3). Refused for every other command. */
   credentials?: Record<string, string>;
 };
@@ -158,7 +158,7 @@ export function resolveGit(pathVar: string | undefined = process.env.PATH): stri
   throw new Error("git not found on an absolute PATH entry");
 }
 
-async function exec(repo: GitRepo, argv: string[], env: Record<string, string>, input?: string) {
+async function exec(repo: GitRepo, argv: string[], env: Record<string, string>, input?: string | Buffer) {
   // cwd is the gitdir, never the worktree: --work-tree already says where the files are.
   return execa(resolveGit(), argv, { cwd: repo.gitDir, env, extendEnv: false, reject: false, input, stripFinalNewline: false });
 }
@@ -174,10 +174,77 @@ export async function openGit(repo: GitRepo, parentEnv: NodeJS.ProcessEnv = proc
     repo,
     flags,
     async run(args, o = {}) {
-      if (o.credentials && args[0] !== "push") throw new GitRepoError(`credentials are for push only, not git ${args[0]}`);
+      const sub = args.find((a, i) => !a.startsWith("-") && args[i - 1] !== "-c");
+      if (o.credentials && sub !== "push" && sub !== "fetch") throw new GitRepoError(`credentials are for push and fetch only, not git ${sub}`);
       const r = await exec(repo, [...flags, ...args], { ...env, ...o.env, ...o.credentials }, o.input);
       if (r.exitCode !== 0) throw new GitError(args, r.exitCode ?? -1, String(r.stderr));
       return { stdout: String(r.stdout), stderr: String(r.stderr) };
     },
   };
+}
+
+/** The engine's commit identity. */
+export const IDENTITY = {
+  GIT_AUTHOR_NAME: "Kitchen",
+  GIT_AUTHOR_EMAIL: "kitchen@localhost",
+  GIT_COMMITTER_NAME: "Kitchen",
+  GIT_COMMITTER_EMAIL: "kitchen@localhost",
+};
+
+/**
+ * A push or fetch to an explicit URL (W3b, ADR 0006 "Engine git"): the scrub's command-scope
+ * `pushInsteadOf` block is dropped (GIT_CONFIG_COUNT=0) and, when given, one credential helper
+ * is named after the neutral config's empty one. Only the engine does this: agents and
+ * worktree code keep the block.
+ */
+function remoteArgs(helper?: string): { pre: string[]; credentials: Record<string, string> } {
+  return { pre: helper ? ["-c", `credential.helper=${helper}`] : [], credentials: { GIT_CONFIG_COUNT: "0", GIT_TERMINAL_PROMPT: "0" } };
+}
+
+/** `git push` to an explicit URL with an explicit `--receive-pack`, never a named remote (no `remote.<name>.*` program applies). */
+export async function pushTo(git: Git, o: { url: string; refspecs: string[]; helper?: string }): Promise<GitRun> {
+  const r = remoteArgs(o.helper);
+  return git.run([...r.pre, "push", "--porcelain", "--receive-pack=git-receive-pack", o.url, ...o.refspecs], { credentials: r.credentials });
+}
+
+/** `git fetch` from an explicit URL with an explicit `--upload-pack`. */
+export async function fetchFrom(git: Git, o: { url: string; refspecs: string[]; helper?: string }): Promise<GitRun> {
+  const r = remoteArgs(o.helper);
+  return git.run([...r.pre, "fetch", "--quiet", "--no-tags", "--no-write-fetch-head", "--upload-pack=git-upload-pack", o.url, ...o.refspecs], {
+    credentials: r.credentials,
+  });
+}
+
+export type MergeResult = { ok: true; head: string; merged: boolean } | { ok: false; conflicts: string[] };
+
+/**
+ * Merge `rev` into the work tree's HEAD (Ready's sync with the base). A merge driver in
+ * the config would run a program, so a repo that defines one is refused. `leave`: on a
+ * conflict, keep the merge in progress (markers in the files, MERGE_HEAD set) for the
+ * builder to resolve; otherwise it is aborted and the tree is as before.
+ */
+export async function mergeRev(git: Git, rev: string, o: { message: string; leave?: boolean }): Promise<MergeResult> {
+  let drivers = "";
+  try {
+    drivers = (await git.run(["config", "--name-only", "--get-regexp", "^merge\\..*\\.driver$"])).stdout.trim();
+  } catch (e) {
+    if (!(e instanceof GitError) || e.exitCode !== 1) throw e;
+  }
+  if (drivers) throw new GitRepoError(`the repo config defines a merge driver (${drivers.split("\n")[0]}): the engine does not merge with it`);
+  try {
+    await git.run(["merge-base", "--is-ancestor", rev, "HEAD"]);
+    return { ok: true, head: (await git.run(["rev-parse", "HEAD"])).stdout.trim(), merged: false }; // already in
+  } catch (e) {
+    if (!(e instanceof GitError) || e.exitCode !== 1) throw e;
+  }
+  try {
+    await git.run(["merge", "--no-ff", "--no-edit", "--no-verify", "-m", o.message, rev], { env: IDENTITY });
+    return { ok: true, head: (await git.run(["rev-parse", "HEAD"])).stdout.trim(), merged: true };
+  } catch (e) {
+    if (!(e instanceof GitError)) throw e;
+    const conflicts = (await git.run(["diff", "--name-only", "--diff-filter=U"])).stdout.split("\n").filter(Boolean);
+    if (!o.leave) await git.run(["merge", "--abort"]);
+    if (!conflicts.length) throw e;
+    return { ok: false, conflicts };
+  }
 }

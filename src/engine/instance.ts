@@ -7,8 +7,8 @@
 //   resetUp      `reset`: data and browser session back to seed state
 // `prepare` runs the first time a job's worktree is brought up, and again when
 // `up` fails (new dependencies, a new migration that changes the seed snapshot).
-// W3b: bin/dev comes from the engine-owned Toolkit checkout at toolkitRef; until
-// then it is the repo's own .kitchen/toolkit/bin/dev (job.toolkitBin).
+// bin/dev is job.toolkitBin: the engine-owned Toolkit checkout at the job's
+// toolkitRef (src/engine/job-toolkit.ts), never the repo's own.
 import fs from "node:fs";
 import path from "node:path";
 import { runToolkit, type ToolkitCall } from "../toolkit/run.ts";
@@ -20,9 +20,11 @@ const PREPARE_MS = 20 * 60_000;
 const UP_MS = 5 * 60_000;
 const marker = (jobDir: string) => path.join(jobDir, "prepared.json");
 
-function preparedFor(jobDir: string, src: string): boolean {
+/** Prepared for this source with this bin/dev (a new toolkitRef's checkout needs its own Toolkit deps). */
+function preparedFor(jobDir: string, src: string, bin: string): boolean {
   try {
-    return (JSON.parse(fs.readFileSync(marker(jobDir), "utf8")) as { src?: string }).src === src;
+    const m = JSON.parse(fs.readFileSync(marker(jobDir), "utf8")) as { src?: string; bin?: string };
+    return m.src === src && m.bin === bin;
   } catch {
     return false;
   }
@@ -44,7 +46,7 @@ export async function down(job: InstanceJob, jobDir?: string): Promise<void> {
 async function prepare(job: InstanceJob, jobDir: string, log: (m: string) => void): Promise<ToolkitCall> {
   log(`prepare --src ${job.worktree}`);
   const r = await runToolkit(job.toolkitBin, ["prepare", `--src=${job.worktree}`], { src: job.worktree, jobDir, timeoutMs: PREPARE_MS });
-  if (r.json?.status === "ok") fs.writeFileSync(marker(jobDir), JSON.stringify({ src: job.worktree, at: new Date().toISOString() }));
+  if (r.json?.status === "ok") fs.writeFileSync(marker(jobDir), JSON.stringify({ src: job.worktree, bin: job.toolkitBin, at: new Date().toISOString() }));
   return r;
 }
 
@@ -66,7 +68,7 @@ export async function bringUp(job: InstanceJob, jobDir: string, o: { fresh: bool
   if (!o.fresh && (await doctorOk(job, jobDir))) return { ok: true, secs: (Date.now() - t0) / 1000, prepared: false, fresh: false };
   await down(job, jobDir);
   let prepared = false;
-  if (!preparedFor(jobDir, job.worktree)) {
+  if (!preparedFor(jobDir, job.worktree, job.toolkitBin)) {
     const p = await prepare(job, jobDir, log);
     if (p.json?.status !== "ok") throw new Error(`prepare failed: ${why(p)}`);
     prepared = true;

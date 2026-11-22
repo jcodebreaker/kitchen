@@ -6,7 +6,7 @@
 // retried stage runs the role again.
 import fs from "node:fs";
 import path from "node:path";
-import type { AgentRequest, Tier } from "../../agents/adapter.ts";
+import type { AgentRequest, BridgeServer, Tier } from "../../agents/adapter.ts";
 import { buildAgentEnv } from "../../agents/env.ts";
 import { bridgeServer } from "../../bridge/mcp.ts";
 import { gapName } from "../../checks/verdict.ts";
@@ -41,7 +41,20 @@ export function headers(text: string): Record<string, string> {
   return h;
 }
 
-export async function runRole(ctx: StageContext, o: { role: string; file: string; tier: Tier; prompt: string; dest: string }): Promise<RoleRun> {
+export async function runRole(
+  ctx: StageContext,
+  o: {
+    role: string;
+    file: string;
+    tier: Tier;
+    prompt: string;
+    dest: string;
+    /** Another engine-made worktree to run in (the smith's Toolkit branch). Default: the job's. */
+    cwd?: string;
+    /** Another bridge (the smith gets the setup bridge on its own worktree). */
+    bridge?: BridgeServer;
+  },
+): Promise<RoleRun> {
   let job = ctx.refresh();
   const key = `${job.stage}/m${job.moves}/x${job.attempts.refused}/${o.role}/${o.file}`;
   const done = job.agentRuns.find((r) => r.key === key && r.ok);
@@ -50,8 +63,8 @@ export async function runRole(ctx: StageContext, o: { role: string; file: string
     const text = fs.readFileSync(o.dest, "utf8");
     return { text, line: done.line, reused: true, run: done };
   }
-  if (o.tier === "write") job = await ensureWorktree(ctx.repo, job);
-  const cwd = job.worktree || ctx.repo;
+  if (o.tier === "write" && !o.cwd) job = await ensureWorktree(ctx.repo, job);
+  const cwd = o.cwd ?? (job.worktree || ctx.repo);
   const outDir = o.tier === "read" ? path.join(scratchOf(ctx.repo, job.id), `${o.role}-m${job.moves}`) : undefined;
   const model = modelFor(ctx.config, o.role);
   const req: AgentRequest = {
@@ -66,7 +79,11 @@ export async function runRole(ctx: StageContext, o: { role: string; file: string
     outDir,
     env: buildAgentEnv(path.join(kitchenHome(), "agent-scrub")),
     procsDir: procsDirOf(ctx.jobDir),
-    ...(o.tier === "write" && BRIDGE_ROLES.has(o.role) ? { bridge: bridgeServer({ repo: ctx.repo, job: job.id, role: o.role }) } : {}),
+    ...(o.bridge
+      ? { bridge: o.bridge }
+      : o.tier === "write" && BRIDGE_ROLES.has(o.role)
+        ? { bridge: bridgeServer({ repo: ctx.repo, job: job.id, role: o.role }) }
+        : {}),
   };
   if (!ctx.holdsLock()) throw new LockLost(`run lock lost before ${o.role} started`);
   const t0 = Date.now();
