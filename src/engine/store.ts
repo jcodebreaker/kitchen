@@ -11,10 +11,11 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { z } from "zod";
 import { withFileLock } from "../lock.ts";
 import { evidenceDir, raiseHeadFloor, sealOf, withJobLock } from "../proof/job.ts";
 import { emptyHead, MANIFEST, verifyManifest } from "../proof/manifest.ts";
-import type { Job, TicketRef } from "./machine.ts";
+import { type Job, STAGES, type TicketRef } from "./machine.ts";
 
 export const kitchenDir = (repo: string) => path.join(repo, ".kitchen");
 export const jobsDir = (repo: string) => path.join(repo, ".kitchen", "jobs");
@@ -76,25 +77,115 @@ export function writeAtomic(file: string, data: string) {
 
 const jobFile = (dir: string) => path.join(dir, "job.json");
 
-export function readJobAt(dir: string): Job {
-  return JSON.parse(fs.readFileSync(jobFile(dir), "utf8")) as Job;
+// job.json as the engine reads it. Loose: fields a later version adds are kept, not stripped.
+const Stage = z.enum(STAGES);
+const Risk = z.enum(["low", "medium", "high"]);
+const Count = z.number().int().min(0);
+export const JobSchema = z.looseObject({
+  id: z.string().regex(JOB_ID),
+  title: z.string(),
+  ticket: z.looseObject({ source: z.enum(["prompt", "github"]), id: z.string(), url: z.string().optional() }),
+  stage: Stage,
+  pausedReason: z.string().optional(),
+  pausedFrom: Stage.optional(),
+  waitFor: z.enum(["backoff", "toolkit-pr", "ci", "toolkit-ticket"]).optional(),
+  until: z.string().optional(),
+  round: z.number().int().min(1),
+  roundStart: z.number().int().min(1),
+  roundLimit: z.number().int().min(1),
+  risk: Risk.nullable(),
+  riskFloor: Risk.nullable(),
+  surfaces: z.array(z.enum(["ui", "security"])),
+  kind: z.enum(["feature", "bug", "chore"]).nullable(),
+  base: z.string(),
+  branch: z.string(),
+  worktree: z.string(),
+  pr: z.number().int().nullable(),
+  slot: z.object({ n: Count, ports: z.array(z.number().int()) }).nullable(),
+  toolkitRef: z.string(),
+  returnTo: Stage.nullable(),
+  gap: z.string().nullable(),
+  attempts: z.object({
+    drives: Count,
+    render: Count,
+    toolkitTicket: Count,
+    repro: Count,
+    inconclusive: Count,
+    backoff: Count,
+    errors: Count,
+    refused: Count,
+  }),
+  smith: z.object({ attempts: Count, toolkitPr: z.number().int().nullable() }),
+  toolkitTicketRef: z.string().nullable(),
+  filed: z.array(z.string()),
+  agentRuns: z.array(z.looseObject({ key: z.string(), role: z.string(), stage: Stage, round: z.number(), ok: z.boolean() })),
+  moves: Count,
+  running: z.object({ pid: z.number().int(), start: z.string().nullable().optional(), stage: Stage, at: z.string() }).nullable(),
+  escalatedFrom: Stage.optional(),
+  startedAt: z.string(),
+  updatedAt: z.string(),
+  uid: z.string().min(1),
+  gitDir: z.string(),
+  toolkitBin: z.string(),
+  slotId: z.string(),
+  manifestHead: z.object({ n: Count, hash: z.string(), mac: z.string() }),
+});
+
+/** A job.json that can't be read or doesn't match the schema. The runner skips it; `status` lists it. */
+export class CorruptJob extends Error {}
+
+/** Pure: parse and check job.json text. Throws CorruptJob with a one-line reason. */
+export function parseJob(text: string): Job {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch (e) {
+    throw new CorruptJob(`not JSON: ${(e as Error).message}`);
+  }
+  const r = JobSchema.safeParse(raw);
+  if (!r.success) {
+    const i = r.error.issues[0];
+    throw new CorruptJob(`${i.path.join(".") || "job"}: ${i.message}`);
+  }
+  return raw as Job; // validated; returned as written so no field is dropped
 }
 
-export function listJobs(repo: string): Job[] {
+export function readJobAt(dir: string): Job {
+  return parseJob(fs.readFileSync(jobFile(dir), "utf8"));
+}
+
+export type JobEntry = { id: string; job: Job; corrupt?: undefined } | { id: string; job?: undefined; corrupt: string };
+
+/** Every job folder, each either read or marked corrupt with the reason. */
+export function scanJobs(repo: string): JobEntry[] {
   const d = jobsDir(repo);
   if (!fs.existsSync(d)) return [];
   return fs
     .readdirSync(d)
     .filter((id) => JOB_ID.test(id) && fs.existsSync(jobFile(path.join(d, id))))
     .sort()
-    .map((id) => readJobAt(path.join(d, id)));
+    .map((id): JobEntry => {
+      try {
+        return { id, job: readJobAt(path.join(d, id)) };
+      } catch (e) {
+        return { id, corrupt: (e as Error).message.split("\n")[0] };
+      }
+    });
+}
+
+/** The jobs that read cleanly; a corrupt one is left out (scanJobs names it). */
+export function listJobs(repo: string): Job[] {
+  return scanJobs(repo).flatMap((e) => (e.job ? [e.job] : []));
 }
 
 /** A job by id, or by its number (`7` or `007`). */
 export function findJob(repo: string, ref: string): Job {
   const jobs = listJobs(repo);
   const hit = /^\d+$/.test(ref) ? jobs.find((j) => Number(JOB_ID.exec(j.id)?.[1]) === Number(ref)) : jobs.find((j) => j.id === ref);
-  if (!hit) throw new Error(`no job ${ref}`);
+  if (!hit) {
+    const bad = scanJobs(repo).find((e) => e.corrupt && (e.id === ref || Number(JOB_ID.exec(e.id)?.[1]) === Number(ref)));
+    throw new Error(bad ? `job ${bad.id} is corrupt (${bad.corrupt})` : `no job ${ref}`);
+  }
   return hit;
 }
 
@@ -173,7 +264,8 @@ export async function updateJob(repo: string, id: string, fn: (j: Job) => Job | 
     next.manifestHead = disk.manifestHead;
     next.uid = disk.uid;
     next.id = disk.id;
-    writeAtomic(jobFile(dir), `${JSON.stringify(next, null, 2)}\n`);
+    const text = `${JSON.stringify(next, null, 2)}\n`;
+    if (text !== `${JSON.stringify(disk, null, 2)}\n`) writeAtomic(jobFile(dir), text); // unchanged: no write
     return next;
   });
 }
