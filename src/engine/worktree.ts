@@ -10,7 +10,25 @@ import { updateJob, worktreeOf } from "./store.ts";
 
 const IDENTITY = { GIT_AUTHOR_NAME: "Kitchen", GIT_AUTHOR_EMAIL: "kitchen@localhost", GIT_COMMITTER_NAME: "Kitchen", GIT_COMMITTER_EMAIL: "kitchen@localhost" };
 /** Agents' one-file outbox: never committed. */
-const NOT_COMMITTED = [":(exclude).kitchen-out", ":(exclude).kitchen-out/**"];
+const OUTBOX = ".kitchen-out";
+type Git = Awaited<ReturnType<typeof openGit>>;
+/**
+ * Stage everything but the outbox. Not an `:(exclude)` pathspec: when the repo's
+ * .gitignore names .kitchen-out (fixture A does), `git add` refuses an exclude
+ * pathspec that matches an ignored path, so it is unstaged afterwards instead.
+ */
+async function addAll(git: Git) {
+  await git.run(["add", "-A", "--", "."]);
+  await git.run(["rm", "-r", "--cached", "--quiet", "--ignore-unmatch", "--", OUTBOX]);
+}
+/** `git status --porcelain` lines outside the outbox: empty means clean. */
+async function dirtyLines(git: Git): Promise<string> {
+  const out = (await git.run(["status", "--porcelain", "--untracked-files=all", "--", "."])).stdout;
+  return out
+    .split("\n")
+    .filter((l) => l.trim() && l.slice(3) !== OUTBOX && !l.slice(3).startsWith(`${OUTBOX}/`))
+    .join("\n");
+}
 
 export async function mainHead(repo: string): Promise<string> {
   const git = await openGit(plainCheckout(repo));
@@ -94,7 +112,7 @@ export async function stripToolkitEdits(job: Job): Promise<string[]> {
 export async function commitAll(job: Job, message: string): Promise<{ committed: boolean; head: string; ahead: boolean; clean: boolean; stripped: string[] }> {
   const git = await gitOf(job);
   const stripped = await stripToolkitEdits(job);
-  await git.run(["add", "-A", "--", ".", ...NOT_COMMITTED]);
+  await addAll(git);
   let staged = false;
   try {
     await git.run(["diff", "--cached", "--quiet", "--no-ext-diff"]);
@@ -104,7 +122,7 @@ export async function commitAll(job: Job, message: string): Promise<{ committed:
   }
   if (staged) await git.run(["commit", "--quiet", "--no-verify", "-m", message], { env: IDENTITY });
   const head = (await git.run(["rev-parse", "HEAD"])).stdout.trim();
-  const status = (await git.run(["status", "--porcelain", "--untracked-files=all", "--", ".", ...NOT_COMMITTED])).stdout.trim();
+  const status = await dirtyLines(git);
   return { committed: staged, head, ahead: head !== job.base, clean: status === "", stripped };
 }
 
@@ -122,7 +140,7 @@ export async function commitWith(
   policy: CommitPolicy,
 ): Promise<{ committed: boolean; head: string; ahead: boolean; clean: boolean; refused: string[]; files: string[] }> {
   const git = await gitOf(job);
-  await git.run(["add", "-A", "--", ".", ...NOT_COMMITTED]);
+  await addAll(git);
   const rows = (await git.run(["diff", "--cached", "--name-status", "--no-renames", "-z", "HEAD"])).stdout.split("\0").filter(Boolean);
   const changes: { status: string; file: string }[] = [];
   for (let i = 0; i + 1 < rows.length; i += 2) changes.push({ status: rows[i], file: rows[i + 1] });
@@ -149,7 +167,7 @@ export async function commitWith(
   }
   if (staged) await git.run(["commit", "--quiet", "--no-verify", "-m", message], { env: IDENTITY });
   const head = (await git.run(["rev-parse", "HEAD"])).stdout.trim();
-  const status = (await git.run(["status", "--porcelain", "--untracked-files=all", "--", ".", ...NOT_COMMITTED])).stdout.trim();
+  const status = await dirtyLines(git);
   const files = changes.filter((c) => !refused.some((r) => r.startsWith(`${c.file}: `))).map((c) => c.file);
   return { committed: staged, head, ahead: head !== job.base, clean: status === "", refused, files };
 }

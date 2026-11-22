@@ -62,12 +62,18 @@ export function partitionStale(slots: Slot[], isAlive: (o: Owner) => boolean): {
   return { live, stale };
 }
 
-export function probePort(port: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    const srv = net.createServer();
-    srv.once("error", () => resolve(false));
-    srv.listen({ port, host: "127.0.0.1", exclusive: true }, () => srv.close(() => resolve(true)));
-  });
+/**
+ * Free on loopback and on the wildcard address: on macOS a 127.0.0.1 listen
+ * succeeds even while another process (Docker publishing a port) holds 0.0.0.0.
+ */
+export async function probePort(port: number): Promise<boolean> {
+  const on = (host: string) =>
+    new Promise<boolean>((resolve) => {
+      const srv = net.createServer();
+      srv.once("error", () => resolve(false));
+      srv.listen({ port, host, exclusive: true }, () => srv.close(() => resolve(true)));
+    });
+  return (await on("127.0.0.1")) && (await on("0.0.0.0"));
 }
 
 function load(home: string): Registry {

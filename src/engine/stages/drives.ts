@@ -63,6 +63,7 @@ export const drives: StageHandler = async (ctx) => {
   };
   let failing = a.missing.length || a.refused.length ? [] : await runChecks();
   let agent: Record<string, string> | null = null;
+  let lintRefused: string[] = [];
   let agentText = "";
   if (a.missing.length || a.refused.length || failing.length) {
     const r = await runRole(ctx, {
@@ -93,8 +94,16 @@ export const drives: StageHandler = async (ctx) => {
     agentText = r.text;
     agent = headers(r.text);
     job = ctx.refresh();
-    const c = await commitWith(job, `kitchen(${job.id}): feature drives`, drivesPolicy);
+    // Only feature drive files, and only ones that hold no code: a refused file never reaches the branch.
+    const wt = job.worktree;
+    const c = await commitWith(job, `kitchen(${job.id}): feature drives`, (f, status) => {
+      const layer = drivesPolicy(f, status);
+      if (layer) return layer;
+      const l = lintFeatureFile(fs.readFileSync(path.join(wt, f), "utf8"), prims);
+      return l.ok ? null : `refused: ${l.reason}`;
+    });
     for (const x of c.refused) ctx.log(`kept off the job branch: ${x}`);
+    lintRefused = c.refused.filter((x) => x.includes(": refused: "));
     a = await assess(job, named, prims);
     failing = a.missing.length || a.refused.length ? [] : await runChecks();
   }
@@ -104,6 +113,7 @@ export const drives: StageHandler = async (ctx) => {
   const resolved = a.missing.length === 0 && a.refused.length === 0;
   const featureChecks = resolved && failing.length === 0;
   const why = [
+    ...lintRefused,
     ...a.missing.map((d) => `${d} does not resolve on HEAD`),
     ...a.refused,
     ...failing.map((c) => `${c.drive}: ${c.why}`),
