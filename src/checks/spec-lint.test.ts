@@ -465,7 +465,7 @@ test("probe H2: a re-marked negative still needs its absence asserted; it may ho
   // With the absence asserted it lints; it is a guard (must hold on the base, not counted as non-discriminating).
   const absent = `${marks}## Criteria\n${owner}- [C2] alice sees no owner\n  proof: toolkit open --path /projects --as alice\n  expect: text "Projects" visible and text "Owner:" not visible\n  covers: R2\n`;
   const ok = lintSpec(absent, { kind: "feature", toolkit: view, requirements: withSpecMarks(intake, absent) });
-  assert.ok(ok.ok, ok.reason);
+  assert.ok(ok.ok, ok.reason ?? "");
   assert.deepEqual(guardCriteria(ok.criteria, withSpecMarks(intake, absent)), ["C2"]);
   const held: BaseCheck = {
     head: "b",
