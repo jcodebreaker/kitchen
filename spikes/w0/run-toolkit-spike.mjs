@@ -91,7 +91,6 @@ const manifest = (id) =>
     .map((l) => JSON.parse(l));
 const head = (id) => JSON.parse(fs.readFileSync(path.join(jobDir(id), "job.json"), "utf8")).manifestHead;
 const containers = () => execFileSync("docker", ["ps", "-a", "--filter", "label=kitchen.toolkit=a-web", "--format", "{{.Names}}"], { encoding: "utf8" }).trim();
-const featureFile = (s, f) => path.join(s, ".kitchen/toolkit/features", f);
 
 const started = new Map(); // slot id → src
 async function upSlot(id, s, pid = process.pid) {

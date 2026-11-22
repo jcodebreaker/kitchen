@@ -224,7 +224,7 @@ async function agentRun(tool: "claude" | "codex", control = false) {
   );
   expect(
     "(ii) reserved-flag attacks stamped nothing, no file outside evidence",
-    !es.some((e) => e.drive === "primitive:login") && !es.some((e) => e.drive === "primitive:screenshot") && !fs.existsSync(escape),
+    !es.some((e) => e.drive === "primitive:login") && !es.some((e) => e.drive === "primitive:screenshot") && !fs.existsSync(escapeDir),
     {
       drives: [...new Set(es.map((e) => e.drive))],
     },
