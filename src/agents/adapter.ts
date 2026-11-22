@@ -30,6 +30,8 @@ export type AgentRequest = {
   denyRead?: string[];
   /** Reasoning effort (Claude `--effort`, Codex `model_reasoning_effort`). Default: the tool's own (Claude) / low (Codex). */
   effort?: "low" | "medium" | "high";
+  /** Where the agent's process group is recorded while it runs (src/procs.ts), so a restart after kill -9 can kill it. */
+  procsDir?: string;
 };
 
 export type AgentResult = {

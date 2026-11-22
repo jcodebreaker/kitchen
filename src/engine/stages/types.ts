@@ -24,6 +24,8 @@ export type StageContext = {
   log: (msg: string) => void;
   /** The job as it is on disk now. */
   refresh: () => Job;
+  /** False once another runner took the run lock: no role may start then. */
+  holdsLock: () => boolean;
 };
 
 export type Proposal = { to: Stage; facts: Omit<Facts, "now">; note?: string };
@@ -40,3 +42,6 @@ export class RoleFailure extends Error {
     this.authFailure = !!o.authFailure;
   }
 }
+
+/** The run lock went to another runner: the stage stops without a move; that runner resumes the job. */
+export class LockLost extends Error {}

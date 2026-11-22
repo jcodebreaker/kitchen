@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { execa } from "execa";
 import { kitchenHome } from "../home.ts";
+import { trackGroup } from "../procs.ts";
 import {
   type AgentAdapter,
   type AgentRequest,
@@ -127,7 +128,8 @@ export class ClaudeAdapter implements AgentAdapter {
     mkdirSync(outDirOf(req), { recursive: true });
     rmSync(outPathOf(req), { force: true }); // a stale file must never pass as this run's
     const sessionId = req.resumeSession ?? randomUUID();
-    const p = await execa(this.bin, claudeArgs(req, sessionId), {
+    // Its own process group, recorded for the job: a restart after kill -9 kills it (src/procs.ts).
+    const sub = execa(this.bin, claudeArgs(req, sessionId), {
       cwd: req.cwd,
       env: req.env,
       extendEnv: false,
@@ -135,7 +137,15 @@ export class ClaudeAdapter implements AgentAdapter {
       timeout: req.timeoutSec * 1000,
       forceKillAfterDelay: 5000,
       reject: false,
+      detached: true,
     });
+    const done = trackGroup(req.procsDir, sub.pid, `agent ${req.role}`);
+    let p: Awaited<typeof sub>;
+    try {
+      p = await sub;
+    } finally {
+      done();
+    }
     const transcriptPath = claudeTranscriptPath(req.cwd, sessionId, req.env);
     const base = { sessionId, transcriptPath, outPath: foundOut(req) };
     if (p.timedOut) return { ...base, ok: false, line: "", timedOut: true, error: `timeout after ${req.timeoutSec}s` };

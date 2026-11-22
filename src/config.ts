@@ -27,9 +27,16 @@ const Check = z.union([
 ]);
 export type CheckSpec = { name: string; run: string; timeoutSec: number };
 
+// Default tier → model per tool. Configurable: `agent.models: { strong: …, medium: …, cheap: … }`
+// in kitchen.yaml overrides any of them, and a role's `models.<role>` may name a model directly.
+// Codex: one generation per map, so `cheap` is never newer or stronger than `strong`. Verified
+// 2026-11-22 against `~/.codex/models_cache.json` (Codex CLI 0.171.0), which lists gpt-6-luna
+// ("fast and affordable", the newest), gpt-5.6-terra ("balanced") and gpt-5.6-luna ("fast");
+// there is no gpt-6 model stronger than luna to put above it. gpt-6-luna ran W0/W1 smokes;
+// gpt-5.6-luna ran the W1-fix smoke on fixture A (spikes/w1/results.md).
 const DEFAULT_MODELS: Record<"claude" | "codex" | "fake", Record<ModelTier, string>> = {
   claude: { strong: "opus", medium: "sonnet", cheap: "haiku" },
-  codex: { strong: "gpt-5.6-terra", medium: "gpt-5.6-terra", cheap: "gpt-6-luna" },
+  codex: { strong: "gpt-5.6-terra", medium: "gpt-5.6-terra", cheap: "gpt-5.6-luna" },
   fake: { strong: "fake", medium: "fake", cheap: "fake" },
 };
 

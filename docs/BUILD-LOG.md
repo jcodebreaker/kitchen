@@ -35,3 +35,34 @@ One entry per wave: what was built, review rounds and scores, what is proven, an
 - `kitchen run --detach` started from the user's own session is not yet proven (Wave 2).
 - In the last Codex rerun the model chose not to attempt rewriting `.git` with its file tool. The previous round showed that attempt being refused.
 - Linux sandboxes are untested.
+
+## Wave 1: engine skeleton (done, 9/10)
+
+**Review rounds:** 7 → 8.5 → 9. The reviewer was an independent Opus subagent, and each round it re-ran the spikes itself and tried its own break tests.
+
+**Built**
+- `src/config.ts`: the kitchen.yaml schema.
+- `src/engine/machine.ts`: the full transition table as one data table, plus a pure `move()`. Every row has a legal and a refused test.
+- `store.ts`: job storage, validated by a zod schema; a corrupt job is listed and skipped.
+- `lock.ts`: a run lock written atomically, with a heartbeat.
+- `runner.ts`: slots, `--once` and `--detach`. It checks the lock before each dispatch, each role run and each move.
+- `src/procs.ts`: every agent, check and per-job Toolkit call runs in its own process group, recorded on disk. On resume those groups are killed, and so are orphaned bridge checks.
+- Eleven thin stage handlers.
+- Ledger, prompt tickets, local and fake forges.
+- CLI: `ticket`, `run`, `status`, `resume`, `feedback [--to]`, `reject`, `report`.
+- A bridge `checks` tool that runs with the untrusted env.
+- ADR 0007: feedback goes back to the stage the job escalated from, and never past it or past verify.
+
+**Proven**
+- Spikes, run with a fake adapter:
+  - stage paths: 54/54;
+  - kill and resume: 34/34, including a real agent subprocess and a SIGKILLed bridge;
+  - faults: 27/27, covering corrupt jobs, a torn worktree, an empty lock, a lost lock, refused human commands, a torn ledger and torn process records;
+  - `--detach`: 8/8;
+  - bridge checks: 7/7.
+- Real calls: one each on Claude and Codex, plus a Codex smoke run on fixture A.
+- `npm test`: 228/228.
+
+**Still stubs, swapped in at W3a and W3b:** the guards that read a role's file instead of evidence (repro on base, drives resolve, verify verdict, toolkit check), the base sync and fresh instance, the engine-owned Toolkit checkout, and the GitHub forge.
+
+**Known gap:** when the loop stops because it lost the lock, it frees the slots of stages that are still finishing.

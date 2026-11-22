@@ -9,6 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { AgentRequest } from "../../src/agents/adapter.ts";
 import type { FakeStep } from "../../src/agents/fake.ts";
+import { stampCommand } from "../../src/proof/stamp-cmd.ts";
 import { SCENARIOS, type Step } from "./scenarios.ts";
 
 const stateFile = () => process.env.KITCHEN_FAKE_STATE ?? path.join(process.cwd(), "fake-state.json");
@@ -66,6 +67,15 @@ export default async function script(req: AgentRequest): Promise<FakeStep> {
     fs.writeFileSync(path.join(req.cwd, ".kitchen/toolkit/features", `${job}.md`), "```drive\ndrive: x.open\nsteps:\n  - read: { target: body }\n```\n");
   }
   if (s.addPrimitive) fs.appendFileSync(path.join(repo, ".kitchen/toolkit/primitives.txt"), `${s.addPrimitive}\n`);
-  const file = s.file?.replaceAll("eLAST", lastEvidence(repo, job));
+  if (s.toolkitEdit) {
+    fs.appendFileSync(path.join(req.cwd, ".kitchen/toolkit/primitives.txt"), "smith-edit\n");
+    fs.writeFileSync(path.join(req.cwd, ".kitchen/toolkit/bin/smith-extra"), "#!/bin/sh\n");
+  }
+  let stamped = "";
+  if (s.stamp) {
+    const jobDir = path.join(repo, ".kitchen", "jobs", job);
+    stamped = (await stampCommand({ jobDir, name: `look-${s.stamp}`, cmd: "ls work", role: "verifier", criterion: s.stamp, timeoutSec: 30 })).id;
+  }
+  const file = s.file?.replaceAll("eLAST", lastEvidence(repo, job)).replaceAll("eSTAMP", stamped);
   return { file, line: `${roleKey}: ${(file ?? "").split("\n")[0]}` };
 }

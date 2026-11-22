@@ -4,9 +4,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { loadConfig } from "../config.ts";
 import { readRunLock, staleReason } from "../engine/lock.ts";
-import { type Job, roundsUsed, type Stage } from "../engine/machine.ts";
+import { feedbackTarget, type Job, roundsUsed, STAGES, type Stage } from "../engine/machine.ts";
 import { moveJob, runKitchen } from "../engine/runner.ts";
-import { createJob, findJob, jobDirOf, kitchenDir, listJobs, writeAtomic } from "../engine/store.ts";
+import { createJob, findJob, jobDirOf, kitchenDir, scanJobs, writeAtomic } from "../engine/store.ts";
 import { mainHead } from "../engine/worktree.ts";
 import { readLedger } from "../ledger/append.ts";
 import { formatCounts, summarize } from "../ledger/report.ts";
@@ -80,15 +80,15 @@ export function status(repo: string, out: Out): number {
   }
   const q = queueLine(repo);
   if (q) out(q);
-  const jobs = listJobs(repo);
+  const jobs = scanJobs(repo);
   if (!jobs.length) out("no jobs");
-  for (const j of jobs) out(statusLine(j, jobDirOf(repo, j.id)));
+  for (const e of jobs) out(e.job ? statusLine(e.job, jobDirOf(repo, e.id)) : `${e.id.padEnd(28)} corrupt(${e.corrupt})`);
   return 0;
 }
 
 async function human(repo: string, ref: string, to: Stage, facts: Parameters<typeof moveJob>[2]["facts"], note: string, out: Out): Promise<number> {
   const job = findJob(repo, ref);
-  const r = await moveJob(repo, job, { to, facts, note }, out);
+  const r = await moveJob(repo, job, { to, facts, note }, out, "human");
   if (r === "stale") out(`${job.id}  changed while you asked; run it again`);
   return r === "moved" ? 0 : 1;
 }
@@ -102,17 +102,27 @@ export async function resume(repo: string, ref: string, out: Out): Promise<numbe
   return 1;
 }
 
-export async function feedback(repo: string, ref: string, text: string, out: Out): Promise<number> {
+/**
+ * needs-info: the answer goes to the source and the job back to intake.
+ * needs-human: back to the stage it escalated from (ADR 0007), or `--to <stage>` at or before it
+ * and never past verify (intake, spec, repro, build, drives, verify).
+ * done: back to build. The text is kept for the builder only if the move is made.
+ */
+export async function feedback(repo: string, ref: string, text: string, out: Out, o: { to?: string } = {}): Promise<number> {
+  if (o.to !== undefined && !(STAGES as readonly string[]).includes(o.to)) throw new Error(`kitchen feedback --to: no stage ${o.to}`);
+  const feedbackTo = o.to as Stage | undefined;
   const job = findJob(repo, ref);
   if (job.stage === "needs-info") {
     if (!text.trim()) throw new Error("kitchen feedback on a needs-info job needs the answer text");
     new PromptSource(repo).reply(job, text);
     return human(repo, ref, "intake", { replied: true }, "the operator replied", out);
   }
-  if (text.trim() && (job.stage === "needs-human" || job.stage === "done")) {
-    writeAtomic(path.join(jobDirOf(repo, job.id), "feedback", `${new Date().toISOString().replace(/[:.]/g, "-")}.md`), `${text.trim()}\n`);
-  }
-  return human(repo, ref, "build", { operator: "feedback" }, "kitchen feedback", out);
+  const to = job.stage === "needs-human" ? feedbackTarget(job, { feedbackTo }) : (feedbackTo ?? "build");
+  const file = path.join(jobDirOf(repo, job.id), "feedback", `${new Date().toISOString().replace(/[:.]/g, "-")}.md`);
+  if (text.trim()) writeAtomic(file, `${text.trim()}\n`);
+  const code = await human(repo, ref, to, { operator: "feedback", feedbackTo }, `kitchen feedback${feedbackTo ? ` --to ${feedbackTo}` : ""}`, out);
+  if (code !== 0) fs.rmSync(file, { force: true }); // refused: no side effect
+  return code;
 }
 
 export async function reject(repo: string, ref: string, out: Out): Promise<number> {

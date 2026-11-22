@@ -8,6 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execa } from "execa";
 import { untrustedEnv } from "../agents/env.ts";
+import { procsDirOf, trackGroup } from "../procs.ts";
 import { evidenceDir, jobGit, readJob, sealOf, storeHead, withJobLock } from "./job.ts";
 import { appendEntry, nextId, verifyManifest } from "./manifest.ts";
 import { sourceStamp } from "./source-stamp.ts";
@@ -26,7 +27,7 @@ export function stampCommand(o: { jobDir: string; name: string; cmd: string; rol
     fs.rmSync(dir, { recursive: true, force: true }); // a crashed run may have left files here
     fs.mkdirSync(dir, { recursive: true });
     const t0 = Date.now();
-    const r = await execa("sh", ["-c", o.cmd], {
+    const sub = execa("sh", ["-c", o.cmd], {
       cwd: job.worktree,
       env: untrustedEnv(job.worktree),
       extendEnv: false,
@@ -35,7 +36,15 @@ export function stampCommand(o: { jobDir: string; name: string; cmd: string; rol
       timeout: o.timeoutSec * 1000,
       forceKillAfterDelay: 5000,
       all: true,
+      detached: true, // its own process group, recorded for the job (src/procs.ts)
     });
+    const untrack = trackGroup(procsDirOf(o.jobDir), sub.pid, `check ${o.name}`);
+    let r: Awaited<typeof sub>;
+    try {
+      r = await sub;
+    } finally {
+      untrack();
+    }
     const secs = (Date.now() - t0) / 1000;
     const exit = r.timedOut ? 124 : (r.exitCode ?? 1);
     fs.writeFileSync(path.join(dir, "stdout.txt"), String(r.stdout));

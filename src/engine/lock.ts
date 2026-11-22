@@ -4,6 +4,8 @@
 // gone (dead pid, or the pid now belongs to another process) or its heartbeat
 // is older than 120 s (a hung or suspended owner). Take-over renames the file
 // aside and puts it back if it changed in between, as src/lock.ts does.
+// The file is created whole (temp file + link), so it is never empty while its
+// owner writes it; an unreadable one is taken over after a 2 s grace.
 // The owner checks on every beat that the lock still names it, and stops if not.
 import fs from "node:fs";
 import path from "node:path";
@@ -12,6 +14,8 @@ import { writeAtomic } from "./store.ts";
 
 export const HEARTBEAT_MS = 30_000;
 export const STALE_MS = 120_000;
+/** An unreadable lock file (empty, torn) must stay so this long before it is taken over. */
+export const UNREADABLE_GRACE_MS = 2_000;
 
 export type RunLockInfo = Owner & { heartbeat: string; startedAt: string; log?: string; argv?: string[] };
 
@@ -53,14 +57,30 @@ export function acquireRunLock(repo: string, extra: { log?: string; argv?: strin
   let takenOver: string | null = null;
   let previous: RunLockInfo | null = null;
   for (let tries = 0; ; tries++) {
+    // Written whole to a temp file, then linked into place: link() fails if the lock
+    // exists, and the lock file never exists without its content.
+    const tmp = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(info()));
     try {
-      fs.writeFileSync(file, JSON.stringify(info()), { flag: "wx" });
+      fs.linkSync(tmp, file);
       break;
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+    } finally {
+      fs.rmSync(tmp, { force: true });
     }
     const cur = readRunLock(repo);
     if (!cur) continue; // released between our create and read
+    if (!cur.info) {
+      // Unreadable (empty or torn, from a crash or an older writer): taken over only once
+      // it has stayed unreadable for UNREADABLE_GRACE_MS, so a writer is never raced.
+      const age = Date.now() - (fs.statSync(file, { throwIfNoEntry: false })?.mtimeMs ?? 0);
+      if (age < UNREADABLE_GRACE_MS) {
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.min(200, UNREADABLE_GRACE_MS - age + 10));
+        tries--;
+        continue;
+      }
+    }
     const why = staleReason(cur.info, Date.now());
     if (!why) throw new RunLockHeld(`kitchen run is already running (pid ${cur.info?.pid}, heartbeat ${cur.info?.heartbeat})`);
     if (tries > 5) throw new RunLockHeld(`could not take over ${file}`);

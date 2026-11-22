@@ -12,10 +12,11 @@ import { bridgeServer } from "../../bridge/mcp.ts";
 import { modelFor } from "../../config.ts";
 import { kitchenHome } from "../../home.ts";
 import { appendLedger } from "../../ledger/append.ts";
+import { procsDirOf, reapGroups } from "../../procs.ts";
 import type { AgentRunRef } from "../machine.ts";
 import { scratchOf, updateJob, writeAtomic } from "../store.ts";
 import { ensureWorktree } from "../worktree.ts";
-import { RoleFailure, type StageContext } from "./types.ts";
+import { LockLost, RoleFailure, type StageContext } from "./types.ts";
 
 const BRIDGE_ROLES = new Set(["builder", "verifier", "smith", "spec", "repro"]);
 const AUTH = /not logged in|unauthori[sz]ed|authentication|invalid api key|401|please run .*login/i;
@@ -56,12 +57,27 @@ export async function runRole(ctx: StageContext, o: { role: string; file: string
     outFile: o.file,
     outDir,
     env: buildAgentEnv(path.join(kitchenHome(), "agent-scrub")),
+    procsDir: procsDirOf(ctx.jobDir),
     ...(o.tier === "write" && BRIDGE_ROLES.has(o.role) ? { bridge: bridgeServer({ repo: ctx.repo, job: job.id, role: o.role }) } : {}),
   };
+  if (!ctx.holdsLock()) throw new LockLost(`run lock lost before ${o.role} started`);
   const t0 = Date.now();
   ctx.log(`${o.role}: ${ctx.agent.name} ${model} (${o.tier}) → ${o.file}`);
   const r = await ctx.agent.run(req);
   const secs = (Date.now() - t0) / 1000;
+  // A bridge killed with its agent's group (SIGKILL: no exit handler) leaves the checks
+  // and Toolkit calls it started running; they must not outlive the stage (src/procs.ts).
+  for (const g of await reapGroups(procsDirOf(ctx.jobDir), { deadOwners: true })) {
+    ctx.log(`killed ${g.what} left running by pid ${g.by} (process group ${g.pgid})`);
+    appendLedger(ctx.repo, {
+      job: job.id,
+      stage: job.stage,
+      round: job.round,
+      event: "orphan-killed",
+      key: `${job.id}/orphan/${g.pgid}/${g.at}`,
+      detail: { ...g },
+    });
+  }
   const run: AgentRunRef = {
     key,
     role: o.role,
@@ -102,5 +118,7 @@ export async function runRole(ctx: StageContext, o: { role: string; file: string
     j.agentRuns.push(run);
     return j;
   });
+  // Kept for whoever holds the lock now (it reuses the file); this runner does nothing more with it.
+  if (!ctx.holdsLock()) throw new LockLost(`run lock lost while ${o.role} ran`);
   return { text, line: r.line, reused: false, run };
 }

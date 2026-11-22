@@ -9,7 +9,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { processStart } from "../../src/lock.ts";
-import { CLI, check, finish, forge, jobDir, jobOf, kitchen, makeRepo, ROOT, sleep, stagesOf, ticket } from "./lib.ts";
+import { CLI, check, finish, forge, HERE, jobDir, jobOf, kitchen, makeRepo, ROOT, sleep, stagesOf, ticket } from "./lib.ts";
 
 const root = path.resolve(process.argv[2] ?? path.join(import.meta.dirname, ".work"));
 fs.mkdirSync(root, { recursive: true });
@@ -132,4 +132,146 @@ fs.writeFileSync(lockFile, JSON.stringify({ ...owner, heartbeat: new Date(Date.n
 const took = kitchen(r, "run", "--once");
 check("a live owner whose heartbeat is 200 s old loses the lock", /took over the run lock \(heartbeat 200s old\)/.test(took.out), took.out.split("\n")[0]);
 sleeper.kill();
+
+// ---- Part 2: the agent is a real subprocess (a stub `claude` via KITCHEN_CLAUDE_BIN / agent.command).
+// It hangs in drives; kill -9 the runner: the agent lives on (an orphan). The restart must kill its
+// process group and wait for it before drives runs again, so exactly one agent runs the stage.
+const alive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+const pgidOf = (pid: number) => Number(spawnSync("ps", ["-o", "pgid=", "-p", String(pid)], { encoding: "utf8" }).stdout.trim());
+const yaml = (agent: string, checks: string) =>
+  `concurrency: 2\nagent: ${agent}\nforge: { kind: fake }\nchecks:\n${checks}\nbackoff: { base_sec: 1, max_sec: 2 }\n`;
+const GATE_CHECK = '  - { name: no-gate-fail, run: "test ! -f GATE_FAIL" }';
+
+async function killMidStage(r: ReturnType<typeof makeRepo>, label: string, pidFile: string) {
+  const log = path.join(root, `${label}-run1.log`);
+  const out = fs.openSync(log, "w");
+  const runner = spawn(process.execPath, [CLI, "run", "--repo", r.dir], { env: r.env, stdio: ["ignore", out, out] });
+  for (let i = 0; i < 300 && !fs.existsSync(pidFile); i++) await sleep(100);
+  await sleep(300);
+  const pid = Number(fs.readFileSync(pidFile, "utf8").trim());
+  runner.kill("SIGKILL");
+  await new Promise((res) => runner.once("exit", res));
+  fs.closeSync(out);
+  return { pid, runnerPid: runner.pid as number };
+}
+
+{
+  const ra = makeRepo(root, "kill-agent");
+  const wrapper = path.join(root, "stub-claude");
+  fs.writeFileSync(wrapper, `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(path.join(ROOT, "spikes/w1/stub-agent.ts"))} "$@"\n`, {
+    mode: 0o755,
+  });
+  fs.writeFileSync(path.join(ra.dir, "kitchen.yaml"), yaml(`{ tool: claude, command: [${JSON.stringify(wrapper)}] }`, GATE_CHECK));
+  const ida = ticket(ra, "Survive a crash with a real agent process\nscenario: kill");
+  const { pid: agent, runnerPid } = await killMidStage(ra, "kill-agent", path.join(ra.dir, `hang-${ida}-verifier-drives`));
+  const procs = path.join(jobDir(ra, ida), "procs");
+  check(
+    "the agent runs as its own process group, recorded in the job's procs/",
+    agent > 0 && pgidOf(agent) === agent && fs.existsSync(path.join(procs, `${agent}.json`)),
+    `agent pid ${agent}, pgid ${pgidOf(agent)}`,
+  );
+  check("after kill -9 of the runner the agent is still running (an orphan)", alive(agent));
+  const again = kitchen(ra, "run");
+  fs.writeFileSync(path.join(root, "kill-agent-run2.log"), again.out);
+  check(
+    "restart kills the orphan's process group before resuming",
+    new RegExp(`${ida}  killed agent verifier left running by pid ${runnerPid} \\(process group ${agent}\\)`).test(again.out) &&
+      again.out.indexOf("killed agent") < again.out.indexOf(`${ida}  resume drives`),
+    again.out
+      .split("\n")
+      .filter((l) => /killed|resume/.test(l))
+      .join(" | "),
+  );
+  check("the old agent is dead", !alive(agent));
+  const runs = fs.readFileSync(path.join(ra.dir, ".kitchen", "stub-agents.log"), "utf8");
+  const starts = [...runs.matchAll(/^start (\d+) drives\.md overlap=(.*)$/gm)];
+  const dones = [...runs.matchAll(/^done (\d+) drives\.md$/gm)];
+  check(
+    "exactly one agent ran the drives stage to the end, and none ran next to another",
+    starts.length === 2 && dones.length === 1 && dones[0][1] !== String(agent) && [...runs.matchAll(/overlap=(\S+)/g)].length === 0,
+    runs.trim().replace(/\n/g, " | "),
+  );
+  const ja = jobOf(ra, ida);
+  check(
+    "the job finishes; no procs records are left",
+    ja.stage === "done" && (!fs.existsSync(procs) || fs.readdirSync(procs).length === 0),
+    stagesOf(ra, ida).join(" → "),
+  );
+}
+
+// ---- Part 3: a gate check (a per-job subprocess) hangs; kill -9 the runner; the restart kills it too.
+{
+  const rc = makeRepo(root, "kill-check");
+  const pidFile = path.join(rc.dir, "check-pid");
+  const trigger = path.join(rc.dir, "hang-check");
+  const hang = `if [ -f ${trigger} ]; then rm ${trigger}; echo $$ > ${pidFile}; sleep 600; fi`;
+  fs.writeFileSync(
+    path.join(rc.dir, "kitchen.yaml"),
+    yaml(`{ tool: fake, script: ${JSON.stringify(path.join(HERE, "fake-script.ts"))} }`, `${GATE_CHECK}\n  - { name: slow, run: ${JSON.stringify(hang)} }`),
+  );
+  fs.writeFileSync(trigger, "");
+  const idc = ticket(rc, "Survive a crash mid-check\nscenario: chore");
+  const { pid: sh, runnerPid } = await killMidStage(rc, "kill-check", pidFile);
+  check("the check runs as its own process group; it outlives the killed runner", pgidOf(sh) === sh && alive(sh), `pid ${sh}`);
+  const again = kitchen(rc, "run");
+  fs.writeFileSync(path.join(root, "kill-check-run2.log"), again.out);
+  check(
+    "restart kills the orphaned check's group (the shell and its sleep) before resuming the gate",
+    new RegExp(`${idc}  killed check slow left running by pid ${runnerPid} \\(process group ${sh}\\)`).test(again.out) && !alive(sh),
+    again.out
+      .split("\n")
+      .filter((l) => /killed|resume/.test(l))
+      .join(" | "),
+  );
+  const leftover = spawnSync("pgrep", ["-g", String(sh)], { encoding: "utf8" }).stdout.trim();
+  check("nothing is left in that process group", leftover === "", leftover);
+  check("the job finishes", jobOf(rc, idc).stage === "done", stagesOf(rc, idc).join(" → "));
+}
+
+// ---- Part 4: a check started through the bridge; the agent's group (agent + bridge) is SIGKILLed.
+// The bridge dies without its exit handler, so its check (its own group) lives on. runRole reaps the
+// job's records whose owner is dead once the agent returns: the check is dead before the stage retries.
+{
+  const rb = makeRepo(root, "kill-bridge");
+  const wrapper = path.join(root, "stub-claude");
+  const pidFile = path.join(rb.dir, "check-pid");
+  const trigger = path.join(rb.dir, "hang-check");
+  const hang = `if [ -f ${trigger} ]; then rm ${trigger}; echo $$ > ${pidFile}; sleep 600; fi`;
+  fs.writeFileSync(
+    path.join(rb.dir, "kitchen.yaml"),
+    yaml(`{ tool: claude, command: [${JSON.stringify(wrapper)}] }`, `${GATE_CHECK}\n  - { name: slow, run: ${JSON.stringify(hang)} }`),
+  );
+  fs.writeFileSync(trigger, "");
+  fs.writeFileSync(path.join(rb.dir, "bridge-kill"), "");
+  const idb = ticket(rb, "A bridge check outlives its agent\nscenario: chore");
+  const out = kitchen(rb, "run");
+  fs.writeFileSync(path.join(root, "kill-bridge-run.log"), out.out);
+  const sh = Number(fs.readFileSync(pidFile, "utf8").trim());
+  const bridgePid = Number(/^bridge-kill (\d+)$/m.exec(fs.readFileSync(path.join(rb.dir, ".kitchen", "stub-agents.log"), "utf8"))?.[1]);
+  check("the check ran in its own process group, started by the bridge", sh > 0 && bridgePid > 0, `check ${sh}, bridge ${bridgePid}`);
+  const killedAt = out.out.indexOf(`killed check slow left running by pid ${bridgePid} (process group ${sh})`);
+  const retryAt = out.out.indexOf("build: builder:", out.out.indexOf("build: builder:") + 1);
+  check(
+    "after the agent returns, runRole kills the check the dead bridge left (before the builder runs again)",
+    killedAt >= 0 && retryAt > killedAt && /build: killed check slow/.test(out.out),
+    out.out
+      .split("\n")
+      .filter((l) => /killed|builder:|error/.test(l))
+      .join(" | "),
+  );
+  check("the check is dead and nothing is left in its group", !alive(sh) && spawnSync("pgrep", ["-g", String(sh)], { encoding: "utf8" }).stdout.trim() === "");
+  const procs = path.join(jobDir(rb, idb), "procs");
+  check(
+    "the job finishes; no procs records are left",
+    jobOf(rb, idb).stage === "done" && (!fs.existsSync(procs) || fs.readdirSync(procs).length === 0),
+    stagesOf(rb, idb).join(" → "),
+  );
+}
 finish("w1 kill");

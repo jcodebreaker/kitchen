@@ -162,13 +162,14 @@ A paused job **releases its slot**. The runner checks `waitFor` on every tick an
 | ready | report | synced with base, CI green (`gh pr checks`), Toolkit PR (if any) merged, gate PASS. Re-verify on the synced HEAD only if base moved since verify |
 | ready | paused (ci / toolkit-pr) | CI still running, or the Toolkit PR not merged yet |
 | ready | build | sync conflict, red CI, or a re-check that fails |
+| ready | gate | gate is no longer PASS on this HEAD (commits since it touch more than `features/*.md`): Gate runs again |
 | paused | `pausedFrom` | the `waitFor` condition clears |
 | report | done | report.html rendered with every id resolved. Evidence branch pushed, PR comment posted |
 | report | needs-human | rendering refused twice |
 | done | build | `kitchen feedback <id>` or a review comment on the PR from a trusted person. Round count resets as for needs-human |
 | * | paused (backoff) | adapter rate limit or auth failure. Retried with backoff, never → needs-human |
-| * | needs-human | round limit, smith limit, or an adapter error that repeats and isn't a rate limit |
-| needs-human | build / rejected | `kitchen feedback` / `kitchen reject` |
+| * | needs-human | round limit, smith limit, an adapter or engine error that repeats and isn't a rate limit, or a stage result refused twice. The stage it left is kept as `escalatedFrom` |
+| needs-human | `escalatedFrom` (or `--to <stage>`) / rejected | `kitchen feedback [--to <stage>]` / `kitchen reject` (ADR 0007). A human command the table refuses changes nothing |
 
 "Merged" is read from the forge; Kitchen never drives it.
 

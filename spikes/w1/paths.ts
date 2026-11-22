@@ -1,6 +1,7 @@
 // W1 exit, part 1: scripted jobs walk every stage path through the real CLI with
 // the fake adapter. One throwaway repo per scenario. Exits 1 on any miss.
 //   node spikes/w1/paths.ts <scratch dir>      (W1_VERBOSE=1 prints every CLI line)
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { check, editForge, finish, forge, jobDir, jobOf, kitchen, makeRepo, type Repo, stagesOf, stepUntil, ticket } from "./lib.ts";
@@ -86,6 +87,16 @@ const expectPath = (label: string, r: Repo, id: string, want: string) => check(`
     `${j.waitFor} pr ${j.smith.toolkitPr}, smith ${j.smith.attempts}`,
   );
   check("gap: toolkitRef pinned to the proven Toolkit", !!j.toolkitRef, j.toolkitRef);
+  const onBranch = execFileSync("git", ["-C", r.dir, "diff", "--name-only", j.base, j.branch], { encoding: "utf8" }).trim().split("\n");
+  const leaked = onBranch.filter((f) => f.startsWith(".kitchen/toolkit/") && !f.startsWith(".kitchen/toolkit/features/"));
+  check(
+    "gap: the smith's Toolkit primitive edits in the worktree are kept off the job branch (feature drives stay)",
+    !leaked.length &&
+      onBranch.some((f) => f.startsWith(".kitchen/toolkit/features/")) &&
+      /Toolkit primitive edits kept off the job branch: .*primitives\.txt/.test(out) &&
+      !fs.existsSync(path.join(j.worktree, ".kitchen/toolkit/bin/smith-extra")),
+    leaked.length ? `leaked: ${leaked.join(", ")}` : onBranch.join(", "),
+  );
   run(r, "--once");
   check("gap: still paused while the Toolkit PR is open", jobOf(r, id).stage === "paused");
   editForge(r, (s) => {
@@ -138,14 +149,15 @@ const expectPath = (label: string, r: Repo, id: string, want: string) => check(`
   run(r);
   j = jobOf(r, id);
   check("inconclusive: after the ticket, INCONCLUSIVE twice more → needs-human", j.stage === "needs-human" && j.round === 1, j.pausedReason);
+  check("inconclusive: needs-human records where it escalated from", j.escalatedFrom === "verify", j.escalatedFrom);
   const fb = kitchen(r, "feedback", id, "The Toolkit is fixed, try again").out;
-  check("needs-human → feedback → build", /needs-human → build/.test(fb), fb.trim());
+  check("needs-human → feedback → verify, the stage it escalated from (ADR 0007)", /needs-human → verify/.test(fb), fb.trim());
   run(r);
   expectPath(
     "inconclusive",
     r,
     id,
-    "intake → build → gate → drives → verify → verify → paused → verify → verify → needs-human → build → gate → drives → verify → review → ready → report → done",
+    "intake → build → gate → drives → verify → verify → paused → verify → verify → needs-human → verify → review → ready → report → done",
   );
 }
 
@@ -159,7 +171,9 @@ const expectPath = (label: string, r: Repo, id: string, want: string) => check(`
     j.stage === "needs-human" && /round limit: 3 of 3 rounds used/.test(out),
     j.pausedReason,
   );
-  kitchen(r, "feedback", id, "Gate is fixed now");
+  check("rounds: escalated from gate", j.escalatedFrom === "gate", j.escalatedFrom);
+  const to = kitchen(r, "feedback", id, "--to", "build", "Gate is fixed now").out;
+  check("rounds: `feedback --to build` overrides the escalation stage", /needs-human → build/.test(to), to.trim());
   run(r);
   j = jobOf(r, id);
   check(
@@ -178,6 +192,19 @@ const expectPath = (label: string, r: Repo, id: string, want: string) => check(`
     id,
     "intake → build → gate → build → gate → build → gate → needs-human → build → gate → drives → verify → review → ready → report → done → build → gate → drives → verify → review → ready → report → done",
   );
+}
+
+// 8b. a judged criterion: PASS with no citation is refused (per criterion, not a flat list); PASS citing C2's own evidence moves on
+{
+  const { r, id } = scenario("judged");
+  const out = run(r);
+  expectPath("judged", r, id, "intake → build → gate → drives → verify → review → ready → report → done");
+  check(
+    "judged: PASS with no citation for the judged criterion is refused with the reason",
+    /refused verify → review: a cited id is not stamped for this HEAD, round and criterion \(C2 is judged and cites no evidence\)/.test(out),
+  );
+  const ev = fs.readFileSync(path.join(jobDir(r, id), "evidence", "manifest.jsonl"), "utf8");
+  check("judged: the cited entry is stamped for C2 by the verifier", /"criterion":"C2"/.test(ev) && /"role":"verifier"/.test(ev));
 }
 
 // 9. rejected from intake, rejected from needs-info, needs-info → reply → intake
