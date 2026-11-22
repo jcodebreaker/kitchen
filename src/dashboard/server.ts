@@ -1,6 +1,5 @@
 // `kitchen dashboard [--port n]`: the page (dashboard/dashboard.html) and its data, on 127.0.0.1 only.
-//   GET  /                         the page, with this launch's token in it (no CDN, no scripts or fonts from elsewhere)
-//   GET  /fonts/<Geist>.woff2      the page's two fonts, bundled (dashboard/fonts, OFL)
+//   GET  /                         the page, with this launch's token in it (no CDN, nothing from elsewhere; system fonts)
 //   GET  /data.json                snapshot(repo): every job, read from .kitchen/ on each request
 //   GET  /jobs/<id>/detail.json    one job: stage history with its agents' activity, thread, criteria
 //   GET  /jobs/<id>/report.html    a job's rendered Report
@@ -22,8 +21,6 @@ import { detail } from "./detail.ts";
 import { setupView } from "./setup.ts";
 
 export const DASHBOARD_HTML = path.resolve(import.meta.dirname, "..", "..", "dashboard", "dashboard.html");
-const FONTS = path.resolve(import.meta.dirname, "..", "..", "dashboard", "fonts");
-const FONT_FILES = new Set(["Geist-Variable.woff2", "GeistMono-Variable.woff2"]);
 /** A POST body larger than this is refused unread. */
 export const MAX_BODY = 16 * 1024;
 
@@ -35,9 +32,9 @@ const HEADERS = {
   "x-frame-options": "DENY",
   "content-security-policy": "default-src 'none'; frame-ancestors 'none'",
 };
-/** The page's own: its inline script and styles, its own data and fonts, data: images; nothing from elsewhere; never framed. */
+/** The page's own: its inline script and styles, its own data, data: images, the system's fonts; nothing from elsewhere; never framed. */
 export const PAGE_CSP =
-  "default-src 'none'; connect-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; font-src 'self'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+  "default-src 'none'; connect-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 /** A Report: no script at all. */
 export const REPORT_CSP = "default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
@@ -108,9 +105,6 @@ export function dashboardServer(repo: string, o: { token?: string } = {}): http.
         page ??= fs.readFileSync(DASHBOARD_HTML, "utf8").replace("__KITCHEN_TOKEN__", token);
         return send(200, "text/html; charset=utf-8", page, { "content-security-policy": PAGE_CSP });
       }
-      const font = /^\/fonts\/([\w-]+\.woff2)$/.exec(url.pathname);
-      if (font && FONT_FILES.has(font[1]))
-        return send(200, "font/woff2", fs.readFileSync(path.join(FONTS, font[1])), { "cache-control": "max-age=86400, immutable" });
       if (url.pathname === "/data.json") return json(200, await snapshot(repo));
       if (url.pathname === "/setup.json") return json(200, setupView(repo));
       const m = /^\/jobs\/([^/]+)\/(report\.html|detail\.json)$/.exec(url.pathname);

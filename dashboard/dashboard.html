@@ -6,9 +6,7 @@
 <meta name="kitchen-token" content="__KITCHEN_TOKEN__">
 <title>Kitchen</title>
 <style>
-/* Geist and Geist Mono (SIL OFL 1.1, dashboard/fonts/OFL.txt), served by kitchen dashboard itself. */
-@font-face{font-family:"Geist";src:url("/fonts/Geist-Variable.woff2") format("woff2");font-weight:100 900;font-display:swap}
-@font-face{font-family:"Geist Mono";src:url("/fonts/GeistMono-Variable.woff2") format("woff2");font-weight:100 900;font-display:swap}
+/* The system San Francisco stack (ADR 0013): nothing to load, nothing from elsewhere. */
 :root{
   --bg:#ffffff; --side:#f7f7f8; --raise:#ffffff; --card:#ffffff; --colbg:#f6f6f7; --band:#f6f6f7; --hover:#f3f3f4; --press:#ececee;
   --line:#ececee; --line2:#dcdce0;
@@ -16,8 +14,8 @@
   --act:#d9480f; --on-act:#ffffff; --act-bg:#fff5ee; --act-line:#f8cfb4; --act-fg:#b93d0b;
   --ok:#2b9a59; --fail:#d43d3d; --add:#1f8a4c; --del:#c63a3a;
   --shadow:0 8px 40px rgba(0,0,0,.12),0 1px 3px rgba(0,0,0,.06);
-  --sans:"Geist",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-  --mono:"Geist Mono","SF Mono",ui-monospace,Menlo,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Helvetica,Arial,sans-serif;
+  --mono:"SF Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
   --ease:cubic-bezier(.2,.8,.2,1);
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
@@ -155,31 +153,63 @@ kbd{font:500 11px var(--sans);color:var(--mute);border:1px solid var(--line2);bo
 .segc button:hover{color:var(--fg)}
 .segc button.on{background:var(--raise);color:var(--fg);box-shadow:0 0 0 1px var(--line2)}
 
-/* board */
-.board{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;padding:14px 16px 6px;align-items:start}
-.col{background:var(--colbg);border-radius:12px;padding:6px;display:flex;flex-direction:column;gap:6px;min-width:0;min-height:96px}
-.chead{display:flex;align-items:center;gap:7px;padding:6px 8px 4px;font-weight:500}
-.chead .n{color:var(--faint);font-weight:400}
-.rw.card{border:1px solid var(--line);border-radius:10px;background:var(--card);padding:11px 12px;display:flex;flex-direction:column;gap:8px;cursor:default;transition:border-color .12s,box-shadow .12s;min-width:0}
-.rw.card:hover{border-color:var(--line2);box-shadow:0 2px 10px rgba(0,0,0,.05)}
-.rw.card.sel{border-color:var(--line2)}
-.rw.card.open{border-color:var(--fg)}
+/* board (ADR 0013, dashboard/mockups/board-apple.html): lanes are quiet surfaces, cards carry the type hierarchy */
+.scroll.bd{display:flex;flex-direction:column}
+.scroll.bd #list{flex:1 0 auto;display:flex;flex-direction:column}
+.board{--ring:color-mix(in srgb,var(--fg) 9%,transparent);flex:1;display:flex;gap:12px;padding:16px 20px 8px;align-items:stretch;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:thin}
+.col{flex:1 0 204px;max-width:340px;min-width:0;background:var(--colbg);border-radius:14px;padding:6px;display:flex;flex-direction:column;min-height:180px}
+.chead{display:flex;align-items:baseline;gap:7px;padding:10px 12px 10px;white-space:nowrap}
+.chead .nm{font-size:13px;font-weight:600;letter-spacing:-.01em}
+.chead .n{font-size:13px;color:var(--faint)}
+.chead .who{margin-left:auto;font-size:11.5px;color:var(--faint);overflow:hidden;text-overflow:ellipsis;min-width:0}
+.chead .dot{width:7px;height:7px;border-radius:4px;align-self:center;flex:none}
+.col.ny .dot{background:var(--act)} .col.ready .dot{background:var(--ok)}
+.col.ny:not(.nil) .nm,.col.ny:not(.nil) .n{color:var(--act-fg)}
+.col.nil:not(.ny){flex:0 0 44px;padding:6px 0;align-items:center}
+.col.nil:not(.ny) .chead{writing-mode:vertical-rl;padding:12px 0;gap:8px;color:var(--mute)}
+.col.nil:not(.ny) .chead .nm{font-weight:500}
+.col.nil:not(.ny) .chead .who,.col.nil:not(.ny) .dot{display:none}
+.cards{display:flex;flex-direction:column;gap:8px;flex:1}
+.cards .nilt{font-size:12.5px;color:var(--faint);padding:2px 12px}
+
+.rw.card{border:0;border-radius:10px;background:var(--card);padding:11px 12px 9px;display:flex;flex-direction:column;gap:7px;cursor:default;min-width:0;box-shadow:0 0 0 1px var(--ring),0 1px 2px rgba(0,0,0,.04);transition:box-shadow .15s;outline-offset:2px}
+.rw.card:hover,.rw.card.sel{box-shadow:0 0 0 1px color-mix(in srgb,var(--fg) 16%,transparent),0 4px 14px rgba(0,0,0,.07)}
+.rw.card.rdy{box-shadow:0 0 0 1.5px color-mix(in srgb,var(--ok) 55%,transparent),0 1px 2px rgba(0,0,0,.04)}
+.rw.card.ny{box-shadow:0 0 0 1.5px color-mix(in srgb,var(--act) 60%,transparent),0 1px 2px rgba(0,0,0,.04)}
+.rw.card.open{box-shadow:0 0 0 2px var(--fg)}
 .rw.card.flash{animation:cflash 1.4s ease-out}
-@keyframes cflash{0%{box-shadow:0 0 0 3px color-mix(in srgb,var(--fg) 22%,transparent)}}
-.ctop{display:flex;align-items:center;gap:8px;color:var(--mute);min-width:0}
-.ctop .id{color:var(--faint)} .ctop .sp,.cbot .sp{flex:1}
-.ctop .tag{margin:0}
-.ctt{font-size:13.5px;font-weight:500;line-height:1.35;letter-spacing:-.006em;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
-.card .sub{margin:0}
-.card .trk{margin:2px 0}
-.cbot{display:flex;align-items:center;min-height:22px}
-.cbot .ib{margin:-4px -5px -4px 0}
-.card.end{gap:5px;background:none;border-color:transparent;padding:8px 8px}
-.card.end:hover{background:var(--card);border-color:var(--line);box-shadow:none}
-.card.end .ctt{font-weight:400;font-size:13px;padding-left:24px}
-.card.end .fin{font-size:12.5px;color:var(--mute);padding-left:24px}
-.card.end .fin.new{color:var(--ok);font-weight:500}
-.card.gone .ctt{color:var(--faint)}
+@keyframes cflash{0%{box-shadow:0 0 0 4px color-mix(in srgb,var(--fg) 20%,transparent)}}
+.ctop{display:flex;align-items:center;gap:7px;min-width:0;height:16px;font:400 11px var(--mono);color:var(--faint)}
+.ctop .id{font-weight:500;color:var(--mute);flex:none}
+.ctop .rnd{font:400 11px var(--sans);color:var(--mute)}
+.ctop .sp{flex:1}
+.ctop .mt{white-space:nowrap;flex:none}
+.ctop .mt i{font:400 11px var(--sans);font-style:normal;margin-right:3px}
+.pulse{width:6px;height:6px;border-radius:3px;background:var(--fg2);flex:none;animation:pulse 1.6s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.2}}
+.ctt{font-size:13.5px;font-weight:600;line-height:1.36;letter-spacing:-.012em;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;text-wrap:pretty}
+.card.gone .ctt{color:var(--mute);font-weight:500}
+.prow{display:flex;align-items:flex-start;gap:8px}
+.prow .cst{margin-left:auto;font:400 11px/18px var(--mono);color:var(--mute);flex:none}
+.pills{display:flex;flex-wrap:wrap;gap:5px;align-items:center;min-width:0}
+.pl{font:500 11px/18px var(--sans);padding:0 7px;border-radius:6px;background:color-mix(in srgb,var(--fg) 6%,transparent);color:var(--mute);white-space:nowrap}
+.pl.high{color:var(--fg);font-weight:600}
+.pl.pass{background:color-mix(in srgb,var(--ok) 13%,transparent);color:color-mix(in srgb,var(--ok) 78%,var(--fg))}
+.pl.fail{background:color-mix(in srgb,var(--fail) 12%,transparent);color:color-mix(in srgb,var(--fail) 82%,var(--fg))}
+.cbot{display:flex;align-items:flex-start;gap:8px;min-width:0;border-top:1px solid var(--line);padding-top:8px;margin-top:2px}
+.evl{flex:1;min-width:0;font:400 12px/16px var(--sans);color:var(--mute);height:32px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:break-word}
+.card.end .evl{height:auto}
+.evl .vb{font-weight:500;color:var(--fg2);margin-right:1px}
+.evl .tg,.evl .df{font-family:var(--mono);font-size:11px}
+.evl .tg{color:var(--fg2)}
+.evl .df{margin-left:5px}
+.evl .ok{color:color-mix(in srgb,var(--ok) 78%,var(--fg));font-weight:500}
+.evl .bad{color:color-mix(in srgb,var(--fail) 82%,var(--fg));font-weight:500}
+.cbot .ib{width:22px;height:22px;border-radius:6px;margin:-3px -4px -3px 0;color:var(--faint);flex:none}
+.cq{font-size:12.5px;line-height:1.45;color:var(--fg2);display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
+.card.ny .btn.act{height:26px;font-size:12.5px;padding:0 13px;border-radius:8px;align-self:flex-start;margin:1px 0 2px}
+.card.ny .tka{flex-wrap:wrap;margin:1px 0 2px}
+button.a{font-weight:600}button.a:hover{text-decoration:underline;text-underline-offset:3px}
 
 /* inline composer under a row */
 .inl{padding:2px 16px 14px 92px;animation:drop .22s var(--ease)}
@@ -300,12 +330,15 @@ kbd{font:500 11px var(--sans);color:var(--mute);border:1px solid var(--line2);bo
 ::view-transition-new(*){animation-duration:.2s;animation-delay:.08s;animation-fill-mode:both}
 
 /* ── list narrows (panel open, or a small window) ── */
-@container main (max-width:900px){ .row .chg{display:none}
-  .board{grid-template-columns:repeat(5,minmax(212px,1fr));overflow-x:auto;overscroll-behavior-x:contain} }
+@container main (max-width:900px){ .row .chg{display:none} }
+/* board on a phone: lanes stack, Needs you first, empty lanes become one quiet line */
 @container main (max-width:560px){
-  .board{grid-template-columns:1fr;overflow:visible;padding:12px 12px 4px}
-  .col{min-height:0}.col.nil{background:none;padding:0 6px}.col.nil .chead{color:var(--faint);padding:2px 8px}
-  .ctt{-webkit-line-clamp:2}
+  .board{flex-direction:column;overflow:visible;padding:12px 12px 4px;gap:10px}
+  .col,.col.nil:not(.ny){flex:none;max-width:none;min-height:0;align-items:stretch}
+  .col.nil:not(.ny){background:none;padding:0 6px}
+  .col.nil:not(.ny) .chead{writing-mode:horizontal-tb;padding:2px 10px;gap:7px}
+  .col.nil:not(.ny) .chead .who{display:block}
+  .evl{height:auto;min-height:16px}
 }
 @container main (max-width:780px){ .top .cost,.top .kb{display:none} }
 @container main (max-width:680px){
@@ -338,6 +371,7 @@ kbd{font:500 11px var(--sans);color:var(--mute);border:1px solid var(--line2);bo
   *,*::before,*::after{animation:none!important;transition:none!important}
   .shim{color:var(--fg);background:none}
   .seg.run{background:var(--fg)}
+  .pulse{opacity:1}
 }
 
 /* ── real data: Setup questions in the composer, links ── */
@@ -356,8 +390,7 @@ kbd{font:500 11px var(--sans);color:var(--mute);border:1px solid var(--line2);bo
 .rbar code{font:12px var(--mono);background:var(--raise);border:1px solid var(--line2);border-radius:6px;padding:1px 8px;color:var(--fg)}
 .meta .age{color:var(--faint)}
 .tka{display:inline-flex;gap:6px;flex:none;align-items:center}
-.sub.q code,.ev.ask p code,.card .q code{font:11.5px var(--mono);background:var(--raise);border:1px solid var(--line2);border-radius:4px;padding:0 4px}
-.cbot .tka{flex-wrap:wrap}
+.sub.q code,.ev.ask p code,.card .cq code,.card .evl code{font:11.5px var(--mono);background:var(--raise);border:1px solid var(--line2);border-radius:4px;padding:0 4px}
 @container main (max-width:680px){ .rbar{padding:9px 12px 9px 16px} }
 </style>
 </head>
@@ -443,7 +476,11 @@ const num=id=>(/^(\d+)-/.exec(id)||[])[1]||id;
 const steps=j=>j.kind==="setup"?(setup?setup.steps:[]):(snap?snap.phases:[]);
 const sidx=j=>j.kind==="setup"?(setup?setup.idx:0):Math.max(0,steps(j).findIndex(s=>s.k===j.phase));
 const stp=j=>steps(j)[sidx(j)]||{nm:""};
-const group=j=>j.state==="you"?"you":j.state==="run"||j.state==="paused"?"run":"done";
+const stopped=j=>j.pausedBy==="stop";
+/* you, run (working, paused or waiting) or done (finished, rejected, stopped by you): the List's sections and every count. */
+const group=j=>j.state==="you"?"you":stopped(j)?"done":j.state==="run"||j.state==="paused"?"run":"done";
+/* What the composer and the controls act on: a stopped job still takes a note and a Resume, like a paused one. */
+const wgroup=j=>stopped(j)?"run":group(j);
 const ended=j=>group(j)==="done";
 const agent=j=>j.kind==="setup"?"the setup agent":j.agent?"the "+j.agent:"Kitchen";
 const Agent=j=>{const a=agent(j);return a[0].toUpperCase()+a.slice(1)};
@@ -467,8 +504,10 @@ function fromSetup(s){
   const st=s.state==="questions"?"you":s.state==="running"?"run":s.state==="done"||s.state==="quick"?"done":"rejected";
   return {id:"setup",num:"setup",kind:"setup",title:"Set up Kitchen for "+(snap?snap.repo:"this repo"),state:st,round:1,cost:s.usd,secs0:s.secs,at0:performance.now(),
     q:s.questions.length?s.questions.length===1?s.questions[0].question:`${s.questions.length} questions before I build the Toolkit.`:null,
-    live:s.evs.at(-1)||null,files:[],crit:[],runnerOn:s.state==="running",failed:s.state==="failed",setup:s};
+    live:s.evs.at(-1)||null,files:[],crit:[],runnerOn:s.state==="running",failed:s.state==="failed",setup:s,lane:setupLane(s)};
 }
+/* Setup's steps (src/dashboard/setup.ts SETUP_STEPS) on the Board's lanes: config, branch, survey → Intake; build, commit → Build; prove it → Check. */
+function setupLane(s){if(s.state==="questions")return "you";if(s.state!=="running")return "done";const k=(s.steps[s.idx]||{}).k;return k==="check"?"check":k==="build"||k==="commit"?"build":"intake"}
 
 /* ───────── polling ───────── */
 async function getJSON(u){const r=await fetch(u,{cache:"no-store"});if(!r.ok)throw new Error(u+": "+r.status);return r.json()}
@@ -495,10 +534,10 @@ async function pollDetail(){
   }
   setTimeout(pollDetail,1500);
 }
-function sigOf(j){return [j.state,j.phase,j.stage,j.round,j.q,j.pausedBy,j.title,j.report,j.files.length,j.runnerOn,j.movedAt,j.failed,fresh.has(j.id),expanded===j.id].join("|")}
+function sigOf(j){return [j.state,j.phase,j.stage,j.lane,j.round,j.q,j.pausedBy,j.title,j.report,j.files.length,j.runnerOn,j.movedAt,j.failed,j.risk,j.proof,j.waitYou,fresh.has(j.id),expanded===j.id].join("|")}
 function paint(before){
   const order0=[...before.keys()].join(),order1=jobs.map(j=>j.id).join();
-  const groups=j=>j?group(j)+(view==="board"?j.phase:""):"";
+  const groups=j=>j?(view==="board"?j.lane:group(j)):"";
   const runner=!!(snap&&snap.runner.running),runnerChanged=paint.runner!==runner;paint.runner=runner; // the runner bar comes and goes with it
   const moved=runnerChanged||order0!==order1||jobs.some(j=>!before.has(j.id)||groups(before.get(j.id))!==groups(j));
   if(moved){structural(()=>{});}
@@ -533,7 +572,7 @@ function liveHTML(j){
     return h+liveEv(j)}
   const st=stp(j);
   let h=`<span class="stg">${esc(st.nm)}</span>${j.round>1?`<span class="rd">round ${j.round}</span>`:""}<span class="dot">·</span>`;
-  if(j.state==="paused") return h+`<span>${j.pausedBy==="stop"?"Stopped by you":j.pausedBy?"Paused by you":"Waiting: "+esc(j.paused||j.reason||"")}</span>`;
+  if(j.state==="paused") return h+`<span>${j.pausedBy==="stop"?"Stopped by you":j.pausedBy?"Paused by you":"Waiting: "+esc(j.reason||j.paused||"")}</span>`;
   if(!j.runnerOn) return h+`<span>${snap&&snap.runner.running?"Waiting for a free slot":"Waiting for kitchen run"}</span>`;
   if(!j.agent&&!j.live) return h+`<span class="shim">${esc(j.step&&j.step.split(" · ").pop()||"Working")}</span>`;
   return h+liveEv(j);
@@ -545,7 +584,7 @@ function liveEv(j){
   if(e.c==="res"||e.c==="bad") return `<span class="mono ${e.c}${car}" data-lv="${j.id}">${shown}</span>`;
   return `<span class="${car}" data-lv="${j.id}">${shown}</span>`;
 }
-function patchLive(j){const el=$("#lv-"+CSS.escape(j.id));if(el)el.innerHTML=liveHTML(j)}
+function patchLive(j){const el=$("#lv-"+CSS.escape(j.id));if(el)el.innerHTML=view==="board"?evLine(j):liveHTML(j);const p=$("#pl-"+CSS.escape(j.id));if(p)p.innerHTML=pillsHTML(j);const c=$("#c-"+CSS.escape(j.id));if(c)c.textContent="$"+j.cost.toFixed(2)}
 
 /* ───────── list ───────── */
 function trackHTML(j){
@@ -557,52 +596,97 @@ function trackHTML(j){
 }
 function chgHTML(j,bump){const A=j.files.reduce((a,f)=>a+f.a,0),D=j.files.reduce((a,f)=>a+f.d,0);
   return `<span class="chg${bump?" bump":""}" id="chg-${esc(j.id)}">${j.files.length&&group(j)==="run"?`${j.files.length} file${j.files.length>1?"s":""}${dfHTML(A,D)}`:""}</span>`}
-function finLabel(j){if(j.kind==="setup"&&j.setup.state==="quick")return "Toolkit not built — kitchen toolkit build";return j.state==="done"?(j.kind==="setup"?"Proven":"Ready to merge"):j.kind==="setup"?"Failed":"Rejected"}
+function finLabel(j){if(j.kind==="setup"&&j.setup.state==="quick")return "Toolkit not built — kitchen toolkit build";if(stopped(j))return "Stopped by you";return j.state==="done"?(j.kind==="setup"?"Proven":"Ready to merge"):j.kind==="setup"?"Failed":"Rejected"}
 /* A job paused no-toolkit (ADR 0010): build the Toolkit in a terminal, or resume (the resume rules decide whether it may go on without one). */
 /* Kitchen's own messages name commands in backticks: shown as code. */
 const md=t=>esc(t).replace(/`([^`]+)`/g,"<code>$1</code>");
-function tkActs(j){return `<button type="button" class="btn act sm" data-act="copy-build" title="Then merge kitchen/setup; the job wakes by itself">Copy kitchen toolkit build</button><button type="button" class="btn ghost sm" data-act="resume" data-id="${esc(j.id)}" title="Go on with checks and tests only, if it can">${I.play}Resume</button>`}
+function tkActs(j,card){return `<button type="button" class="btn act sm" data-act="copy-build" title="Copy kitchen toolkit build. Then merge kitchen/setup; the job wakes by itself">${card?"Copy command":"Copy kitchen toolkit build"}</button><button type="button" class="btn ghost sm" data-act="resume" data-id="${esc(j.id)}" title="Go on with checks and tests only, if it can">${I.play}Resume</button>`}
+/* A pause only the person can end (data.ts waitYouOf): a Toolkit to build, the agent's login to fix, a Toolkit PR to merge. */
+function waitActs(j,card){return j.waitYou==="no-toolkit"?tkActs(j,card):`<button type="button" class="btn act sm" data-act="resume" data-id="${esc(j.id)}" title="${j.waitYou==="auth"?"After you log the agent in again":"Try now, without waiting for the merge"}">${I.play}Resume</button>`}
+const WAIT_HINT={"no-toolkit":"Build the Toolkit, then it goes on by itself; or Resume to go on with checks and tests only.",auth:"Log the agent's CLI in again, then Resume.","toolkit-pr":"Merge the Toolkit PR and it goes on by itself, or Resume to try now."};
 function icon(j){if(j.kind==="setup"&&j.setup.state==="quick")return S.wait;return S[j.state==="done"?"ok":j.state==="rejected"?"skip":j.state==="run"&&!j.runnerOn?"paused":j.state]}
 function rowHTML(j){
   const g=group(j),ex=expanded===j.id;
   let sub="",mid="",tm="",acts="";
-  if(g==="you"){sub=`<div class="sub q">${md(j.q)}</div>`;mid=j.needsToolkit?`<span class="tka">${tkActs(j)}</span>`:`<button class="btn act sm rep" data-act="message" data-id="${esc(j.id)}">${ex?"Close":"Reply"}</button>`;tm=`<span class="tm mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`}
+  if(g==="you"){sub=`<div class="sub q">${md(j.q)}</div>`;mid=j.waitYou?`<span class="tka">${waitActs(j)}</span>`:`<button class="btn act sm rep" data-act="message" data-id="${esc(j.id)}">${ex?"Close":"Reply"}</button>`;tm=`<span class="tm mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`}
   else if(g==="run"){sub=`<div class="sub" id="lv-${esc(j.id)}">${liveHTML(j)}</div>`;mid=chgHTML(j)+trackHTML(j);tm=`<span class="tm mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`;
     acts=`<span class="acts"><button class="ib" title="Message ${esc(agent(j))} (R)" aria-label="Message agent" data-act="message" data-id="${esc(j.id)}">${I.msg}</button></span>`}
   else{mid=`<span class="fin ${fresh.has(j.id)?"new":""}">${fresh.has(j.id)?"Just finished · ":""}${finLabel(j)}</span>`;tm=`<span class="tm mono num">$${j.cost.toFixed(2)}</span>`;
-    if(j.state==="done"&&j.kind!=="setup")acts=`<span class="acts"><button class="ib" title="Follow up (R)" aria-label="Follow up" data-act="message" data-id="${esc(j.id)}">${I.msg}</button></span>`}
+    if(j.state==="done"&&j.kind!=="setup")acts=`<span class="acts"><button class="ib" title="Follow up (R)" aria-label="Follow up" data-act="message" data-id="${esc(j.id)}">${I.msg}</button></span>`;
+    else if(stopped(j))acts=`<span class="acts"><button class="ib" title="Leave a note or resume (R)" aria-label="Leave a note" data-act="message" data-id="${esc(j.id)}">${I.msg}</button></span>`}
   return `<div class="rw ${g} ${g==="done"?"end":""} ${j.state==="rejected"?"gone":""} ${open===j.id?"open":""} ${sel===j.id?"sel":""} ${just.has(j.id)?"flash":""}" id="rw-${esc(j.id)}" style="view-transition-name:r-${esc(j.id)}">
     <div class="row" tabindex="0" role="button" data-row="${esc(j.id)}">
       <span class="ic">${icon(j)}</span><span class="id mono">${esc(j.num)}</span>
       <div class="mn"><div class="ttl"><span class="idn mono">${esc(j.num)}</span>${esc(j.title)}</div>${sub}</div>${mid}${tm}${acts}
     </div>${ex?`<div class="inl">${composerHTML(j)}</div>`:""}</div>`;
 }
-const COLS=[["Intake",["intake"]],["Build",["build"]],["Check",["gate","verify"]],["Review",["review","report"]]];
-const colOf=j=>j.kind==="setup"?(sidx(j)<4?"intake":sidx(j)<5?"build":"gate"):j.phase;
+/* ───────── board (ADR 0013, dashboard/mockups/board-apple.html) ───────── */
+const lanes=()=>snap?snap.lanes:[];
+const LANE_CLS={you:"ny",ready:"ready"};
+const doneT=j=>Date.parse(j.doneAt||j.updatedAt||0)||0;
+function inLane(k){const a=jobs.filter(j=>j.lane===k);return k==="ready"||k==="done"?a.sort((x,y)=>doneT(y)-doneT(x)):a}
+const RISK={low:"low",medium:"med",high:"high"};
+function pillsHTML(j){
+  if(j.kind==="setup"){const s=j.setup;return `<span class="pl">${s.state==="done"?"proven":s.state==="quick"?"Toolkit not built":s.state==="failed"?"failed":"step "+(s.idx+1)+" of "+s.steps.length}</span>`}
+  const p=j.proof;
+  return (j.risk?`<span class="pl ${j.risk==="high"?"high":""}" title="Risk: ${esc(j.risk)}">${RISK[j.risk]||esc(j.risk)}</span>`:"")
+    +(p?`<span class="pl ${p==="pass"?"pass":p==="fail"?"fail":""}" title="${p==="fail"?"Verdict of the last round":p==="pass"?"Verdict: every criterion proven":"No passing verdict yet"}">${p}</span>`:"")
+    +(j.state==="rejected"?'<span class="pl">rejected</span>':j.pausedBy==="stop"?'<span class="pl">stopped</span>':j.state==="paused"&&!j.waitYou?`<span class="pl high">${j.pausedBy?"paused":"waiting"}</span>`:"");
+}
+/* The card's two-line activity line: what the agent working on it did last, from its own stream. */
+function evLine(j){
+  if(j.kind==="setup"){
+    if(j.failed)return `<span class="bad">✗ Failed: ${esc((j.setup.last||[]).at(-1)||"see kitchen toolkit build --status")}</span>`;
+    if(j.setup.state==="quick")return "Toolkit not built. Run kitchen toolkit build";
+    if(j.state==="done")return `<span class="ok">✓ Proven twice</span>`;
+    return evOf(j);
+  }
+  if(j.state==="done")return `<span class="ok">✓ ${fresh.has(j.id)?"Just finished · ready to merge":"Ready to merge"}</span>`;
+  if(j.state==="rejected")return esc(j.reason&&!/^by-you/.test(j.reason)?"Rejected: "+j.reason:"Rejected");
+  if(j.pausedBy==="stop")return "Stopped by you";
+  if(j.state==="paused")return j.pausedBy?"Paused by you":"Waiting: "+esc(j.reason||j.paused||"");
+  if(!j.runnerOn)return snap&&snap.runner.running?"Waiting for a free slot":"Waiting for kitchen run";
+  if(!j.agent&&!j.live)return `<span class="shim">${esc(j.step&&j.step.split(" · ").pop()||"Working")}</span>`;
+  return evOf(j);
+}
+function evOf(j){
+  const e=j.live; if(!e)return `<span class="shim">Starting</span>`;
+  const full=evText(e),shown=esc(full.slice(0,j.liveShown??1e9)),live=liveOpen(e),car=(j.liveShown??1e9)<full.length?" caret":"";
+  if(e.c==="tool")return `<span class="vb">${esc(e.vb||e.t)}</span> <span class="tg ${live?"shim":""}${car}" data-lv="${esc(j.id)}">${shown}</span>${e.df?dfHTML(...e.df):""}`;
+  if(e.c==="res")return `<span class="ok">✓ <span class="${car}" data-lv="${esc(j.id)}">${shown}</span></span>`;
+  if(e.c==="bad")return `<span class="bad">✗ <span class="${car}" data-lv="${esc(j.id)}">${shown}</span></span>`;
+  return `<span class="${car}" data-lv="${esc(j.id)}">${shown}</span>`;
+}
 function cardHTML(j){
-  const g=group(j),cls=`${open===j.id?"open":""} ${sel===j.id?"sel":""} ${just.has(j.id)?"flash":""}`;
-  const head=`id="rw-${esc(j.id)}" style="view-transition-name:r-${esc(j.id)}" tabindex="0" role="button" data-row="${esc(j.id)}"`;
-  if(g==="done") return `<div class="rw card end ${j.state==="done"?"":"gone"} ${cls}" ${head}><div class="ctop">${icon(j)}<span class="id mono">${esc(j.num)}</span><span class="sp"></span><span class="mono num">$${j.cost.toFixed(2)}</span></div><div class="ctt">${esc(j.title)}</div><div class="fin ${fresh.has(j.id)?"new":""}">${fresh.has(j.id)?"Just finished · ":""}${finLabel(j)}</div></div>`;
-  return `<div class="rw card ${cls}" ${head}><div class="ctop">${icon(j)}<span class="id mono">${esc(j.num)}</span><span class="sp"></span><span class="mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span></div>
-    <div class="ctt">${esc(j.title)}</div><div class="sub" id="lv-${esc(j.id)}">${j.needsToolkit?`<span class="q">${md(j.q)}</span>`:liveHTML(j)}</div>${trackHTML(j)}
-    <div class="cbot">${j.needsToolkit?`<span class="tka">${tkActs(j)}</span>`:chgHTML(j)}<span class="sp"></span><button class="ib" title="Message ${esc(agent(j))} (R)" aria-label="Message agent" data-act="message" data-id="${esc(j.id)}">${I.msg}</button></div></div>`;
+  const l=j.lane,end=ended(j)||l==="done",idt=j.kind==="setup"?"setup":"#"+j.num;
+  const cls=`${l==="you"?"ny":""} ${end?"end":""} ${j.state==="done"&&j.kind!=="setup"?"rdy":""} ${j.state==="rejected"||j.pausedBy==="stop"?"gone":""} ${open===j.id?"open":""} ${sel===j.id?"sel":""} ${just.has(j.id)?"flash":""}`;
+  const bot=l==="you"
+    ?`<div class="cq">${md(j.q)}</div>${j.waitYou?`<span class="tka">${waitActs(j,true)}<button type="button" class="btn ghost sm" data-act="reject" data-id="${esc(j.id)}">Reject</button></span>`:`<button class="btn act sm" data-act="message" data-id="${esc(j.id)}">Reply</button>`}`
+    :`<div class="cbot"><div class="evl" id="lv-${esc(j.id)}">${evLine(j)}</div>${j.kind==="setup"||j.state==="rejected"?"":`<button class="ib" title="${j.state==="done"?"Follow up":"Message "+esc(agent(j))} (R)" aria-label="${j.state==="done"?"Follow up":"Message agent"}" data-act="message" data-id="${esc(j.id)}">${I.msg}</button>`}</div>`;
+  return `<div class="rw card ${cls}" id="rw-${esc(j.id)}" style="view-transition-name:r-${esc(j.id)}" tabindex="0" role="button" data-row="${esc(j.id)}">
+    <div class="ctop"><span class="id">${esc(idt)}</span>${j.round>1?`<span class="rnd">round ${j.round}</span>`:""}<span class="sp"></span>${j.state==="run"&&j.runnerOn?'<i class="pulse" title="Working now"></i>':""}${end?"":`<span class="mt num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`}</div>
+    <div class="ctt">${esc(j.title)}</div><div class="prow"><div class="pills" id="pl-${esc(j.id)}">${pillsHTML(j)}</div><span class="cst num" id="c-${esc(j.id)}">$${j.cost.toFixed(2)}</span></div>${bot}</div>`;
 }
-function boardHTML(run,done){
-  return `<div class="board" id="g-run">${COLS.map(([nm,ks])=>{const cs=run.filter(j=>ks.includes(colOf(j)));
-    return `<section class="col ${cs.length?"":"nil"}"><div class="chead">${nm}<span class="n num">${cs.length||""}</span></div>${cs.map(cardHTML).join("")}</section>`}).join("")}
-    <section class="col" id="g-done"><div class="chead">${S.ok}Done<span class="n num">${done.length}</span></div>${done.map(cardHTML).join("")}</section></div>`;
+function boardHTML(){
+  if(!snap)return ""; /* the lanes come with the first snapshot */
+  return `<div class="board" id="g-run">${lanes().map(l=>{const cs=inLane(l.k),c=LANE_CLS[l.k]||"";
+    return `<section class="col ${c} ${cs.length?"":"nil"}" ${l.k==="you"?'id="g-you"':l.k==="ready"?'id="g-done"':""} aria-label="${esc(l.nm)}"><div class="chead">${c?'<i class="dot"></i>':""}<span class="nm">${esc(l.nm)}</span><span class="n num">${cs.length}</span><span class="who">${esc(l.who)}</span></div>
+      <div class="cards">${cs.map(cardHTML).join("")||(l.k==="you"?'<div class="nilt">Nothing needs you.</div>':"")}</div></section>`}).join("")}</div>`;
 }
+/* cards outside the visible board must not take part in a view transition (their snapshots are not clipped) */
+function clipVT(){const b=$(".board");if(!b)return;const r=b.getBoundingClientRect();$$(".rw.card").forEach(c=>{const q=c.getBoundingClientRect();if(q.right>r.right+1||q.left<r.left-1)c.style.viewTransitionName="none"})}
 function setView(v){view=v;try{localStorage.setItem("kitchen.view",v)}catch(e){}expanded=null;structural(()=>{})}
-function order(){const t=j=>Date.parse(j.doneAt||j.updatedAt||0)||0;
-  return [...jobs.filter(j=>group(j)==="you"),...jobs.filter(j=>group(j)==="run"),...jobs.filter(j=>group(j)==="done").sort((a,b)=>t(b)-t(a))]}
+function order(){if(view==="board")return lanes().flatMap(l=>inLane(l.k));
+  return [...jobs.filter(j=>group(j)==="you"),...jobs.filter(j=>group(j)==="run"),...jobs.filter(j=>group(j)==="done").sort((a,b)=>doneT(b)-doneT(a))]}
 function renderList(){
   keepFocus(()=>{
     const o=order(),you=o.filter(j=>group(j)==="you"),run=o.filter(j=>group(j)==="run"),done=o.filter(j=>group(j)==="done");
     const idle=snap&&!snap.runner.running&&jobs.some(j=>j.kind!=="setup"&&(j.state==="run"||(j.state==="paused"&&!j.pausedBy)));
+    $("#scroll").classList.toggle("bd",view==="board");
     $("#list").innerHTML=(idle?`<div class="rbar" role="status">${S.paused}<span>Kitchen isn't working the queue: jobs move only while it runs.</span><code>kitchen run --detach</code><button type="button" class="btn sm" data-act="copy">Copy</button></div>`:"")+
-     `<section id="g-you"><div class="ghead ${you.length?"act":""}">${you.length?S.you:S.wait} Needs you <span class="n num">${you.length}</span></div>${you.map(rowHTML).join("")||'<div class="empty">Nothing needs you.</div>'}</section>
-      ${view==="board"?boardHTML(run,done):`<section id="g-run"><div class="ghead">${run.length?S.run:S.wait} Running <span class="n num">${run.length}</span><span class="hint">Message any agent while it works</span></div>${run.map(rowHTML).join("")||'<div class="empty">Nothing running. Start one with New ticket.</div>'}</section>
-      <section id="g-done"><div class="ghead">${S.ok} Done <span class="n num">${done.length}</span></div>${done.map(rowHTML).join("")||'<div class="empty">Nothing done yet.</div>'}</section>`}`;
+     (view==="board"?boardHTML():`<section id="g-you"><div class="ghead ${you.length?"act":""}">${you.length?S.you:S.wait} Needs you <span class="n num">${you.length}</span></div>${you.map(rowHTML).join("")||'<div class="empty">Nothing needs you.</div>'}</section>
+      <section id="g-run"><div class="ghead">${run.length?S.run:S.wait} Running <span class="n num">${run.length}</span><span class="hint">Message any agent while it works</span></div>${run.map(rowHTML).join("")||'<div class="empty">Nothing running. Start one with New ticket.</div>'}</section>
+      <section id="g-done"><div class="ghead">${S.ok} Done <span class="n num">${done.length}</span></div>${done.map(rowHTML).join("")||'<div class="empty">Nothing done yet.</div>'}</section>`);
     $("#vList").classList.toggle("on",view==="list");$("#vBoard").classList.toggle("on",view==="board");
     renderCounts(); just.clear(); grow();
     for(const j of jobs)sigs[j.id]=sigOf(j);
@@ -611,7 +695,8 @@ function renderList(){
 function renderCounts(){
   if(!snap)return;
   const you=jobs.filter(j=>group(j)==="you"),run=jobs.filter(j=>group(j)==="run"),done=jobs.filter(j=>group(j)==="done");
-  $("#sum").innerHTML=(you.length?`<span class="a">${you.length} need${you.length===1?"s":""} you</span>`:`<span>Nothing needs you</span>`)+`<i>·</i><span><b>${run.length}</b> running</span><i class="rdy">·</i><span class="rdy"><b>${done.filter(j=>j.state==="done"&&j.kind!=="setup").length}</b> ready</span>`;
+  const nyou=`${you.length} need${you.length===1?"s":""} you`;
+  $("#sum").innerHTML=(you.length?(view==="board"?`<button class="a" onclick="jump('g-you')">${nyou}</button>`:`<span class="a">${nyou}</span>`):`<span>Nothing needs you</span>`)+`<i>·</i><span><b>${run.length}</b> running</span><i class="rdy">·</i><span class="rdy"><b>${done.filter(j=>j.state==="done"&&j.kind!=="setup").length}</b> ready</span>`;
   $("#sYou").textContent=you.length||"";$("#sRun").textContent=run.length;$("#sDone").textContent=done.length;
   $("#wsName").textContent=snap.repo;document.title=(you.length?`(${you.length}) `:"")+"Kitchen · "+snap.repo;
   $("#sSetup").textContent=!setup||setup.state==="none"?"not run":setup.state==="quick"?"Toolkit not built":setup.state==="done"?"proven":setup.state==="failed"?"failed":"step "+(setup.idx+1)+"/"+setup.steps.length;
@@ -619,18 +704,18 @@ function renderCounts(){
   $("#tCost").textContent="$"+snap.usdToday.toFixed(2)+" today";$("#tCost").title="Spent today on every agent run, setup and retro included";$("#sCost").textContent="$"+snap.usdTotal.toFixed(2);$("#sCost").parentElement.title="Spent in all on every agent run, setup and retro included";
   $("#foot").innerHTML=`Runner: ${esc(snap.runner.text)}${snap.runner.running?"":`. Jobs move only while <span class="mono">kitchen run</span> works the queue.`}${snap.corrupt.length?` · Unreadable job folders: ${esc(snap.corrupt.join(", "))}`:""}`;
 }
-function replaceRow(j){if(!j)return;const n=$("#rw-"+CSS.escape(j.id));if(n)keepFocus(()=>{n.outerHTML=view==="board"&&group(j)!=="you"?cardHTML(j):rowHTML(j);just.delete(j.id);sigs[j.id]=sigOf(j);grow()})}
+function replaceRow(j){if(!j)return;const n=$("#rw-"+CSS.escape(j.id));if(n)keepFocus(()=>{n.outerHTML=view==="board"?cardHTML(j):rowHTML(j);just.delete(j.id);sigs[j.id]=sigOf(j);grow()})}
 function keepFocus(fn){
   const a=document.activeElement,key=a&&a.dataset&&a.dataset.draft?a.dataset.draft+":"+a.dataset.where:null,pos=key&&a.selectionStart!=null?[a.selectionStart,a.selectionEnd]:null;
   const rowKey=a&&a.dataset&&a.dataset.row; fn();
   if(key){const [id,w]=key.split(":");const n=$(`[data-draft="${id}"][data-where="${w}"]`);if(n){n.focus();if(pos&&n.setSelectionRange)n.setSelectionRange(...pos)}}
   else if(rowKey){const n=$(`[data-row="${rowKey}"]`);if(n)n.focus({preventScroll:true})}
 }
-function structural(fn){ if(document.startViewTransition&&!RM&&!document.hidden){document.startViewTransition(()=>{fn();renderList();renderPanel()})} else {fn();renderList();renderPanel()} }
+function structural(fn){ if(document.startViewTransition&&!RM&&!document.hidden){clipVT();document.startViewTransition(()=>{fn();renderList();renderPanel();clipVT()})} else {fn();renderList();renderPanel()} }
 
 /* ───────── composer ───────── */
 function composerHTML(j,where="row"){
-  const g=group(j),a=agent(j),eng=!j.agent&&j.kind!=="setup";
+  const g=wgroup(j),a=agent(j),eng=!j.agent&&j.kind!=="setup";
   if(j.state==="rejected"||(j.kind==="setup"&&g!=="you"))return "";
   const ph=g==="you"?(j.kind==="setup"?"Anything else the setup agent should know (optional)…":`Reply to ${a}…`):j.state==="paused"?`Leave a note for ${a}…`:g==="run"?`Message ${a}: redirect it, add context, ask…`:`Follow up to reopen ${j.num} for another round…`;
   const hint=g==="you"?(j.needsToolkit?"Kitchen needs a Toolkit to drive the app: build it, or resume with checks and tests only":`${Agent(j)} is waiting for you`):g==="done"?"Starts round "+(j.round+1):j.state==="paused"?"Paused. It reads this when you resume":eng?"Automatic step. Your note goes to the next agent":g==="run"&&!j.runnerOn?"Not running now. The next agent reads this when it starts":g==="run"&&snap&&snap.tool==="codex"?"Codex reads this when its next role starts":g==="run"?"It reads this at its next step, without stopping":"Starts round "+(j.round+1);
@@ -639,8 +724,8 @@ function composerHTML(j,where="row"){
   const ch=qs.map(q=>`<div class="choice qa"><b>${esc(q.id)}</b><span class="qq">${esc(q.question)}${q.why?`<i>${esc(q.why)}</i>`:""}</span><div class="box qbox"><input data-draft="setup-${esc(q.id)}" data-where="${where}" data-q="${esc(q.id)}" placeholder="${esc(q.default?"Default: "+q.default:"Your answer")}" value="${esc(answersDraft[q.id]||"")}" aria-label="${esc(q.question)}"></div></div>`).join("");
   const ctl=g==="run"&&where==="panel"?"":g==="run"?`<button type="button" class="btn ghost sm" data-act="${j.state==="paused"?"resume":"pause"}" data-id="${esc(j.id)}">${j.state==="paused"?I.play+"Resume":I.pause+"Pause"}</button>${j.state==="paused"?"":`<button type="button" class="btn ghost sm" data-act="stop" data-id="${esc(j.id)}">${I.stop}Stop</button>`}`
     :g==="you"&&j.kind!=="setup"?`<button type="button" class="btn ghost sm" data-act="reject" data-id="${esc(j.id)}">Reject</button>`:"";
-  /* A no-toolkit wait takes no message: nothing would read it. Its two ways on are the actions. */
-  if(j.needsToolkit)return `<div class="cmp you"><div class="box"><div class="cbar"><span class="hint">Build the Toolkit, then it goes on by itself; or Resume to go on with checks and tests only.</span><span class="sp"></span>${tkActs(j)}<button type="button" class="btn ghost sm" data-act="reject" data-id="${esc(j.id)}">Reject</button></div></div></div>`;
+  /* A wait only you can end takes no message: nothing would read it. Its two ways on are the actions. */
+  if(j.waitYou)return `<div class="cmp you"><div class="box"><div class="cbar"><span class="hint">${WAIT_HINT[j.waitYou]||""}</span><span class="sp"></span>${waitActs(j)}<button type="button" class="btn ghost sm" data-act="reject" data-id="${esc(j.id)}">Reject</button></div></div></div>`;
   return `<form class="cmp ${g==="you"?"you":""} ${qs.length?"ready":""}" data-cmp="${esc(j.id)}">${ch}
     ${chips.length?`<div class="chips">${chips.map(c=>`<button type="button" class="chip" data-act="chip" data-id="${esc(j.id)}">${esc(c)}</button>`).join("")}</div>`:""}
     <div class="box"><textarea rows="1" data-draft="${esc(j.id)}" data-where="${where}" placeholder="${esc(ph)}" aria-label="${esc(ph)}" maxlength="4000">${esc(drafts[j.id]||"")}</textarea>
@@ -653,7 +738,7 @@ document.addEventListener("input",e=>{const t=e.target;if(!t.dataset)return;
 function useChip(id,b){drafts[id]=b.textContent;const f=b.closest(".cmp"),t=f.querySelector("textarea");$$(`textarea[data-draft="${id}"]`).forEach(o=>o.value=drafts[id]);grow();t.focus()}
 function message(id){
   const j=J(id); if(!j)return;
-  if(view==="board"&&group(j)!=="you"&&open!==id)openJob(id);
+  if(view==="board"&&open!==id)openJob(id);
   if(open===id){expanded=null;renderList();const t=$(`[data-draft="${id}"][data-where="panel"]`)||$(`[data-where="panel"][data-q]`);if(t)t.focus();return}
   expanded=expanded===id?null:id;sel=id;renderList();
   const t=$(`textarea[data-draft="${id}"][data-where="row"]`);if(t){t.focus();t.closest(".rw").scrollIntoView({block:"nearest"})}
@@ -671,7 +756,7 @@ const said=lines=>(lines.at(-1)||"").replace(/^\S+\s\s/,"");
 function refreshSoon(){clearTimeout(refreshSoon.t);refreshSoon.t=setTimeout(async()=>{try{const [d,s]=await Promise.all([getJSON("/data.json"),getJSON("/setup.json")]);snap=d;setup=s;const before=new Map(jobs.map(j=>[j.id,j]));jobs=d.jobs.map(fromSnap);if(s.state!=="none")jobs.unshift(fromSetup(s));paint(before);if(open&&open!=="setup"&&J(open)){const dd=await getJSON(`/jobs/${encodeURIComponent(open)}/detail.json`);const old=details[open];details[open]=dd;panelUpdate(old,dd)}}catch(e){}},120)}
 function clearDraft(id){drafts[id]="";$$(`textarea[data-draft="${id}"]`).forEach(o=>o.value="");grow()}
 async function send(id){
-  const j=J(id); if(!j)return; const text=(drafts[id]||"").trim(), g=group(j);
+  const j=J(id); if(!j)return; const text=(drafts[id]||"").trim(), g=wgroup(j);
   if(j.kind==="setup"){
     if(g!=="you")return;
     const answers={};for(const q of j.setup.questions)answers[q.id]=(answersDraft[q.id]||"")+(text&&q===j.setup.questions.at(-1)?(answersDraft[q.id]?" — ":"")+text:"");
@@ -696,8 +781,8 @@ const resume=id=>simple("resume",id,`${J(id).num} resumed`);
 async function stopJob(id){const j=J(id);if(await simple("stop",id,`${j.num} stopped`))toast(`${j.num} stopped`,"Undo",()=>resume(id))}
 /* Reject has no engine undo, so the page holds it for the toast's five seconds and sends it after. */
 function reject(id){const j=J(id);let undone=false;
-  const prev=j.state;j.state="rejected";if(expanded===id)expanded=null;structural(()=>{});
-  toast(`${j.num} rejected`,"Undo",()=>{undone=true;const k=J(id);if(k)k.state=prev;structural(()=>{})});
+  const prev=[j.state,j.lane];j.state="rejected";j.lane="done";if(expanded===id)expanded=null;structural(()=>{});
+  toast(`${j.num} rejected`,"Undo",()=>{undone=true;const k=J(id);if(k)[k.state,k.lane]=prev;structural(()=>{})});
   setTimeout(async()=>{if(undone)return;const r=await post("reject",{id:j.id});if(!r.ok)toast(said(r.lines)||"Reject refused");refreshSoon()},5000)}
 
 /* ───────── panel ───────── */
@@ -748,7 +833,7 @@ function panelUpdate(old,d){
 }
 function renderPanel(scrollEnd){
   const p=$("#panel"); const j=open&&J(open); if(!j){if(open&&!J(open))open=null;p.classList.remove("on");return}
-  const g=group(j),sc0=$("#pscroll"),keep=sc0&&!scrollEnd?sc0.scrollTop:null,atEnd=sc0?sc0.scrollHeight-sc0.scrollTop-sc0.clientHeight<90:true;
+  const g=wgroup(j),sc0=$("#pscroll"),keep=sc0&&!scrollEnd?sc0.scrollTop:null,atEnd=sc0?sc0.scrollHeight-sc0.scrollTop-sc0.clientHeight<90:true;
   const ss=steps(j),i=sidx(j);
   const ctl=g==="run"&&j.kind!=="setup"?`<button type="button" class="btn ghost sm" data-act="${j.state==="paused"?"resume":"pause"}" data-id="${esc(j.id)}">${j.state==="paused"?I.play+"Resume":I.pause+"Pause"}</button>${j.state==="paused"?"":`<button type="button" class="btn ghost sm" data-act="stop" data-id="${esc(j.id)}">${I.stop}Stop</button>`}`:"";
   const sub=j.kind==="setup"?(snap?snap.repo:"setup"):[j.kind,j.risk?j.risk+" risk":""].filter(Boolean).join(" · ");
@@ -788,7 +873,7 @@ function palette(on=true,mode="cmd"){const p=$("#pal");p.classList.toggle("on",o
 function paintPal(){const q=$("#palin").value.toLowerCase();
   if(palMode==="ticket"){const t=$("#palin").value.trim();palItems=t?[{t:"File a ticket: "+t,h:"Enter",f:async()=>{const r=await post("ticket",{text:t});toast(r.ok?said(r.lines).replace(/\s+→ intake$/,"")+" · filed":said(r.lines)||"Not filed");refreshSoon()}}]:[];
     $("#pallist").innerHTML=palItems.map((x,i)=>`<button class="pali ${i===palI?"on":""}" onclick="runPal(${i})"><em>${esc(x.t)}</em><span>${x.h}</span></button>`).join("")||`<div class="none" style="padding:14px 16px">One line is enough; the intake agent asks if it needs more. Kitchen run picks it up.</div>`;return}
-  const live=order().filter(j=>!ended(j)&&j.kind!=="setup");
+  const live=order().filter(j=>(!ended(j)||stopped(j))&&j.kind!=="setup");
   palItems=[...live.map(j=>({t:(j.state==="you"?"Reply to ":"Message ")+j.num+" · "+j.title,h:j.state==="you"?"needs you":stp(j).nm,f:()=>{openJob(j.id);setTimeout(()=>message(j.id),60)}})),
     ...live.filter(j=>j.state==="run").map(j=>({t:"Pause "+j.num+" · "+j.title,h:"after its step",f:()=>pause(j.id)})),
     ...live.filter(j=>j.state==="paused").map(j=>({t:"Resume "+j.num+" · "+j.title,h:"paused",f:()=>resume(j.id)})),

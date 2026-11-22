@@ -182,7 +182,7 @@ A job's steering thread is `.kitchen/jobs/<id>/messages.jsonl`: each message wit
 
 Every button is a CLI verb: the page sends `POST /api/<verb>` and the server calls the same engine function as the command, so the browser can do nothing `kitchen` can't. Jobs move only while `kitchen run` works the queue; the page says so when it isn't running.
 
-Safety: the server listens on 127.0.0.1 and refuses any other `Host` (DNS rebinding). It makes a random 32-byte token when it starts and puts it in the page it serves; every POST must carry it in an `x-kitchen-token` header, as `application/json`, and from the page's own origin. A cross-site page can send neither that header nor that content type, and can't read the token. The page loads nothing from elsewhere (its fonts, Geist and Geist Mono under the SIL Open Font License, are served by Kitchen) under a strict Content-Security-Policy. Another program running as you could read the token from the page, but it could run `kitchen` itself anyway.
+Safety: the server listens on 127.0.0.1 and refuses any other `Host` (DNS rebinding). It makes a random 32-byte token when it starts and puts it in the page it serves; every POST must carry it in an `x-kitchen-token` header, as `application/json`, and from the page's own origin. A cross-site page can send neither that header nor that content type, and can't read the token. The page loads nothing from elsewhere (it uses the system's own fonts) under a strict Content-Security-Policy. Another program running as you could read the token from the page, but it could run `kitchen` itself anyway.
 
 ## Learning: report, dashboard, retro
 
