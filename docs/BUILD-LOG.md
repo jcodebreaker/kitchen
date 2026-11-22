@@ -67,7 +67,7 @@ One entry per wave: what was built, review rounds and scores, what is proven, an
 
 **Known gap:** when the loop stops because it lost the lock, it frees the slots of stages that are still finishing.
 
-## Wave 2: Toolkit and setup (built, awaiting review)
+## Wave 2: Toolkit and setup (review fixes done, awaiting re-review)
 
 **Built**
 - `src/toolkit/contract.ts`: zod schemas for every command's JSON line and `describe` (`contract: 1`, surface, primitives, features, `seed_users`, externals, `ports.needs`, parallel), and the parser for a feature file's `kitchen` block (mapped `paths`, `check` args).
@@ -80,9 +80,17 @@ One entry per wave: what was built, review rounds and scores, what is proven, an
 
 **Proven by running** (`spikes/w2/results.md`): `init` + `toolkit check` pass on A (regenerated from scratch), B, C, D on Claude Code (sonnet, medium effort: 103–264 s agent time, $0.42–$0.87 each) and on A, B, C on Codex (gpt-6-luna: 208–498 s); the no-TTY question flow and the base-change re-proof (`flow.ts`, scripted setup role, 26/26); superchat-lite generated in 229 s for $1.26 (generate-only: its stack is over this laptop's Docker budget).
 
+**Review round 1 (fixed, `spikes/w2/results.md` "W2 review round")**
+- Blocker: a `bin/dev` timeout waited on a stdout pipe a child held (146 s for a 2 s timeout). `runToolkit` now kills the process group and returns at once; `timeout.ts`.
+- `toolkit check` passed a broken Toolkit: one JSON line per call, http(s) url, doctor with checks, `surface` enum, and a contract probe (every primitive, plus the refusals the contract requires); `probe.ts` (the reviewer's fake and each fault fail, named). The 7 generated Toolkits of A–D and fixture A's own still pass.
+- Feature `paths` required and matched against tracked files; `parallel:false` enforced by the runner (no `kitchen.yaml` regex); an init re-run never says done without a passing full check.
+- `kitchen init --detach` / `--status [--wait]`, and the skill polls it; secret scan before the setup commit; checkout leases; the setup bridge's `bin/dev` under macOS `sandbox-exec` (ADR 0008, Linux unhandled); `.env.kitchen` can't set `PATH`/`NODE_OPTIONS`/loader variables; prepare cached per lockfile hash and stall-killed after 5 silent minutes; `models.setup`; `kitchen toolkit up|down`.
+- Real runs: a real survey asked a question (fixture E: which catalog the team uses) and the whole `/kitchen` setup ran inside `claude -p` (detach, poll, relay the question, answer on resume, done), about $1.14 on sonnet. Two findings from it fixed: Claude Code refuses `sleep 60` between polls (now `--status --wait`), and `--status` exiting 3 made the agent chain a fallback (now exit 0).
+- New: `npm test` 250/250; spikes `timeout.ts` 6/6, `probe.ts` 14/14, `gc.ts` 6/6, `sandbox.ts` 9/9, `codex-sandbox.ts` 3/3, `flow.ts` 36/36, `inside.ts claude e` 11/11, `spikes/w1/paths.ts` 54/54.
+
 **Open**
-- No real survey asked a question; the question flow is proven with the scripted role only.
+- Codex: the account hit its usage limit (until 2026-12-21) mid-run: D on Codex stopped after its survey, and the `/kitchen` setup inside `codex exec` (`inside.ts codex b`) has not run. What Codex needs approved is shown without a model (`codex-sandbox.ts`); that an execpolicy `allow` rule runs `kitchen init` outside the sandbox is unproven.
+- The sandbox covers the setup bridge only; `toolkit check` after the commit and every job's Toolkit calls run unsandboxed (ADR 0006/0008). Linux has no sandbox at all.
 - superchat-lite's Toolkit has never run (W3b's first step, on a machine with the Docker budget).
 - Jobs still use the repo's own `bin/dev` (W1); moving them onto the engine-owned checkout comes with the smith and PR pinning (W3b).
-- `toolkit up|down|maintain` are not built.
-- `prepare` has no stall detection (a hung download waits for the 30-minute timeout).
+- `toolkit maintain` is W4.
