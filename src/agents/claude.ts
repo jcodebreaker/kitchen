@@ -147,7 +147,7 @@ export class ClaudeAdapter implements AgentAdapter {
       done();
     }
     const transcriptPath = claudeTranscriptPath(req.cwd, sessionId, req.env);
-    const base = { sessionId, transcriptPath, outPath: foundOut(req) };
+    const base = { sessionId, transcriptPath, outPath: foundOut(req), ran: { adapter: this.name, model: req.model } };
     if (p.timedOut) return { ...base, ok: false, line: "", timedOut: true, error: `timeout after ${req.timeoutSec}s` };
 
     let j: ClaudeJson | undefined;
