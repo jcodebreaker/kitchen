@@ -125,7 +125,7 @@ a { color: var(--agent); }
   <h1>Kitchen</h1>
   <p>An open-source pipeline that takes a ticket and hands you a pull request that has been <b>proven by driving your real app</b>, not just read. Agents (Claude Code or Codex) make the judgment calls. A TypeScript CLI owns every state change, check and retry. Your project's Toolkit is the only way anything touches the running app.</p>
   <div class="status">
-    <span class="pill draft">v1 design · all questions settled · ADRs 0001–0004</span>
+    <span class="pill draft">plan v4 · reviewed 9/10 · ADRs 0001–0005 · wave 0 in progress</span>
     <span class="pill">npx devkitchen init</span>
     <span class="pill">Claude Code · Codex</span>
     <span class="pill">human merges by default</span>
@@ -205,8 +205,8 @@ a { color: var(--agent); }
 
     <rect x="760" y="240" width="124" height="78" rx="9" class="b-toolkit"/>
     <text x="772" y="266" class="name">Verify</text>
-    <text x="772" y="285" class="sub">drives every criterion</text>
-    <text x="772" y="302" class="subm">never the builder</text>
+    <text x="772" y="285" class="sub">drives, then proofs</text>
+    <text x="772" y="302" class="subm">engine stamps evidence</text>
 
     <rect x="906" y="246" width="118" height="66" rx="8" class="b-agent"/>
     <text x="918" y="272" class="name">Review</text>
@@ -229,8 +229,8 @@ a { color: var(--agent); }
     <text x="1180" y="430" class="subm">on PR + dashboard</text>
 
     <!-- spec-lint marker -->
-    <rect x="356" y="320" width="86" height="20" rx="4" class="b-script"/>
-    <text x="364" y="334" class="subm">spec-lint</text>
+    <rect x="340" y="320" width="118" height="20" rx="4" class="b-script"/>
+    <text x="348" y="334" class="subm">spec-lint · repro</text>
 
     <!-- main flow arrows -->
     <path d="M170 279 H196" class="a" marker-end="url(#m)"/>
@@ -312,7 +312,8 @@ a { color: var(--agent); }
       <tr><td class="stage">Spec<span class="k">mise en place</span></td><td class="who agent">agent</td><td>A short <b>verification contract</b>, not a long document: each acceptance criterion names how it will be proven (a Toolkit drive, a command, or a test). The builder may only tick criteria off, never edit them.</td><td><b>spec-lint</b> passes: no criterion needs a protected file, and every drive the spec names exists in the Toolkit. A missing drive becomes a Toolkit gap now, before any code is written. For bugs, Verify reproduces the bug first.</td></tr>
       <tr><td class="stage">Build<span class="k">the line</span></td><td class="who agent">agent · strong</td><td>Commits on its own branch and worktree, a draft PR, build notes. May self-check with its own Toolkit instance.</td><td>Tree clean, branch pushed, PR open. The builder's own evidence is a hint, never the proof.</td></tr>
       <tr><td class="stage">Gate<span class="k">temp check</span></td><td class="who script">script</td><td>Gate report pinned to the commit.</td><td>Your checks pass from main's copy of the config, and no protected path changed.</td></tr>
-      <tr><td class="stage">Verify<span class="k">taste test</span></td><td class="who agent">agent · fresh</td><td>One Verdict per criterion, with screenshots, logs and side effects in <code>evidence/</code>.</td><td>PASS on every criterion. FAIL goes back to Build. TOOLKIT-GAP pauses the job for the Toolkit smith. INCONCLUSIVE counts as FAIL.</td></tr>
+      <tr><td class="stage">Drives<span class="k">set the table</span></td><td class="who agent">agent · verifier</td><td>Any missing feature drive: a declarative list of Toolkit primitives with no code, committed by the engine before any proof runs.</td><td>Every drive named in the spec resolves and passes <code>toolkit check --feature</code>. A feature that can't be reached goes back to Build. A missing primitive goes to the Toolkit smith.</td></tr>
+      <tr><td class="stage">Verify<span class="k">taste test</span></td><td class="who agent">engine, then agent</td><td>The engine runs every mechanical proof through <code>kitchen drive</code> and stamps each piece of evidence with commit, round and criterion. The agent judges only the visual and wording criteria.</td><td>PASS on every criterion, and every citation is stamped for this commit and round. FAIL goes back to Build. INCONCLUSIVE gets one free retry, then the job pauses for a Toolkit fix.</td></tr>
       <tr><td class="stage">Review<span class="k">chef's eye</span></td><td class="who agent">agents · routed</td><td>One file per lens: code always, security, UX and UI when intake flags the surface.</td><td>No blocking finding. A finding blocks only if the reviewer can show it (a failing run, a wrong line). Findings are de-duplicated and confidence-filtered, and each lens's precision is tracked in the ledger; a lens or category that keeps being dismissed is muted.</td></tr>
       <tr><td class="stage">Ready<span class="k">the pass</span></td><td class="who script">script + 1 verifier</td><td>Ready report on the PR, evidence linked.</td><td>Synced with main, then Gate and a single Verify pass again on the synced head. The PR is marked ready.</td></tr>
       <tr><td class="stage">Report<span class="k">the bill</span></td><td class="who agent">agent · medium</td><td>An HTML page: what was done, each criterion with its Verdict, the tests that ran, screenshots and logs. Proof is cited only by evidence id.</td><td>The CLI swaps each id for the real file and refuses an id that doesn't exist, so made-up proof can't be saved. Linked from the PR and the dashboard.</td></tr>
