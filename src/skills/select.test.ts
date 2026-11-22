@@ -8,11 +8,11 @@ const facts = (f: Partial<JobFacts> = {}): JobFacts => ({ kind: "feature", surfa
 const names = (role: string, f: Partial<JobFacts> = {}) => selectSkills(reg, role, facts(f)).wants.map((w) => `${w.name}:${w.need}`);
 
 test("the builder's skills follow the ticket's kind", () => {
-  assert.deepEqual(names("builder", { kind: "bug" }), ["diagnosing-bugs:optional", "codebase-design:optional"]);
-  assert.deepEqual(names("builder", { kind: "feature" }), ["tdd:optional", "implement:optional", "codebase-design:optional"]);
-  assert.deepEqual(names("builder", { kind: "ui" }), ["tdd:optional", "implement:optional", "codebase-design:optional"]);
-  assert.deepEqual(names("builder", { kind: "chore" }), ["codebase-design:optional"], "picked and optional: listed once");
-  assert.deepEqual(names("builder", { kind: null }), ["codebase-design:optional"], "before intake rates the kind");
+  assert.deepEqual(names("builder", { kind: "bug" }), ["diagnosing-bugs:optional"]);
+  assert.deepEqual(names("builder", { kind: "feature" }), ["tdd:optional"]);
+  assert.deepEqual(names("builder", { kind: "ui" }), ["tdd:optional"]);
+  assert.deepEqual(names("builder", { kind: "chore" }), ["codebase-design:optional"], "refactor and tech-debt are chores");
+  assert.deepEqual(names("builder", { kind: null }), [], "before intake rates the kind");
 });
 
 test("security-review is required at high risk, picked for the security surface; impeccable for the ui surface", () => {
@@ -26,28 +26,34 @@ test("security-review is required at high risk, picked for the security surface;
   assert.deepEqual(names("smith"), [], "a role the registry doesn't list loads nothing");
 });
 
-test("a ticket's Skills: line adds required skills to the builder only, outside code fences; interactive ones are refused", () => {
+test("Kitchen-Skills: adds registry skills (required) to the builder only, outside code fences; others are refused, never halted on", () => {
   const ticket = [
     "Fix the overdue count.",
-    "Skills: diagnosing-bugs, `mattpocock-skills:prototype`",
+    "Skills: TypeScript, React",
+    "Kitchen-Skills: codebase-design, `prototype`",
     "```",
-    "Skills: wizard",
+    "Kitchen-Skills: humanizer",
     "```",
     "~~~md",
-    "skills: in-a-fence",
+    "kitchen-skills: impeccable",
     "~~~",
-    "- **Skills:** grilling, ../../etc/passwd",
+    "- **Kitchen-Skills:** grilling, mattpocock-skills:tdd, ../../etc/passwd",
   ].join("\n");
-  assert.deepEqual(ticketSkills(ticket), ["diagnosing-bugs", "mattpocock-skills:prototype", "grilling", "../../etc/passwd"]);
+  assert.deepEqual(
+    ticketSkills(ticket),
+    ["codebase-design", "prototype", "grilling", "mattpocock-skills:tdd", "../../etc/passwd"],
+    "a plain Skills: line is not ours",
+  );
   const s = selectSkills(reg, "builder", facts({ kind: "bug", ticket }));
   assert.deepEqual(
     s.wants.map((w) => `${w.name}:${w.need}`),
-    ["diagnosing-bugs:required", "codebase-design:optional", "mattpocock-skills:prototype:required"],
-    "the ticket only adds (and can make a picked skill required)",
+    ["diagnosing-bugs:optional", "codebase-design:required"],
   );
   assert.deepEqual(
     s.refused.map((r) => r.name),
-    ["grilling", "../../etc/passwd"],
+    ["prototype", "grilling", "mattpocock-skills:tdd", "../../etc/passwd"],
   );
+  assert.match(s.refused[0].why, /not in Kitchen's skills registry/);
+  assert.match(s.refused[1].why, /interactive/);
   assert.deepEqual(names("reviewer-code", { ticket }), ["code-review:optional", "codebase-design:optional"], "only the builder reads the line");
 });

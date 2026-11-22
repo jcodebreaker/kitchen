@@ -44,3 +44,32 @@ dashboard/fonts/Geist-Variable.woff2 and GeistMono-Variable.woff2 are from the
 `geist` npm package 1.9.2, Copyright (c) 2023 Vercel, in collaboration with
 basement.studio, licensed under the SIL Open Font License 1.1: see
 dashboard/fonts/OFL.txt.
+
+claude-code-security-review
+---------------------------
+skills/vendor/security-review/SKILL.md is adapted from Anthropic's
+claude-code-security-review (https://github.com/anthropics/claude-code-security-review),
+file .claude/commands/security-review.md at commit
+0c6a49f1fa56a1d472575da86a94dbc1edb78eda. Its notice:
+
+MIT License
+
+Copyright (c) 2025 Anthropic
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

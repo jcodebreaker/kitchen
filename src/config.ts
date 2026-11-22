@@ -176,7 +176,12 @@ export const ConfigSchema = z
      * `--no-skills` side). `host` names where to look for the `fake` tool (claude and codex look where they load skills).
      */
     skills: z
-      .object({ enabled: z.boolean().default(true), host: z.enum(["claude", "codex"]).optional() })
+      .object({
+        enabled: z.boolean().default(true),
+        host: z.enum(["claude", "codex"]).optional(),
+        /** Skills Kitchen vendors (security-review) to take from your own install instead of Kitchen's pinned copy. */
+        use_installed: z.array(z.string().min(1)).default([]),
+      })
       .strict()
       .prefault({}),
     /** Where tickets come from. `prompt`: `kitchen ticket`. `github`: open issues with `label` (the label is the trust boundary). */

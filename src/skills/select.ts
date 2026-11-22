@@ -1,8 +1,9 @@
 // Which skills a role loads for a job (ADR 0014 §1, §2). Pure: the registry, the job's kind,
-// surfaces and risk, and the ticket's `Skills: a, b` line (outside code fences) go in; the
-// role's wanted skills, each required or optional with the reason, come out. Interactive
-// skills are refused, whoever names them.
-import { bare, isForbidden, type Registry, type Rule, SKILL_NAME } from "./registry.ts";
+// surfaces and risk, and the ticket's `Kitchen-Skills: a, b` line (outside code fences) go in;
+// the role's wanted skills, each required or optional with the reason, come out. A ticket can
+// only name skills the registry lists (an allowlist); anything else, and any interactive skill,
+// is refused and logged, never halted on.
+import { bare, describeRule, isForbidden, type Registry, type Rule } from "./registry.ts";
 
 export type JobFacts = {
   kind: string | null;
@@ -16,7 +17,10 @@ export type JobFacts = {
 export type Want = { name: string; need: "required" | "optional"; why: string };
 export type Selection = { wants: Want[]; refused: { name: string; why: string }[] };
 
-/** Pure: the names on `Skills:` lines of the ticket, outside ``` / ~~~ fences. */
+/** The ticket line that asks for skills. Stricter than "Skills:", which issue templates use for other things. */
+export const TICKET_KEY = "Kitchen-Skills";
+
+/** Pure: the names on `Kitchen-Skills:` lines of the ticket, outside ``` / ~~~ fences. */
 export function ticketSkills(text: string): string[] {
   const out: string[] = [];
   let fence: string | null = null;
@@ -28,7 +32,7 @@ export function ticketSkills(text: string): string[] {
       continue;
     }
     if (fence) continue;
-    const m = /^\s*(?:[-*]\s+)?(?:\*\*)?skills(?:\*\*)?\s*:(?:\*\*)?\s*(.+)$/i.exec(line);
+    const m = /^\s*(?:[-*]\s+)?(?:\*\*)?kitchen-skills(?:\*\*)?\s*:(?:\*\*)?\s*(.+)$/i.exec(line);
     if (m) out.push(...m[1].split(/[\s,]+/).map((s) => s.replace(/^[`'"]+|[`'".;]+$/g, "")));
   }
   return [...new Set(out.filter(Boolean))];
@@ -39,9 +43,6 @@ const holds = (r: Rule, f: JobFacts) =>
   (!r.surface || r.surface.some((s) => f.surfaces.includes(s))) &&
   (!r.risk || (r.risk as string[]).includes(f.risk));
 
-const ruleWhy = (r: Rule) =>
-  [r.kind && `kind ${r.kind.join("/")}`, r.surface && `${r.surface.join("/")} surface`, r.risk && `${r.risk.join("/")} risk`].filter(Boolean).join(", ");
-
 /** Pure: the skills `role` wants for a job. A role the registry doesn't list wants none. */
 export function selectSkills(reg: Registry, role: string, f: JobFacts): Selection {
   const e = reg.roles[role];
@@ -49,19 +50,19 @@ export function selectSkills(reg: Registry, role: string, f: JobFacts): Selectio
   const wants: Want[] = [];
   const refused: Selection["refused"] = [];
   const add = (w: Want) => {
-    const have = wants.find((x) => bare(x.name) === bare(w.name));
+    const have = wants.find((x) => x.name === w.name);
     if (!have) wants.push(w);
     else if (w.need === "required" && have.need === "optional") Object.assign(have, w);
   };
-  for (const r of e.required) if (holds(r, f)) add({ name: r.skill, need: "required", why: ruleWhy(r) || "always" });
-  for (const r of e.picked) if (holds(r, f)) add({ name: r.skill, need: "optional", why: ruleWhy(r) });
+  for (const r of e.required) if (holds(r, f)) add({ name: r.skill, need: "required", why: describeRule(r) || "always" });
+  for (const r of e.picked) if (holds(r, f)) add({ name: r.skill, need: "optional", why: describeRule(r) });
   for (const n of e.optional) add({ name: n, need: "optional", why: "optional" });
-  // The ticket only adds: a name it asks for is required (the person asked for it), never removes one.
+  // The ticket only adds, and only skills the registry lists (by their bare name): those are required (the person asked).
   if (e.ticket)
     for (const n of ticketSkills(f.ticket)) {
-      if (!SKILL_NAME.test(n)) refused.push({ name: n, why: "not a skill name" });
-      else if (isForbidden(reg, n)) refused.push({ name: n, why: "interactive: nobody is there to answer its questions" });
-      else add({ name: n, need: "required", why: "the ticket's Skills: line" });
+      if (isForbidden(reg, n)) refused.push({ name: n, why: "interactive: nobody is there to answer its questions" });
+      else if (n.includes(":") || !reg.skills[n]) refused.push({ name: n, why: `not in Kitchen's skills registry (${Object.keys(reg.skills).join(", ")})` });
+      else add({ name: bare(n), need: "required", why: `the ticket's ${TICKET_KEY}: line` });
     }
   return { wants, refused };
 }

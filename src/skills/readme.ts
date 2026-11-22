@@ -3,13 +3,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { loadRegistry, type Registry, type Rule } from "./registry.ts";
+import { loadRegistry, type Registry, describeRule as when } from "./registry.ts";
 
 export const START = "<!-- skills-registry:start (generated from skills/registry.json: npm run skills:readme) -->";
 export const END = "<!-- skills-registry:end -->";
 
-const when = (r: Rule) =>
-  [r.kind && `kind ${r.kind.join("/")}`, r.surface && `${r.surface.join("/")} surface`, r.risk && `${r.risk.join("/")} risk`].filter(Boolean).join(", ");
 const code = (n: string) => `\`${n}\``;
 
 /** Pure: the markdown table, one row per role. */
@@ -17,7 +15,7 @@ export function registryTable(reg: Registry): string {
   const rows = Object.entries(reg.roles).map(([role, e]) => {
     const req = e.required.map((r) => `${code(r.skill)}${when(r) ? ` (${when(r)})` : ""}`);
     const picked = e.picked.map((r) => `${when(r)} → ${code(r.skill)}`);
-    const opt = [...e.optional.map(code), ...(e.ticket ? ["the ticket's `Skills:` line (required)"] : [])];
+    const opt = [...e.optional.map(code), ...(e.ticket ? ["a registry skill named on the ticket's `Kitchen-Skills:` line (required)"] : [])];
     return `| ${role} | ${req.join("; ") || "—"} | ${picked.join("; ") || "—"} | ${opt.join(", ") || "—"} | ${e.fallback} |`;
   });
   return [
@@ -25,7 +23,12 @@ export function registryTable(reg: Registry): string {
     "|---|---|---|---|---|",
     ...rows,
     "",
-    `Never loaded (interactive): ${reg.forbidden.map(code).join(", ")}.`,
+    `Never loaded: the interactive ${reg.forbidden.map(code).join(", ")}, and any skill whose frontmatter says \`disable-model-invocation: true\`. Shipped with Kitchen (skills/vendor/, see NOTICE): ${
+      Object.entries(reg.skills)
+        .filter(([, s]) => s.vendored)
+        .map(([n]) => code(n))
+        .join(", ") || "none"
+    }.`,
   ].join("\n");
 }
 

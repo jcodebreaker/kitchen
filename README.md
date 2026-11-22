@@ -234,39 +234,40 @@ Every key, with its default:
 | `feedback` | `{ trusted: [], trust_associations: [OWNER, MEMBER, COLLABORATOR] }` | whose PR comments count |
 | `forge` | `{ kind: local, base: main }` | `github` with `repo: owner/name` (and optional `url`) for PRs |
 | `source` | `{ kind: prompt, label: kitchen, operators: [] }` | `github`: labelled issues are tickets |
-| `skills` | `{ enabled: true }` | role skills (see [Role skills](#role-skills)); `enabled: false` runs every role on its prompt alone; `host: claude\|codex` says where to look for the `fake` tool |
+| `skills` | `{ enabled: true, use_installed: [] }` | role skills (see [Role skills](#role-skills)); `enabled: false` runs every role on its prompt alone; `use_installed` names vendored skills to take from your own install; `host: claude\|codex` says where to look for the `fake` tool |
 
 `kitchen migrate --dry-run` shows what an upgrade of Kitchen would change in `kitchen.yaml` and in the Toolkit's template files, and exits 1 when there is something to change (0 when there is nothing), so CI can check it; `kitchen migrate` writes it (you commit it).
 
 ## Role skills
 
-Each role can get proven outside skills as guidance: test-first building for a feature, bug diagnosis for a bug, a security review on a high-risk change (decision: `docs/adr/0014-role-skills.md` in the source repository). Kitchen doesn't ship or install them; it uses the ones installed where your agent tool loads skills:
+Each role can get proven outside skills as guidance: test-first building for a feature, bug diagnosis for a bug, a security review on a high-risk change (decision: `docs/adr/0014-role-skills.md` in the source repository). Kitchen ships one, `security-review` (adapted from Anthropic's MIT-licensed claude-code-security-review, see `NOTICE`), as the pinned default; the others it uses when they are installed, first found wins:
 
-- **Claude Code:** `<repo>/.claude/skills/<name>/SKILL.md`, `~/.claude/skills/<name>/SKILL.md`, and the skills of plugins installed in `~/.claude/plugins/installed_plugins.json` and enabled in `~/.claude/settings.json` or the repo's `.claude/settings.json` / `settings.local.json` (named `<plugin>:<name>`; the bare name matches too).
-- **Codex:** `.agents/skills` from the working folder up to the repo root, `~/.agents/skills`, and `$CODEX_HOME/skills` (default `~/.codex/skills`).
+- **Your repository, as committed** on the job's base commit (read with git, never from a working tree): `.claude/skills/<name>/SKILL.md` for Claude Code, `.agents/skills/<name>/SKILL.md` for Codex. A `SKILL.md` committed as a symlink is refused. Nothing an agent writes in a job's worktree can become a skill.
+- **Your own folders:** Claude Code `~/.claude/skills/<name>/SKILL.md`; Codex `~/.agents/skills` and `$CODEX_HOME/skills` (default `~/.codex/skills`).
+- **Claude Code plugins** installed in `~/.claude/plugins/installed_plugins.json` and enabled in `~/.claude/settings.json` or the repo's `.claude/settings.json` / `settings.local.json`. A skill whose registry source is a plugin (`tdd` comes from `mattpocock-skills`) is taken from that plugin only; a skill two enabled plugins provide is ambiguous and not used.
 
-A skill counts only as a readable, non-empty `SKILL.md`. `kitchen init` and `kitchen skills` list what is there; before each agent role a job checks again. A **required** skill that is missing stops the job before any agent runs, as `needs-human` with the skill, the tool and how to install it; install it and answer the job (`kitchen feedback <id> "installed"`). A missing optional skill is skipped and logged. Kitchen never installs a skill.
+`skills.use_installed: [security-review]` in `kitchen.yaml` takes your own install of a vendored skill instead of Kitchen's copy. A skill counts only as a non-empty `SKILL.md`, and never one its author marked for people only (`disable-model-invocation: true`). `kitchen init` and `kitchen skills` list what is there; before each agent role a job checks again for the roles still ahead. A **required** skill that is missing stops the job before that role runs (intake runs first, since it rates the risk), as `needs-human` with the skill, the tool and how to install it; install it and answer the job (`kitchen feedback <id> "installed"`); the round budget is not reset for it. A missing optional skill is skipped and logged. Kitchen never installs a skill.
 
-Roles run sealed off (no settings, no slash commands), so Kitchen quotes each skill's `SKILL.md` (frontmatter removed, at most 12,000 characters each and 24,000 per role) under a "Skills" heading at the end of the role's prompt, as guidance. A skill never changes a role's tools, permissions or verdicts: code still decides. Each role run records in the ledger and `job.json` the skill's name, path, tool and the sha256 of its `SKILL.md`; the Report has a "Skills used" table per role; the dashboard shows them on each step; and a role that runs again with a changed skill logs a warning.
+Roles run sealed off (no settings, no slash commands), so Kitchen quotes each skill's `SKILL.md` (frontmatter removed, at most 12,000 characters each and 24,000 per role) under a "Skills" heading before the job's context, as guidance, each naming where it came from; the engine's own line about the output file ends every prompt. A skill never changes a role's tools, permissions or verdicts: code still decides. Each role run records in the ledger and `job.json` the skill's name, source, path, tool, the sha256 of its `SKILL.md` and how many characters reached the prompt; the Report has a "Skills used" table per role (with "cut at N of M" or "left out (cap)"); the dashboard shows them on each step; and a role that runs again with a changed skill (content or source) logs a warning.
 
-A ticket may ask for more skills for the builder with a line `Skills: a, b` (outside code blocks): they are added as required, never removing one. Interactive skills (they ask questions nobody is there to answer) are refused.
+A ticket may ask for more registry skills for the builder with a line `Kitchen-Skills: a, b` (outside code blocks): they are added as required, never removing one. A name the registry doesn't list, or an interactive skill, is refused and logged.
 
 The registry, `skills/registry.json` (the table below is generated from it):
 
 <!-- skills-registry:start (generated from skills/registry.json: npm run skills:readme) -->
 | Role | Required | Picked by kind / surface / risk | Optional | Fallback if missing |
 |---|---|---|---|---|
-| builder | — | kind bug → `diagnosing-bugs`; kind feature/ui → `tdd`; kind feature/ui → `implement`; kind chore → `codebase-design` | `codebase-design`, the ticket's `Skills:` line (required) | the role prompt alone (today's behaviour) |
+| builder | — | kind bug → `diagnosing-bugs`; kind feature/ui → `tdd`; kind chore → `codebase-design` | a registry skill named on the ticket's `Kitchen-Skills:` line (required) | the role prompt alone (today's behaviour) |
 | intake | — | — | `domain-modeling` | the role prompt |
-| spec | — | — | `to-spec` | the role prompt |
+| spec | — | — | — | the role prompt |
 | reviewer-code | — | — | `code-review`, `codebase-design` | the roles/_review.md checklist |
-| reviewer-security | `security-review` (high risk) | security surface → `security-review` | — | halt: high risk needs it |
+| reviewer-security | `security-review` (high risk) | security surface → `security-review` | — | none needed: Kitchen ships it |
 | reviewer-ui | — | ui surface → `impeccable` | — | the reviewer-ui.md rubric; the Report says degraded |
 | reviewer-ux | — | — | — | the role prompt |
 | verifier | — | — | — | none: the verifier judges only what needs eyes |
 | report | — | — | `humanizer` | the role prompt |
 
-Never loaded (interactive): `grilling`, `grill-me`, `grill-with-docs`, `wizard`, `triage`, `ask-matt`, `to-questionnaire`.
+Never loaded: the interactive `grilling`, `grill-me`, `grill-with-docs`, `wizard`, `triage`, `ask-matt`, `to-questionnaire`, and any skill whose frontmatter says `disable-model-invocation: true`. Shipped with Kitchen (skills/vendor/, see NOTICE): `security-review`.
 <!-- skills-registry:end -->
 
 **Bench them before keeping them.** From a clone of Kitchen, run the same subset with and without skills, on the same machine (the skills installed for your agent tool are the ones measured), and compare correct rate, rounds and cost. Each side is paid agent runs, roughly $10–25 on the smoke subset:

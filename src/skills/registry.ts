@@ -41,14 +41,35 @@ const RoleEntry = z
   .strict();
 export type RoleEntry = z.infer<typeof RoleEntry>;
 
-const Source = z.object({ about: z.string(), claude: z.string().min(1), codex: z.string().min(1) }).strict();
+const Source = z
+  .object({
+    about: z.string(),
+    /** The Claude Code plugin that ships these skills: a skill of this source is looked up as `<plugin>:<name>` only. */
+    plugin: z
+      .string()
+      .regex(/^[a-z0-9][a-z0-9._-]*$/i)
+      .optional(),
+    claude: z.string().min(1),
+    codex: z.string().min(1),
+  })
+  .strict();
+const Skill = z
+  .object({
+    source: z.string().min(1),
+    /** Shipped with Kitchen: skills/<vendored>/SKILL.md, the pinned default (a user copy only with skills.use_installed). */
+    vendored: z
+      .string()
+      .regex(/^vendor\/[a-z0-9][a-z0-9._-]*$/)
+      .optional(),
+  })
+  .strict();
 
 export const RegistrySchema = z
   .object({
     version: z.literal(1),
     about: z.string().optional(),
     forbidden: z.array(Name).min(1),
-    skills: z.record(Name, z.object({ source: z.string().min(1) }).strict()),
+    skills: z.record(z.string().regex(/^[a-z0-9][a-z0-9._-]*$/, "a registry skill has a bare name"), Skill),
     sources: z.record(z.string(), Source),
     roles: z.record(z.string().regex(/^[a-z][a-z-]*$/), RoleEntry),
   })
@@ -67,13 +88,19 @@ export const RegistrySchema = z
   });
 export type Registry = z.infer<typeof RegistrySchema>;
 
+/** Pure: when a rule holds, in words (`kind bug`, `security surface`, `high risk`), "" for always. Shared by selection, the README and the readiness report. */
+export const describeRule = (r: Omit<Rule, "skill">) =>
+  [r.kind && `kind ${r.kind.join("/")}`, r.surface && `${r.surface.join("/")} surface`, r.risk && `${r.risk.join("/")} risk`].filter(Boolean).join(", ");
+
 /** `plugin:name` → `name`. Pure. */
 export const bare = (name: string) => name.slice(name.indexOf(":") + 1);
 
 /** Pure: an interactive skill, by bare name (a plugin prefix doesn't hide one). */
 export const isForbidden = (r: Pick<Registry, "forbidden">, name: string) => r.forbidden.includes(bare(name).toLowerCase());
 
-export const REGISTRY_FILE = path.resolve(import.meta.dirname, "..", "..", "skills", "registry.json");
+/** Kitchen's shipped skills folder: registry.json and vendor/. */
+export const SKILLS_DIR = path.resolve(import.meta.dirname, "..", "..", "skills");
+export const REGISTRY_FILE = path.join(SKILLS_DIR, "registry.json");
 
 export class RegistryError extends Error {}
 
