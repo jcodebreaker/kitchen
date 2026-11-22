@@ -15,6 +15,7 @@ import { kitchenHome } from "../../home.ts";
 import { appendLedger } from "../../ledger/append.ts";
 import { procsDirOf, reapGroups } from "../../procs.ts";
 import type { AgentRunRef } from "../machine.ts";
+import { markRead, operatorNotes, steerLine, unreadSteers } from "../messages.ts";
 import { scratchOf, updateJob, writeAtomic } from "../store.ts";
 import { ensureWorktree } from "../worktree.ts";
 import { LockLost, RoleFailure, type StageContext } from "./types.ts";
@@ -67,9 +68,19 @@ export async function runRole(
   const cwd = o.cwd ?? (job.worktree || ctx.repo);
   const outDir = o.tier === "read" ? path.join(scratchOf(ctx.repo, job.id), `${o.role}-m${job.moves}`) : undefined;
   const model = modelFor(ctx.config, o.role);
+  const t0 = Date.now();
+  // Steers sent before this role started (a paused job, an engine-only step, a Codex role) open its prompt.
+  const notes = unreadSteers(ctx.jobDir);
+  await markRead(
+    ctx.jobDir,
+    notes.map((m) => m.id),
+    o.role,
+    "next-role",
+  );
+  const stream = path.join("activity", `m${job.moves}-${o.role}-${t0}.jsonl`);
   const req: AgentRequest = {
     role: o.role,
-    prompt: o.prompt,
+    prompt: operatorNotes(notes) + o.prompt,
     cwd,
     model,
     tier: o.tier,
@@ -79,6 +90,13 @@ export async function runRole(
     outDir,
     env: buildAgentEnv(path.join(kitchenHome(), "agent-scrub")),
     procsDir: procsDirOf(ctx.jobDir),
+    streamFile: path.join(ctx.jobDir, stream),
+    steer: {
+      take: () => unreadSteers(ctx.jobDir).map((m) => ({ id: m.id, text: steerLine(m.text) })),
+      read: (ids) => {
+        markRead(ctx.jobDir, ids, o.role, "mid-run").catch((e) => ctx.log(`messages: ${(e as Error).message}`));
+      },
+    },
     ...(o.bridge
       ? { bridge: o.bridge }
       : o.tier === "write" && BRIDGE_ROLES.has(o.role)
@@ -86,7 +104,6 @@ export async function runRole(
         : {}),
   };
   if (!ctx.holdsLock()) throw new LockLost(`run lock lost before ${o.role} started`);
-  const t0 = Date.now();
   ctx.log(`${o.role}: ${ctx.agent.name} ${model} (${o.tier}) → ${o.file}`);
   const r = await ctx.agent.run(req);
   const secs = (Date.now() - t0) / 1000;
@@ -113,6 +130,7 @@ export async function runRole(
     adapter: ran.adapter,
     model: ran.model,
     sessionId: r.sessionId,
+    stream: fs.existsSync(req.streamFile ?? "") ? stream : undefined,
     ok: r.ok && !!r.outPath,
     line: r.line,
     usd: r.usage?.usd,

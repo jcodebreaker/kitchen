@@ -2,7 +2,7 @@
 
 import { appendFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { execa } from "execa";
 import { kitchenHome } from "../home.ts";
 import { trackGroup } from "../procs.ts";
@@ -166,6 +166,7 @@ export class CodexAdapter implements AgentAdapter {
     let maxTurnsHit = false;
     let inTok = 0;
     let outTok = 0;
+    if (req.streamFile) mkdirSync(dirname(req.streamFile), { recursive: true });
     for await (const raw of p) {
       if (this.rawLog) appendFileSync(this.rawLog, `${raw}\n`);
       let e: CodexEvent;
@@ -174,6 +175,8 @@ export class CodexAdapter implements AgentAdapter {
       } catch {
         continue;
       }
+      // `codex exec` takes no input mid-run: steering messages wait for the next role (ADR 0009).
+      if (req.streamFile) appendFileSync(req.streamFile, `${JSON.stringify({ _t: new Date().toISOString(), ...e })}\n`);
       if (e.type === "thread.started" && e.thread_id) sessionId = e.thread_id;
       else if (e.type === "item.completed" && e.item?.type === "agent_message") message = e.item.text ?? message;
       else if (e.type === "item.started" && TURN_ITEMS.has(e.item?.type ?? "") && ++turns > req.maxTurns) {

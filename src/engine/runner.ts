@@ -31,6 +31,7 @@ import { maintain, maintainDue } from "../toolkit/maintain.ts";
 import { beforeNewWork } from "../toolkit/reproof.ts";
 import { acquireSlot, downSlot, listSlots, reclaimStaleSlots, releaseSlot } from "../toolkit/slots.ts";
 import { takeTicket } from "./base.ts";
+import { honorControl, stopRequested } from "./control.ts";
 import { ensureJobToolkit } from "./job-toolkit.ts";
 import { acquireRunLock } from "./lock.ts";
 import { type Facts, isActive, type Job, move, type Stage } from "./machine.ts";
@@ -368,8 +369,10 @@ function backoffUntil(cfg: Config, job: Job): string {
 async function step(repo: string, start: Job, d: Deps, print: (l: string) => void, stats: { steps: number; moves: number; refused: number }) {
   const me = self();
   if (!d.holdsLock()) return; // another runner has the lock: it runs the job
+  // A pause or stop asked for while the job waited for a slot: parked instead of run.
+  if (await honorControl(repo, start.id, print)) return;
   let job = await updateJob(repo, start.id, (j) => {
-    j.running = { pid: me.pid, start: me.start, stage: j.stage, at: new Date().toISOString() };
+    if (j.stage === start.stage) j.running = { pid: me.pid, start: me.start, stage: j.stage, at: new Date().toISOString() };
     return j;
   });
   if (job.stage !== start.stage) return;
@@ -399,6 +402,8 @@ async function step(repo: string, start: Job, d: Deps, print: (l: string) => voi
   try {
     p = await handler(ctx);
   } catch (e) {
+    // `kitchen stop` killed the agent: the stage's result is dropped and the job parked where it was.
+    if (stopRequested(jobDir) && (await honorControl(repo, job.id, print))) return;
     const fresh = readJobAt(jobDir);
     const msg = (e as Error).message;
     if (e instanceof LockLost || !d.holdsLock()) {
@@ -432,9 +437,12 @@ async function step(repo: string, start: Job, d: Deps, print: (l: string) => voi
     print(`${short(job)}  ${job.stage}: run lock lost, ${job.stage} → ${p.to} not made; the runner that holds the lock resumes it`);
     return;
   }
+  if (stopRequested(jobDir) && (await honorControl(repo, job.id, print))) return;
   const r = await moveJob(repo, job, p, print);
   if (r === "moved") stats.moves++;
   else if (r === "refused") stats.refused++;
+  // `kitchen pause`: the step finished and moved; the job parks in the stage it moved to.
+  await honorControl(repo, job.id, print);
 }
 
 /**

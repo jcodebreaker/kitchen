@@ -32,6 +32,10 @@ export type Stage = (typeof STAGES)[number];
 /** Stages the runner dispatches a handler for. The rest wait for a human, a condition, or nothing. */
 export const ACTIVE: readonly Stage[] = ["intake", "spec", "repro", "build", "gate", "drives", "verify", "toolkit", "review", "ready", "report"];
 export const isActive = (s: Stage) => ACTIVE.includes(s);
+/** pausedReason of a job a person paused, or stopped (ADR 0009). Only `kitchen resume` wakes it. */
+export const BY_YOU = "by-you";
+export const BY_YOU_STOPPED = "by-you: stopped";
+export const pausedByYou = (j: Pick<Job, "stage" | "pausedReason">) => j.stage === "paused" && !!j.pausedReason?.startsWith(BY_YOU);
 /** Stages that carry a reason for whoever looks next. */
 export const WAITING: readonly Stage[] = ["needs-info", "needs-human", "paused", "rejected"];
 
@@ -47,6 +51,8 @@ export type AgentRunRef = {
   adapter: string;
   model: string;
   sessionId?: string;
+  /** The agent's event stream, relative to the job folder (activity/…jsonl): what the dashboard shows. */
+  stream?: string;
   ok: boolean;
   line: string;
   file?: string;
@@ -145,7 +151,8 @@ export type Facts = {
   /** needs-info: the source shows an answer from the author or operator. */
   replied?: boolean;
   /** A human command. */
-  operator?: "feedback" | "reject" | "resume";
+  /** pause / stop: a person parked the job (`kitchen pause`, `kitchen stop`, the dashboard; ADR 0009). */
+  operator?: "feedback" | "reject" | "resume" | "pause" | "stop";
   /** `kitchen feedback --to <stage>`: where a needs-human job goes instead of the stage it escalated from. */
   feedbackTo?: Stage;
   spec?: Lint;
@@ -913,6 +920,25 @@ export const TABLE: readonly Row[] = [
     apply: (j, f) => {
       pause("backoff", f.adapter?.rateLimited ? "rate limited" : "auth failure")(j, f);
       j.attempts.backoff += 1;
+    },
+  },
+  {
+    id: "*>paused(by-you)",
+    from: "*",
+    to: "paused",
+    when: "`kitchen pause` (after the current step) or `kitchen stop` (its agent killed): parked until `kitchen resume`",
+    guard: all(
+      check(
+        (j) => isActive(j.stage),
+        (j) => `${j.stage} is not running: nothing to pause`,
+      ),
+      check((_j, f) => f.operator === "pause" || f.operator === "stop", "needs `kitchen pause` or `kitchen stop`"),
+    ),
+    apply: (j, f) => {
+      j.pausedFrom = j.stage;
+      j.waitFor = undefined;
+      j.until = undefined;
+      j.pausedReason = f.operator === "stop" ? BY_YOU_STOPPED : BY_YOU;
     },
   },
   {
