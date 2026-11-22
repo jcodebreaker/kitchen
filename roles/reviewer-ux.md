@@ -11,3 +11,5 @@ Look for:
 **Asking for a view.** If a screen you need isn't among the screenshots (dark mode, another page, another user, a state after an action), ask for it with a `VIEW:` line (see the review file reference): `VIEW: /settings --as alice`.
 
 Cite screenshots by their evidence id (`evidence: e31`). A finding about how something looks that you can't show in a screenshot is a note.
+
+Category (`category:`): `ux` for the flow, the words and accessibility, `ui` for how it looks; `security` when a person can see or do what they must not.

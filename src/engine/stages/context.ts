@@ -89,6 +89,7 @@ export type StoredFinding = {
   title: string;
   why?: string;
   blocks: boolean;
+  category?: string;
   at?: { file: string; line: number };
   requirement?: string;
   members?: Member[];
@@ -116,7 +117,7 @@ export function findingById(jobDir: string, id: string): (StoredFinding & { roun
     for (const x of r.findings) {
       if (x.id === id) return { ...x, round: r.round, blockedRow: x.blocks };
       const m = x.members?.find((y) => y.id === id) ?? (x.also.includes(id) ? { id, lens: id.split("-")[0], title: x.title, why: "", blocks: false } : null);
-      if (m) return { ...x, id: m.id, lens: m.lens, title: m.title, why: m.why, blocks: m.blocks, round: r.round, blockedRow: x.blocks };
+      if (m) return { ...x, id: m.id, lens: m.lens, title: m.title, why: m.why, blocks: m.blocks, category: m.category, round: r.round, blockedRow: x.blocks };
     }
   return null;
 }

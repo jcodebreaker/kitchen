@@ -19,6 +19,7 @@ import { appendLedger, readLedger } from "../ledger/append.ts";
 import { formatMeasures, measures } from "../ledger/measures.ts";
 import { formatCounts, summarize } from "../ledger/report.ts";
 import { prove } from "../proof/prove.ts";
+import { needsReason } from "../retro/categories.ts";
 import { PromptSource } from "../sources/prompt.ts";
 import { queueLine } from "../toolkit/reproof.ts";
 import { acquireSlot, downSlot, listSlots, releaseSlot } from "../toolkit/slots.ts";
@@ -232,6 +233,8 @@ export function dismiss(repo: string, ref: string, finding: string, reason: stri
     const all = findingsOf(jobDir).flatMap((r) => r.findings.flatMap((x) => [x.id, ...x.also]));
     throw new Error(`${job.id} has no review finding ${finding}${all.length ? ` (it has ${all.join(", ")})` : ""}`);
   }
+  if (needsReason(f) && !reason?.trim())
+    throw new Error(`${finding} is a security finding: dismiss it only with a reason (--reason "<why it is not a problem>")`);
   const file = path.join(jobDir, "dismissed.jsonl");
   const had =
     fs.existsSync(file) &&
@@ -245,6 +248,7 @@ export function dismiss(repo: string, ref: string, finding: string, reason: stri
   }
   const by = whoAmI(repo);
   const anchor = { ...(f.at ? { at: f.at } : {}), ...(f.requirement ? { requirement: f.requirement } : {}) };
+  const said = { ...(f.why ? { why: f.why } : {}), ...(f.category ? { category: f.category } : {}) };
   fs.appendFileSync(
     file,
     `${JSON.stringify({ finding, lens: f.lens, round: f.round, blocked: f.blocks, by, reason: reason ?? null, title: f.title, ...anchor, when: new Date().toISOString() })}\n`,
@@ -256,7 +260,7 @@ export function dismiss(repo: string, ref: string, finding: string, reason: stri
     event: "finding-dismissed",
     key: `${job.id}/dismiss/${finding}`,
     role: `reviewer-${f.lens}`,
-    detail: { finding, lens: f.lens, blocked: f.blocks, by, reason: reason ?? null, title: f.title, ...anchor },
+    detail: { finding, lens: f.lens, blocked: f.blocks, by, reason: reason ?? null, title: f.title, ...said, ...anchor },
   });
   out(`${job.id}  dismissed ${finding} (${f.lens}${f.blocks ? ", it had blocked" : ""}) by ${by}${reason ? `: ${reason}` : ""}`);
   return 0;

@@ -11,3 +11,5 @@ You review the change for security. Verify proved the contract's criteria; you l
 To show what an attacker sees, ask for a `VIEW:` (see the review file reference): another user's page opened as `--as <seed user>`, a response with a field it shouldn't carry. Cite its evidence id.
 
 A risk you can't tie to a line, a requirement or evidence is a note (say what a human should look at). Defence-in-depth suggestions are notes.
+
+Category (`category:`): `security` for every finding of this lens.

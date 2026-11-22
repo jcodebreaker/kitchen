@@ -4,7 +4,8 @@
 // Mutes. A (lens, category) pair is muted once a person dismissed `mute_after` of
 // its findings (`kitchen dismiss`, or a "not useful" reply on the PR read through the
 // forge). A muted category's findings never block again; they stay in the Report as
-// notes. `other` and the lenses in `never_mute` (security) are never muted.
+// notes. `other`, the lenses and categories in `never_mute` (security) and any finding
+// the security veto covers (categories.ts: a security term in it, any lens) are never muted.
 // `kitchen retro unmute` lifts one; it is muted again only after `mute_after` new
 // dismissals.
 //
@@ -14,9 +15,18 @@
 // proposed at most once, ever (its id is kept in `filed`).
 import type { LedgerLine } from "../ledger/append.ts";
 import type { Measures } from "../ledger/measures.ts";
-import { type Category, categoryOf } from "./categories.ts";
+import { type Category, categoryOf, securityVeto } from "./categories.ts";
 
-export type Dismissal = { job: string; finding: string; lens: string; category: Category; title: string; source: string };
+export type Dismissal = {
+  job: string;
+  finding: string;
+  lens: string;
+  category: Category;
+  title: string;
+  source: string;
+  /** The security veto covers it (categories.ts): it never counts toward a mute. */
+  vetoed?: string | null;
+};
 export type Mute = { lens: string; category: Category; at: string; dismissals: number; findings: string[] };
 export type Unmuted = { lens: string; category: Category; at: string; dismissals: number };
 export type Filed = { signal: string; ref: string; title: string; kind: LessonKind; at: string };
@@ -45,13 +55,16 @@ export function dismissalsOf(lines: LedgerLine[]): Dismissal[] {
     if (!finding || seen.has(k)) continue;
     seen.add(k);
     const title = String(d.title ?? "");
+    const why = String(d.why ?? "");
+    const declared = d.category === undefined ? undefined : String(d.category);
     out.push({
       job: l.job,
       finding,
       lens: String(d.lens ?? l.role?.replace(/^reviewer-/, "") ?? "?"),
-      category: categoryOf(title, String(d.reason ?? "")),
+      category: categoryOf(title, why, declared),
       title,
       source: String(d.source ?? "cli"),
+      vetoed: securityVeto({ title, why, category: declared }),
     });
   }
   return out;
@@ -61,7 +74,7 @@ export function dismissalsOf(lines: LedgerLine[]): Dismissal[] {
 export function muteDecisions(ds: Dismissal[], st: RetroState, o: { muteAfter: number; neverMute: string[]; now: string }): Mute[] {
   const groups = new Map<string, Dismissal[]>();
   for (const d of ds) {
-    if (d.category === "other" || o.neverMute.includes(d.lens)) continue;
+    if (d.category === "other" || d.vetoed || o.neverMute.includes(d.lens) || o.neverMute.includes(d.category)) continue;
     const k = `${d.lens}/${d.category}`;
     groups.set(k, [...(groups.get(k) ?? []), d]);
   }
@@ -76,16 +89,63 @@ export function muteDecisions(ds: Dismissal[], st: RetroState, o: { muteAfter: n
   return out;
 }
 
-/** A trusted person's PR comment that says a finding was not useful: the finding ids it names. Pure. */
-export function dismissedIn(body: string): string[] {
-  if (!/(not useful|^\s*(👎|:-1:|:thumbsdown:))/im.test(body)) return [];
-  return [...new Set([...body.matchAll(/\b([a-z][a-z0-9]*-\d+-\d+)\b/g)].map((m) => m[1]))];
+export type Dismissed = { id: string; reason: string | null };
+
+const TRIGGER = /not useful|^\s*(👎|:-1:|:thumbsdown:)/i;
+const FINDING_ID = /\b([a-z][a-z0-9]*-\d+-\d+)\b/g;
+const FILLER = /^(thanks?( you)?|thx|ty|cheers|ok(ay)?|lgtm)$/i;
+
+/**
+ * A trusted person's PR comment, read for dismissals. Pure. Only a finding id in the same sentence (of
+ * a line) as a trigger ("not useful", or a sentence starting with 👎) is dismissed; ids elsewhere in the
+ * comment are not. Its reason is what that sentence says after "because", "since", "reason:", or a colon
+ * or dash after "not useful" (null when it gives none). `rest` is the comment without the dismissal
+ * sentences: when it says anything, the comment is still feedback (`pure` is false).
+ */
+export function dismissalsIn(body: string): { dismissed: Dismissed[]; rest: string; pure: boolean } {
+  const dismissed: Dismissed[] = [];
+  const kept: string[] = [];
+  for (const line of body.split(/\r?\n/)) {
+    const keep: string[] = [];
+    for (const sentence of line.split(/(?<=[.!?;])\s+/)) {
+      const ids = TRIGGER.test(sentence) ? [...sentence.matchAll(FINDING_ID)].map((m) => m[1]) : [];
+      if (!ids.length) {
+        keep.push(sentence);
+        continue;
+      }
+      const reason = reasonIn(sentence);
+      for (const id of ids) if (!dismissed.some((d) => d.id === id)) dismissed.push({ id, reason });
+    }
+    kept.push(keep.join(" "));
+  }
+  const rest = kept
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  const words = rest
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return { dismissed, rest, pure: dismissed.length > 0 && (!words || FILLER.test(words)) };
+}
+
+/** The ids a comment dismisses (see dismissalsIn). */
+export const dismissedIn = (body: string): string[] => dismissalsIn(body).dismissed.map((d) => d.id);
+
+/** An explicit reason in a dismissal sentence: after because/since/reason:, or a colon or dash after "not useful"; at least 3 words. */
+function reasonIn(sentence: string): string | null {
+  const m = /\b(?:because|since|reason:)\s*(.+)$/i.exec(sentence) ?? /not useful\s*(?:[:—–]|\s-\s)\s*(.+)$/i.exec(sentence);
+  const r = m?.[1]
+    ?.replace(FINDING_ID, "")
+    .replace(/[\s.!;]+$/, "")
+    .trim();
+  return r && r.split(/\s+/).length >= 3 ? r : null;
 }
 
 /** The lesson signals, strongest first. `blocked`: findings that blocked (review.json); `gaps`: the primitive each Toolkit gap named. */
 export function signalsOf(o: {
   m: Measures;
-  blocked: { job: string; lens: string; id: string; title: string }[];
+  blocked: { job: string; lens: string; id: string; title: string; why?: string; category?: string }[];
   dismissed: Dismissal[];
   gaps: { job: string; primitive: string }[];
   mutes: Mute[];
@@ -134,7 +194,7 @@ export function signalsOf(o: {
   // A dismissed finding is not a lesson: a person said it was not useful.
   const kept = o.blocked
     .filter((b) => !dismissedIds.has(`${b.job}/${b.id}`))
-    .map((b) => ({ ...b, category: categoryOf(b.title) }))
+    .map((b) => ({ ...b, category: categoryOf(b.title, b.why ?? "", b.category) }))
     .filter((b) => b.category !== "other");
   for (const [k, g] of by(kept, (b) => `${b.lens}/${b.category}`)) {
     const jobs = jobsOf(g);

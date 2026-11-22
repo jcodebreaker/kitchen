@@ -8,13 +8,14 @@ VERDICT: PASS | BLOCKING
 ### F1: <one line: what is wrong>
 - kind: blocking | note
 - confidence: high | medium | low
+- category: security | correctness | performance | naming | style | types | tests | docs | ux | ui
 - at: server.js:42
 - requirement: R2
 - evidence: e14 e15
 - why: <how a person sees it: the wrong line and what it does, the requirement it misses, what the screenshot shows>
 ```
 
-One `### F<n>` block per finding, numbered from F1. Leave out `at`, `requirement` or `evidence` when you have none; never invent one.
+One `### F<n>` block per finding, numbered from F1. `category` is one word from that list: what the finding is about, not which lens you are (a missing check on who may open a page is `security` in any lens; a wrong total is `correctness`). People can silence a category of your lens that keeps being dismissed; a finding about access, sessions, tokens, secrets, injection or data leaks is never silenced, so call it `security`. Leave out `at`, `requirement` or `evidence` when you have none; never invent one.
 
 **What blocks.** You don't decide that; the engine does, from what you write:
 - A finding blocks only when it is **demonstrable**: it names at least one anchor and every anchor it names holds.

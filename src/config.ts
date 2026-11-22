@@ -85,7 +85,7 @@ export const ConfigSchema = z
     protected: z.array(z.string()).default(["kitchen.yaml"]),
     /**
      * The retro (src/retro/): every `every_jobs` finished jobs it mutes a review category for a lens after `mute_after`
-     * dismissals (never for the lenses in `never_mute`) and files at most `max_tickets` lesson tickets as drafts.
+     * dismissals (never for the lenses or categories in `never_mute`, never a finding the security veto covers) and files at most `max_tickets` lesson tickets as drafts.
      */
     retro: z
       .object({
@@ -93,6 +93,8 @@ export const ConfigSchema = z
         mute_after: z.number().int().positive().default(3),
         max_tickets: z.number().int().min(0).max(10).default(3),
         never_mute: z.array(z.string()).default(["security"]),
+        /** The retro reads PR replies (dismissals) only of jobs done within this many days. */
+        lookback_days: z.number().int().positive().default(30),
       })
       .strict()
       .prefault({}),

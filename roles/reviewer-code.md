@@ -11,3 +11,5 @@ You review the change for correctness. Verify already proved every criterion of 
 A wrong behaviour you can only see by running the app (an error page, a second call that fails) can be shown with a `VIEW:` (see the review file reference); cite its evidence.
 
 Style, naming and structure are notes unless they cause a bug you can point at.
+
+Category (`category:`): usually `correctness`, `performance`, `naming`, `style`, `types`, `tests` or `docs`; `security` when the finding is about who may see or change what.

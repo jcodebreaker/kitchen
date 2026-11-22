@@ -19,7 +19,7 @@ import path from "node:path";
 import type { AgentAdapter } from "../agents/adapter.ts";
 import { buildAgentEnv } from "../agents/env.ts";
 import { type Config, loadConfig, modelFor } from "../config.ts";
-import { findingsOf } from "../engine/stages/context.ts";
+import { findingById, findingsOf } from "../engine/stages/context.ts";
 import { ROLES_DIR, roleFile } from "../engine/stages/prompts.ts";
 import { jobDirOf, kitchenDir, listJobs, writeAtomic } from "../engine/store.ts";
 import { type Forge, isTrusted } from "../forge/forge.ts";
@@ -28,10 +28,10 @@ import { appendLedger, readLedger } from "../ledger/append.ts";
 import { formatMeasures, measures } from "../ledger/measures.ts";
 import { withFileLock } from "../lock.ts";
 import type { TicketSource } from "../sources/source.ts";
-import type { Category } from "./categories.ts";
+import { type Category, needsReason } from "./categories.ts";
 import {
+  dismissalsIn,
   dismissalsOf,
-  dismissedIn,
   finishedCount,
   type Lesson,
   muteDecisions,
@@ -73,8 +73,11 @@ export async function runRetro(o: {
     const n = st.runs + 1;
     const out: RetroOutcome = { muted: [], filed: [], signals: 0, refused: [], usd: 0 };
 
-    // 1. Dismissals people left on PRs, through the forge.
-    for (const job of listJobs(repo).filter((j) => j.pr !== null)) {
+    // 1. Dismissals people left on PRs, through the forge: done jobs of the last `lookback_days` only
+    //    (one forge read per job per retro; an old PR's replies were read by an earlier retro).
+    const cutoff = Date.parse(now()) - cfg.retro.lookback_days * 86_400_000;
+    const recent = listJobs(repo).filter((j) => j.pr !== null && j.stage === "done" && Date.parse(j.doneAt ?? j.updatedAt) >= cutoff);
+    for (const job of recent) {
       let comments: Awaited<ReturnType<Forge["reviewComments"]>> = [];
       try {
         comments = await o.forge.reviewComments(job.pr);
@@ -82,18 +85,25 @@ export async function runRetro(o: {
         say(`${job.id}: PR comments unreadable (${(e as Error).message}); its dismissals wait for the next retro`);
         continue;
       }
-      const known = new Map(findingsOf(jobDirOf(repo, job.id)).flatMap((r) => r.findings.map((f) => [f.id, { ...f, round: r.round }] as const)));
+      const jobDir = jobDirOf(repo, job.id);
       for (const c of comments.filter((x) => isTrusted(x, cfg.feedback)))
-        for (const id of dismissedIn(c.body)) {
-          const f = known.get(id);
+        for (const d of dismissalsIn(c.body).dismissed) {
+          const f = findingById(jobDir, d.id);
           if (!f) continue;
+          // A security finding is dismissed only with a reason a person wrote (recorded with it).
+          if (needsReason(f) && !d.reason) {
+            say(`${job.id}: ${d.id} (${f.lens}) not dismissed: a security finding needs a reason ("not useful because …") in ${c.author}'s comment`);
+            continue;
+          }
           recordDismissal(repo, job.id, {
-            finding: id,
+            finding: d.id,
             lens: f.lens,
             round: f.round,
             blocked: f.blocks,
             title: f.title,
-            reason: `PR comment by ${c.author}`,
+            why: f.why,
+            category: f.category,
+            reason: d.reason ? `${d.reason} (PR comment by ${c.author})` : `PR comment by ${c.author}`,
             source: "forge",
           });
         }
@@ -126,7 +136,9 @@ export async function runRetro(o: {
     const jobsRoot = path.join(kitchenDir(repo), "jobs");
     const ids = fs.existsSync(jobsRoot) ? fs.readdirSync(jobsRoot).filter((x) => /^\d{3,}-/.test(x)) : [];
     const blocked = ids.flatMap((id) =>
-      findingsOf(jobDirOf(repo, id)).flatMap((r) => r.findings.filter((f) => f.blocks).map((f) => ({ job: id, lens: f.lens, id: f.id, title: f.title }))),
+      findingsOf(jobDirOf(repo, id)).flatMap((r) =>
+        r.findings.filter((f) => f.blocks).map((f) => ({ job: id, lens: f.lens, id: f.id, title: f.title, why: f.why, category: f.category })),
+      ),
     );
     // Toolkit gaps: the primitive a Verify proof named (proof lines) or the job's last gap (spec, repro, drives).
     const gaps = [
@@ -198,7 +210,17 @@ export async function runRetro(o: {
 export function recordDismissal(
   repo: string,
   job: string,
-  d: { finding: string; lens: string; round: number; blocked: boolean; title: string; reason: string | null; source: string },
+  d: {
+    finding: string;
+    lens: string;
+    round: number;
+    blocked: boolean;
+    title: string;
+    why?: string;
+    category?: string;
+    reason: string | null;
+    source: string;
+  },
 ): boolean {
   const file = path.join(jobDirOf(repo, job), "dismissed.jsonl");
   const had =
@@ -210,7 +232,8 @@ export function recordDismissal(
   if (had) return false;
   fs.appendFileSync(
     file,
-    `${JSON.stringify({ finding: d.finding, lens: d.lens, round: d.round, blocked: d.blocked, reason: d.reason, source: d.source, at: new Date().toISOString() })}\n`,
+    // `when`, not `at`: `at` is a finding's anchor in dismissed.jsonl (context.ts dismissalsOf).
+    `${JSON.stringify({ finding: d.finding, lens: d.lens, round: d.round, blocked: d.blocked, reason: d.reason, title: d.title, source: d.source, when: new Date().toISOString() })}\n`,
   );
   appendLedger(repo, {
     job,
@@ -219,7 +242,16 @@ export function recordDismissal(
     event: "finding-dismissed",
     key: `${job}/dismiss/${d.finding}`,
     role: `reviewer-${d.lens}`,
-    detail: { finding: d.finding, lens: d.lens, blocked: d.blocked, reason: d.reason, title: d.title, source: d.source },
+    detail: {
+      finding: d.finding,
+      lens: d.lens,
+      blocked: d.blocked,
+      reason: d.reason,
+      title: d.title,
+      ...(d.why ? { why: d.why } : {}),
+      ...(d.category ? { category: d.category } : {}),
+      source: d.source,
+    },
   });
   return true;
 }

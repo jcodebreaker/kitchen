@@ -21,7 +21,7 @@ import { appendLedger } from "../ledger/append.ts";
 import { self } from "../lock.ts";
 import { procsDirOf, reapGroups } from "../procs.ts";
 import { retroDue, runRetro } from "../retro/retro.ts";
-import { dismissedIn } from "../retro/signals.ts";
+import { dismissalsIn } from "../retro/signals.ts";
 import { GithubSource } from "../sources/github.ts";
 import { PromptSource } from "../sources/prompt.ts";
 import type { TicketSource } from "../sources/source.ts";
@@ -124,6 +124,20 @@ export async function runKitchen(o: RunOpts): Promise<{ steps: number; moves: nu
       const p = step(repo, j, deps, print, stats).finally(() => inFlight.delete(j.id));
       inFlight.set(j.id, p);
     };
+    // Every retro.every_jobs finished jobs: the retro (src/retro/retro.ts), a stage outside any job. Checked each
+    // tick too (paused jobs can keep a runner alive for days), one at a time, beside the jobs.
+    let retro: Promise<void> | null = null;
+    const maybeRetro = () => {
+      if (retro || lock.lost() || !retroDue(repo, config).due) return;
+      retro = runRetro({ repo, agent: deps.agent, forge: deps.forge, source: deps.source, print })
+        .then(
+          () => {},
+          (e) => print(`retro: failed: ${(e as Error).message}`),
+        )
+        .finally(() => {
+          retro = null;
+        });
+    };
 
     if (o.once) {
       await takeNew(repo, deps, print);
@@ -147,6 +161,7 @@ export async function runKitchen(o: RunOpts): Promise<{ steps: number; moves: nu
         }
         await takeNew(repo, deps, print);
         await checkWaits(repo, deps, print, wanted);
+        maybeRetro();
         const jobs = listJobs(repo).filter(wanted);
         const runnable = jobs.filter((j) => isActive(j.stage) && !inFlight.has(j.id)).sort(byOldest);
         while (runnable.length && inFlight.size < concurrency) dispatch(runnable.shift() as Job);
@@ -155,9 +170,8 @@ export async function runKitchen(o: RunOpts): Promise<{ steps: number; moves: nu
         await Promise.race([...inFlight.values(), new Promise((r) => setTimeout(r, tickMs))]);
       }
     }
-    // Every retro.every_jobs finished jobs: the retro (src/retro/retro.ts), a stage outside any job.
-    if (!lock.lost() && retroDue(repo, config).due)
-      await runRetro({ repo, agent: deps.agent, forge: deps.forge, source: deps.source, print }).catch((e) => print(`retro: failed: ${(e as Error).message}`));
+    maybeRetro();
+    if (retro) await retro;
   } finally {
     // Leaving: give back the slots this runner holds (the next run takes new ones).
     for (const s of listSlots().filter((x) => x.pid === me.pid)) {
@@ -271,10 +285,13 @@ async function checkWaits(repo: string, d: Deps, print: (l: string) => void, wan
  * recorded in the same job.json write as the move, so a crash can't replay one.
  */
 async function prCommentsBack(repo: string, job: Job, d: Deps, print: (l: string) => void) {
-  // A "not useful" reply dismisses a finding (read by the retro, src/retro/signals.ts); it is not feedback that reopens the job.
-  const unseen = (await d.forge.reviewComments(job.pr)).filter(
-    (c) => !job.filed.includes(`pr-comment/${c.id}`) && !c.body.includes(KITCHEN_MARKER) && dismissedIn(c.body).length === 0,
-  );
+  // A "not useful" reply dismisses findings (read by the retro, src/retro/signals.ts). A comment that is only that is not
+  // feedback; one that says more is, without its dismissal sentences.
+  const unseen = (await d.forge.reviewComments(job.pr)).flatMap((c) => {
+    if (job.filed.includes(`pr-comment/${c.id}`) || c.body.includes(KITCHEN_MARKER)) return [];
+    const ds = dismissalsIn(c.body);
+    return ds.pure ? [] : [ds.dismissed.length ? { ...c, body: ds.rest } : c];
+  });
   if (!unseen.length) return;
   const head = await headTime(job).catch(() => "");
   const done = job.doneAt ?? job.updatedAt;

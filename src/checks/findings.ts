@@ -4,6 +4,7 @@
 // lines (any lens), then one `### F<n>: <title>` block per finding:
 //   - kind: blocking | note
 //   - confidence: high | medium | low
+//   - category: security | correctness | … (src/retro/categories.ts; what the retro mutes by)
 //   - at: server.js:42           a line at HEAD, in this change
 //   - requirement: R2            a requirement of intake.md
 //   - evidence: e12 e14          stamped evidence ids
@@ -36,6 +37,8 @@ export type Finding = {
   title: string;
   kind: Kind;
   confidence: Confidence;
+  /** The `category:` the lens wrote, lower case (validated where it is used: src/retro/categories.ts). */
+  category?: string;
   at?: { file: string; line: number };
   /** The text of an `at:` value that didn't parse as file:line. */
   atRaw?: string;
@@ -52,7 +55,7 @@ export type Judged = Finding & {
 };
 
 /** A finding merged into another (same file and line): what it said, kept for the builder and the report. */
-export type Member = { id: string; lens: string; title: string; why: string; blocks: boolean };
+export type Member = { id: string; lens: string; title: string; why: string; blocks: boolean; category?: string };
 export type Merged = Judged & { lenses: string[]; also: string[]; members: Member[] };
 
 /** What the anchors are checked against, gathered by the caller from git, intake.md, the contract and the manifest. */
@@ -122,12 +125,14 @@ export function parseFindings(text: string, lens: string, round: number): Findin
     const atRaw = field("at");
     const at = atRaw && !/^(none|n\/a|-)$/i.test(atRaw) ? parseAt(atRaw) : null;
     const req = /\bR\d+\b/i.exec(field("requirement"))?.[0]?.toUpperCase();
+    const category = field("category").toLowerCase().replace(/[`*]/g, "").trim();
     out.push({
       id: `${lens}-${round}-${out.length + 1}`,
       lens,
       title: head[2].trim() || `finding ${head[1]}`,
       kind: (KINDS.find((k) => kindRaw.startsWith(k)) ?? "note") as Kind,
       confidence: (CONF.find((c) => confRaw.startsWith(c)) ?? "low") as Confidence,
+      ...(category ? { category } : {}),
       ...(at ? { at } : atRaw && !/^(none|n\/a|-)$/i.test(atRaw) ? { atRaw } : {}),
       ...(req ? { requirement: req } : {}),
       evidence: field("evidence").match(/\be\d+\b/g) ?? [],
@@ -350,7 +355,7 @@ export function dedupe(judged: Judged[]): Merged[] {
       evidence: [...new Set(g.flatMap((f) => f.evidence))],
       lenses: [...new Set(g.map((f) => f.lens))],
       also: others.map((f) => f.id),
-      members: others.map((f) => ({ id: f.id, lens: f.lens, title: f.title, why: f.why, blocks: f.blocks })),
+      members: others.map((f) => ({ id: f.id, lens: f.lens, title: f.title, why: f.why, blocks: f.blocks, ...(f.category ? { category: f.category } : {}) })),
     });
   }
   return out.sort((x, y) => Number(y.blocks) - Number(x.blocks));

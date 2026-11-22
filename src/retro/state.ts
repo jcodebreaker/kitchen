@@ -3,7 +3,7 @@
 // can import it without importing the retro.
 import fs from "node:fs";
 import path from "node:path";
-import { categoryOf } from "./categories.ts";
+import { categoryOf, securityVeto } from "./categories.ts";
 import { emptyState, type RetroState } from "./signals.ts";
 
 export const retroDir = (repo: string) => path.join(repo, ".kitchen", "retro");
@@ -17,9 +17,13 @@ export function readRetroState(repo: string): RetroState {
   }
 }
 
-/** Whether a finding of this lens and title is muted: the reason to show in its place, or null. */
-export function mutedFinding(repo: string, f: { lens: string; title: string; why?: string }): string | null {
-  const c = categoryOf(f.title, f.why ?? "");
+/**
+ * Whether a finding of this lens is muted: the reason to show in its place, or null. Its category is the
+ * one the lens declared (else keywords). A finding the security veto covers is never muted, in any lens.
+ */
+export function mutedFinding(repo: string, f: { lens: string; title: string; why?: string; category?: string }): string | null {
+  if (securityVeto(f)) return null;
+  const c = categoryOf(f.title, f.why ?? "", f.category);
   const m = readRetroState(repo).mutes.find((x) => x.lens === f.lens && x.category === c);
   return m ? `muted by the retro: ${m.lens}/${m.category} after ${m.dismissals} dismissals (kitchen retro unmute ${m.lens}/${m.category})` : null;
 }
