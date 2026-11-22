@@ -633,3 +633,19 @@ No pile of unit tests added per fix.
 | W3b onward | Median time and cost per risk path from the first full benchmark | Set a target for low-risk tickets then; the low path must be clearly shorter |
 
 Round 4 minors are applied: the `toolkit` return rule depends on where the job came from, there's now `repro → toolkit`, the stale interpreter wording is fixed, roles without a worktree get a scratch folder, and the adapter ADR records the sandbox flags.
+
+## Changes from Wave 0 findings (ADR 0006, spikes/w0/toolkit-results.md)
+
+| Finding | Change |
+|---|---|
+| Neither tool's sandbox can reach Docker; agents have no network | **Engine bridge:** `kitchen mcp --job <id> --role <role>` is an MCP server that the agent tool starts. It runs outside the Bash sandbox, as the engine, and exposes only job-scoped tools: `drive` (a feature drive or one primitive, in the job's slot, stamped), `toolkit_status` (doctor), and for the builder `checks` (runs `kitchen.yaml` checks in the worktree). It refuses anything outside the job. This is how the builder self-checks and how the verifier and UX lenses ask for views. File requests (`VIEW:`, `--args`) stay as a fallback. W1 must prove the bridge works on both tools |
+| Primitive calls overwrote each other's files | `--out <dir>` on every primitive call; the engine passes `files/e<N>/` |
+| `wait` is built on `read` | `read {target, attr?}` is a required primitive. `wait: { until: { text, target?, attr? } }` |
+| The list of features must come from the job branch | `describe [--src]`; `describe` also declares `ports.needs` |
+| Drive results can't be asserted | A drive returns its saved `vars`; `expect:` in the spec may use `$var` |
+| Single-page apps need navigation | `open {path}` and `reload` become generic primitives |
+| A TOOLKIT-GAP left nothing to cite | Gaps are stamped in the manifest |
+| Drive format | The restricted YAML subset (one step per line, `save:` as the only continuation) is the official format. Wait polls are collapsed into one entry with a count |
+| Mixed import styles | `.ts` relative imports everywhere (`rewriteRelativeImportExtensions`), so the code runs directly on Node and builds with tsc |
+| Skills | The same `SKILL.md` goes to `.claude/skills/kitchen/` and `.agents/skills/kitchen/` |
+| `--detach` from inside a sandbox keeps the sandbox | The `/kitchen` skill starts `kitchen run --detach` outside the sandbox (a one-time approval on Codex) |
