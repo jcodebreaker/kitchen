@@ -22,7 +22,7 @@ export async function sourceStamp(repo: GitRepo): Promise<SourceStamp> {
     // Hash the working tree with a throwaway index, so the repo's own index is untouched.
     const env = { GIT_INDEX_FILE: path.join(tmp, "index") };
     await out(["read-tree", "HEAD"], env);
-    await out(["add", "-A", "."], env);
+    await out(["add", "-A", "--", ":/"], env);
     const tree = await out(["write-tree"], env);
     return { sha, dirty: tree !== headTree, tree };
   } catch (e) {
