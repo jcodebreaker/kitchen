@@ -67,38 +67,53 @@ round_limit: 3
 # models: { builder: strong, verifier: medium, setup: medium }   # tiers map to models per tool
 `;
 
-/** Pure: the YAML lines for the detected checks (Gate runs them in every job). */
-export function checksYaml(d: Detected): string {
+/**
+ * Pure: the YAML lines for the detected checks (Gate runs them in every job). `proposed`: checks an agent
+ * proposed that the person hasn't accepted: written commented out, so nothing runs them until they do.
+ */
+export function checksYaml(d: Detected, o: { proposed?: boolean } = {}): string {
   const q = (s: string) => stringify(s).trimEnd();
-  return [
-    `# What Gate runs in every job's worktree (found in ${d.from.join(", ")}; edit freely)`,
+  const lines = [
     "checks:",
     ...d.checks.map((c) => `  - { name: ${c.name}, run: ${q(c.run)} }`),
-    ...(d.prepare
-      ? ["# Readies a fresh job worktree before the checks; downloading packages needs the network", `checks_prepare: ${q(d.prepare)}`, "checks_network: true"]
-      : []),
+    ...(d.prepare ? ["# Readies a fresh job worktree before the checks (a frozen install; it alone gets the network)", `checks_prepare: ${q(d.prepare)}`] : []),
     ...(d.testCmd ? ["# How a `test <file>` proof runs", `test_cmd: ${q(d.testCmd)}`] : []),
+  ];
+  return [
+    o.proposed
+      ? "# Checks an agent proposed from reading the repo. NOT used and never run until you uncomment them (review them first):"
+      : `# What Gate runs in every job's worktree (found in ${d.from.join(", ")}; edit freely)`,
+    ...(o.proposed ? lines.map((l) => (l.startsWith("#") ? l : `# ${l}`)) : lines),
     "",
   ].join("\n");
 }
 
+/** The config the person already has decides: a kitchen.yaml that names checks keeps them, whoever runs (quick init or the build). */
+export const hasOwnChecks = (repo: string): boolean => {
+  const f = path.join(repo, "kitchen.yaml");
+  return fs.existsSync(f) && /^checks\s*:/m.test(fs.readFileSync(f, "utf8"));
+};
+
 /**
  * kitchen.yaml: written when missing; an existing one is kept, and only gets the
- * detected checks when it names none (no `checks:` key yet).
+ * detected checks when it names none (no `checks:` key yet). The one rule for quick init and the build.
  */
-export function writeConfig(repo: string, tool: string, d: Detected | null): { written: boolean; checksAdded: boolean } {
+export function writeConfig(repo: string, tool: string, d: Detected | null, o: { proposed?: boolean } = {}): { written: boolean; checksAdded: boolean } {
   const f = path.join(repo, "kitchen.yaml");
   if (!fs.existsSync(f)) {
-    fs.writeFileSync(f, `${KITCHEN_YAML(tool)}${d?.checks.length ? checksYaml(d) : ""}`);
-    return { written: true, checksAdded: !!d?.checks.length };
+    fs.writeFileSync(f, `${KITCHEN_YAML(tool)}${d?.checks.length ? checksYaml(d, o) : ""}`);
+    return { written: true, checksAdded: !!d?.checks.length && !o.proposed };
   }
   const have = fs.readFileSync(f, "utf8");
-  if (!d?.checks.length || /^checks\s*:/m.test(have)) return { written: false, checksAdded: false };
-  const extra = checksYaml({
-    ...d,
-    prepare: /^checks_(prepare|network)\s*:/m.test(have) ? undefined : d.prepare,
-    testCmd: /^test_cmd\s*:/m.test(have) ? undefined : d.testCmd,
-  });
+  if (!d?.checks.length || hasOwnChecks(repo)) return { written: false, checksAdded: false };
+  const extra = checksYaml(
+    {
+      ...d,
+      prepare: /^checks_prepare\s*:/m.test(have) ? undefined : d.prepare,
+      testCmd: /^test_cmd\s*:/m.test(have) ? undefined : d.testCmd,
+    },
+    o,
+  );
   fs.writeFileSync(f, `${have}${have.endsWith("\n") ? "" : "\n"}${extra}`);
-  return { written: false, checksAdded: true };
+  return { written: false, checksAdded: !o.proposed };
 }

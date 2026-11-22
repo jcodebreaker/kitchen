@@ -5,13 +5,14 @@
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import readline from "node:readline/promises";
 import { loadConfig } from "../config.ts";
 import { plainCheckout } from "../engine/git.ts";
 import { forgeFor } from "../forge/forge.ts";
 import { serveSetupBridge } from "../init/bridge.ts";
 import { toolkitBuild } from "../init/build.ts";
 import { installSkill } from "../init/files.ts";
-import { quickInit } from "../init/quick.ts";
+import { quickInit, readQuickRecord } from "../init/quick.ts";
 import { detachInit, initLog, readStatus, statusReport, tracked } from "../init/status.ts";
 import { ownerAlive } from "../lock.ts";
 
@@ -53,8 +54,23 @@ const BUILD_ONLY = ["answers", "model", "effort", "max-fix", "generate-only", "d
 const BUILD_FLAGS = ["repo", "tool", "verbose", "status", "wait", ...BUILD_ONLY];
 const INIT_FLAGS = [...BUILD_FLAGS, "skill", "toolkit"];
 
+/** A yes/no question in a terminal (Enter = yes); none without one: proposed checks are then written commented out. */
+function terminalConfirm(): ((q: string) => Promise<boolean>) | undefined {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) return undefined;
+  return async (q) => {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    try {
+      return /^(y|yes)?$/i.test((await rl.question(q)).trim());
+    } catch {
+      return false; // Ctrl-D: no answer is not a yes
+    } finally {
+      rl.close();
+    }
+  };
+}
+
 /** `--status [--wait <secs>]`: how a detached build is doing; blocks up to `--wait` (at most 110 s, so one agent tool call stays short) while it runs. */
-async function buildStatus(repo: string, flags: Record<string, string | true>, out: (l: string) => void): Promise<number> {
+async function buildStatus(repo: string, flags: Record<string, string | true>, out: (l: string) => void, who?: string): Promise<number> {
   // Agent tools may refuse a plain `sleep`; this is the way to wait between polls.
   const wait = Math.min(110, Math.max(0, Number(str(flags.wait) ?? 0) || 0)) * 1000;
   const end = Date.now() + wait;
@@ -67,7 +83,7 @@ async function buildStatus(repo: string, flags: Record<string, string | true>, o
     await new Promise((res) => setTimeout(res, 2000));
     cur = live();
   }
-  const r = statusReport(cur.s, cur.alive);
+  const r = statusReport(cur.s, cur.alive, Date.now(), who);
   for (const l of r.lines) out(l);
   return r.code;
 }
@@ -142,12 +158,19 @@ export async function w2(name: string, argv: string[]): Promise<number> {
       out("next: open Claude Code (or Codex) in this repo and type: /kitchen set up Kitchen");
       return 0;
     }
+    // `init --status`: the build's status in the words skills from before ADR 0010 poll for (`init: …`).
+    if (flags.status === true) return buildStatus(repo, flags, out, "init");
+    if ("wait" in flags) throw new Error("kitchen init: --wait goes with --status");
     // Flags that only mean something for the Toolkit build (the pre-ADR-0010 init's) run the build too.
-    if (flags.status === true) return buildStatus(repo, flags, out);
-    const toolkit = flags.toolkit === true || BUILD_ONLY.some((k) => k in flags);
-    const code = await quickInit({ repo, tool: str(flags.tool) as "claude" | "codex" | undefined }, out);
-    if (!toolkit || code !== 0) return code;
-    out("");
+    const implied = BUILD_ONLY.some((k) => k in flags);
+    const toolkit = flags.toolkit === true || implied;
+    if (flags.verbose === true && !toolkit) throw new Error("kitchen init: --verbose goes with --toolkit (quick init has nothing more to show)");
+    // An old skill's `init --detach` / `--answers` on a repo quick init already set up: straight to the build, so it returns at once.
+    if (!(implied && readQuickRecord(repo))) {
+      const code = await quickInit({ repo, tool: str(flags.tool) as "claude" | "codex" | undefined, confirm: terminalConfirm() }, out);
+      if (!toolkit || code !== 0) return code;
+      out("");
+    }
     return runBuild(repo, flags, out);
   }
   if (name === "toolkit" && argv[0] === "build") {

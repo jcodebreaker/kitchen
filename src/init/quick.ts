@@ -2,21 +2,29 @@
 // It writes kitchen.yaml and the /kitchen skill, adds Kitchen's .gitignore
 // entries, finds the project's checks (detect-checks.ts; one short read-only
 // agent call on the cheap tier only when nothing obvious is there), runs them
-// once on the checkout and records the result in .kitchen/init/checks.json.
-// No Toolkit, no worktree, no app start, no Docker: `kitchen toolkit build` is
-// that step (build.ts).
-import { spawn } from "node:child_process";
+// once on the person's own checkout (HEAD plus whatever they have changed)
+// under the proof sandbox Gate uses, and records the result in
+// .kitchen/init/checks.json. No Toolkit, no worktree, no app start, no Docker:
+// `kitchen toolkit build` is that step (build.ts).
+//
+// Checks an agent proposed never run without the person's OK (a README can
+// carry an injection): in a terminal they are shown and asked about; without
+// one they go into kitchen.yaml commented out. Dependencies are installed only
+// with a frozen install from a lockfile, announced first, with the network for
+// that step alone.
 import fs from "node:fs";
 import path from "node:path";
 import type { AgentAdapter } from "../agents/adapter.ts";
-import { buildAgentEnv, untrustedEnv } from "../agents/env.ts";
+import { buildAgentEnv } from "../agents/env.ts";
 import { type Config, loadConfig, tierModel } from "../config.ts";
+import { toolkitAt } from "../engine/base.ts";
 import { openGit, plainCheckout } from "../engine/git.ts";
 import { writeAtomic } from "../engine/store.ts";
 import { kitchenHome } from "../home.ts";
 import { appendLedger } from "../ledger/append.ts";
+import { runSandboxed } from "../proof/run-sandboxed.ts";
 import { type Detected, detectChecks } from "./detect-checks.ts";
-import { addGitignore, installSkill, toolFor, writeConfig } from "./files.ts";
+import { addGitignore, hasOwnChecks, installSkill, toolFor, writeConfig } from "./files.ts";
 import { dur, phaseLine, usd } from "./say.ts";
 
 export type QuickOpts = {
@@ -24,17 +32,25 @@ export type QuickOpts = {
   tool?: "claude" | "codex";
   /** The adapter for the one agent call (tests pass a fake); default: the configured tool. */
   agent?: () => Promise<AgentAdapter>;
+  /** Asks the person a yes/no question (a terminal). Absent: no one to ask, so proposed checks are written commented out. */
+  confirm?: (question: string) => Promise<boolean>;
 };
 
-export type CheckRun = { name: string; run: string; ok: boolean; exit: number | null; secs: number; tail: string };
+export type CheckRun = { name: string; run: string; ok: boolean; exit: number | null; secs: number; tail: string; sandboxed?: boolean };
 export type QuickRecord = {
   at: string;
   sha: string | null;
   from: string[];
-  /** How the checks were found: from the repo's files, by an agent, or already in kitchen.yaml. */
-  found: "files" | "agent" | "config" | "none";
-  agent?: { model: string; secs: number; usd?: number };
+  /**
+   * How the checks were found: from the repo's files, by an agent (accepted), already in kitchen.yaml; `proposed`:
+   * an agent proposed some the person hasn't accepted (commented out in kitchen.yaml); `none`: nothing. A re-run
+   * with `proposed` or `none` does not ask the agent again.
+   */
+  found: "files" | "agent" | "config" | "proposed" | "none";
+  agent?: { model: string; secs: number; usd?: number; error?: string };
   prepare?: CheckRun;
+  /** Why the checks did not run (no commit, dependencies that can't be installed). */
+  skipped?: string;
   results: CheckRun[];
 };
 
@@ -45,6 +61,17 @@ export function readQuickRecord(repo: string): QuickRecord | null {
     return JSON.parse(fs.readFileSync(checksRecord(repo), "utf8")) as QuickRecord;
   } catch {
     return null;
+  }
+}
+
+/** The project has dependencies and they aren't installed in the checkout (Node: no node_modules). */
+function depsMissing(repo: string): boolean {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(repo, "package.json"), "utf8")) as { dependencies?: object; devDependencies?: object };
+    const n = Object.keys(pkg.dependencies ?? {}).length + Object.keys(pkg.devDependencies ?? {}).length;
+    return n > 0 && !fs.existsSync(path.join(repo, "node_modules"));
+  } catch {
+    return false;
   }
 }
 
@@ -62,36 +89,63 @@ export async function quickInit(o: QuickOpts, out: (l: string) => void): Promise
   } catch {}
   out(`Setting up Kitchen in ${path.basename(repo)}…`);
 
-  // 1. checks: kitchen.yaml's own, else the repo's files, else one short agent call
+  // 1. checks: kitchen.yaml's own, else the repo's files, else (once) one short agent call
   const tool = toolFor(repo, o.tool);
-  const had = fs.existsSync(path.join(repo, "kitchen.yaml")) ? loadConfig(repo) : null;
+  const prior = readQuickRecord(repo);
   let found: QuickRecord["found"] = "none";
   let detected: Detected | null = null;
+  let proposed = false;
   let agentRun: QuickRecord["agent"];
-  if (had?.checkList.length) found = "config";
-  else {
-    detected = detectChecks(repo);
-    if (detected) found = "files";
-    else {
-      const base = had ?? loadConfig(repo);
-      const a = await proposeChecks(repo, { ...base, agent: { ...base.agent, tool: tool as Config["agent"]["tool"] } }, o.agent);
-      agentRun = a.run;
+  const notes: string[] = [];
+  if (!hasOwnChecks(repo)) detected = detectChecks(repo);
+  if (hasOwnChecks(repo)) found = "config";
+  else if (detected) found = "files";
+  else if (prior?.found === "proposed" || prior?.found === "none") {
+    found = prior.found;
+    notes.push(
+      prior.found === "proposed"
+        ? "The checks an agent proposed last time are in kitchen.yaml, commented out: review and uncomment them to use them."
+        : 'No checks found last time either; not asking the agent again. Add them to kitchen.yaml (checks: ["npm test"]), or delete .kitchen/init/checks.json to look again.',
+    );
+  } else {
+    const base = loadConfig(repo);
+    const a = await proposeChecks(repo, { ...base, agent: { ...base.agent, tool: tool as Config["agent"]["tool"] } }, o.agent);
+    agentRun = a.run;
+    if (a.run.error) notes.push(`The agent call to find the checks failed: ${a.run.error}`);
+    if (a.detected) {
       detected = a.detected;
-      if (detected) found = "agent";
+      out("An agent read the repo and proposes these checks (it found none in the usual files):");
+      for (const c of a.detected.checks) out(`    ${c.name}: ${c.run}`);
+      if (a.detected.prepare) out(`    install first: ${a.detected.prepare}`);
+      const yes = o.confirm ? await o.confirm("Use these checks? [Y/n] ") : false;
+      proposed = !yes;
+      found = yes ? "agent" : "proposed";
+      if (!yes)
+        notes.push(
+          o.confirm
+            ? "Not used: they are in kitchen.yaml, commented out."
+            : "Not run: no one to ask here, so they are in kitchen.yaml commented out. Review them and uncomment the ones you want.",
+        );
     }
   }
 
   // 2. the files
-  const cfgW = writeConfig(repo, tool, detected);
+  const cfgW = writeConfig(repo, tool, detected, { proposed });
   const cfg = loadConfig(repo);
   const n = cfg.checkList.length;
   const from =
-    found === "config" ? "kept from kitchen.yaml" : found === "files" ? `from ${detected?.from.join(", ")}` : found === "agent" ? "proposed by an agent" : "";
+    found === "config"
+      ? "kept from kitchen.yaml"
+      : found === "files"
+        ? `from ${detected?.from.join(", ")}`
+        : found === "agent"
+          ? "proposed by an agent, accepted"
+          : "";
   out(
     phaseLine(
-      true,
+      !agentRun?.error,
       cfgW.written ? "Wrote kitchen.yaml" : "Kept kitchen.yaml",
-      `agent ${cfg.agent.tool} · ${n ? `${n} check${n === 1 ? "" : "s"} ${from}` : "no checks found"}${cfgW.checksAdded && !cfgW.written ? " (added)" : ""}`,
+      `agent ${cfg.agent.tool} · ${n ? `${n} check${n === 1 ? "" : "s"} ${from}` : found === "proposed" ? "proposed checks commented out" : "no checks found"}${cfgW.checksAdded && !cfgW.written ? " (added)" : ""}`,
       agentRun?.secs,
       agentRun?.usd,
     ),
@@ -101,18 +155,26 @@ export async function quickInit(o: QuickOpts, out: (l: string) => void): Promise
   const added = addGitignore(repo);
   out(phaseLine(true, "Updated .gitignore", added.length ? `${added.length} Kitchen entries` : "already has Kitchen's entries"));
 
-  // 3. run them once on the checkout
+  // 3. run them once on the checkout, sandboxed like Gate
   const record: QuickRecord = { at: new Date().toISOString(), sha, from: detected?.from ?? [], found, ...(agentRun ? { agent: agentRun } : {}), results: [] };
   let failed: CheckRun | undefined;
-  if (n) {
+  const run = async (name: string, cmd: string, timeoutSec: number, network: boolean): Promise<CheckRun> => {
+    const r = await runSandboxed({ cwd: repo, cmd, timeoutSec, network, what: `init check ${name}`, killOnSignal: true });
+    const tail = r.all.trimEnd().split("\n").slice(-40).join("\n");
+    return { name, run: cmd, ok: r.exit === 0, exit: r.timedOut ? null : r.exit, secs: r.secs, tail, sandboxed: r.sandboxed };
+  };
+  if (n && !sha) record.skipped = "no commit yet";
+  else if (n && depsMissing(repo) && !cfg.checks_prepare) record.skipped = "dependencies not installed, and no lockfile to install them from";
+  else if (n) {
     const c0 = Date.now();
-    const env = untrustedEnv(repo);
-    if (cfg.checks_prepare && !fs.existsSync(path.join(repo, "node_modules")) && /^(npm|pnpm|yarn|bun)\b/.test(cfg.checks_prepare)) {
-      record.prepare = await runCheck(repo, { name: "prepare", run: cfg.checks_prepare, timeoutSec: 1800 }, env);
+    if (cfg.checks_prepare && depsMissing(repo)) {
+      out(`  … Installing dependencies (${cfg.checks_prepare})…`);
+      record.prepare = await run("prepare", cfg.checks_prepare, 600, true);
       if (!record.prepare.ok) failed = record.prepare;
     }
     for (const c of failed ? [] : cfg.checkList) {
-      const r = await runCheck(repo, c, env);
+      out(`  … Running ${c.name} (${c.run})…`);
+      const r = await run(c.name, c.run, c.timeoutSec, cfg.checks_network);
       record.results.push(r);
       if (!r.ok) failed ??= r;
     }
@@ -121,6 +183,7 @@ export async function quickInit(o: QuickOpts, out: (l: string) => void): Promise
     const verdict = failed ? `${failed.name} FAILED (${failed.exit === null ? "timed out" : `exit ${failed.exit}`})` : `${names} passed`;
     out(phaseLine(!failed, "Ran the checks", `${verdict} ${where}`, (Date.now() - c0) / 1000));
   }
+  if (record.skipped) out(phaseLine(false, "Ran the checks", `skipped: ${record.skipped}`));
   fs.mkdirSync(path.dirname(checksRecord(repo)), { recursive: true });
   writeAtomic(checksRecord(repo), `${JSON.stringify(record, null, 2)}\n`);
   appendLedger(repo, {
@@ -129,58 +192,37 @@ export async function quickInit(o: QuickOpts, out: (l: string) => void): Promise
     round: 0,
     event: "checks",
     key: `init/checks/${record.at}`,
-    result: !n ? "none" : failed ? "fail" : "pass",
-    detail: { found, sha, checks: record.results.map((r) => ({ name: r.name, ok: r.ok, secs: r.secs })) },
+    result: record.skipped ? "skipped" : !n ? "none" : failed ? "fail" : "pass",
+    detail: { found, sha, skipped: record.skipped, checks: record.results.map((r) => ({ name: r.name, ok: r.ok, secs: r.secs })) },
   });
 
+  // 4. what to do next follows from what happened
+  for (const l of notes) out(l);
   if (failed) {
     out("");
     out(`${failed.name} failed on your checkout: ${failed.run}`);
     out(failed.tail.replace(/^/gm, "  | "));
-    out("Gate runs these checks on every job, so every job would fail them. Fix them (or edit checks: in kitchen.yaml), then run kitchen init again.");
-    out("");
-  } else if (!n) {
-    out("");
-    out('No checks found: Gate will have nothing to run. Add them to kitchen.yaml (checks: ["npm test"]) when you can.');
-    out("");
+    out("Gate runs these checks on every job, so every job would fail them.");
+    out(`Done in ${dur((Date.now() - t0) / 1000)}, with failing checks.`);
+    out("Next: fix them (or edit checks: in kitchen.yaml), then run kitchen init again.");
+    return 1;
   }
   const cost = agentRun?.usd;
   out(`Done in ${dur((Date.now() - t0) / 1000)} · ${agentRun ? `one agent call${cost ? ` (${usd(cost)})` : ""}` : "no agent"}`);
+  if (record.skipped === "no commit yet") {
+    out("Next: make a first commit (git add -A && git commit -m init), then kitchen init again to run the checks.");
+    return 0;
+  }
+  if (record.skipped) {
+    out("Next: install the dependencies (or commit a lockfile), then kitchen init again to run the checks.");
+    return 0;
+  }
+  if (!n && found !== "proposed") out('No checks: Gate will have nothing to run. Add them to kitchen.yaml (checks: ["npm test"]) when you can.');
   out('Next: kitchen ticket "<what you want>"  then  kitchen run --detach');
   out("      commit kitchen.yaml, .gitignore and the skill folders when you like");
-  out("      to have Kitchen drive your app as well: kitchen toolkit build (about 3–15 min)");
+  if (sha && (await toolkitAt(repo, sha))) out(`      Kitchen drives your app with the Toolkit already on ${branch || "HEAD"}`);
+  else out("      to have Kitchen drive your app as well: kitchen toolkit build (about 3–15 min)");
   return 0;
-}
-
-/** One check in the checkout, with the untrusted env (no credentials), its own process group, killed at its timeout. */
-function runCheck(repo: string, c: { name: string; run: string; timeoutSec: number }, env: Record<string, string>): Promise<CheckRun> {
-  const t0 = Date.now();
-  return new Promise((resolve) => {
-    const p = spawn("sh", ["-c", c.run], { cwd: repo, env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
-    let text = "";
-    const keep = (b: Buffer) => {
-      text = (text + b.toString("utf8")).slice(-8000);
-    };
-    p.stdout.on("data", keep);
-    p.stderr.on("data", keep);
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      try {
-        if (p.pid) process.kill(-p.pid, "SIGKILL");
-      } catch {}
-    }, c.timeoutSec * 1000);
-    const done = (code: number | null) => {
-      clearTimeout(timer);
-      const tail = text.trimEnd().split("\n").slice(-40).join("\n");
-      resolve({ name: c.name, run: c.run, ok: !timedOut && code === 0, exit: timedOut ? null : code, secs: (Date.now() - t0) / 1000, tail });
-    };
-    p.on("error", (e) => {
-      text += String(e.message);
-      done(127);
-    });
-    p.on("close", done);
-  });
 }
 
 const PROPOSE = `You are helping Kitchen find this repository's checks: the commands a developer runs
@@ -214,11 +256,16 @@ async function proposeChecks(
   cfg: Config,
   agent?: () => Promise<AgentAdapter>,
 ): Promise<{ detected: Detected | null; run: NonNullable<QuickRecord["agent"]> }> {
-  const a = agent ? await agent() : await (await import("../engine/runner.ts")).adapterFor(repo, cfg);
   const model = tierModel(cfg, "cheap");
   const outDir = path.join(repo, ".kitchen", "init", "agent");
   fs.mkdirSync(outDir, { recursive: true });
   const t0 = Date.now();
+  let a: AgentAdapter;
+  try {
+    a = agent ? await agent() : await (await import("../engine/runner.ts")).adapterFor(repo, cfg);
+  } catch (e) {
+    return { detected: null, run: { model, secs: (Date.now() - t0) / 1000, error: (e as Error).message } };
+  }
   const r = await a.run({
     role: "setup",
     prompt: PROPOSE,
@@ -247,5 +294,9 @@ async function proposeChecks(
     usd: r.usage?.usd,
     detail: { line: r.line, error: r.error },
   });
-  return { detected: text ? parseProposal(text) : null, run: { model, secs, ...(r.usage?.usd !== undefined ? { usd: r.usage.usd } : {}) } };
+  const error = !r.ok ? (r.error ?? r.line ?? "the agent failed") : !text ? "it wrote no checks.md" : undefined;
+  return {
+    detected: text ? parseProposal(text) : null,
+    run: { model, secs, ...(r.usage?.usd !== undefined ? { usd: r.usage.usd } : {}), ...(error ? { error } : {}) },
+  };
 }

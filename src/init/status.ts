@@ -137,27 +137,27 @@ export function detachInit(repo: string, cli: string, argv: string[], out: (l: s
 /**
  * Pure: what `--status` prints for a status (and whether its process lives).
  * The exit code is 0 for every state: the state is the first word after
- * `toolkit build:`. (A non-zero code for "questions" made agents chain `|| <fallback>`.)
+ * `toolkit build:` (`init:` for `kitchen init --status`, which skills written before ADR 0010 poll). (A non-zero code for "questions" made agents chain `|| <fallback>`.)
  */
-export function statusReport(s: InitStatus | null, alive: boolean, now = Date.now()): { lines: string[]; code: number } {
-  if (!s) return { lines: ["toolkit build: not started here (kitchen toolkit build --detach)"], code: 0 };
+export function statusReport(s: InitStatus | null, alive: boolean, now = Date.now(), who = "toolkit build"): { lines: string[]; code: number } {
+  if (!s) return { lines: [`${who}: not started here (kitchen toolkit build --detach)`], code: 0 };
   const mins = (iso: string) => `${Math.max(0, Math.round((now - Date.parse(iso)) / 60_000))}m`;
   if (s.state === "running" && !alive)
     return {
       lines: [
-        `toolkit build: failed: its process (pid ${s.pid}) is gone without a result (killed?); run kitchen toolkit build --detach again (it resumes)`,
+        `${who}: failed: its process (pid ${s.pid}) is gone without a result (killed?); run kitchen toolkit build --detach again (it resumes)`,
         ...tail(s),
       ],
       code: 0,
     };
   const head =
     s.state === "running"
-      ? `toolkit build: running for ${mins(s.startedAt)} (pid ${s.pid}); last line ${mins(s.at)} ago`
+      ? `${who}: running for ${mins(s.startedAt)} (pid ${s.pid}); last line ${mins(s.at)} ago`
       : s.state === "done"
-        ? "toolkit build: done"
+        ? `${who}: done`
         : s.state === "questions"
-          ? `toolkit build: questions: ${s.questions?.length ?? "?"} question(s) in .kitchen/setup-questions.json; answer them, then kitchen toolkit build --answers <file> --detach`
-          : `toolkit build: failed (exit ${s.exit ?? "?"})${s.error ? `: ${s.error.split("\n")[0]}` : ""}`;
+          ? `${who}: questions: ${s.questions?.length ?? "?"} question(s) in .kitchen/setup-questions.json; answer them, then kitchen toolkit build --answers <file> --detach`
+          : `${who}: failed (exit ${s.exit ?? "?"})${s.error ? `: ${s.error.split("\n")[0]}` : ""}`;
   return { lines: [head, ...tail(s)], code: 0 };
 }
 const tail = (s: InitStatus) => s.last.map((l) => `  | ${l}`);

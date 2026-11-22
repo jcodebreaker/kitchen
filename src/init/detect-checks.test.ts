@@ -52,7 +52,27 @@ test("package.json: the package manager comes from the lockfile; npm's placehold
   assert.equal(detectChecks(placeholder), null);
 });
 
-test("Makefile: its usual targets win over the ecosystem's scripts (the project's own entry point)", () => {
+test("frozen installs only: no lockfile, no install (review M1); yarn is --immutable", () => {
+  const loose = fixture("npm-unlocked", { "package.json": JSON.stringify({ scripts: { test: "vitest" }, devDependencies: { vitest: "1" } }) });
+  assert.equal(detectChecks(loose)?.prepare, undefined);
+  assert.equal(detectChecks(loose)?.unlockedDeps, true);
+  const yarn = fixture("yarn-deps", { "package.json": JSON.stringify({ scripts: { test: "jest" }, dependencies: { a: "1" } }), "yarn.lock": "" });
+  assert.equal(detectChecks(yarn)?.prepare, "yarn install --immutable");
+});
+
+test("scripts and targets that change files, watch or start things are never checks (review M2)", () => {
+  const dir = fixture("unsafe", {
+    "package.json": JSON.stringify({
+      scripts: { lint: "eslint . --fix", typecheck: "tsc --noEmit --watch", test: "vitest watch", build: "docker build ." },
+    }),
+  });
+  assert.equal(detectChecks(dir), null);
+  const fmt = fixture("unsafe-2", { "package.json": JSON.stringify({ scripts: { lint: "prettier --write .", test: "node --test" } }) });
+  assert.deepEqual(runs(fmt), ["test: npm test"]);
+  assert.deepEqual(makeTargets("test:\n\tdocker compose run app pytest\nlint:\n\truff check .\nbuild: serve\n"), ["lint"]);
+});
+
+test("Makefile: with test or check it wins (the project's own entry point); otherwise its targets join the others (review M2)", () => {
   assert.deepEqual(makeTargets("build: deps\n\tgo build\ntest:\n\tgo test ./...\nlint :\n\tgolangci-lint run\nX := 1\n.PHONY: test\n"), [
     "lint",
     "test",
@@ -62,11 +82,13 @@ test("Makefile: its usual targets win over the ecosystem's scripts (the project'
   const dir = fixture("make", { Makefile: "test:\n\tpytest\nlint:\n\truff check .\n", "pyproject.toml": "[tool.pytest.ini_options]\n" });
   assert.deepEqual(runs(dir), ["lint: make lint", "test: make test"]);
   assert.equal(detectChecks(dir)?.testCmd, "python3 -m pytest -q {file}", "the test command still comes from the ecosystem");
+  const lintOnly = fixture("make-lint", { Makefile: "lint:\n\tgolangci-lint run\n", "go.mod": "module x\n" });
+  assert.deepEqual(runs(lintOnly), ["lint: make lint", "vet: go vet ./...", "test: go test ./..."]);
 });
 
-test("pyproject.toml: pytest, ruff and mypy when configured (uv/poetry run them); unittest files without pytest", () => {
+test("pyproject.toml: pytest, ruff and mypy when they have their own section (uv/poetry/.venv run them); unittest files without pytest", () => {
   const dir = fixture("py", {
-    "pyproject.toml": '[project]\nname = "x"\n[project.optional-dependencies]\ndev = ["pytest", "mypy"]\n[tool.ruff]\nline-length = 100\n',
+    "pyproject.toml": '[project]\nname = "x"\n[tool.mypy]\nstrict = true\n[tool.pytest.ini_options]\nx = 1\n[tool.ruff]\nline-length = 100\n',
     "uv.lock": "",
   });
   assert.deepEqual(runs(dir), ["lint: uv run ruff check .", "typecheck: uv run mypy .", "test: uv run pytest -q"]);
@@ -75,6 +97,10 @@ test("pyproject.toml: pytest, ruff and mypy when configured (uv/poetry run them)
   assert.deepEqual(runs(unit), ["test: python3 -m unittest discover -s tests"]);
   assert.equal(detectChecks(unit)?.testCmd, "python3 -m unittest {file}");
   assert.equal(detectChecks(fixture("py-bare", { "pyproject.toml": '[project]\nname = "c"\n' })), null, "nothing configured: the agent is asked");
+  // A mention in the dependencies is not a configuration (review L6).
+  assert.equal(detectChecks(fixture("py-mention", { "pyproject.toml": '[project]\nname = "d"\ndependencies = ["pytest", "ruff", "mypy"]\n' })), null);
+  const venv = fixture("py-venv", { "pyproject.toml": "[tool.pytest.ini_options]\n", ".venv/bin/python": "" });
+  assert.deepEqual(runs(venv), ["test: .venv/bin/python -m pytest -q"]);
 });
 
 test("go.mod and Cargo.toml: their standard commands", () => {
@@ -101,8 +127,19 @@ test("the checks block kitchen.yaml gets parses as config (quoting included)", (
       ["test", "npm test"],
     ],
   );
-  assert.equal(cfg.checks_prepare, "npm install");
-  assert.equal(cfg.checks_network, true);
+  assert.equal(cfg.checks_prepare, undefined, "no lockfile: never installed");
+  assert.equal(cfg.checks_network, false, "the checks never get the network from detection (review H2)");
+  const locked = detectChecks(
+    fixture("yaml-lock", { "package.json": JSON.stringify({ scripts: { test: "node --test" }, dependencies: { a: "1" } }), "package-lock.json": "{}" }),
+  );
+  assert.ok(locked);
+  const c2 = parseConfig(`version: 1\n${checksYaml(locked)}`);
+  assert.equal(c2.checks_prepare, "npm ci");
+  assert.equal(c2.checks_network, false);
+  // Proposed by an agent and not accepted: commented out, so the config has no checks (review H1).
+  const proposed = parseConfig(`version: 1\n${checksYaml(locked, { proposed: true })}`);
+  assert.deepEqual(proposed.checkList, []);
+  assert.equal(proposed.checks_prepare, undefined);
 });
 
 test("the agent's proposal (checks.md) when nothing is obvious: at most 4 checks, none when it names none", () => {

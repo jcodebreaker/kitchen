@@ -33,6 +33,10 @@ const TEMPLATE = path.join(PKG, "toolkit-template");
 const ROLE = path.join(PKG, "roles", "setup.md");
 
 export const SETUP_BRANCH = "kitchen/setup";
+
+/** How the person gets the Toolkit onto the base jobs start from: locally a merge; with GitHub, the merge pushed (review M8). */
+export const mergeSetupHow = (cfg: Pick<Config, "forge">): string =>
+  cfg.forge.kind === "github" ? `merge ${SETUP_BRANCH} into ${cfg.forge.base} and push` : `git merge ${SETUP_BRANCH}`;
 const WT_ID = "_setup";
 const IDENTITY = { GIT_AUTHOR_NAME: "Kitchen", GIT_AUTHOR_EMAIL: "kitchen@localhost", GIT_COMMITTER_NAME: "Kitchen", GIT_COMMITTER_EMAIL: "kitchen@localhost" };
 /** Never committed from the setup worktree, whatever the repo's .gitignore says. */
@@ -167,7 +171,7 @@ export async function toolkitBuild(o: BuildOpts, out: BuildOut): Promise<number>
   // 1–3. kitchen.yaml, the skill, .gitignore: what quick init writes, for a repo that skipped it
   if (!done("config")) {
     const tool = toolFor(repo, o.tool);
-    const w = writeConfig(repo, tool, fs.existsSync(path.join(repo, "kitchen.yaml")) ? null : detectChecks(repo));
+    const w = writeConfig(repo, tool, detectChecks(repo));
     st.steps.config = { file: "kitchen.yaml", tool, written: w.written };
     save();
     say(w.written ? `kitchen.yaml written (agent: ${tool})` : "kitchen.yaml kept");
@@ -482,8 +486,7 @@ export async function toolkitBuild(o: BuildOpts, out: BuildOut): Promise<number>
   out.phase(
     `Done in ${dur((Date.now() - t0) / 1000)}${cost ? ` · ${usd(cost)}` : ""} · ${existing ? `proven on ${check.sha.slice(0, 12)}` : `on branch ${SETUP_BRANCH}`}`,
   );
-  const branch = (await main.run(["symbolic-ref", "--short", "-q", "HEAD"]).catch(() => ({ stdout: "main" }))).stdout.trim() || "main";
-  if (!existing) out.phase(`Next: review it (git log -p ${branch}..${SETUP_BRANCH}), then git merge ${SETUP_BRANCH}`);
+  if (!existing) out.phase(`Next: review it (git log -p ${cfg.forge.base}..${SETUP_BRANCH}), then ${mergeSetupHow(cfg)}`);
   const waiting = listJobs(repo).filter((j) => j.stage === "paused" && j.waitFor === "no-toolkit");
   if (waiting.length)
     out.phase(`${existing ? "Next" : "Then"}: kitchen resume ${waiting.map((j) => j.id).join(" · kitchen resume ")}  (waiting for the Toolkit)`);
