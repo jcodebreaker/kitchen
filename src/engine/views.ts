@@ -12,7 +12,7 @@
 import { parseProof, words } from "../proof/proof-line.ts";
 import { prove } from "../proof/prove.ts";
 import type { InstanceJob } from "./instance.ts";
-import { ensureUp, resetUp } from "./instance.ts";
+import { ensureUp, freshUp, resetUp } from "./instance.ts";
 
 /** At most this many views per lens per review: the lens is re-run once with them. */
 export const MAX_VIEWS = 3;
@@ -74,7 +74,8 @@ export async function runView(o: {
 }): Promise<ViewResult> {
   const p = viewProof(o.view, `view-${o.lens}-${o.n}`);
   if ("refused" in p) return { view: o.view, ok: false, why: p.refused, evidence: [] };
-  await ensureUp(o.job, o.jobDir, o.log);
+  // The app Verify left running may have died since (a wedged browser driver): one fresh start before giving up.
+  await ensureUp(o.job, o.jobDir, o.log).catch(() => freshUp(o.job, o.jobDir, o.log));
   await resetUp(o.job, o.jobDir);
   const r = await prove({
     jobDir: o.jobDir,

@@ -28,7 +28,10 @@ const name = `w4-${kind}`;
 
 const TICKETS = {
   ui: 'On the Projects page, show how many projects the signed-in user has in the heading, e.g. "Projects (1)", and show the same count in the top navigation\'s Projects link on every page, e.g. "Projects · 1". When the user has no projects, the Projects page shows an empty state saying "No projects yet" with a link "Create your first project" that goes to /projects/new.',
-  auth: "Sign-in (authentication): after a failed sign-in, the login page should keep the username that was typed so people don't have to type it again, but it must never put the password back into the form. A successful sign-in still works as before.",
+  // Earlier attempts (results.md): a sign-in ticket intake rated a low-risk bug, and a "sign out of all devices"
+  // ticket whose spec needed test proofs that can't reach the slot's app (they assumed port 3000). This one is
+  // W3a's permissions ticket, which proves with the Toolkit only.
+  auth: "Permissions (authorization): admins see every user's projects with the owner shown; regular users still see only their own, with no owner shown.",
 };
 const yaml = `concurrency: 2
 round_limit: 3
@@ -39,10 +42,22 @@ test_cmd: "node --test {file}"
 forge: { kind: fake }
 `;
 
-const r = makeFixtureRepo(root, name, { yaml });
-const id = ticket(r, TICKETS[kind]);
+// W4_RESUME=1: carry on with the job already in <scratch>/w4-<kind> (after a person answered it with `kitchen feedback`).
+const resume = !!process.env.W4_RESUME;
+const r = resume
+  ? (() => {
+      const dir = path.join(root, name);
+      const home = path.join(root, "kitchen-home");
+      return {
+        dir,
+        home,
+        env: { ...process.env, KITCHEN_HOME: home, KITCHEN_TICK_MS: "200", KITCHEN_FAKE_STATE: path.join(dir, ".kitchen", "fake-state.json") },
+      };
+    })()
+  : makeFixtureRepo(root, name, { yaml });
+const id = resume ? fs.readdirSync(path.join(r.dir, ".kitchen", "jobs"))[0] : ticket(r, TICKETS[kind]);
 const log = path.join(root, `${name}.log`);
-fs.writeFileSync(log, "");
+if (!resume) fs.writeFileSync(log, "");
 const t0 = Date.now();
 stepUntil(r, id, ["done", "needs-human", "needs-info", "rejected", "paused"], { max: 45, log });
 const wall = Math.round((Date.now() - t0) / 1000);
@@ -53,7 +68,7 @@ const lines = ledger(r).filter((l) => l.job === id);
 const agents = lines.filter((l) => l.event === "agent");
 const usd = agents.reduce((n, a) => n + (a.usd ?? 0), 0);
 const costs = stageCosts(readLedger(r.dir), id, j.startedAt);
-const lastRound = Math.max(...fs.readdirSync(path.join(dir, "rounds")).map(Number).filter(Number.isInteger));
+const lastRound = fs.existsSync(path.join(dir, "rounds")) ? Math.max(...fs.readdirSync(path.join(dir, "rounds")).map(Number).filter(Number.isInteger)) : 0;
 const reviewRound = [...Array(lastRound).keys()].map((n) => lastRound - n).find((n) => fs.existsSync(path.join(dir, "rounds", String(n), "review.json")));
 const review = reviewRound
   ? (JSON.parse(read(`rounds/${reviewRound}/review.json`)) as {
@@ -111,7 +126,10 @@ check(`${kind}: report.html rendered, every evidence id resolved`, !!html && !/\
 const src = read("report.src.html");
 const head = execFileSync("git", ["-C", r.dir, "rev-parse", j.branch], { encoding: "utf8" }).trim();
 const entries = manifest(r, id);
-check(`${kind}: the report role's own source renders for the final HEAD`, !!src && renderRefusal(src, entries, head, j.risk === "high" || j.riskFloor === "high") === null);
+check(
+  `${kind}: the report role's own source renders for the final HEAD`,
+  !!src && renderRefusal(src, entries, head, j.risk === "high" || j.riskFloor === "high") === null,
+);
 check(
   `${kind}: a planted made-up id in report.src.html is refused`,
   /unknown evidence id e999999/.test(renderRefusal(`${src}<p>{{e999999}}</p>`, entries, head, false) ?? ""),
@@ -124,7 +142,13 @@ if (stale)
     /not stamped for the final HEAD/.test(renderRefusal(`${src}{{${stale.id}}}`, entries, head, false) ?? ""),
     stale.id,
   );
-const branchFiles = execFileSync("git", ["-C", r.dir, "ls-tree", "-r", "--name-only", "kitchen-evidence"], { encoding: "utf8" });
+let branchFiles = "";
+try {
+  branchFiles = execFileSync("git", ["-C", r.dir, "ls-tree", "-r", "--name-only", "kitchen-evidence"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+} catch {} // no evidence branch: nothing was published
 check(
   `${kind}: published to the kitchen-evidence branch (report.html + evidence)`,
   branchFiles.includes(`${id}/report.html`) && branchFiles.includes(`${id}/evidence/manifest.jsonl`),

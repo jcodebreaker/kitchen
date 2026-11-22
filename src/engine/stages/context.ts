@@ -58,3 +58,13 @@ export function earlierRoundsBlock(jobDir: string, job: Job): PromptBlock[] {
   }
   return out.length ? [{ title: "Earlier rounds (fix these first)", body: out.join("\n\n") }] : [];
 }
+
+/** Human feedback (`kitchen feedback`, a trusted PR comment), newest last: the builder addresses it, and so does the spec role when a person sends the job back to spec. */
+export function humanFeedback(jobDir: string): string[] {
+  const d = path.join(jobDir, "feedback");
+  if (!fs.existsSync(d)) return [];
+  return fs
+    .readdirSync(d)
+    .sort()
+    .map((f) => fs.readFileSync(path.join(d, f), "utf8").trim());
+}
