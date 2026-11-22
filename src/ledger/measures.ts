@@ -133,7 +133,9 @@ export function measures(all: LedgerLine[]): Measures {
     let hi = -Infinity;
     for (const l of ls) {
       const t = Date.parse(l.t);
-      if (t < lo) lo = t;
+      // An agent line is written when its run ends: the job was already going `secs` before it.
+      const from = l.event === "agent" ? t - (Number(l.secs) || 0) * 1000 : t;
+      if (from < lo) lo = from;
       if (t > hi) hi = t;
     }
     const agents = ls.filter((l) => l.event === "agent");

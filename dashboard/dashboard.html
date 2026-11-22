@@ -104,7 +104,8 @@ button.theme svg { width: 15px; height: 15px; }
 .card.active::before { content: ""; position: absolute; left: -1px; top: 10px; bottom: 10px; width: 3px; border-radius: 0 3px 3px 0; background: var(--accent); }
 .card.paused::before { content: ""; position: absolute; left: -1px; top: 10px; bottom: 10px; width: 3px; border-radius: 0 3px 3px 0; background: var(--warn); }
 .card .top { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--ink-3); }
-.card .id { font-family: var(--mono); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card .id { font-family: var(--mono); font-size: 11px; color: var(--ink-3); margin-top: 6px; overflow-wrap: anywhere; line-height: 1.35; }
+.card .id + .title { margin-top: 3px; }
 .card .now { font-size: 11.5px; color: var(--ink-3); margin: -4px 0 8px; display: flex; gap: 6px; min-width: 0; }
 .card .now .step { font-family: var(--mono); color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .card .now .ago { flex: none; font-variant-numeric: tabular-nums; }
@@ -235,7 +236,8 @@ function card(j) {
       ? `<div class="note${j.stage === "rejected" ? " neutral" : ""}">${esc(j.reason.length > 140 ? `${j.reason.slice(0, 140)}…` : j.reason)}</div>`
       : "";
   return `<article class="${cls}">
-    <div class="top"><span class="id" title="${esc(j.id)}">${esc(j.id)}</span>${j.risk ? `<span class="tag ${esc(j.risk)}">${esc(j.risk)}</span>` : ""}${j.kind ? `<span class="tag">${esc(j.kind)}</span>` : ""}<span class="stage">${esc(j.stage)}</span></div>
+    <div class="top">${j.risk ? `<span class="tag ${esc(j.risk)}">${esc(j.risk)}</span>` : ""}${j.kind ? `<span class="tag">${esc(j.kind)}</span>` : ""}<span class="stage">${esc(j.stage)}</span></div>
+    <div class="id">${esc(j.id)}</div>
     <div class="title" title="${esc(j.title)}">${esc(j.title)}</div>
     <div class="now"><span class="ago" title="last moved ${esc(j.movedAt)}">last moved ${esc(dur(ago))} ago</span>${j.step ? `<span class="step" title="${esc(j.step)}">${esc(j.step)}</span>` : ""}</div>
     ${chips || rev ? `<div class="chips">${chips}${rev}</div>` : ""}
