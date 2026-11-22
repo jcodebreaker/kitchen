@@ -47,7 +47,7 @@ export function terminalPrimitives({ command, env = () => ({}), cwd = (ctx) => c
   return {
     cli: {
       args: {
-        argv: "arguments after the command: a list, or one string split like a shell line (\"done 1 2\")",
+        argv: 'arguments after the command: a list, or one string split like a shell line ("done 1 2")',
         stdin: "optional text typed on stdin",
         expect_exit: "optional exit code that counts as ok (default 0)",
       },
