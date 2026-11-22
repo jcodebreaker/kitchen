@@ -40,8 +40,38 @@ export function addSqlPrimitive(toolkitDir: string) {
   fs.writeFileSync(f, s);
 }
 
+/** scenario: primitive. The only proof of "last sign-in is recorded" is the database row: a missing `sql` primitive. */
+const PRIM_SPEC = `## Criteria
+- [C1] Signing in records the time on the user's row
+  proof: toolkit login --as alice ; toolkit sql --query "SELECT CASE WHEN last_login_at IS NULL THEN 'never' ELSE 'seen' END AS s FROM users WHERE username = 'alice'" --save rows
+  expect: $rows contains "seen"
+## Out of scope
+- showing it anywhere
+`;
+const LOGIN_FROM = 'await pool.query("INSERT INTO sessions (token, user_id) VALUES ($1, $2)", [token, rows[0].id]);';
+
+function primitiveScenario(req: AgentRequest): FakeStep | null {
+  if (req.role === "intake")
+    return { file: "DECISION: ACCEPT\nKIND: feature\nRISK: high\nSURFACES: none\nREASON: a schema change and the sign-in path\n", line: "ACCEPT feature high" };
+  if (req.role === "spec") return { file: PRIM_SPEC, line: "spec: 1 criterion (needs sql)" };
+  if (req.role === "builder") {
+    fs.writeFileSync(path.join(req.cwd, "db", "003_last_login.sql"), "ALTER TABLE users ADD COLUMN last_login_at timestamptz;\n");
+    const f = path.join(req.cwd, "server.js");
+    const s = fs.readFileSync(f, "utf8");
+    if (!s.includes("last_login_at"))
+      fs.writeFileSync(f, s.replace(LOGIN_FROM, `${LOGIN_FROM}\n    await pool.query("UPDATE users SET last_login_at = now() WHERE id = $1", [rows[0].id]);`));
+    return { file: "STATUS: READY\n\nlast_login_at column, set on sign-in.\n", line: "READY" };
+  }
+  if (req.role === "verifier") return { file: "DRIVES: OK\nVERDICT: PASS\n", line: "ok" };
+  return null;
+}
+
 export default async function script(req: AgentRequest): Promise<FakeStep> {
   if (req.role.startsWith("reviewer")) return { file: "VERDICT: PASS\n\nNothing blocking.\n", line: "VERDICT: PASS" };
+  if (/scenario: primitive/.test(req.prompt)) {
+    const r = req.role === "smith" ? null : primitiveScenario(req);
+    if (r) return r;
+  }
   if (req.role === "smith") {
     const gap = /Missing primitive: (\S+)/.exec(req.prompt)?.[1] ?? "?";
     if (gap !== "sql") return w3a(req);

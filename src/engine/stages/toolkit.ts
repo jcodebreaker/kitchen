@@ -42,6 +42,7 @@ export const toolkit: StageHandler = async (ctx) => {
   if (!from) throw new Error("the job has no base to start a Toolkit branch from");
   const smith = await ensureSmithWorktree(ctx.repo, job, n, from);
   const dir = roundDir(ctx.jobDir, job.round);
+  fs.mkdirSync(dir, { recursive: true });
   const checkFile = path.join(dir, `toolkit-check-${n}.json`);
   const lastCheck = fs.existsSync(checkFile) ? fs.readFileSync(checkFile, "utf8") : "";
   const why = [
