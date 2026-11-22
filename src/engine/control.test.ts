@@ -156,7 +156,7 @@ test("a steer sent before a role starts opens its prompt as operator notes, read
   const prompt = agent.calls[0].prompt;
   assert.match(prompt, /^## Operator notes/);
   assert.match(prompt, /> use the existing formatter/);
-  assert.ok(prompt.endsWith("Build it."), "the role's own prompt follows");
+  assert.match(prompt, /Build it\.\n\nKitchen: your one output is build\.md/, "the role's own prompt follows, then the engine's closing line");
   const [m] = readMessages(jobDirOf(repo, j.id));
   assert.deepEqual([m.status, m.by, m.via], ["read", "builder", "next-role"]);
 });

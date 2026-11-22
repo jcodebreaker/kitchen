@@ -14,6 +14,7 @@ import { modelFor } from "../../config.ts";
 import { kitchenHome } from "../../home.ts";
 import { appendLedger } from "../../ledger/append.ts";
 import { procsDirOf, reapGroups } from "../../procs.ts";
+import { closingLine, withSkills } from "../../skills/deliver.ts";
 import type { AgentRunRef } from "../machine.ts";
 import { markRead, operatorNotes, steerLine, unread, unreadSteers } from "../messages.ts";
 import { scratchOf, updateJob, writeAtomic } from "../store.ts";
@@ -71,7 +72,7 @@ export async function runRole(
   const model = modelFor(ctx.config, o.role);
   // Role skills (ADR 0014): a required one missing anywhere on the job's path throws SkillMissing here,
   // before this role or any later one spends money; the found ones are quoted at the end of the prompt.
-  const skills = skillsFor(ctx, job, o.role, cwd);
+  const skills = skillsFor(ctx, job, o.role);
   const t0 = Date.now();
   // Steers sent before this role started (a paused job, an engine-only step, a Codex role) open its prompt.
   // Every steer this run reads is put back to `sent` if the run doesn't produce its file (failed, stopped,
@@ -84,7 +85,7 @@ export async function runRole(
   const stream = path.join("activity", `m${job.moves}-${o.role}-${t0}.jsonl`);
   const req: AgentRequest = {
     role: o.role,
-    prompt: operatorNotes(notes) + o.prompt + (skills.section ? `\n\n${skills.section}` : ""),
+    prompt: operatorNotes(notes) + withSkills(o.prompt, skills.section) + closingLine(o.file),
     cwd,
     model,
     tier: o.tier,
@@ -178,7 +179,20 @@ export async function runRole(
       error: r.error,
       inTok: r.usage?.inTok,
       outTok: r.usage?.outTok,
-      ...(skills.uses.length ? { skills: skills.uses.map((u) => ({ name: u.name, path: u.path, host: u.host, sha256: u.sha256 })) } : {}),
+      ...(skills.uses.length
+        ? {
+            skills: skills.uses.map((u) => ({
+              name: u.name,
+              source: u.source,
+              path: u.path,
+              host: u.host,
+              sha256: u.sha256,
+              chars: u.chars,
+              of: u.of,
+              truncated: u.truncated,
+            })),
+          }
+        : {}),
       ...(skills.skipped.length ? { skillsSkipped: skills.skipped.map((m) => m.name) } : {}),
     },
   });

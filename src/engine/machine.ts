@@ -44,8 +44,20 @@ export type Kind = "feature" | "bug" | "ui" | "chore";
 /** no-toolkit: the ticket needs Kitchen to drive the app and the repo has no Toolkit yet (ADR 0010). */
 export type WaitFor = "backoff" | "toolkit-pr" | "ci" | "toolkit-ticket" | "no-toolkit";
 export type TicketRef = { source: "prompt" | "github"; id: string; url?: string };
-/** One skill a role run was given (ADR 0014): its SKILL.md, pinned by sha256; `chars` of it reached the prompt. */
-export type SkillUse = { name: string; path: string; host: "claude" | "codex"; sha256: string; chars: number; truncated: boolean };
+/**
+ * One skill a role run was given (ADR 0014): its SKILL.md from `source` (kitchen (vendored), repo at <sha>, user,
+ * plugin <key>…), pinned by the sha256 of its bytes; `chars` of its `of` characters reached the prompt (0: left out).
+ */
+export type SkillUse = {
+  name: string;
+  source?: string;
+  path: string;
+  host: "claude" | "codex";
+  sha256: string;
+  chars: number;
+  of?: number;
+  truncated: boolean;
+};
 export type AgentRunRef = {
   key: string;
   role: string;
@@ -1098,7 +1110,7 @@ export const TABLE: readonly Row[] = [
       id: `needs-human>${to}`,
       from: "needs-human",
       to,
-      when: `\`kitchen feedback\` on a job that escalated from ${to}${FEEDBACK_TO.includes(to) ? ` (or \`--to ${to}\` on one that escalated later)` : ""}; the round budget resets`,
+      when: `\`kitchen feedback\` on a job that escalated from ${to}${FEEDBACK_TO.includes(to) ? ` (or \`--to ${to}\` on one that escalated later)` : ""}; the round budget resets (not after a missing skill: no round was spent)`,
       guard: all(
         operatorIs("feedback"),
         (j, f) => (f.feedbackTo ? feedbackToRefusal(j, f.feedbackTo) : null),
@@ -1107,7 +1119,8 @@ export const TABLE: readonly Row[] = [
           (j, f) => `feedback goes to ${feedbackTarget(j, f)}${f.feedbackTo ? " (--to)" : j.escalatedFrom ? " (where it escalated from)" : ""}, not ${to}`,
         ),
       ),
-      apply: resetBudget,
+      // A job that stopped for a missing skill spent no round on it: its budget stays as it was.
+      apply: (j) => (j.pausedReason?.startsWith("skill-missing") ? undefined : resetBudget(j)),
     }),
   ),
   { id: "needs-human>rejected", from: "needs-human", to: "rejected", when: "`kitchen reject`", guard: operatorIs("reject") },
@@ -1129,14 +1142,14 @@ export function move(job: Job, to: Stage, facts: Facts): MoveResult {
       continue;
     }
     const next: Job = structuredClone(job);
-    if (!WAITING.includes(to)) next.pausedReason = undefined;
     // The backoff counter survives a pause and its resume, so repeated rate limits back off longer;
     // the first move that is neither resets it.
     if (to !== "paused" && job.stage !== "paused") next.attempts.backoff = 0;
     next.escalatedFrom = to === "needs-human" ? job.stage : job.stage === "needs-human" ? undefined : job.escalatedFrom;
     next.attempts.errors = 0;
     next.attempts.refused = 0;
-    row.apply?.(next, facts); // sees the stage being left
+    row.apply?.(next, facts); // sees the stage being left, and the reason it waited
+    if (!WAITING.includes(to)) next.pausedReason = undefined;
     next.stage = to;
     next.moves += 1;
     next.updatedAt = facts.now;
