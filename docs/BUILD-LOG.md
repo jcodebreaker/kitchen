@@ -179,7 +179,16 @@ One entry per wave: what was built, review rounds and scores, what is proven, an
 
 **Open after round 2:** the app the Toolkit starts, the primitives of a merged Toolkit, Gate's checks and the builder's `checks` tool are still unsandboxed; Linux has no proof sandbox; the base check after drives needs a `prepare` of the base checkout (one extra prepare per job with new drives); the coverage rule trusts intake's reading of the ticket (short, quoted, shown to review).
 
-## Wave 4: review, report, feedback, maintain (built, not yet reviewed: Claude only, Codex owed)
+## Wave 4: review, report, feedback, maintain (done, 9/10, conditional)
+
+**Review rounds:** 6.5 → 8.5 → 9.
+
+**Conditions:**
+- the Codex smoke, once the quota returns on 2026-12-21;
+- the §0.2/§0.3 benchmark run on the final main.
+
+**Observed flake:** in one scripted run the security lens's VIEW returned no evidence while other spikes' containers were running at the same time; two reruns were clean. A slot collision between concurrent runs that each have their own `KITCHEN_HOME` is suspected but not proven.
+
 
 **Built**
 - Review lenses `roles/reviewer-code.md`, `reviewer-security.md`, `reviewer-ux.md`, `reviewer-ui.md` and the shared findings format `roles/_review.md` (read tier, medium model). Routing from the risk path and surfaces (`lensesFor`), lenses in parallel up to `concurrency`, one packet for all (requirements, contract, verdict with NON-DISCRIMINATING flags, verify.md, seed-diff.md, diff); a `human: always` path labels the PR `kitchen:review-required`.
