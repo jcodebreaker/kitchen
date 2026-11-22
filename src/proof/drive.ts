@@ -185,7 +185,7 @@ async function runLocked(o: DriveOpts): Promise<DriveResult> {
   // One primitive call, writing its files into the open entry folder.
   const call = (name: string, args: Record<string, Value>, out: string): Promise<ToolkitCall> => {
     const argv = [name, `--id=${job.slotId}`, `--src=${job.worktree}`, `--out=${out}`, ...toFlags(args)];
-    return runToolkit(job.toolkitBin, argv, { src: job.worktree });
+    return runToolkit(job.toolkitBin, argv, { src: job.worktree, jobDir: o.jobDir });
   };
   const cmdOf = (c: ToolkitCall) => `bin/dev ${c.argv.map(shellQuote).join(" ")}`;
   /** Files a call reports must be inside its own --out folder; anything else fails the step and is never copied. */

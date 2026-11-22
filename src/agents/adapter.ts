@@ -28,6 +28,8 @@ export type AgentRequest = {
   bridge?: BridgeServer;
   /** Engine-owned folders the agent may not even read. Default: $KITCHEN_HOME (the engine key). */
   denyRead?: string[];
+  /** Where the agent's process group is recorded while it runs (src/procs.ts), so a restart after kill -9 can kill it. */
+  procsDir?: string;
 };
 
 export type AgentResult = {

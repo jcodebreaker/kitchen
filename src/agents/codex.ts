@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { execa } from "execa";
 import { kitchenHome } from "../home.ts";
+import { trackGroup } from "../procs.ts";
 import {
   type AgentAdapter,
   type AgentRequest,
@@ -146,8 +147,17 @@ export class CodexAdapter implements AgentAdapter {
       forceKillAfterDelay: 5000,
       reject: false,
       lines: true,
+      detached: true, // its own process group, recorded for the job (src/procs.ts)
     });
+    const untrack = trackGroup(req.procsDir, p.pid, `agent ${req.role}`);
+    try {
+      return await this.collect(req, p);
+    } finally {
+      untrack();
+    }
+  }
 
+  private async collect(req: AgentRequest, p: ReturnType<typeof execa<{ lines: true; reject: false }>>): Promise<AgentResult> {
     let sessionId = req.resumeSession;
     let message = "";
     let errorMsg: string | undefined;
