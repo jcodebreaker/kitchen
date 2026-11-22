@@ -6,14 +6,14 @@ Kitchen turns tickets into pull requests that are **proven by driving your real 
 - Works with Claude Code or Codex, on macOS (Linux runs without the sandbox, see [Known limitations](#known-limitations-v01))
 - Status: v0.1. The design (build plan, decisions, build log) lives in the source repository's `docs/` folder, not in the npm package
 
-## Quick start (5 minutes, plus setup time)
+## Quick start (5 minutes)
 
 ### 0. What you need
 
 - Node 20.11 or newer, and git. Your project must be a git repository with at least one commit.
 - [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude`) or Codex (`codex`) installed and logged in. Kitchen starts them as its agents and uses their login.
-- Whatever your app needs to run locally (Docker, Postgres, Python…). Kitchen starts your app the way a developer would.
 - For GitHub pull requests: the GitHub CLI (`gh`) logged in. Without it Kitchen works locally (branches and reports, no PRs).
+- Later, for step 6: whatever your app needs to run locally (Docker, Postgres, Python…). Kitchen starts your app the way a developer would.
 
 ### 1. Install
 
@@ -24,7 +24,7 @@ kitchen --version                # 0.1.0
 
 Or run it without installing: put `npx devkitchen` wherever this page says `kitchen`.
 
-**Optional: choose cheaper models first.** Kitchen uses three model tiers. On Claude they are `strong` = opus, `medium` = sonnet, `cheap` = haiku. To spend less, create `kitchen.yaml` in your repo before step 2 (setup keeps an existing file):
+**Optional: choose cheaper models first.** Kitchen uses three model tiers. On Claude they are `strong` = opus, `medium` = sonnet, `cheap` = haiku. To spend less, create `kitchen.yaml` in your repo before step 2 (`kitchen init` keeps an existing file):
 
 ```yaml
 version: 1
@@ -35,53 +35,29 @@ agent: { tool: claude, models: { strong: sonnet, medium: sonnet, cheap: haiku } 
 
 ### 2. Set up Kitchen in your repo
 
-Setup writes `kitchen.yaml`, installs the `/kitchen` skill, and has an agent build a **Toolkit** for your app: the commands that start, drive and observe it (see [Concepts](#concepts)). Then Kitchen proves the Toolkit end to end. The Toolkit goes on a branch, `kitchen/setup`, for you to review. It takes 3 to 15 minutes and costs about $0.50 to $1 on Claude with sonnet.
-
-Pick one way to run it:
-
-**A. From Claude Code or Codex (`/kitchen`).** Install the skill, then let your agent run setup:
-
-```sh
-cd your-repo
-kitchen init --skill             # writes .claude/skills/kitchen/ and .agents/skills/kitchen/
-```
-
-Start Claude Code (or Codex) in the repo and type: `/kitchen set up Kitchen`. The skill runs `kitchen init --detach`, polls `kitchen init --status --wait 90` until it ends, and asks you up to three questions about your app if it has any.
-
-What to approve:
-
-| tool | approve | why |
-|---|---|---|
-| Claude Code | the Bash command `kitchen init --detach` (once), and `kitchen run --detach` later. If you use Claude Code's sandbox mode, these two must run **with the sandbox off** | They start Kitchen in the background. Kitchen starts its own agents, Docker and network calls, which a sandboxed command can't |
-| Claude Code | `kitchen init --status --wait 90`, `kitchen status`, `kitchen ticket …` | Read-only, or one file under `.kitchen/`. Safe to allow always |
-| Codex | the escalation for `kitchen init --detach` and for `kitchen run --detach` ("run outside the sandbox"), once each | Same reason: inside Codex's sandbox Kitchen can't write `.git`, reach Docker or start its agents |
-| Codex | nothing else | `kitchen init --status`, `kitchen status` and `kitchen ticket` run inside the sandbox |
-
-**B. From a terminal.**
-
 ```sh
 cd your-repo
 kitchen init                     # or: kitchen init --tool codex
 ```
 
-It prints a line per step and can be quiet for several minutes while the setup agent works; that is normal. If it has questions (at most three, often none) it asks them right there. Without a terminal (a script, CI, an agent's shell) it writes them to `.kitchen/setup-questions.json` and exits with code 3: answer them in a file `{ "answers": { "q1": "…" } }` and run `kitchen init --answers <file>`. You can also run it in the background, `kitchen init --detach`, and follow it with `kitchen init --status --wait 90` (repeat until it ends).
+It takes seconds, like `git init`:
 
-Either way it ends with `init: done: Toolkit proven on <sha>` and the next steps. If it ends with `not done`, the lines above it say which step failed; `kitchen init` again resumes from there. On a small app it took about 4 minutes and $0.53 (sonnet).
-
-### 3. Review and merge the Toolkit
-
-Run these on your default branch (`main` below; use yours). The branch `kitchen/setup` is checked out in Kitchen's own worktree (`.worktrees/_setup`), so read it with `git log`/`git diff` rather than checking it out:
-
-```sh
-git log -p main..kitchen/setup   # what the setup agent wrote: .kitchen/toolkit/
-git merge kitchen/setup
-git add kitchen.yaml .gitignore .claude/skills/kitchen .agents/skills/kitchen
-git commit -m "Kitchen: config, skill and Toolkit"
+```
+Setting up Kitchen in your-repo…
+  ✓ Wrote kitchen.yaml     agent claude · 2 checks from package.json
+  ✓ Installed the skill    /kitchen for Claude Code (.claude/skills) and Codex (.agents/skills)
+  ✓ Updated .gitignore     18 Kitchen entries
+  ✓ Ran the checks         lint, test passed on main (4b67d97)              3.1s
+Done in 3.2s · no agent
 ```
 
-Jobs use the Toolkit that is on your main branch, so this merge is what lets work start.
+It writes `kitchen.yaml` with your project's **checks** (what Gate runs on every job), found in `package.json` scripts (lint, typecheck, test, build; the package manager from the lockfile), `Makefile` targets, `pyproject.toml` (pytest, ruff, mypy), `go.mod` or `Cargo.toml`. Only when none of these say anything does it ask an agent once, briefly, on the cheap model. It installs the `/kitchen` skill, adds Kitchen's entries to `.gitignore`, and runs the checks once. If they fail it says so plainly: Gate would fail every job until they pass, so fix them (or edit `checks:`) first.
 
-### 4. Give Kitchen a ticket
+Commit `kitchen.yaml`, `.gitignore`, `.claude/skills/kitchen/` and `.agents/skills/kitchen/` when you like.
+
+From Claude Code or Codex instead: `kitchen init --skill`, then type `/kitchen set up Kitchen`.
+
+### 3. Give Kitchen a ticket
 
 ```sh
 kitchen ticket "On the tasks list, show how many tasks are open at the top"
@@ -89,7 +65,7 @@ kitchen ticket "On the tasks list, show how many tasks are open at the top"
 
 Or tell `/kitchen` what you want in Claude Code or Codex. With GitHub, label an issue `kitchen` instead (see [Configuration](#configuration)).
 
-### 5. Run it
+### 4. Run it
 
 ```sh
 kitchen run --detach             # works the queue in the background; log in .kitchen/run.log
@@ -99,11 +75,13 @@ kitchen dashboard                # the board in your browser: http://127.0.0.1:7
 
 For the first second after `run --detach`, `kitchen status` may still say `runner: not running`; run it again. `status` doesn't wait: run it whenever you want to look (or keep the dashboard open, it refreshes itself). Without GitHub every job shows `no PR`; that is normal.
 
-A ticket goes through intake (is it clear, how risky), spec (acceptance criteria, each with a proof), build, gate (your checks), verify (Kitchen drives the app and runs every proof), review, and report. A small ticket takes a few minutes and costs cents to a few tens of cents.
+A ticket goes through intake (is it clear, how risky), spec (acceptance criteria, each with a proof), build, gate (your checks), verify (Kitchen runs every proof), review, and report. A small ticket takes a few minutes and costs cents to a few tens of cents.
+
+Until Kitchen can drive your app (step 6), a job is proven by your checks and by tests (`test <file>` and `cmd` proofs), and its Report says so. A ticket whose criteria need the running app pauses with `paused(no-toolkit)`: build the Toolkit (step 6) and it goes on, or `kitchen resume <id>` to go on without it, with those criteria marked "not proven (no Toolkit)". A high-risk ticket (auth, payments, migrations) waits for the Toolkit.
 
 If a job needs you, `kitchen status` says `needs-info` or `needs-human` with the reason. Answer with `kitchen feedback <id> "<your answer>"`, or drop it with `kitchen reject <id>`.
 
-### 6. Read the Report and merge
+### 5. Read the Report and merge
 
 When the job is `done`, `kitchen status` prints the path of its Report (`.kitchen/jobs/<id>/report.html`; the dashboard links it). It opens with what a person must check, then each requirement, the criteria that prove it, who decided each verdict, and the evidence (screenshots, command output), then the review findings and the cost.
 
@@ -113,6 +91,45 @@ When the job is `done`, `kitchen status` prints the path of its Report (`.kitche
 A review comment on the PR from a trusted person sends the job back to build with your comment.
 
 Cleaning up: Kitchen removes nothing you might still want. After merging, you may delete the job branch (`git branch -d kitchen/<id>`) and `kitchen/setup`; `.worktrees/` holds Kitchen's working copies (ignored by git) and can be removed when no `kitchen run` is going (`git worktree prune` afterwards). Keep `kitchen-evidence`: it is where the Reports live.
+
+### 6. Make Kitchen drive your app: `kitchen toolkit build`
+
+Kitchen's point is proof in your real, running app. For that it needs a **Toolkit**: the commands that start, drive and observe your app (see [Concepts](#concepts)). An agent writes it once, and Kitchen proves it end to end. It takes 3 to 15 minutes and costs about $0.50 to $1 on Claude with sonnet.
+
+```sh
+kitchen toolkit build            # or: kitchen init --toolkit, to do steps 2 and 6 in one go
+```
+
+It prints one line per phase:
+
+```
+Teaching Kitchen to run your-repo…
+  ✓ Read the repo          api · no questions                                31s · $0.12
+  ✓ Wrote the Toolkit      api · features: books, loans                      2m 50s · $0.71
+  ✓ Proved it              4 drives × 2 (after a reset) · 2 copies at once   25s
+Done in 3m 46s · $0.83 · on branch kitchen/setup
+Next: review it (git log -p main..kitchen/setup), then git merge kitchen/setup
+```
+
+Every detail (each drive, the evidence, the sandbox notes) goes to `.kitchen/init/init.log`; `--verbose` shows it on the terminal too. A failure prints the failing step in full, and `kitchen toolkit build` again resumes from there.
+
+If it has questions (at most three, often none) it asks them right there. Without a terminal (a script, CI, an agent's shell) it writes them to `.kitchen/setup-questions.json` and exits with code 3: answer them in a file `{ "answers": { "q1": "…" } }` and run `kitchen toolkit build --answers <file>`. You can also run it in the background, `kitchen toolkit build --detach`, and follow it with `kitchen toolkit build --status --wait 90` (repeat until it ends). From Claude Code or Codex, `/kitchen` does all of this; approve these once:
+
+| tool | approve | why |
+|---|---|---|
+| Claude Code | the Bash command `kitchen toolkit build --detach` (once), and `kitchen run --detach`. If you use Claude Code's sandbox mode, these two must run **with the sandbox off** | They start Kitchen in the background. Kitchen starts its own agents, Docker and network calls, which a sandboxed command can't |
+| Claude Code | `kitchen init`, `kitchen toolkit build --status --wait 90`, `kitchen status`, `kitchen ticket …` | Quick, read-only, or files under the repo. Safe to allow always |
+| Codex | the escalation for `kitchen toolkit build --detach` and for `kitchen run --detach` ("run outside the sandbox"), once each | Same reason: inside Codex's sandbox Kitchen can't write `.git`, reach Docker or start its agents |
+| Codex | nothing else | `kitchen init`, `kitchen toolkit build --status`, `kitchen status` and `kitchen ticket` run inside the sandbox |
+
+Then review and merge the Toolkit. Run these on your default branch (`main` below; use yours). The branch `kitchen/setup` is checked out in Kitchen's own worktree (`.worktrees/_setup`), so read it with `git log`/`git diff` rather than checking it out:
+
+```sh
+git log -p main..kitchen/setup   # what the setup agent wrote: .kitchen/toolkit/
+git merge kitchen/setup
+```
+
+Jobs use the Toolkit that is on your main branch, so this merge is what lets them drive the app. A job paused `no-toolkit` goes on by itself at the next `kitchen run` (or `kitchen resume <id>`).
 
 ## Concepts
 
@@ -155,10 +172,10 @@ Every key, with its default:
 |---|---|---|
 | `version` | `1` | schema version (`kitchen migrate` raises it) |
 | `agent` | `{ tool: claude, timeout_sec: 1800, max_turns: 80 }` | `tool` claude or codex; `models: { strong, medium, cheap }` maps tiers to model names; `command: [argv]` to start the tool another way |
-| `models` | intake, spec, builder, smith, setup: `strong`; verifier, reviewer, report, maintain: `medium`; retro: `cheap` | the tier (or a literal model name) per role |
+| `models` | intake, spec, builder, smith: `strong`; setup (`kitchen toolkit build`), verifier, reviewer, report, maintain: `medium`; retro: `cheap` | the tier (or a literal model name) per role |
 | `concurrency` | `2` | jobs at once |
 | `round_limit` | `3` | rounds before a human is asked |
-| `checks` | `[]` | commands Gate runs in the job's worktree: strings, or `{ name, run, timeout_sec }` |
+| `checks` | `[]` (`kitchen init` fills them in) | commands Gate runs in the job's worktree: strings, or `{ name, run, timeout_sec }` |
 | `checks_network` | `false` | let checks reach the network (a package install) |
 | `checks_prepare` | none | readies a job worktree before the checks and `test` proofs, in the same sandbox (`npm ci`; needs `checks_network: true` to download). Runs once per worktree, again when a lockfile changes |
 | `test_cmd` | `npm test -- {file}` | how a `test <file>` proof runs |

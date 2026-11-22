@@ -1,6 +1,6 @@
 # Two-speed init: start in a minute, build the Toolkit when a ticket needs it
 
-**Status.** Proposed, 2026-11-22. To be built after ADR 0009, the interactive dashboard.
+**Status.** Accepted and built, 2026-11-22 (docs/BUILD-LOG.md "ADR 0010"). The open questions are settled at the end.
 
 **Problem.** `kitchen init` pays the whole price up front. It surveys the repo, builds a Toolkit, self-tests it, then has the engine prove it again, before a single ticket can run.
 
@@ -49,6 +49,7 @@ The per-drive lines, the evidence ids and the sandbox notes go behind `--verbose
 
 **Why not keep one speed.** Proof by driving the real app is Kitchen's point, but making every project pay for it on day one hides that point behind a long, sometimes blocked, setup. Most first tickets are small. The Toolkit arrives when a ticket actually needs it, and the user is asked first.
 
-**Open questions.**
-- Should quick init auto-build the Toolkit in the background after it finishes, so it's usually ready before the first ticket needs it?
-- Is detecting checks without an agent reliable enough for Python and Go repos, or does it always need the short agent call?
+**Settled (were open questions).**
+- No background auto-build. A ticket that needs the running app pauses with reason `no-toolkit` and the message "This ticket needs Kitchen to drive the app; run `kitchen toolkit build` (about 3–15 min), then `kitchen resume <id>`." The pause is where the criteria are first linted: intake for a low-risk ticket, spec for a medium one; a high-risk job pauses at spec before any agent runs (or after review, if the diff raised it). The runner wakes it once a Toolkit is on the base; `kitchen resume` without one goes on with checks and tests only, unless the job is high risk or a bug whose reproduction drives the app.
+- Check detection is deterministic first (package.json scripts with the package manager from the lockfile, Makefile targets, pyproject.toml pytest/ruff/mypy, a unittest `tests/` folder, go.mod, Cargo.toml); one short read-only agent call on the `cheap` tier, without the bridge, only when none of these says anything.
+- The answer to the user's "how does the person answer": `kitchen toolkit build`, then `kitchen resume <id>` (or the dashboard later). Not `kitchen feedback`: a paused job takes `resume`.
