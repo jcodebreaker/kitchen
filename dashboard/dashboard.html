@@ -513,7 +513,7 @@ function evHTML(e,uid,anim){
 }
 function liveHTML(j){
   if(j.kind==="setup"){const st=stp(j);let h=`<span class="stg">${esc(st.nm)}</span><span class="dot">·</span>`;
-    if(j.failed)return h+`<span class="bad">Stopped: ${esc((j.setup.last||[]).at(-1)||"see kitchen init --status")}</span>`;
+    if(j.failed)return h+`<span class="bad">Failed: ${esc((j.setup.last||[]).at(-1)||"see kitchen init --status")}</span>`;
     return h+liveEv(j)}
   const st=stp(j);
   let h=`<span class="stg">${esc(st.nm)}</span>${j.round>1?`<span class="rd">round ${j.round}</span>`:""}<span class="dot">·</span>`;
@@ -541,7 +541,7 @@ function trackHTML(j){
 }
 function chgHTML(j,bump){const A=j.files.reduce((a,f)=>a+f.a,0),D=j.files.reduce((a,f)=>a+f.d,0);
   return `<span class="chg${bump?" bump":""}" id="chg-${j.id}">${j.files.length&&group(j)==="run"?`${j.files.length} file${j.files.length>1?"s":""}${dfHTML(A,D)}`:""}</span>`}
-function finLabel(j){return j.state==="done"?(j.kind==="setup"?"Proven":"Ready to merge"):j.kind==="setup"?"Stopped":"Rejected"}
+function finLabel(j){return j.state==="done"?(j.kind==="setup"?"Proven":"Ready to merge"):j.kind==="setup"?"Failed":"Rejected"}
 function icon(j){return S[j.state==="done"?"ok":j.state==="rejected"?"skip":j.state==="run"&&!j.runnerOn?"paused":j.state]}
 function rowHTML(j){
   const g=group(j),ex=expanded===j.id;
@@ -593,7 +593,7 @@ function renderCounts(){
   $("#sum").innerHTML=(you.length?`<span class="a">${you.length} need${you.length===1?"s":""} you</span>`:`<span>Nothing needs you</span>`)+`<i>·</i><span><b>${run.length}</b> running</span><i class="rdy">·</i><span class="rdy"><b>${done.filter(j=>j.state==="done"&&j.kind!=="setup").length}</b> ready</span>`;
   $("#sYou").textContent=you.length||"";$("#sRun").textContent=run.length;$("#sDone").textContent=done.length;
   $("#wsName").textContent=snap.repo;document.title=(you.length?`(${you.length}) `:"")+"Kitchen · "+snap.repo;
-  $("#sSetup").textContent=!setup||setup.state==="none"?"not run":setup.state==="done"?"proven":setup.state==="failed"?"stopped":"step "+(setup.idx+1)+"/"+setup.steps.length;
+  $("#sSetup").textContent=!setup||setup.state==="none"?"not run":setup.state==="done"?"proven":setup.state==="failed"?"failed":"step "+(setup.idx+1)+"/"+setup.steps.length;
   $("#sTk").textContent=snap.toolkitProven?"proven":"not proven";
   $("#tCost").textContent="$"+snap.usdToday.toFixed(2)+" today";$("#sCost").textContent="$"+snap.summary.usd.toFixed(2);
   $("#foot").innerHTML=`Runner: ${esc(snap.runner.text)}${snap.runner.running?"":`. Jobs move only while <span class="mono">kitchen run</span> works the queue.`}${snap.corrupt.length?` · Unreadable job folders: ${esc(snap.corrupt.join(", "))}`:""}`;
@@ -706,7 +706,7 @@ function tabBody(j){
 }
 function tabsHTML(j){const okN=j.crit.filter(c=>c.st==="ok").length;
   return [["activity","Activity",""],["checks","Checks",j.crit.length?okN+"/"+j.crit.length:""],["changes","Changes",j.files.length||""]].filter(([k])=>k==="activity"||j.kind!=="setup").map(([k,n,c])=>`<button class="tab ${tab===k?"on":""}" onclick="setTab('${k}')">${n}${c!==""?`<span class="n num">${c}</span>`:""}</button>`).join("")}
-function statusOf(j){return j.state==="you"?"Needs you":j.state==="run"?(j.runnerOn?stp(j).nm+(j.round>1?" · round "+j.round:""):"Waiting · "+stp(j).nm):j.state==="paused"?(j.pausedBy==="stop"?"Stopped in ":"Paused in ")+stp(j).nm:j.state==="done"?(j.kind==="setup"?"Proven":"Ready to merge"):j.kind==="setup"?"Stopped":"Rejected"}
+function statusOf(j){return j.state==="you"?"Needs you":j.state==="run"?(j.runnerOn?stp(j).nm+(j.round>1?" · round "+j.round:""):"Waiting · "+stp(j).nm):j.state==="paused"?(j.pausedBy==="stop"?"Stopped in ":"Paused in ")+stp(j).nm:j.state==="done"?(j.kind==="setup"?"Proven":"Ready to merge"):j.kind==="setup"?"Failed":"Rejected"}
 function paintHead(){const j=J(open);if(!j)return;const t=$("#tabs");if(t)t.innerHTML=tabsHTML(j);const st=$("#pst");if(st)st.innerHTML=icon(j)+esc(statusOf(j));if(tab!=="activity"&&j.kind!=="setup"){const b=$("#tabbody");if(b)b.innerHTML=tabBody(j)}}
 function panelUpdate(old,d){
   if(!old||tab!=="activity"){renderPanel();return}

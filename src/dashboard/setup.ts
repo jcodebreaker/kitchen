@@ -45,7 +45,8 @@ export function setupView(repo: string, now = Date.now()): SetupView {
     try {
       questions = (JSON.parse(fs.readFileSync(questionsFile(repo), "utf8")) as { questions: Question[] }).questions ?? [];
     } catch {}
-  const done = (k: keyof InitState["steps"]) => st?.steps[k] !== undefined;
+  const done = (k: keyof InitState["steps"]) =>
+    k === "build" ? st?.steps.build?.status === "READY" : k === "check" ? !!st?.steps.check?.ok : st?.steps[k] !== undefined;
   let idx = SETUP_STEPS.findIndex((x) => !x.covers.every(done));
   if (state === "done") idx = SETUP_STEPS.length - 1;
   if (idx < 0) idx = SETUP_STEPS.length - 1;

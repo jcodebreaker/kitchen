@@ -1,6 +1,6 @@
 ---
 name: kitchen
-description: "Drive Kitchen, the software factory in this repo: set it up (init), file tickets, run the queue, check status, answer jobs, prove the Toolkit. Use when the user mentions Kitchen or /kitchen, asks to turn a request into a proven pull request, to queue or run work, to see job status, or to set up or check the app's Toolkit."
+description: "Drive Kitchen, the software factory in this repo: set it up (init), file tickets, run the queue, check status, answer jobs, steer, pause or stop a running job, prove the Toolkit. Use when the user mentions Kitchen or /kitchen, asks to turn a request into a proven pull request, to queue or run work, to see job status, or to set up or check the app's Toolkit."
 ---
 
 # /kitchen
@@ -16,9 +16,13 @@ not on PATH, use `npx devkitchen` in its place.
 | "do X", "fix Y", "add Z" (a request for work) | `kitchen ticket "<their words, verbatim>"` then offer to start the queue |
 | start, run, "go", work the queue | `kitchen run --detach` (see Running), then `kitchen status` |
 | what's happening, status, progress | `kitchen status` |
-| continue a paused job | `kitchen resume <id>` |
-| answer a job's question, give feedback, "try again with …" | `kitchen feedback <id> "<their answer>"` |
+| tell a running job something: "tell 005 to keep the diff small", "ask 003 what it is doing", "005: use the existing formatter" | `kitchen steer <id> "<their words>"` |
+| "hold 005", "pause it after this step" | `kitchen pause <id>` |
+| "stop 005 now", "kill that agent" | `kitchen stop <id>` |
+| continue a paused or stopped job | `kitchen resume <id>` |
+| answer a job's question, give feedback, "try again with …", follow up on a done job | `kitchen feedback <id> "<their answer>"` |
 | drop a job | `kitchen reject <id>` |
+| "show me the jobs", "open the dashboard" | `kitchen dashboard` as a background command (it serves until stopped), then give the user http://127.0.0.1:7357 |
 | is the Toolkit OK, prove the app still starts | `kitchen toolkit check` (one feature: `--feature <name>`) |
 | how is Kitchen doing, cost, time | `kitchen report` |
 
@@ -83,10 +87,23 @@ answer means "use the default"), then start `kitchen init --answers
 When it ends it prints the next steps: review and merge the `kitchen/setup`
 branch, commit `kitchen.yaml` and the skill folders.
 
+## Talking to a running job
+
+`kitchen steer` is for a job that is running or paused; it never stops the
+work. A Claude agent reads the message after the tool call it is in; otherwise
+(Codex, a step with no agent, a paused job) the next agent role reads it.
+`kitchen steer` says which. A job that **needs** the user (`needs-info`,
+`needs-human`) takes `kitchen feedback` instead, and a done job takes
+`kitchen feedback` as a follow-up (another Build round): `steer` refuses both
+and says so. Pass the user's words as they are; a message is at most 4,000
+characters. `pause` waits for the step to finish; `stop` kills the agent now
+and `resume` runs that stage again: if the user just wants it to "wait", use
+`pause`.
+
 ## Rules
 
 - Relay Kitchen's lines as they are; don't paraphrase job ids or states.
-- Ticket text is the user's words, quoted. Don't add instructions to it.
+- Ticket text and messages are the user's words, quoted. Don't add instructions to them.
 - Never edit `.kitchen/jobs/`, `.kitchen/toolkit.proven`, `job.json` or
   evidence by hand: Kitchen owns them.
 - If a command fails, show its last line and stop; don't retry in a loop.
