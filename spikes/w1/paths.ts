@@ -22,11 +22,12 @@ const run = (r: Repo, ...a: string[]) => {
 const walk = (r: Repo, id: string) => stagesOf(r, id).join(" → ");
 const expectPath = (label: string, r: Repo, id: string, want: string) => check(`${label}: path`, walk(r, id) === want, walk(r, id));
 
-// 1. feature, medium risk, through every main stage; the report is refused once (unknown id) and rendered on the retry
+// 1. feature, medium risk, through every main stage. (W1 had a scripted report role refused once for an unknown id;
+// since W3b the report is the engine's placeholder template, W4 brings the role back: render refusals are unit-tested.)
 {
   const { r, id } = scenario("feature");
   run(r);
-  expectPath("feature (medium)", r, id, "intake → spec → build → gate → drives → verify → review → ready → report → report → done");
+  expectPath("feature (medium)", r, id, "intake → spec → build → gate → drives → verify → review → ready → report → done");
   const j = jobOf(r, id);
   check(
     "feature: report.html rendered, PR opened once",
