@@ -22,6 +22,7 @@ import { check, finish, jobDir, jobOf, type Repo, ticket } from "../w3a/lib.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const root = path.resolve(process.argv[2] ?? fs.mkdtempSync(path.join(os.tmpdir(), "kitchen-checks-prepare-")));
+fs.mkdirSync(root, { recursive: true });
 const dir = path.join(root, "kitchen-copy");
 fs.rmSync(dir, { recursive: true, force: true });
 const git = (cwd: string, ...a: string[]) =>
