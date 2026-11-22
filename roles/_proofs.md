@@ -22,7 +22,7 @@ Kitchen proves a ticket by driving the real app. Every acceptance criterion name
 
 - Ids are `C1`, `C2`, … and unique. Two-space indent for `proof:`, `expect:`, `repro:`.
 - `toolkit` segments run in one browser session, left to right, separated by ` ; `. A dotted name (`settings.toggle-dark`) is a feature drive; a plain name (`read`, `open`, `press`) is one primitive. Args are `--name value`; quote values with spaces (`--target "[data-testid=x]"`). A feature drive takes exactly the args it declares.
-- Values saved by a drive (`save: theme`) are `$theme` in later segments' args and in `expect:`.
+- Values saved by a drive (`save: theme`) are `$theme` in later segments' args and in `expect:`. A single primitive segment saves its output with `--save <var>` (`toolkit read --target "[data-testid=owner]" --save owner`, then `expect: $owner == "alice"`).
 - Only primitives and feature drives that exist may be named, except a **new feature drive** for this ticket's feature: name it `<feature>.<verb>` and list it under `## New drives` with one line saying what it does step by step (what to open or press, what to read, what to `save:`). The verifier writes it later from primitives.
 
 ## expect (mechanical: the engine decides)

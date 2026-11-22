@@ -103,6 +103,8 @@ export async function prove(o: ProveOpts): Promise<ProveResult> {
             ...(waitTimedOut ? { waitText: r.failedAt?.wait } : {}),
           });
         }
+        // `--save <var>` on a primitive segment: its output, as a drive's `save:` keeps it.
+        if (s.save) outcome.vars[s.save] = outcome.output;
       }
       outcome.ok = true;
       outcome.exit = 0;

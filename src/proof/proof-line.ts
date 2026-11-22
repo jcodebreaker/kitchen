@@ -4,9 +4,11 @@
 //   test <file>
 // A dotted name (`settings.toggle-dark`) is a feature drive, anything else a
 // primitive. Toolkit segments chain in one browser session; `cmd` and `test`
-// stand alone. Values may be quoted ("…" or '…').
+// stand alone. Values may be quoted ("…" or '…'). A primitive segment may end
+// with `--save <var>`: its output is kept as `$var` for later segments and the
+// expect, as a drive's `save:` would (the engine's, never passed to bin/dev).
 
-export type ToolkitSegment = { kind: "toolkit"; name: string; args: Record<string, string>; drive: boolean };
+export type ToolkitSegment = { kind: "toolkit"; name: string; args: Record<string, string>; drive: boolean; save?: string };
 export type Segment = ToolkitSegment | { kind: "cmd"; cmd: string } | { kind: "test"; file: string };
 
 export class ProofLineError extends Error {}
@@ -88,6 +90,12 @@ export function parseProof(proof: string): Segment[] {
       }
       args[k] = v;
     }
-    return { kind: "toolkit", name, args, drive: name.includes(".") };
+    const drive = name.includes(".");
+    if (!("save" in args)) return { kind: "toolkit", name, args, drive };
+    // Review run: a spec wrote `read --target x --save owner`, which bin/dev got as an arg and no var was kept.
+    if (drive) throw new ProofLineError(`${name}: --save is for one primitive; a feature drive saves its own vars (save: in the drive)`);
+    const { save, ...rest } = args;
+    if (!/^[a-z_][a-z0-9_]*$/i.test(save)) throw new ProofLineError(`${name}: --save takes a var name, got ${JSON.stringify(save)}`);
+    return { kind: "toolkit", name, args: rest, drive, save };
   });
 }

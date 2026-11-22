@@ -91,6 +91,14 @@ test("proof lines: toolkit segments, cmd, test", () => {
   );
 });
 
+test("a primitive segment's --save keeps its output as a var (never passed to bin/dev); a drive can't take --save", () => {
+  const [a, b] = parseProof('toolkit login --as alice ; read --target "[data-testid=owner]" --save owner');
+  assert.deepEqual(b, { kind: "toolkit", name: "read", args: { target: "[data-testid=owner]" }, drive: false, save: "owner" });
+  assert.equal(a.kind === "toolkit" && a.save, undefined);
+  assert.throws(() => parseProof("toolkit settings.toggle-dark --user alice --save x"), /feature drive saves its own/);
+  assert.throws(() => parseProof("toolkit read --target body --save 'a b'"), /var name/);
+});
+
 test("a negative expect fails on an error page, a failed response or an empty read (review: trivially true)", () => {
   const page = (t: string) => o({ pageText: t });
   assert.equal(check('text "Bob plan" not visible', page("Fixture A Projects Onboarding")).pass, true);
