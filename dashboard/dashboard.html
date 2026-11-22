@@ -97,7 +97,7 @@ kbd{font:500 11px var(--sans);color:var(--mute);border:1px solid var(--line2);bo
 
 .rw{border-bottom:1px solid var(--line);position:relative}
 .rw.you::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--act)}
-.row{display:grid;grid-template-columns:18px 42px minmax(0,1fr) auto 108px 46px 28px;column-gap:12px;align-items:center;padding:11px 16px 11px 20px;cursor:default;outline-offset:-2px;transition:background .12s}
+.row{display:grid;grid-template-columns:18px 42px minmax(0,1fr) auto 108px 76px 28px;column-gap:12px;align-items:center;padding:11px 16px 11px 20px;cursor:default;outline-offset:-2px;transition:background .12s}
 .row:hover{background:var(--hover)}
 .rw.sel .row{background:var(--hover)}
 .rw.open .row{background:var(--press)}
@@ -348,12 +348,12 @@ kbd{font:500 11px var(--sans);color:var(--mute);border:1px solid var(--line2);bo
 .qbox input{display:block;width:100%;border:0;outline:0;background:none;padding:7px 10px;line-height:1.45}
 .qbox input::placeholder{color:var(--faint)}
 .foot2 .mono{font-size:11.5px}
-.row .tm.wt{grid-column:6/8;white-space:nowrap}
+.row .tm{white-space:nowrap}
 .tm i{font:400 12px var(--sans);font-style:normal;color:var(--faint);margin-right:3px}
 .rbar{display:flex;align-items:center;gap:8px 10px;flex-wrap:wrap;padding:9px 16px 9px 20px;border-bottom:1px solid var(--line);background:var(--band);color:var(--fg2);font-size:13px}
 .rbar code{font:12px var(--mono);background:var(--raise);border:1px solid var(--line2);border-radius:6px;padding:1px 8px;color:var(--fg)}
 .meta .age{color:var(--faint)}
-@container main (max-width:680px){ .row .tm.wt{grid-column:3} .rbar{padding:9px 12px 9px 16px} }
+@container main (max-width:680px){ .rbar{padding:9px 12px 9px 16px} }
 </style>
 </head>
 <body>
@@ -556,7 +556,7 @@ function icon(j){return S[j.state==="done"?"ok":j.state==="rejected"?"skip":j.st
 function rowHTML(j){
   const g=group(j),ex=expanded===j.id;
   let sub="",mid="",tm="",acts="";
-  if(g==="you"){sub=`<div class="sub q">${esc(j.q)}</div>`;mid=`<button class="btn act sm rep" data-act="message" data-id="${esc(j.id)}">${ex?"Close":"Reply"}</button>`;tm=`<span class="tm wt mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`}
+  if(g==="you"){sub=`<div class="sub q">${esc(j.q)}</div>`;mid=`<button class="btn act sm rep" data-act="message" data-id="${esc(j.id)}">${ex?"Close":"Reply"}</button>`;tm=`<span class="tm mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`}
   else if(g==="run"){sub=`<div class="sub" id="lv-${esc(j.id)}">${liveHTML(j)}</div>`;mid=chgHTML(j)+trackHTML(j);tm=`<span class="tm mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`;
     acts=`<span class="acts"><button class="ib" title="Message ${esc(agent(j))} (R)" aria-label="Message agent" data-act="message" data-id="${esc(j.id)}">${I.msg}</button></span>`}
   else{mid=`<span class="fin ${fresh.has(j.id)?"new":""}">${fresh.has(j.id)?"Just finished · ":""}${finLabel(j)}</span>`;tm=`<span class="tm mono num">$${j.cost.toFixed(2)}</span>`;
@@ -588,7 +588,7 @@ function order(){const t=j=>Date.parse(j.doneAt||j.updatedAt||0)||0;
 function renderList(){
   keepFocus(()=>{
     const o=order(),you=o.filter(j=>group(j)==="you"),run=o.filter(j=>group(j)==="run"),done=o.filter(j=>group(j)==="done");
-    const idle=snap&&!snap.runner.running&&jobs.some(j=>j.kind!=="setup"&&(j.state==="run"||j.state==="paused"));
+    const idle=snap&&!snap.runner.running&&jobs.some(j=>j.kind!=="setup"&&(j.state==="run"||(j.state==="paused"&&!j.pausedBy)));
     $("#list").innerHTML=(idle?`<div class="rbar" role="status">${S.paused}<span>Kitchen isn't working the queue: jobs move only while it runs.</span><code>kitchen run --detach</code><button type="button" class="btn sm" data-act="copy">Copy</button></div>`:"")+
      `<section id="g-you"><div class="ghead ${you.length?"act":""}">${you.length?S.you:S.wait} Needs you <span class="n num">${you.length}</span></div>${you.map(rowHTML).join("")||'<div class="empty">Nothing needs you.</div>'}</section>
       ${view==="board"?boardHTML(run,done):`<section id="g-run"><div class="ghead">${run.length?S.run:S.wait} Running <span class="n num">${run.length}</span><span class="hint">Message any agent while it works</span></div>${run.map(rowHTML).join("")||'<div class="empty">Nothing running. Start one with New ticket.</div>'}</section>

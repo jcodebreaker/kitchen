@@ -152,6 +152,8 @@ export class ClaudeStream {
    */
   private unanswered: { id: string; boundary: boolean }[] = [];
   private resultAt = 0;
+  /** The session is up (its first `system init`): a message written before it could be read as part of the prompt. */
+  started = false;
   /** The last stdout line that was not JSON, for an error message. */
   junk = "";
 
@@ -170,6 +172,7 @@ export class ClaudeStream {
       this.resultAt = now;
       return [];
     }
+    if (e.type === "system" && e.subtype === "init") this.started = true;
     if (e.type === "user" || (e.type === "system" && e.subtype === "init")) {
       for (const u of this.unanswered) u.boundary = true;
       if (e.type === "system" && this.result && this.unanswered.length) this.result = null; // the turn a queued message started
@@ -261,7 +264,7 @@ export class ClaudeAdapter implements AgentAdapter {
     });
     const tick = setInterval(() => {
       if (!open) return;
-      if (!s.result)
+      if (s.started && !s.result)
         for (const m of req.steer?.take() ?? []) {
           if (s.written.has(m.id)) continue;
           sub.stdin?.write(userLine(m.text));

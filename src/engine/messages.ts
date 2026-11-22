@@ -93,12 +93,15 @@ export async function markRead(jobDir: string, ids: string[], by: string, via: M
   });
 }
 
-/** Back to `sent`: the role that read them failed, was stopped or lost the run lock, so the next role reads them again. */
-export async function unread(jobDir: string, ids: string[]): Promise<void> {
+/**
+ * Back to `sent`: the role that read them failed, was stopped or lost the run lock, so the next role reads them
+ * again. Only the ones `by` read: a parallel role (another review lens) that read one keeps its mark.
+ */
+export async function unread(jobDir: string, ids: string[], by: string): Promise<void> {
   if (!ids.length) return;
   await rewrite(jobDir, (ms) => {
     for (const m of ms)
-      if (ids.includes(m.id) && m.kind === "steer" && m.status === "read") {
+      if (ids.includes(m.id) && m.kind === "steer" && m.status === "read" && m.by === by) {
         m.status = "sent";
         delete m.by;
         delete m.readAt;

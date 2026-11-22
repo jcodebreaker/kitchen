@@ -107,7 +107,7 @@ export async function runRole(
   // Marks made while it ran land before anything else reads the thread.
   const giveBack = async () => {
     await Promise.all(marking);
-    await unread(ctx.jobDir, delivered);
+    await unread(ctx.jobDir, delivered, o.role);
   };
   if (!ctx.holdsLock()) {
     await giveBack();
@@ -122,7 +122,7 @@ export async function runRole(
     throw e;
   }
   await Promise.all(marking);
-  if (!r.ok || !r.outPath) await unread(ctx.jobDir, delivered);
+  if (!r.ok || !r.outPath) await unread(ctx.jobDir, delivered, o.role);
   const secs = (Date.now() - t0) / 1000;
   // A wrapper (a scripted adapter passing a real run through) reports what really ran.
   const ran = r.ran ?? { adapter: ctx.agent.name, model };

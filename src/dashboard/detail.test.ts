@@ -95,6 +95,9 @@ test("a repro that can't reproduce asks as the Repro agent; a drives that goes b
   const d = await detail(repo, id);
   const ask = d.tl.at(-1)?.evs.find((e) => e.c === "ask");
   assert.equal(ask && "who" in ask ? ask.who : "", "Repro agent");
+  assert.equal(d.tl.find((x) => x.stage === "repro")?.st, "bad", "a repro that escalates to you is not a pass");
+  const asks = await walked([["intake", "needs-info"]], { stage: "needs-info" });
+  assert.equal((await detail(repo, asks)).tl[0].st, "ok", "intake asking its question is not a failure");
   assert.equal((await snapshot(repo, T0)).jobs[0].agent, "Repro agent");
 
   const back = await walked(

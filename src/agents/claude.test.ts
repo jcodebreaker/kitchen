@@ -129,6 +129,30 @@ test("a message written during the final answer gets its own turn: stdin stays o
   assert.deepEqual([s.final?.usage?.input_tokens, s.final?.usage?.output_tokens], [22, 610]);
 });
 
+test("no steer is written before the session's first system init (it could be read as part of the prompt)", async () => {
+  const s = new ClaudeStream();
+  assert.equal(s.started, false);
+  s.line(ev({ type: "system", subtype: "hook_started" }), 0);
+  assert.equal(s.started, false);
+  s.line(ev({ type: "system", subtype: "init" }), 1);
+  assert.equal(s.started, true);
+  // The adapter: a steer queued before init is written only after it (the stand-in prints init at 50 ms).
+  const writes: number[] = [];
+  const t0 = Date.now();
+  const r = await new ClaudeAdapter(bin).run(
+    req({
+      steer: {
+        take: () => {
+          return writes.length ? [] : [{ id: "m1", text: "early" }];
+        },
+        read: () => writes.push(Date.now() - t0),
+      },
+    }),
+  );
+  assert.equal(r.ok, true, String(r.error));
+  assert.match(r.line, /heard 1/, "taken in its turn, not folded into the prompt");
+});
+
 test("a written message no turn takes: stdin closes after the grace, the message stays unread", () => {
   const s = new ClaudeStream();
   s.line(asst("A"), 0);

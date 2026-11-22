@@ -11,7 +11,7 @@ import { parseConfig } from "../config.ts";
 import { processStart } from "../lock.ts";
 import { groupAlive, procsDirOf } from "../procs.ts";
 import { honorControl, pause, readControl, steer, stop } from "./control.ts";
-import { MAX_MESSAGE, readMessages } from "./messages.ts";
+import { MAX_MESSAGE, markRead, readMessages, unread } from "./messages.ts";
 import { runRole } from "./stages/role.ts";
 import type { StageContext } from "./stages/types.ts";
 import { createJob, jobDirOf, readJobAt, updateJob } from "./store.ts";
@@ -204,6 +204,17 @@ test("steer → stop → resume: the steers the stopped role read go back to sen
   assert.match(second.calls[0].prompt, /> use the existing formatter/);
   assert.match(second.calls[0].prompt, /> and keep the diff small/);
   assert.ok(readMessages(dir).every((m) => m.status === "read" && m.via === "next-role"));
+});
+
+test("a failing role gives back only what it read: a parallel lens that read the same message keeps its mark", async () => {
+  const j = await job();
+  const dir = jobDirOf(repo, j.id);
+  await steer(repo, j.id, "check the auth path", out);
+  await markRead(dir, ["m1"], "reviewer-security", "mid-run");
+  await unread(dir, ["m1"], "reviewer-ux"); // the ux lens was handed m1 too, then failed
+  assert.deepEqual([readMessages(dir)[0].status, readMessages(dir)[0].by], ["read", "reviewer-security"]);
+  await unread(dir, ["m1"], "reviewer-security");
+  assert.equal(readMessages(dir)[0].status, "sent");
 });
 
 test("a role that never starts (run lock lost) gives its notes back", async () => {

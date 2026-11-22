@@ -35,9 +35,12 @@ export type Detail = {
 };
 
 const EVENTS_PER_SEG = 160;
-/** A move that sends a job back: to a person who must decide, or to an earlier stage (a failed check, a contract sent back). */
+/** A move that sends a job back: to a person who must decide (intake asking its question is not a failure), or to an earlier stage (a failed check, a contract sent back). */
 const sentBack = (from: Stage, to: string) =>
-  to === "needs-human" || to === "rejected" || (isActive(from) && isActive(to as Stage) && STAGES.indexOf(to as Stage) < STAGES.indexOf(from));
+  to === "needs-human" ||
+  (to === "needs-info" && from !== "intake") ||
+  to === "rejected" ||
+  (isActive(from) && isActive(to as Stage) && STAGES.indexOf(to as Stage) < STAGES.indexOf(from));
 
 /** The latest verdict table of the job: criterion → result, evidence and why. */
 function verdictRows(dir: string): Map<string, { result: string; e: string }> {
