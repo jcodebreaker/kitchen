@@ -164,9 +164,8 @@ export async function quickInit(o: QuickOpts, out: (l: string) => void): Promise
     ),
   );
   installSkill(repo);
-  out(phaseLine(true, "Installed the skill", "/kitchen for Claude Code (.claude/skills) and Codex (.agents/skills)"));
-  // Role skills (ADR 0014): a report only, never a failure; `kitchen skills` lists where each comes from.
-  out(phaseLine(true, "Checked role skills", `${skillsReport(repo).summary} (kitchen skills for the list)`));
+  // Role skills (ADR 0014) ride on this line to keep init quiet: a report only, never a failure; `kitchen skills` lists them.
+  out(phaseLine(true, "Installed the skill", `/kitchen for Claude Code and Codex · role skills: ${skillsReport(repo).short} (kitchen skills)`));
   const added = addGitignore(repo);
   out(phaseLine(true, "Updated .gitignore", added.length ? `${added.length} Kitchen entries` : "already has Kitchen's entries"));
 

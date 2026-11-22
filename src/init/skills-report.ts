@@ -5,15 +5,17 @@ import { envOf, hostOf } from "../engine/stages/skills.ts";
 import { readinessLines } from "../skills/plan.ts";
 import { loadRegistry } from "../skills/registry.ts";
 
-/** Every registry skill, found or not: a summary line, then one line per skill. */
-export function skillsReport(repo: string): { summary: string; lines: string[] } {
+/** Every registry skill, found or not: a summary, a short one for init's quiet output, then one line per skill. */
+export function skillsReport(repo: string): { summary: string; short: string; lines: string[] } {
   const config = loadConfig(repo);
   const host = hostOf(config);
-  if (!host) return { summary: "off (skills.enabled: false, or the fake tool with no skills.host)", lines: [] };
+  if (!host) return { summary: "off (skills.enabled: false, or the fake tool with no skills.host)", short: "off", lines: [] };
   const r = readinessLines(loadRegistry(), host, envOf(repo, config));
   const total = r.lines.length;
+  const short = `${total - r.missing} of ${total} found`;
   return {
-    summary: `${total - r.missing} of ${total} found for ${host}${r.missing ? "; the others are skipped, or a job that needs one stops and says how to install it" : ""}`,
+    summary: `${short} for ${host}${r.missing ? "; the others are skipped, or a job that needs one stops and says how to install it" : ""}`,
+    short,
     lines: r.lines,
   };
 }
