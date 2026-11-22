@@ -25,6 +25,24 @@ The reference factory (zazencodes v2) installs in about a minute: it fills in `c
 
 **What a job without a Toolkit claims.** Its Report says plainly that it was proven by checks and tests only, with no app driven. Criteria that need a drive are shown as **not proven (no Toolkit)**, never as passed. Risk rules still apply: a high-risk ticket (auth, payments, migrations) needs a Toolkit before it can reach ready.
 
+**Names match what they do.** `init` in every other tool (`git init`, `npm init`) writes a few files in seconds. A user typing `kitchen init` doesn't expect an agent to write code, start their app twice and make 110 HTTP calls (library-demo, 2026-11-22: "suddenly check this"). So:
+
+- `kitchen init` is quick init only.
+- **`kitchen toolkit build`** is the Toolkit step: survey, write, prove. It is run by name, or offered when a ticket first needs it.
+
+**Quiet output by default.** Each phase prints one line saying what it did, its time and its cost, then one line with the total and the next step:
+
+```
+Teaching Kitchen to run library-demo…
+  ✓ Read the repo          API on node server.js · 5 features                31s
+  ✓ Wrote the Toolkit      start · health · reset · call as a member          2m 50s
+  ✓ Proved it              7 checks × 2 (after a reset) · 2 copies at once    25s
+Done in 3m 46s · $0.98 · on branch kitchen/setup
+Next: review it (git log -p main..kitchen/setup), then git merge kitchen/setup
+```
+
+The per-drive lines, the evidence ids and the sandbox notes go behind `--verbose`; they are always written to `.kitchen/init/init.log`. A failure prints the failing step in full.
+
 **Also trims setup itself.**
 - Setup runs on the `medium` tier (sonnet) by default.
 - The survey prompt is told not to re-read files already in context.
