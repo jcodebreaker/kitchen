@@ -117,9 +117,10 @@ export async function prove(o: ProveOpts): Promise<ProveResult> {
     } else {
       const s = segs[0];
       const cmd = s.kind === "cmd" ? s.cmd : o.testCmd.replaceAll("{file}", shq(s.kind === "test" ? s.file : ""));
-      // Untrusted env (stampCommand); spec-lint refused paths outside the worktree, $HOME, env dumps and network tools.
-      // W2 sandbox: run this under the W2 sandbox-exec profile (no network, writes only in the worktree) once it is on main.
-      const r = await stampCommand({ ...common, name: `${c.id} ${s.kind}`, cmd, timeoutSec: o.timeoutSec ?? 600 });
+      // spec-lint's denylist (outside paths, $HOME, env dumps, network tools) is the first line; the proof sandbox
+      // (no network, $HOME and $KITCHEN_HOME unreadable, writes only in the worktree) is the boundary. Untrusted env.
+      const r = await stampCommand({ ...common, name: `${c.id} ${s.kind}`, cmd, timeoutSec: o.timeoutSec ?? 600, sandbox: true });
+      if (!r.sandboxed) o.log?.(`${c.id} ${s.kind} proof ran UNSANDBOXED (no sandbox-exec on this platform)`);
       evidence.push(r.id);
       outcome.exit = r.exit;
       outcome.ok = r.exit === 0;

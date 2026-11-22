@@ -25,6 +25,7 @@ import {
 } from "./drive-format.ts";
 import { evidenceDir, jobGit, type ProofJob, readJob, sealOf, storeHead, withJobLock } from "./job.ts";
 import { appendEntry, type Entry, type ManifestHead, nextId, verifyManifest } from "./manifest.ts";
+import { redactTextFiles } from "./redact.ts";
 import { type SourceStamp, sourceStamp } from "./source-stamp.ts";
 
 export type DriveRequest =
@@ -135,6 +136,8 @@ async function runLocked(o: DriveOpts): Promise<DriveResult> {
     const dir = path.join(ev, nextId(job.manifestHead));
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, "call.json"), JSON.stringify(record, null, 2));
+    // What the primitive printed or wrote (call.json, read output files) is redacted before it is hashed.
+    redactTextFiles(dir);
     const files = fs
       .readdirSync(dir, { recursive: true, withFileTypes: true })
       .filter((d) => d.isFile())

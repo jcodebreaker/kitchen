@@ -1,9 +1,29 @@
 // Masks secret-looking strings in text evidence (PLAN §2 "Redaction") before it
 // leaves the engine: what the bridge hands an agent (a proof's output, a check's
-// tail) goes through here. Screenshots can't be scanned, so Toolkits seed only
-// fake data. Pure.
+// tail) goes through here, and so does every text evidence file when it is
+// written (stamp-cmd, drive), before the manifest hashes it. Screenshots can't
+// be scanned, so Toolkits seed only fake data. `redact` is pure.
+import fs from "node:fs";
+import path from "node:path";
 
 const MASK = "[redacted]";
+
+/**
+ * Redacts every text file under `dir` in place (a file with a NUL byte is binary: a
+ * screenshot is left as it is). Called before the files are hashed into the manifest,
+ * so no evidence file on disk ever holds the secret.
+ */
+export function redactTextFiles(dir: string): void {
+  for (const d of fs.readdirSync(dir, { recursive: true, withFileTypes: true })) {
+    if (!d.isFile()) continue;
+    const f = path.join(d.parentPath, d.name);
+    const buf = fs.readFileSync(f);
+    if (buf.includes(0)) continue;
+    const text = buf.toString("utf8");
+    const out = redact(text);
+    if (out !== text) fs.writeFileSync(f, out);
+  }
+}
 
 const PATTERNS: RegExp[] = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
