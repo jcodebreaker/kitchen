@@ -7,6 +7,7 @@
 //
 // `once`: one tick (waits checked once, every runnable job runs one stage), then exit.
 // Default: until no job is runnable or paused.
+import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { AgentAdapter } from "../agents/adapter.ts";
@@ -14,7 +15,7 @@ import { ClaudeAdapter } from "../agents/claude.ts";
 import { CodexAdapter } from "../agents/codex.ts";
 import { FakeAdapter, type FakeScript } from "../agents/fake.ts";
 import { type Config, loadConfig } from "../config.ts";
-import { type Forge, forgeFor } from "../forge/forge.ts";
+import { type Forge, forgeFor, isTrusted } from "../forge/forge.ts";
 import { appendLedger } from "../ledger/append.ts";
 import { self } from "../lock.ts";
 import { procsDirOf, reapGroups } from "../procs.ts";
@@ -28,7 +29,7 @@ import { type Facts, isActive, type Job, move, type Stage } from "./machine.ts";
 import { HANDLERS } from "./stages/index.ts";
 import { hasToolkit } from "./stages/toolkit-info.ts";
 import { LockLost, type Proposal, RoleFailure, type StageContext } from "./stages/types.ts";
-import { jobDirOf, listJobs, readJobAt, repairManifest, scanJobs, updateJob } from "./store.ts";
+import { jobDirOf, listJobs, readJobAt, repairManifest, scanJobs, updateJob, writeAtomic } from "./store.ts";
 
 export type RunOpts = { repo: string; once?: boolean; job?: string; tickMs?: number; print?: (line: string) => void; logFile?: string };
 type Deps = { config: Config; agent: AgentAdapter; forge: Forge; source: TicketSource; holdsLock: () => boolean };
@@ -215,8 +216,63 @@ async function checkWaits(repo: string, d: Deps, print: (l: string) => void, wan
       if (cleared) await moveJob(repo, job, { to: job.pausedFrom, facts: { waitCleared: true }, note: `${job.waitFor} cleared` }, print);
     } else if (job.stage === "needs-info" && (await d.source.replies(job)).length) {
       await moveJob(repo, job, { to: "intake", facts: { replied: true }, note: "the author replied" }, print);
+    } else if (job.stage === "done" && job.pr !== null) {
+      await prCommentsBack(repo, job, d, print);
     }
   }
+}
+
+/**
+ * done → build from review comments on the PR (PLAN §2). Comments are read through the
+ * forge; only a trusted person's count (forge.ts isTrusted: kitchen.yaml `feedback`).
+ * The new trusted ones become one feedback file for the builder (quoted, with the
+ * author) and the job goes back to build; an untrusted one is logged and ignored.
+ * Each comment is handled once (`pr-comment/<id>` in `filed`).
+ */
+async function prCommentsBack(repo: string, job: Job, d: Deps, print: (l: string) => void) {
+  const fresh = (await d.forge.reviewComments(job.pr)).filter((c) => !job.filed.includes(`pr-comment/${c.id}`));
+  if (!fresh.length) return;
+  const trusted = fresh.filter((c) => isTrusted(c, d.config.feedback));
+  const ignored = fresh.filter((c) => !trusted.includes(c));
+  for (const c of ignored) {
+    print(`${job.id}  PR comment ${c.id} by ${c.author} (${c.association}) ignored: not a trusted person`);
+    appendLedger(repo, {
+      job: job.id,
+      stage: job.stage,
+      round: job.round,
+      event: "pr-comment-ignored",
+      key: `${job.id}/pr-comment/${c.id}`,
+      detail: { author: c.author, association: c.association },
+    });
+  }
+  const mark = (keys: string[]) =>
+    updateJob(repo, job.id, (j) => {
+      for (const k of keys) if (!j.filed.includes(k)) j.filed.push(k);
+      return j;
+    });
+  if (!trusted.length) {
+    await mark(ignored.map((c) => `pr-comment/${c.id}`));
+    return;
+  }
+  const lead = trusted[0];
+  const file = path.join(jobDirOf(repo, job.id), "feedback", `${new Date().toISOString().replace(/[:.]/g, "-")}-pr-${lead.id}.md`);
+  writeAtomic(
+    file,
+    `${trusted.map((c) => `Review comment on PR #${c.pr} by ${c.author} (${c.association}), ${c.at}. It is a person's request, quoted:\n\n${c.body.trim().replace(/^/gm, "> ")}`).join("\n\n")}\n`,
+  );
+  const r = await moveJob(
+    repo,
+    job,
+    {
+      to: "build",
+      facts: { prComment: { id: lead.id, author: lead.author, trusted: true } },
+      note: `PR comment ${trusted.map((c) => c.id).join(", ")} by ${lead.author}`,
+    },
+    print,
+    "human",
+  );
+  if (r === "moved") await mark(fresh.map((c) => `pr-comment/${c.id}`));
+  else fs.rmSync(file, { force: true });
 }
 
 function backoffUntil(cfg: Config, job: Job): string {

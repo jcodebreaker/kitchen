@@ -42,6 +42,15 @@ export function earlierRoundsBlock(jobDir: string, job: Job): PromptBlock[] {
       const v = fs.readFileSync(path.join(dir, last), "utf8");
       if (!/^VERDICT:\s*PASS/m.test(v)) out.push(`## Round ${r}: Verify\n${v}`);
     }
+    if (files.includes("review.md")) {
+      const t = fs.readFileSync(path.join(dir, "review.md"), "utf8");
+      // Only what blocked: notes are not the builder's to chase.
+      if (/^REVIEW:\s*BLOCKING/m.test(t)) {
+        const [head, table] = t.split("\n\n");
+        const rows = (table ?? "").split("\n").filter((l, i) => i < 2 || / BLOCKS /.test(l));
+        out.push(`## Round ${r}: Review BLOCKING (fix what blocks; the findings name the line, requirement or evidence)\n${head}\n\n${rows.join("\n")}`);
+      }
+    }
     for (const d of files.filter((f) => /^drives-\d+\.md$/.test(f))) {
       const t = fs.readFileSync(path.join(dir, d), "utf8");
       if (/DRIVES:\s*UNREACHABLE/.test(t)) out.push(`## Round ${r}: the verifier could not reach the feature\n${t}`);
