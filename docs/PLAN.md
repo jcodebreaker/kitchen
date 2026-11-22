@@ -267,6 +267,7 @@ On a pass it writes `.kitchen/toolkit.proven` with the base sha. **When the base
 - [C1] Signed-in user sees a "Dark mode" toggle on /settings
   proof: toolkit settings.open --as alice
   expect: text "Dark mode" visible
+  covers: R1              # the requirements of intake.md's `## Requirements` this criterion proves
 - [C2] Toggle persists across reload
   proof: toolkit settings.toggle-dark --as alice ; toolkit reload ; toolkit read body.class
   expect: contains "dark"
@@ -289,12 +290,13 @@ On a pass it writes `.kitchen/toolkit.proven` with the base sha. **When the base
 4. Nothing touches a protected path.
 5. A bug has a criterion marked `repro: true` with a mechanical `expect`.
 6. IDs are unique.
+7. The criteria cover the ticket (W3a review round 2, ADR 0003): intake.md lists the ticket's requirements (`## Requirements`, `- R1: …`, `- R3 (negative): …`, `- R5 (out of scope): … — why`); every criterion has a `covers:` line naming the Rs it proves, every R in scope is covered, and a negative R is covered by at least one criterion whose mechanical expect asserts an absence (`not visible`, `not contains`, `!=`, `== ""`). An `ACCEPT` without requirements is refused at intake.
 
 ### Proofs: `kitchen drive` and Verdicts
 
 `kitchen drive <job> <criterion> [--repro]` is the **only** way a proof runs:
 1. Reads the proof lines.
-2. Runs them through the Toolkit, or as a command or test, in the job's slot. Every process that runs worktree code (Toolkit primitives, the app, tests, cmd proofs) gets the untrusted env (§3).
+2. Runs them through the Toolkit, or as a command or test, in the job's slot. Every process that runs worktree code (Toolkit primitives, the app, tests, cmd proofs) gets the untrusted env (§3). `cmd` and `test` proofs also run under the proof sandbox (macOS `sandbox-exec`: no network but loopback, `$HOME` unreadable but the worktree and toolchains, writes only in the worktree and temp; ADR 0006); spec-lint's cmd denylist is only a first line. Text evidence is redacted before it is written.
 3. Writes each call's files into its own entry folder `evidence/e<N>/`, plus `e<N>/call.json` (argv, exit, result, stdout/stderr tails).
 4. Adds one manifest entry per call, stamped `{id, prev, sha, dirty, tree, round, criterion, role, cmd, exit, files: [{path, sha256}], at}`:
    - `sha` is HEAD of the **tested worktree** (never "unknown": no git, no proof), `dirty` whether the working tree differs from it, `tree` the git tree hash of what was on disk.
@@ -775,3 +777,14 @@ History: all of these are now part of §2 and §3, which are the current contrac
 | `judged` was allowed for "message", "label", "reads", "width" | Only layout, appearance, visual style, tone or copy quality, and the proof must take a screenshot. `repro: true` only on a bug |
 | A refused manifest could still give PASS | INCONCLUSIVE |
 | No job could fix a drive it had added itself on a retry | "Existing" drives are the base's (and, for the drives stage, the repro's) |
+
+## Changes from the Wave 3a review (round 2)
+
+| Finding | Change (proven by `spikes/w3a/`) |
+|---|---|
+| The spec can drop part of the ticket ("with no owner shown") and still pass every check | Structural, no extra agent (ADR 0003): intake writes `## Requirements` (R1..Rn, negative ones marked, rescoped ones `(out of scope)`); each criterion has `covers:`; spec-lint rule 7 refuses an uncovered R, a criterion covering none, or a negative R no covering criterion asserts the absence of. `e2e.ts claude admin` on the verbatim ticket; `wrong.ts claude owner` |
+| The base check skipped every criterion that needed a new drive | After the drives stage, those criteria run on a checkout of the base plus only the new drive and test files (`.worktrees/<id>.base`, same slot, fresh app, `phase: base`); one that passes is NON-DISCRIMINATING (`base-check.json` `afterDrives`), shown in the verdict row and footer, the verifier's prompt and the review prompt (`facts.review.nonDiscriminating` for W4). Features only: a bug's repro covers it. `paths.ts nondisc` |
+| cmd/test proofs ran unconfined; only bridge replies were redacted | cmd and test proofs run under a `sandbox-exec` profile (`src/proof/sandbox.ts`: loopback only, `$HOME` unreadable but the worktree and toolchains, writes in the worktree and temp, W2's credential list + `$KITCHEN_HOME` + `.kitchen/jobs` + git config denied); Linux logs UNSANDBOXED. Evidence files are redacted when written (stamp-cmd, drive). The cmd denylist stays as a first line; `_proofs.md` and ADR 0006 say the sandbox is the boundary. `contain.ts` |
+| A new drive could work only in-chain, then fail W2's base re-proof after merge | The drives stage runs every new `check:` line alone from seed (reset, then that drive with its check args); a failure goes back to the drives role, told to make the check line self-sufficient. `paths.ts nondisc` |
+| `$o == ""` held whenever the element was missing | The lint treats equality to empty as a negative: it needs an earlier step that makes something (a feature drive or a writing `http`) |
+| The builder policy was a ternary chain | A rule table (rule → reason) in `contract.ts` |
