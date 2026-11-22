@@ -13,18 +13,41 @@ import fs from "node:fs";
 import path from "node:path";
 import { appEnv } from "./common.mjs";
 
+// A list (drive flow array), a JSON array string, or a plain string split like a shell
+// line ("done 1 2", 'add "Buy milk" --tag home'): a spec's proof line can only pass strings.
+const splitWords = (s) => {
+  const out = [];
+  let cur = "";
+  let q = null;
+  let any = false;
+  for (const ch of s) {
+    if (q) {
+      if (ch === q) q = null;
+      else cur += ch;
+    } else if (ch === '"' || ch === "'") {
+      q = ch;
+      any = true;
+    } else if (/\s/.test(ch)) {
+      if (cur || any) out.push(cur);
+      cur = "";
+      any = false;
+    } else cur += ch;
+  }
+  if (cur || any) out.push(cur);
+  return out;
+};
 const asArgv = (v) => {
   if (Array.isArray(v)) return v.map(String);
   if (typeof v === "string" && v.trim().startsWith("[")) return JSON.parse(v).map(String);
   if (v === undefined || v === "") return [];
-  return [String(v)];
+  return typeof v === "string" ? splitWords(v) : [String(v)];
 };
 
 export function terminalPrimitives({ command, env = () => ({}), cwd = (ctx) => ctx.src, timeoutMs = 60000 }) {
   return {
     cli: {
       args: {
-        argv: "list of arguments after the command",
+        argv: "arguments after the command: a list, or one string split like a shell line (\"done 1 2\")",
         stdin: "optional text typed on stdin",
         expect_exit: "optional exit code that counts as ok (default 0)",
       },
