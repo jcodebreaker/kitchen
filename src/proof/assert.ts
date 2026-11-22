@@ -149,6 +149,46 @@ export function parseExpect(expect: string): Clause[] {
   return clausesOf(expect).map(parseClause);
 }
 
+/** The strings a clause asks to be there (positive clauses only): `text "X" visible`, `contains "X"`, `== "X"`. */
+function wantedStrings(c: Clause): string[] {
+  if (c.kind === "text") return c.visible ? [c.text] : [];
+  if (c.kind === "contains") return c.negate ? [] : [c.text];
+  if ((c.kind === "json" || c.kind === "var") && (c.op === "==" || c.op === "contains") && typeof c.value === "string") return [c.value];
+  return [];
+}
+
+/**
+ * Whether a timed-out `wait` polled for the state the criterion's own expect asks for
+ * (its text is, or contains, or is contained in, a string a positive clause wants), so
+ * the timeout is that expect failing rather than an unrelated broken step. Pure.
+ */
+export function waitMatchesExpect(waitText: string | undefined, expect: string | null | undefined): boolean {
+  if (!waitText || !expect || isJudged(expect)) return false;
+  let clauses: Clause[];
+  try {
+    clauses = parseExpect(expect);
+  } catch {
+    return false;
+  }
+  const w = waitText.toLowerCase();
+  return clauses.flatMap(wantedStrings).some((s) => {
+    const x = s.toLowerCase();
+    return x === w || (Math.min(x.length, w.length) >= 3 && (x.includes(w) || w.includes(x)));
+  });
+}
+
+/** Clauses that ask for something to be absent or different: `not visible`, `not contains`, `!=`. */
+export const negativeClauses = (clauses: Clause[]) =>
+  clauses.filter(
+    (c) =>
+      (c.kind === "text" && !c.visible) ||
+      (c.kind === "contains" && c.negate) ||
+      ((c.kind === "json" || c.kind === "var") && (c.op === "!=" || c.op === "not contains")),
+  );
+/** The string a negative clause says must not show (null for a non-string value). */
+export const absentString = (c: Clause): string | null =>
+  c.kind === "text" || c.kind === "contains" ? c.text : (c.kind === "json" || c.kind === "var") && typeof c.value === "string" ? c.value : null;
+
 /** Does deciding this expect need the page's body text read after the proof? */
 export const needsPage = (clauses: Clause[]) => clauses.some((c) => c.kind === "text");
 /** Vars an expect refers to. */
@@ -197,6 +237,21 @@ function rowCount(text: string): number {
 export type ClauseResult = { clause: string; pass: boolean; got: string };
 export type AssertResult = { pass: boolean; results: ClauseResult[]; why?: string };
 
+/** Words of a page that failed (an error, not-found or no-access page): absence of anything there proves nothing. */
+const ERROR_PAGE =
+  /\b(not found|page not found|404|403|500|forbidden|access denied|permission denied|unauthori[sz]ed|internal server error|server error|bad request|admins only|something went wrong)\b/i;
+/** Why a negative clause can't hold on this page or response (it failed, or is empty), or null. */
+export function failedSubject(text: string | undefined): string | null {
+  if (text === undefined || !text.trim()) return "empty: an empty read shows nothing, so its absence proves nothing";
+  const j = tryJson(text);
+  const status = j && typeof j === "object" ? Number((j as Record<string, unknown>).status) : Number.NaN;
+  if (status >= 400) return `the response failed (status ${status}): its absence proves nothing`;
+  const m = ERROR_PAGE.exec(text.slice(0, 2000));
+  if (m && !(j && typeof j === "object"))
+    return `the page looks like an error page ("${m[1]}"): a "not visible" check there proves nothing; if that error is the expected outcome, assert it (text "…" visible)`;
+  return null;
+}
+
 export function evaluate(clauses: Clause[], o: Outcome): AssertResult {
   const results: ClauseResult[] = clauses.map((c): ClauseResult => {
     const subject = (name: string | null): { ok: true; v: string } | { ok: false; got: string } =>
@@ -209,10 +264,14 @@ export function evaluate(clauses: Clause[], o: Outcome): AssertResult {
       case "text": {
         if (o.pageText === undefined) return { clause: c.src, pass: false, got: "page text was not read" };
         const has = o.pageText.includes(c.text);
+        const bad = !c.visible && !has ? failedSubject(o.pageText) : null;
+        if (bad) return { clause: c.src, pass: false, got: bad };
         return { clause: c.src, pass: has === c.visible, got: has ? "present" : "absent" };
       }
       case "contains": {
         const has = o.output.includes(c.text);
+        const bad = c.negate && !has ? failedSubject(o.output) : null;
+        if (bad) return { clause: c.src, pass: false, got: bad };
         return { clause: c.src, pass: has !== c.negate, got: show(o.output) };
       }
       case "json": {
@@ -220,7 +279,12 @@ export function evaluate(clauses: Clause[], o: Outcome): AssertResult {
         if (!s.ok) return { clause: c.src, pass: false, got: s.got };
         let v: unknown = tryJson(s.v);
         if (v === undefined) return { clause: c.src, pass: false, got: `not JSON: ${show(s.v)}` };
+        const negative = c.op === "!=" || c.op === "not contains";
+        const top = negative ? failedSubject(s.v) : null;
+        if (top?.startsWith("the response failed")) return { clause: c.src, pass: false, got: top };
         for (const k of c.path) v = v && typeof v === "object" ? (v as Record<string | number, unknown>)[k] : undefined;
+        if (negative && (v === undefined || v === null || v === ""))
+          return { clause: c.src, pass: false, got: `${show(v)}: nothing there, so it differing proves nothing` };
         return { clause: c.src, pass: compare(v, c.op, c.value), got: show(v) };
       }
       case "rows": {
@@ -232,6 +296,10 @@ export function evaluate(clauses: Clause[], o: Outcome): AssertResult {
       case "var": {
         const s = subject(c.name);
         if (!s.ok) return { clause: c.src, pass: false, got: s.got };
+        if (c.op === "!=" || c.op === "not contains") {
+          const bad = failedSubject(s.v);
+          if (bad && !bad.startsWith("the page looks")) return { clause: c.src, pass: false, got: `$${c.name} ${bad}` };
+        }
         return { clause: c.src, pass: compare(s.v, c.op, c.value), got: show(s.v) };
       }
     }

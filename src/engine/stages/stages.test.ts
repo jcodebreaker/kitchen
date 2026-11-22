@@ -26,4 +26,12 @@ test("a GAP header names a primitive only when it names one (agents write `GAP: 
     assert.equal(named(v), undefined, String(v));
   assert.equal(named("drag"), "drag");
   assert.equal(named("`drag` (to reorder rows)"), "drag");
+  assert.equal(named("drag: to reorder rows"), "drag");
+});
+
+test('free text or a primitive the Toolkit has is not a gap (review: `GAP: the read primitive…` → "the")', () => {
+  for (const v of ["the `read` primitive fails on a missing selector", "read fails on missing", "Read", "a drag primitive"])
+    assert.equal(named(v), undefined, v);
+  assert.equal(named("read", ["read", "open"]), undefined, "describe lists it: nothing is missing");
+  assert.equal(named("drag", ["read", "open"]), "drag");
 });

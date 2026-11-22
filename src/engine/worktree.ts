@@ -80,6 +80,12 @@ export async function fileAtHead(job: Job, rel: string): Promise<string | null> 
   }
 }
 
+/** Paths a role left changed in the worktree (tracked or new), outside the outbox. */
+export async function pendingFiles(job: Job): Promise<string[]> {
+  const lines = (await dirtyLines(await gitOf(job))).split("\n").filter(Boolean);
+  return lines.map((l) => l.slice(3).replace(/^"|"$/g, "")).map((p) => (p.includes(" -> ") ? (p.split(" -> ").at(-1) ?? p) : p));
+}
+
 export async function headOf(job: Job): Promise<string> {
   return (await (await gitOf(job)).run(["rev-parse", "--verify", "HEAD^{commit}"])).stdout.trim();
 }

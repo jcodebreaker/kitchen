@@ -26,10 +26,11 @@ import { contractOf, nothingPolicy } from "../contract.ts";
 import { doctorOk, freshUp, resetUp } from "../instance.ts";
 import { once, roundDir, writeAtomic } from "../store.ts";
 import { commitWith, headOf } from "../worktree.ts";
+import { nonDiscriminating } from "./base-check.ts";
 import { contractBlock } from "./context.ts";
 import { prompt } from "./prompts.ts";
 import { headers, named, runRole } from "./role.ts";
-import { hasToolkit } from "./toolkit-info.ts";
+import { hasToolkit, primitives } from "./toolkit-info.ts";
 import type { StageHandler } from "./types.ts";
 
 export { citationProblem, citationsOf } from "../../checks/verdict.ts";
@@ -140,6 +141,7 @@ export const verify: StageHandler = async (ctx) => {
   } catch (e) {
     ctx.log(`manifest refused: ${(e as Error).message}`);
   }
+  const prims = judgedText && hasToolkit(job) ? (await primitives(job)).list : [];
   const v = decideVerdict({
     criteria: contract.criteria,
     proofs,
@@ -148,10 +150,14 @@ export const verify: StageHandler = async (ctx) => {
     head,
     round: job.round,
     argsDeltas: argsDeltasOf(ctx.jobDir, job.round),
+    primitives: prims,
+    nonDiscriminating: job.kind === "bug" ? [] : nonDiscriminating(ctx.jobDir, contract.criteria),
   });
   writeAtomic(path.join(roundDir(ctx.jobDir, job.round), `verdict-m${moves}.md`), renderVerdict(v, head, job.round));
-  ctx.log(`verdict ${v.verdict}: ${v.criteria.map((c) => `${c.id} ${c.result}`).join(", ")}${v.citationProblem ? ` (${v.citationProblem})` : ""}`);
-  const agentGap = judgedText ? named(headers(judgedText).GAP) : undefined;
+  ctx.log(
+    `verdict ${v.verdict}: ${v.criteria.map((c) => `${c.id} ${c.result}`).join(", ")}${v.citationProblem ? ` (${v.citationProblem})` : ""}${v.nonDiscriminating.length ? `; non-discriminating (passed on the base too): ${v.nonDiscriminating.join(", ")}` : ""}`,
+  );
+  const agentGap = judgedText ? named(headers(judgedText).GAP, prims) : undefined;
   const facts = {
     verify: {
       verdict: v.verdict,

@@ -7,11 +7,14 @@
 // 3. The engine runs the proof itself, `kitchen drive <job> <C> --repro`, on a
 //    fresh app started from that commit, whose diff from the base is only those
 //    files ("on the base sha"). It failed as expected when every step ran and
-//    the mechanical expect is false.
+//    the mechanical expect is false, or a `wait` for the text the expect asks
+//    for timed out after every earlier step ran.
 import fs from "node:fs";
 import path from "node:path";
 import { changedExistingDrive } from "../../checks/feature-lint.ts";
+import { waitMatchesExpect } from "../../proof/assert.ts";
 import { prove } from "../../proof/prove.ts";
+import { featureFileProblems } from "../../toolkit/feature-check.ts";
 import { contractOf, namedDrives, reproCriterion, reproPolicy, testFilesOf } from "../contract.ts";
 import { freshUp } from "../instance.ts";
 import { updateJob, writeAtomic } from "../store.ts";
@@ -20,8 +23,10 @@ import { contractBlock, toolkitBlock } from "./context.ts";
 import { featureFilesAtHead } from "./drives.ts";
 import { prompt } from "./prompts.ts";
 import { headers, named, runRole } from "./role.ts";
-import { featureDrives, hasToolkit } from "./toolkit-info.ts";
+import { described, featureDrives, hasToolkit } from "./toolkit-info.ts";
 import type { StageHandler } from "./types.ts";
+
+const FEATURE_FILE = /^\.kitchen\/toolkit\/features\/[^/]+\.md$/;
 
 export const repro: StageHandler = async (ctx) => {
   let job = await ensureWorktree(ctx.repo, ctx.refresh());
@@ -65,16 +70,22 @@ export const repro: StageHandler = async (ctx) => {
       }),
       dest: path.join(ctx.jobDir, `repro-${n}.md`),
     });
-    gap = named(headers(r.text).GAP);
+    gap = named(headers(r.text).GAP, (await described(job)).primitives);
   }
   job = ctx.refresh();
   const before = await featureFilesAtHead(job);
   const policy = reproPolicy(ctx.config.protected);
   const wt = job.worktree;
+  const tk = await described(job);
   const c = await commitWith(job, `kitchen(${job.id}): regression test (repro)`, (f, status) => {
     const layer = policy(f, status);
-    if (layer || status !== "M" || !before.has(f)) return layer;
-    return changedExistingDrive(before.get(f) ?? "", fs.readFileSync(path.join(wt, f), "utf8"));
+    if (layer || !FEATURE_FILE.test(f)) return layer;
+    const text = fs.readFileSync(path.join(wt, f), "utf8");
+    const changed = status === "M" && before.has(f) ? changedExistingDrive(before.get(f) ?? "", text) : null;
+    if (changed) return changed;
+    // A drive the repro adds must pass W2's feature rules too, or it breaks the Toolkit's re-proof once merged.
+    const problems = featureFileProblems(f, text, tk.features);
+    return problems.length ? `refused: ${problems.join("; ")}` : null;
   });
   for (const x of c.refused) ctx.log(`kept off the job branch: ${x}`);
   // What the builder may not edit: what this stage added, plus the drives and test files the repro proof runs.
@@ -109,9 +120,10 @@ export const repro: StageHandler = async (ctx) => {
       tag: { phase: "repro" },
       log: (m) => ctx.log(`[drive] ${m}`),
     });
-    // Failed as expected: every step ran and the expect is false, or a `wait` for the state the
-    // criterion expects timed out after every earlier step ran (the state never showed up).
-    failedAsExpected = p.status === "assert-fail" || (p.status === "step-failed" && !!p.waitTimedOut);
+    // Failed as expected: every step ran and the expect is false, or a `wait` timed out after every
+    // earlier step ran AND what it waited for is what the criterion's own expect asks for (the state
+    // never showed up). A wait for anything else (a page heading, a button) is a broken proof.
+    failedAsExpected = p.status === "assert-fail" || (p.status === "step-failed" && !!p.waitTimedOut && waitMatchesExpect(p.waitText, crit.expect));
     why =
       p.status === "pass" ? "the expect holds on the base: nothing reproduced" : failedAsExpected ? `failed as expected: ${p.why}` : `${p.status}: ${p.why}`;
     writeAtomic(

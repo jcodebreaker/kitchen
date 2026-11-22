@@ -34,10 +34,31 @@ export type Verdict = {
   citationProblem?: string;
   gap?: string;
   argsDeltas: ArgsDelta[];
+  /** Criteria that already passed on the base: a pass on them doesn't tell this change from no change. */
+  nonDiscriminating: string[];
 };
 
 /** Roles whose entries a Verdict may cite. A builder's self-check is never proof. */
 export const CITABLE_ROLES = ["engine", "verifier"];
+
+const NOTHING = /^(none|no|n\/?a|null|nil|-+|—|false|0|\(none\)|<.*>)$/i;
+const PRIMITIVE_NAME = /^[a-z][a-z0-9_-]*$/;
+
+/**
+ * The missing primitive a `GAP:` header value names, or undefined. The value must be
+ * one primitive-shaped word (optionally in backticks), alone or followed by a
+ * separator and a note (`drag (to reorder rows)`, `drag: …`); free text such as
+ * "the `read` primitive fails" names nothing. A name the Toolkit already has
+ * (`known`, from describe) is not missing. Pure.
+ */
+export function gapName(v: string | undefined, known: readonly string[] = []): string | undefined {
+  const m = /^`?([^\s`,;:(]+)`?\s*([\s\S]*)$/.exec(v?.trim() ?? "");
+  if (!m) return undefined;
+  const [, t, rest] = m;
+  if (NOTHING.test(t) || !PRIMITIVE_NAME.test(t) || known.includes(t)) return undefined;
+  if (rest && !/^([(:,;]|[—–]|-\s)/.test(rest)) return undefined;
+  return t;
+}
 
 /** `EVIDENCE C<n>: e<N> …` lines, as criterion → cited ids. */
 export function citationsOf(text: string): Map<string, string[]> {
@@ -99,12 +120,16 @@ export function decideVerdict(o: {
   head: string;
   round: number;
   argsDeltas?: ArgsDelta[];
+  /** describe's primitives: a GAP that names one of them names nothing missing. */
+  primitives?: string[];
+  /** Criteria whose mechanical expect already held on the base before the change: flagged, not failed. */
+  nonDiscriminating?: string[];
 }): Verdict {
   const entries = o.entries ?? [];
   const judgements = o.judgedText ? judgementsOf(o.judgedText) : new Map<string, Result>();
   const cited = o.judgedText ? citationsOf(o.judgedText) : new Map<string, string[]>();
   const agentVerdict = o.judgedText ? (/^\s*VERDICT:\s*(PASS|FAIL|INCONCLUSIVE|TOOLKIT-GAP)\b/m.exec(o.judgedText)?.[1] as Result | undefined) : undefined;
-  const agentGap = o.judgedText ? /^\s*GAP:\s*(\S+)/m.exec(o.judgedText)?.[1] : undefined;
+  const agentGap = o.judgedText ? gapName(/^\s*GAP:[ \t]*(.*)$/m.exec(o.judgedText)?.[1], o.primitives) : undefined;
   let citationProblemText: string | undefined;
   const out: CriterionVerdict[] = o.criteria.map((c) => {
     const proof = o.proofs.find((p) => p.criterion === c.id);
@@ -112,8 +137,10 @@ export function decideVerdict(o: {
     if (!proof) return { id: c.id, judged, result: "INCONCLUSIVE", why: "its proof did not run", evidence: [] };
     if (!judged || proof.result !== "PASS") return { id: c.id, judged, result: proof.result, why: proof.why, evidence: proof.evidence };
     if (o.judgedText === null) return { id: c.id, judged, result: "INCONCLUSIVE", why: "no verifier judgement", evidence: proof.evidence };
-    const said = judgements.get(c.id) ?? (agentVerdict === "INCONCLUSIVE" || agentVerdict === "TOOLKIT-GAP" ? agentVerdict : undefined);
+    let said = judgements.get(c.id) ?? (agentVerdict === "INCONCLUSIVE" || agentVerdict === "TOOLKIT-GAP" ? agentVerdict : undefined);
     if (!said) return { id: c.id, judged, result: "FAIL", why: "the verifier gave no JUDGED line", evidence: [] };
+    // A TOOLKIT-GAP must name a missing primitive; free text names nothing a smith could add.
+    if (said === "TOOLKIT-GAP" && !agentGap) said = "INCONCLUSIVE";
     const ids = cited.get(c.id) ?? [];
     if (said === "PASS") {
       const p = citationProblemFor(c.id, ids, entries, o.head, o.round);
@@ -124,7 +151,9 @@ export function decideVerdict(o: {
     }
     return { id: c.id, judged, result: said, why: said === "PASS" ? undefined : "judged by the verifier", evidence: ids };
   });
-  const verdict = worst(out.map((c) => c.result));
+  let verdict = worst(out.map((c) => c.result));
+  // Evidence that doesn't verify proves nothing: a refused manifest is never a PASS.
+  if (o.entries === null && verdict === "PASS") verdict = "INCONCLUSIVE";
   const gap = verdict === "TOOLKIT-GAP" ? (o.proofs.find((p) => p.gap)?.gap ?? agentGap) : undefined;
   return {
     verdict,
@@ -134,6 +163,7 @@ export function decideVerdict(o: {
     ...(citationProblemText ? { citationProblem: citationProblemText } : {}),
     ...(gap ? { gap } : {}),
     argsDeltas: o.argsDeltas ?? [],
+    nonDiscriminating: o.nonDiscriminating ?? [],
   };
 }
 
@@ -151,6 +181,12 @@ export function renderVerdict(v: Verdict, head: string, round: number): string {
     ...v.criteria.map(
       (c) => `| ${c.id} | ${c.judged ? "verifier" : "engine"} | ${c.result} | ${c.evidence.join(" ")} | ${(c.why ?? "").replace(/\|/g, "\\|")} |`,
     ),
+    ...(v.nonDiscriminating.length
+      ? [
+          "",
+          `NON-DISCRIMINATING: ${v.nonDiscriminating.join(" ")} (already held on the base before the change, so passing proves nothing about it: base-check.json)`,
+        ]
+      : []),
     ...(v.argsDeltas.length
       ? [
           "",

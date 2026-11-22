@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
-import { ExpectError, evaluate, needsPage, type Outcome, parseExpect, varsOf } from "./assert.ts";
+import { ExpectError, evaluate, needsPage, type Outcome, parseExpect, varsOf, waitMatchesExpect } from "./assert.ts";
 import { ProofLineError, parseProof } from "./proof-line.ts";
 
 const o = (x: Partial<Outcome> = {}): Outcome => ({ ok: true, exit: 0, output: "", vars: {}, ...x });
@@ -89,4 +89,27 @@ test("proof lines: toolkit segments, cmd, test", () => {
     ["login", "open"],
     "later segments may leave out the word toolkit",
   );
+});
+
+test("a negative expect fails on an error page, a failed response or an empty read (review: trivially true)", () => {
+  const page = (t: string) => o({ pageText: t });
+  assert.equal(check('text "Bob plan" not visible', page("Fixture A Projects Onboarding")).pass, true);
+  for (const t of ["Fixture A Home Not found", "Fixture A Admins only", "404 Page Not Found", "Forbidden", ""])
+    assert.equal(check('text "Bob plan" not visible', page(t)).pass, false, JSON.stringify(t));
+  assert.equal(check('text "Not found" visible', page("Fixture A Not found")).pass, true, "asserting the error itself is fine");
+  assert.equal(check('not contains "secret"', o({ output: JSON.stringify({ status: 403, body: { error: "no" } }) })).pass, false);
+  assert.equal(check('not contains "secret"', o({ output: JSON.stringify({ status: 200, body: [] }) })).pass, true);
+  assert.equal(check('$theme != "Light"', o({ vars: { theme: "" } })).pass, false, "an empty read differs from everything");
+  assert.equal(check('json $me.body.theme != "light"', o({ vars: { me: JSON.stringify({ status: 200, body: {} }) } })).pass, false);
+  assert.equal(check('json $me.body.theme != "light"', o({ vars: { me: JSON.stringify({ status: 500, body: { theme: "x" } }) } })).pass, false);
+  assert.equal(check('json $me.body.theme != "light"', o({ vars: { me: JSON.stringify({ status: 200, body: { theme: "dark" } }) } })).pass, true);
+});
+
+test("a timed-out wait counts as the expect failing only when it waited for what the expect asks", () => {
+  assert.equal(waitMatchesExpect("theme-dark", 'contains "theme-dark"'), true);
+  assert.equal(waitMatchesExpect("Dark", '$theme == "Dark" and json $me.body.theme == "dark"'), true);
+  assert.equal(waitMatchesExpect("Appearance", '$theme == "Dark"'), false, "a navigation wait is a broken step");
+  assert.equal(waitMatchesExpect("Saved", 'text "Saved" not visible'), false, "a negative clause asks for nothing");
+  assert.equal(waitMatchesExpect(undefined, 'contains "x"'), false);
+  assert.equal(waitMatchesExpect("x", "judged"), false);
 });

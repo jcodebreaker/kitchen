@@ -27,12 +27,19 @@ export async function primitives(job: Job, src = job.worktree || process.cwd()):
  * Every feature drive in `<src>/.kitchen/toolkit/features/*.md`: name → args, and the
  * file it is in. A file that doesn't parse is reported in `broken`, its drives left out.
  */
-export function featureDrives(src: string): { drives: Record<string, string[]>; files: Record<string, string>; broken: Record<string, string> } {
+export function featureDrives(src: string): {
+  drives: Record<string, string[]>;
+  files: Record<string, string>;
+  broken: Record<string, string>;
+  /** Drives with a `screenshot` step. */
+  screenshots: string[];
+} {
   const dir = path.join(src, FEATURES_DIR);
   const drives: Record<string, string[]> = {};
   const files: Record<string, string> = {};
   const broken: Record<string, string> = {};
-  if (!fs.existsSync(dir)) return { drives, files, broken };
+  const screenshots: string[] = [];
+  if (!fs.existsSync(dir)) return { drives, files, broken, screenshots };
   for (const f of fs
     .readdirSync(dir)
     .filter((x) => x.endsWith(".md"))
@@ -43,17 +50,26 @@ export function featureDrives(src: string): { drives: Record<string, string[]>; 
         const d = parseDrive(b.body, b.line);
         drives[d.name] = d.args;
         files[d.name] = rel;
+        if (d.steps.some((s) => s.kind === "prim" && s.name === "screenshot")) screenshots.push(d.name);
       }
     } catch (e) {
       broken[rel] = (e as Error).message;
     }
   }
-  return { drives, files, broken };
+  return { drives, files, broken, screenshots };
+}
+
+/** describe's primitives and feature files (`features/<x>.md`), read with `--src` (a job branch's new files show). */
+export async function described(job: Job, src = job.worktree || process.cwd()): Promise<{ primitives: string[]; features: string[] }> {
+  if (!hasToolkit(job)) return { primitives: [], features: [] };
+  const d = await describeToolkit(job.toolkitBin, src);
+  return { primitives: d.primitives, features: Array.isArray(d.raw.features) ? (d.raw.features as unknown[]).map(String) : [] };
 }
 
 /** What spec-lint checks a contract against: describe's primitives and the feature drives in `src`. */
 export async function toolkitView(job: Job, src: string): Promise<ToolkitView> {
-  return { primitives: (await primitives(job, src)).list, drives: featureDrives(src).drives };
+  const f = featureDrives(src);
+  return { primitives: (await primitives(job, src)).list, drives: f.drives, screenshots: f.screenshots };
 }
 
 /** The Toolkit as a role sees it: primitives (from describe) and the feature drives in `src`. */

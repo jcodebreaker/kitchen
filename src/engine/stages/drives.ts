@@ -1,17 +1,20 @@
 // drives: every feature drive the contract names must resolve on the job HEAD,
-// hold no code, and pass `toolkit check --feature` before any proof runs (PLAN
-// §2, drives → verify). The engine decides all three; the verifier (drives
-// mode) only writes the drives that are missing or that failed the check, and
-// the engine commits feature drive files only (drivesPolicy) before any proof
-// runs, so no evidence goes stale. Gate stays valid only while the commits
-// since gate.md touch nothing but features/*.md.
+// hold no code, pass W2's feature-file rules, and every criterion that uses a
+// new or changed drive must run end to end, twice, from seed state, before any
+// proof runs (PLAN §2, drives → verify). The engine decides all of it; the
+// verifier (drives mode) only writes what is missing or failed: feature drives,
+// and the test files `test` proofs name (the builder may not write those). The
+// engine commits only those files (drivesPolicy) before any proof runs, so no
+// evidence goes stale. Gate stays valid only while the commits since gate.md
+// touch nothing but features/*.md (a new test file means Gate runs again).
 import fs from "node:fs";
 import path from "node:path";
 import { changedExistingDrive, lintFeatureFile } from "../../checks/feature-lint.ts";
+import type { Criterion } from "../../checks/spec-lint.ts";
 import { evidenceDir, readJob, sealOf } from "../../proof/job.ts";
 import { verifyManifest } from "../../proof/manifest.ts";
-import { checkFeatureDrive, type FeatureCheck } from "../../toolkit/feature-check.ts";
-import { contractOf, drivesPolicy, namedDrives } from "../contract.ts";
+import { type ChainCheck, checkChain, featureFileProblems } from "../../toolkit/feature-check.ts";
+import { contractOf, drivesPolicy, namedDrives, testFilesOf } from "../contract.ts";
 import { freshUp } from "../instance.ts";
 import type { Job } from "../machine.ts";
 import { roundDir, writeAtomic } from "../store.ts";
@@ -20,13 +23,17 @@ import { contractBlock, toolkitBlock } from "./context.ts";
 import { gateStillValid } from "./gate.ts";
 import { prompt } from "./prompts.ts";
 import { headers, named as namedHeader, runRole } from "./role.ts";
-import { FEATURES_DIR, featureDrives, hasToolkit, primitives } from "./toolkit-info.ts";
+import { described, FEATURES_DIR, featureDrives, hasToolkit } from "./toolkit-info.ts";
 import type { StageHandler } from "./types.ts";
 
-type Assessment = { missing: string[]; refused: string[]; gaps: string[]; changed: string[] };
+type Assessment = { missing: string[]; refused: string[]; gaps: string[]; affected: Criterion[] };
 
-/** Which named drives don't resolve on the worktree, and which changed feature files fail the no-code lint. */
-async function assess(job: Job, named: Map<string, Record<string, string>>, prims: string[]): Promise<Assessment> {
+/** A `GAP:` value that says nothing is missing (`none`, `-`, `n/a`, a placeholder). */
+const SAYS_NONE = /^`?(none|no|n\/?a|null|nil|-+|—|\(none\)|<.*>)`?(\s|$)/i;
+
+/** What doesn't resolve on the worktree, which changed feature files are refused, and which criteria use a new or changed drive. */
+async function assess(job: Job, criteria: Criterion[], tk: { primitives: string[]; features: string[] }): Promise<Assessment> {
+  const named = namedDrives(criteria);
   const f = featureDrives(job.worktree);
   const changedFeatureFiles = (await changedFiles(job, job.base)).filter((p) => p.startsWith(`${FEATURES_DIR}/`) && p.endsWith(".md"));
   const refused: string[] = [];
@@ -34,12 +41,23 @@ async function assess(job: Job, named: Map<string, Record<string, string>>, prim
   for (const rel of changedFeatureFiles) {
     const abs = path.join(job.worktree, rel);
     if (!fs.existsSync(abs)) continue;
-    const l = lintFeatureFile(fs.readFileSync(abs, "utf8"), prims);
+    const text = fs.readFileSync(abs, "utf8");
+    const l = lintFeatureFile(text, tk.primitives);
     if (!l.ok) refused.push(`${rel}: ${l.reason}`);
-    else gaps.push(...l.gaps);
+    else {
+      gaps.push(...l.gaps);
+      refused.push(...featureFileProblems(rel, text, tk.features));
+    }
   }
-  const changed = [...named.keys()].filter((d) => f.files[d] && changedFeatureFiles.includes(f.files[d]));
-  return { missing: [...named.keys()].filter((d) => !f.drives[d]), refused, gaps: [...new Set(gaps)], changed };
+  const changedDrives = new Set([...named.keys()].filter((d) => f.files[d] && changedFeatureFiles.includes(f.files[d])));
+  const affected = criteria.filter((c) => [...namedDrives([c]).keys()].some((d) => changedDrives.has(d)));
+  const missingTests = criteria.flatMap(testFilesOf).filter((t) => !fs.existsSync(path.join(job.worktree, t)));
+  return {
+    missing: [...[...named.keys()].filter((d) => !f.drives[d]), ...[...new Set(missingTests)].map((t) => `test file ${t}`)],
+    refused,
+    gaps: [...new Set(gaps)],
+    affected,
+  };
 }
 
 export const drives: StageHandler = async (ctx) => {
@@ -48,17 +66,18 @@ export const drives: StageHandler = async (ctx) => {
   const dir = roundDir(ctx.jobDir, job.round);
   const base = { resolved: false, featureChecks: false };
   if (!(await gateStillValid(ctx.jobDir, job))) return { to: "gate", facts: { drives: { gateValid: false, ...base } } };
-  const contract = contractOf(ctx.jobDir);
-  const named = namedDrives(contract?.criteria ?? []);
-  const prims = (await primitives(job)).list;
+  const criteria = contractOf(ctx.jobDir)?.criteria ?? [];
+  const named = namedDrives(criteria);
+  const testFiles = [...new Set(criteria.flatMap(testFilesOf))];
+  let tk = await described(job);
   if (hasToolkit(job)) await freshUp(job, ctx.jobDir, ctx.log);
 
-  let a = await assess(job, named, prims);
-  let checks: FeatureCheck[] = [];
+  let a = await assess(job, criteria, tk);
+  let checks: ChainCheck[] = [];
   const runChecks = async () => {
     checks = [];
-    for (const d of a.changed)
-      checks.push(await checkFeatureDrive({ job, jobDir: ctx.jobDir, drive: d, args: named.get(d) ?? {}, log: (m) => ctx.log(`[check] ${m}`) }));
+    for (const c of a.affected)
+      checks.push(await checkChain({ job, jobDir: ctx.jobDir, criterion: c, testCmd: ctx.config.test_cmd, log: (m) => ctx.log(`[check] ${m}`) }));
     return checks.filter((c) => !c.ok);
   };
   let failing = a.missing.length || a.refused.length ? [] : await runChecks();
@@ -80,9 +99,14 @@ export const drives: StageHandler = async (ctx) => {
           {
             title: "What to write",
             body: [
-              ...a.missing.map((d) => `- missing: ${d} (args: ${Object.keys(named.get(d) ?? {}).join(", ") || "none"})`),
-              ...a.refused.map((x) => `- refused (no code in drives): ${x}`),
-              ...failing.map((c) => `- failed the engine's check (reset, run, reset, run): ${c.drive}: ${c.why} (evidence ${c.evidence.join(" ")})`),
+              ...a.missing.map((d) =>
+                d.startsWith("test file ") ? `- missing: ${d}` : `- missing: ${d} (args: ${Object.keys(named.get(d) ?? {}).join(", ") || "none"})`,
+              ),
+              ...a.refused.map((x) => `- refused: ${x}`),
+              ...failing.map(
+                (c) =>
+                  `- ${c.criterion}'s whole proof did not run end to end (the engine's check: reset, run, reset, run): ${c.why} (evidence ${c.evidence.join(" ")})`,
+              ),
               ...previousFailure(dir, attempt - 1),
             ].join("\n"),
           },
@@ -94,41 +118,50 @@ export const drives: StageHandler = async (ctx) => {
     agentText = r.text;
     agent = headers(r.text);
     job = ctx.refresh();
-    // Only feature drive files, and only ones that hold no code: a refused file never reaches the branch.
+    // Only feature drive files and the contract's test files; a feature file only if it holds no code and passes W2's rules.
     const wt = job.worktree;
     const before = await featureFilesAtHead(job);
+    tk = await described(job);
     const c = await commitWith(job, `kitchen(${job.id}): feature drives`, (f, status) => {
-      const layer = drivesPolicy(f, status);
+      const layer = drivesPolicy(testFiles)(f, status);
       if (layer) return layer;
+      if (testFiles.includes(f)) return null;
       const text = fs.readFileSync(path.join(wt, f), "utf8");
-      const l = lintFeatureFile(text, prims);
+      const l = lintFeatureFile(text, tk.primitives);
       if (!l.ok) return `refused: ${l.reason}`;
       const changed = status === "M" ? changedExistingDrive(before.get(f) ?? "", text) : null;
-      return changed ? `refused: ${changed}` : null;
+      if (changed) return `refused: ${changed}`;
+      const problems = featureFileProblems(f, text, tk.features);
+      return problems.length ? `refused: ${problems.join("; ")}` : null;
     });
     for (const x of c.refused) ctx.log(`kept off the job branch: ${x}`);
     lintRefused = c.refused.filter((x) => x.includes(": refused: "));
-    a = await assess(job, named, prims);
+    a = await assess(job, criteria, tk);
     failing = a.missing.length || a.refused.length ? [] : await runChecks();
   }
   const gateValid = await gateStillValid(ctx.jobDir, job);
   const unreachable = agent?.DRIVES === "UNREACHABLE" && unreachableCited(ctx.jobDir, agentText, job.round);
-  const missingPrimitive = namedHeader(agent?.GAP) || a.gaps[0] || undefined;
+  // A GAP counts only when it names one primitive describe doesn't have; free text is a failed write, not a gap.
+  const rawGap = agent?.GAP?.trim();
+  const agentGap = namedHeader(rawGap, tk.primitives);
+  const badGap = !!rawGap && !agentGap && !SAYS_NONE.test(rawGap);
+  const missingPrimitive = agentGap || a.gaps[0] || undefined;
   const resolved = a.missing.length === 0 && a.refused.length === 0;
   const featureChecks = resolved && failing.length === 0;
   const why = [
     ...lintRefused,
     ...a.missing.map((d) => `${d} does not resolve on HEAD`),
     ...a.refused,
-    ...failing.map((c) => `${c.drive}: ${c.why}`),
+    ...failing.map((c) => `${c.criterion}: ${c.why}`),
     ...(agent?.DRIVES === "UNREACHABLE" && !unreachable ? ["UNREACHABLE without a failed verifier run stamped this round"] : []),
+    ...(badGap ? [`GAP: ${JSON.stringify(rawGap)} names no missing primitive (one name describe lacks): not a Toolkit gap`] : []),
   ];
   writeAtomic(
     path.join(dir, `drives-check-${attempt}.md`),
     [
       `RESOLVED: ${resolved}`,
       `FEATURE-CHECKS: ${featureChecks}`,
-      ...checks.map((c) => `- ${c.ok ? "PASS" : "FAIL"} ${c.drive} ${c.evidence.join(" ")}${c.why ? `: ${c.why}` : ""}`),
+      ...checks.map((c) => `- ${c.ok ? "PASS" : "FAIL"} ${c.criterion} (whole proof, twice) ${c.evidence.join(" ")}${c.why ? `: ${c.why}` : ""}`),
       ...why.map((w) => `- ${w}`),
       "",
     ].join("\n"),

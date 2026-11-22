@@ -27,6 +27,8 @@ export type ProveResult = {
   status: ProveStatus;
   /** step-failed at a `wait` (its text never showed up) after every earlier step ran: the expected state is absent. */
   waitTimedOut?: boolean;
+  /** The text that timed-out wait polled for (after `$var` substitution). */
+  waitText?: string;
   why?: string;
   gap?: string;
   outcome: Outcome;
@@ -46,6 +48,8 @@ export type ProveOpts = {
   /** `--args`: concrete values for feature drive args, over the spec's. */
   argsOverride?: Record<string, string>;
   tag?: Record<string, string>;
+  /** Stamp the entries for this criterion name instead of the criterion's id (the drives check stamps `drives`). */
+  stampAs?: string;
   log?: (m: string) => void;
 };
 
@@ -74,8 +78,10 @@ export async function prove(o: ProveOpts): Promise<ProveResult> {
   } catch (e) {
     return res("error", { why: (e as Error).message });
   }
-  const clauses = judged ? [] : parseExpect(c.expect?.trim() ? c.expect : segs[0].kind === "toolkit" ? "ok" : "exit 0");
-  const common = { jobDir: o.jobDir, criterion: c.id, role: o.role, tag: o.tag };
+  let clauses = judged ? [] : parseExpect(c.expect?.trim() ? c.expect : segs[0].kind === "toolkit" ? "ok" : "exit 0");
+  // A cmd or test proof that crashed proves nothing: its expect holds only with exit 0, unless the expect is about the exit code.
+  if (segs[0].kind !== "toolkit" && !judged && !clauses.some((x) => x.kind === "exit")) clauses = [...parseExpect("exit 0"), ...clauses];
+  const common = { jobDir: o.jobDir, criterion: o.stampAs ?? c.id, role: o.role, tag: o.tag };
   try {
     if (segs[0].kind === "toolkit") {
       for (const s of segs) {
@@ -90,9 +96,11 @@ export async function prove(o: ProveOpts): Promise<ProveResult> {
         if (r.gap) return res("gap", { gap: r.gap, why: `the Toolkit has no primitive ${r.gap}` });
         if (!r.ok) {
           outcome.output = text(r.failedAt?.out);
+          const waitTimedOut = r.failedAt?.wait !== undefined && !r.failedAt.why;
           return res("step-failed", {
             why: `${s.name}: step "${r.failedAt?.step}" failed${r.failedAt?.why ? ` (${r.failedAt.why})` : ""}`,
-            waitTimedOut: !!r.failedAt?.step.startsWith("wait ") && !r.failedAt.why,
+            waitTimedOut,
+            ...(waitTimedOut ? { waitText: r.failedAt?.wait } : {}),
           });
         }
       }
@@ -107,6 +115,8 @@ export async function prove(o: ProveOpts): Promise<ProveResult> {
     } else {
       const s = segs[0];
       const cmd = s.kind === "cmd" ? s.cmd : o.testCmd.replaceAll("{file}", shq(s.kind === "test" ? s.file : ""));
+      // Untrusted env (stampCommand); spec-lint refused paths outside the worktree, $HOME, env dumps and network tools.
+      // W2 sandbox: run this under the W2 sandbox-exec profile (no network, writes only in the worktree) once it is on main.
       const r = await stampCommand({ ...common, name: `${c.id} ${s.kind}`, cmd, timeoutSec: o.timeoutSec ?? 600 });
       evidence.push(r.id);
       outcome.exit = r.exit;

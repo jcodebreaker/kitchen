@@ -42,7 +42,8 @@ export type DriveOpts = {
   log?: (msg: string) => void;
 };
 
-export type StepResult = { line: number; step: string; ok: boolean; out: unknown; evidence: string[]; why?: string };
+/** `wait`: the text a wait step polled for (after `$var` substitution). */
+export type StepResult = { line: number; step: string; ok: boolean; out: unknown; evidence: string[]; why?: string; wait?: string };
 export type DriveResult = {
   ok: boolean;
   drive: string;
@@ -241,7 +242,7 @@ async function runLocked(o: DriveOpts): Promise<DriveResult> {
       { wait: { text, target: s.target, attr: s.attr, timeoutMs: s.timeoutMs }, polls, last: record(last) },
     );
     log(`${e.id} ${hit ? "ok  " : "FAIL"} ${label} in ${s.target}${s.attr ? `@${s.attr}` : ""} after ${polls.length} poll(s)`);
-    return { line: s.line, step: label, ok: hit, out: last.json?.out, evidence: [e.id] };
+    return { line: s.line, step: label, ok: hit, out: last.json?.out, evidence: [e.id], wait: text };
   };
 
   const runOne = (s: PrimStep | WaitStep, attempt: number) => (s.kind === "prim" ? runPrim(s, attempt) : runWait(s, attempt));

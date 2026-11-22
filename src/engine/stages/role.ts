@@ -9,6 +9,7 @@ import path from "node:path";
 import type { AgentRequest, Tier } from "../../agents/adapter.ts";
 import { buildAgentEnv } from "../../agents/env.ts";
 import { bridgeServer } from "../../bridge/mcp.ts";
+import { gapName } from "../../checks/verdict.ts";
 import { modelFor } from "../../config.ts";
 import { kitchenHome } from "../../home.ts";
 import { appendLedger } from "../../ledger/append.ts";
@@ -24,14 +25,11 @@ const AUTH = /not logged in|unauthori[sz]ed|authentication|invalid api key|401|p
 export type RoleRun = { text: string; line: string; reused: boolean; run: AgentRunRef };
 
 /**
- * A header value that names something, or undefined: an agent that writes `GAP: none`,
- * `GAP: -` or `GAP: n/a` names no gap. Only a primitive-like word counts. Pure.
+ * The missing primitive a `GAP:` header names, or undefined (verdict.ts gapName): `none`,
+ * free text ("the `read` primitive fails…") and a primitive describe already lists name
+ * no gap. Pure.
  */
-export function named(v: string | undefined): string | undefined {
-  const t = (v?.trim().split(/[\s,;(]+/)[0] ?? "").replace(/^`|`$/g, "");
-  if (!t || /^(none|no|n\/?a|null|nil|-+|—|false|0|\(none\)|<.*>)$/i.test(t)) return undefined;
-  return /^[a-z][a-z0-9_-]*$/i.test(t) ? t : undefined;
-}
+export const named = (v: string | undefined, known: readonly string[] = []) => gapName(v, known);
 
 /** `KEY: value` header lines of a role file (first occurrence wins). Pure. */
 export function headers(text: string): Record<string, string> {

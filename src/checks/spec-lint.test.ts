@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "vitest";
 import { changedExistingDrive, lintFeatureFile } from "./feature-lint.ts";
 import { gateOutcome } from "./gate.ts";
-import { riskFloor } from "./risk-floor.ts";
+import { riskFloor, seedTouched } from "./risk-floor.ts";
 import { lintSpec, newDrivesOf } from "./spec-lint.ts";
 
 const toolkit = { primitives: ["login", "press", "read", "open", "reload", "screenshot", "http", "type"], drives: { "settings.toggle-dark": ["user"] } };
@@ -55,11 +55,70 @@ test("rule 2: primitives from describe; drives exist with their args, or are dec
   assert.match(lint(spec(C("C1", "x", "toolkit read --target body --id p2", "ok"))).reason ?? "", /set by the engine/);
 });
 
-test("rule 3: judged only for a visual or wording criterion; mechanical expects must parse", () => {
-  assert.match(lint(spec(C("C1", "Saving works", "toolkit settings.toggle-dark --user alice", "judged"))).reason ?? "", /only for a visual or wording/);
-  assert.ok(lint(spec(C("C1", "The error message reads clearly", "toolkit settings.toggle-dark --user alice", "judged"))).ok);
+test("rule 3: judged only for layout, appearance, style, tone or copy quality, with a screenshot; mechanical expects must parse", () => {
+  const shot = "toolkit settings.toggle-dark --user alice ; toolkit screenshot --name s";
+  assert.match(lint(spec(C("C1", "Saving works", shot, "judged"))).reason ?? "", /only for layout/);
+  for (const text of ["The error message says Saved", "The button is labelled Save", "The header reads Welcome", "The column is 200px width"])
+    assert.match(lint(spec(C("C1", text, shot, "judged"))).reason ?? "", /only for layout/, `${text}: mechanical, not judged`);
+  for (const text of ["The error copy is friendly in tone", "The settings layout is aligned", "The header looks right in dark mode"])
+    assert.ok(lint(spec(C("C1", text, shot, "judged"))).ok, text);
+  assert.match(
+    lint(spec(C("C1", "The header looks right", "toolkit settings.toggle-dark --user alice", "judged"))).reason ?? "",
+    /must take a screenshot/,
+    "a judged proof with nothing to look at",
+  );
+  const viaDrive = lintSpec(spec(C("C1", "The header looks right", "toolkit settings.toggle-dark --user alice", "judged")), {
+    kind: "feature",
+    toolkit: { ...toolkit, screenshots: ["settings.toggle-dark"] },
+  });
+  assert.ok(viaDrive.ok, "a drive that takes a screenshot counts");
+  const newDrive = `${spec(C("C1", "The header looks right", "toolkit settings.dark-shot --user alice", "judged"))}\n## New drives\n- settings.dark-shot: sign in, toggle dark, screenshot the header\n`;
+  assert.ok(lint(newDrive).ok, "a new drive described as taking a screenshot counts");
   assert.match(lint(spec(C("C1", "The page looks right", "cmd true", "judged"))).reason ?? "", /needs a toolkit proof/);
   assert.match(lint(spec(C("C1", "x", "toolkit settings.toggle-dark --user alice", "theme is dark"))).reason ?? "", /C1: expect/);
+});
+
+test("rule 3: a negative expect needs an earlier step of the same proof that creates what must not show", () => {
+  const leak = "toolkit login --as alice ; toolkit open --path /projects";
+  assert.match(
+    lint(spec(C("C1", "Alice doesn't see Bob's project", leak, 'text "Bob plan" not visible'))).reason ?? "",
+    /holds whenever the thing never existed/,
+  );
+  const made = `${spec(
+    C(
+      "C1",
+      "Alice doesn't see Bob's project",
+      'toolkit projects.make --user bob-admin --name "Bob plan" ; toolkit login --as alice ; toolkit open --path /projects',
+      'text "Bob plan" not visible and text "Onboarding" visible',
+    ),
+  )}\n## New drives\n- projects.make: sign in as user, create a project named name\n`;
+  assert.equal(lint(made).reason, undefined, "created by an earlier step");
+  assert.match(lint(spec(C("C1", "x", "toolkit settings.toggle-dark --user alice", '$theme != "Light"'))).reason ?? "", /never existed/);
+  assert.match(lint(spec(C("C1", "x", leak, 'not contains "secret"'))).reason ?? "", /never existed/);
+  assert.ok(lint(spec(C("C1", "x", "cmd node --check server.js", "exit != 1"))).ok, "an exit code is not a negative expect");
+});
+
+test("rule 4: a cmd proof stays in the worktree: no outside path, home, env dump or network tool", () => {
+  for (const cmd of [
+    "cat /etc/passwd",
+    "cat ../other/secret",
+    "ls ~",
+    "echo $HOME",
+    "env",
+    "printenv AWS_KEY",
+    "curl http://example.com",
+    "wget x",
+    "nc -l 9",
+    "ssh host",
+    "scp a b:c",
+    "node x.js > /tmp/out",
+    "node x.js >../out",
+    "/usr/bin/curl x",
+  ])
+    assert.match(lint(spec(C("C1", "x", `cmd ${cmd}`, "exit 0"))).reason ?? "", /cmd proof is refused/, cmd);
+  for (const cmd of ["node --check server.js", "node x.js > out.txt 2>/dev/null", "npm test -- test/a.test.js"])
+    assert.ok(lint(spec(C("C1", "x", `cmd ${cmd}`, "exit 0"))).ok, cmd);
+  assert.match(lint(spec(C("C1", "x", "test ../outside.test.js"))).reason ?? "", /test proof is refused/);
 });
 
 test("rule 4: nothing touches a protected path or the Toolkit's primitives", () => {
@@ -74,6 +133,7 @@ test("rule 5: a bug needs a repro: true criterion with a mechanical expect", () 
   assert.match(lint(spec(C("C1", "x", p, 'contains "theme-dark"')), "bug").reason ?? "", /repro: true/);
   assert.ok(lint(spec(C("C1", "x", p, 'contains "theme-dark"', true)), "bug").ok);
   assert.ok(!lint(spec(C("C1", "The toggle looks right", p, "judged", true)), "bug").ok, "a judged repro can't fail mechanically");
+  assert.match(lint(spec(C("C1", "x", p, 'contains "theme-dark"', true)), "feature").reason ?? "", /only for a bug/, "repro: true on a feature");
 });
 
 test("rule 6: ids are unique", () => {
@@ -111,6 +171,10 @@ test("risk floor: high_paths and diff size, never lower than it was", () => {
   assert.equal(riskFloor([{ file: "db/migrations/003.sql", lines: 2 }], cfg), "high");
   assert.equal(riskFloor([{ file: "src/auth/login.ts", lines: 1 }], cfg), "high");
   assert.equal(riskFloor([], cfg), "low");
+  // A builder diff touching seed data or migrations: high, and listed for review (gate writes seed-diff.md).
+  const seeds = { ...cfg, seed_paths: ["db/**", "**/*seed*"] };
+  assert.equal(riskFloor([{ file: "db/002_seed.sql", lines: 1 }], seeds), "high");
+  assert.deepEqual(seedTouched([{ file: "db/003_names.sql" }, { file: "server.js" }], seeds), ["db/003_names.sql"]);
 });
 
 test("gate is pinned to HEAD", () => {

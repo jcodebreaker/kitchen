@@ -9,7 +9,8 @@
 // reports whether its mechanical expect holds: the same path as `kitchen drive <job> <C>`.
 // A verifier's feature drive run for a criterion with args other than the spec's
 // is logged against the spec (rounds/<N>/args-deltas.jsonl) and listed in the Verdict.
-// Everything else (other jobs, other slots, raw flags, paths) is refused.
+// Everything else (other jobs, other slots, raw flags, paths) is refused. Every
+// result passes through the redactor (proof/redact.ts) before the agent sees it.
 // A tiny hand-rolled JSON-RPC 2.0 server: newline-delimited messages on stdin/stdout.
 import fs from "node:fs";
 import path from "node:path";
@@ -26,6 +27,7 @@ import { DriveFormatError } from "../proof/drive-format.ts";
 import { readJob } from "../proof/job.ts";
 import { ManifestTampered } from "../proof/manifest.ts";
 import { prove } from "../proof/prove.ts";
+import { redact } from "../proof/redact.ts";
 import { runToolkit } from "../toolkit/run.ts";
 
 const ROLES = ["builder", "verifier", "smith", "spec", "repro", "ux", "ui", "setup"] as const;
@@ -110,7 +112,8 @@ const RESTART_TOOL = {
 };
 const toolsFor = (role: string) => (role === "builder" ? [...TOOLS, CHECKS_TOOL, RESTART_TOOL] : TOOLS);
 
-const text = (o: unknown, isError = false): ToolResult => ({ content: [{ type: "text", text: JSON.stringify(o) }], ...(isError ? { isError } : {}) });
+/** Every tool result goes through the redactor: evidence text (a proof's output, a check's tail) can carry secrets. */
+const text = (o: unknown, isError = false): ToolResult => ({ content: [{ type: "text", text: redact(JSON.stringify(o)) }], ...(isError ? { isError } : {}) });
 
 export function makeBridge(o: BridgeOpts) {
   if (!JOB_ID.test(o.job)) throw new Error(`bad job id ${JSON.stringify(o.job)}`);
