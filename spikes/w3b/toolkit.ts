@@ -13,9 +13,85 @@ import { CLAUDE_BIN, check, finish, jobDir, jobOf, kitchenContainers, ledger, st
 import { editShim, git, githubFixture, HERE, mergeOnRemote, shimState } from "./lib.ts";
 
 const tool = process.argv[2];
-if (tool !== "fake" && tool !== "claude") throw new Error("usage: toolkit.ts fake|claude <scratch>");
+if (tool !== "fake" && tool !== "claude" && tool !== "buggy") throw new Error("usage: toolkit.ts fake|claude|buggy <scratch>");
 const root = path.resolve(process.argv[3] ?? path.join(HERE, ".work"));
 fs.mkdirSync(root, { recursive: true });
+if (tool === "buggy") {
+  await buggyBase(root);
+  finish("w3b toolkit (buggy base)");
+  process.exit(0);
+}
+
+/**
+ * Review fix B1 (+ the toolkit → toolkit retry), scripted smith. The base has fixture A's planted
+ * dark-mode bug, which the base's own `settings.toggle-dark` drive exercises: that drive fails on the
+ * base with or without any Toolkit change. The smith's first try leaves a stub `sql` (the contract
+ * probe refuses it) → toolkit → toolkit; the second try, started from the stub and told why, writes
+ * the real one. Its check passes with the base's failing drive tolerated as known → Toolkit PR → paused.
+ */
+async function buggyBase(root: string) {
+  const agent = `{ tool: fake, script: ${JSON.stringify(path.join(HERE, "fake-agent.ts"))} }`;
+  const { r, shim } = githubFixture(root, "toolkit-buggy", { agent, bug: true });
+  const id = ticket(
+    r,
+    "Record when each user last signed in: every successful sign-in stores the time on the user (a last_login_at timestamp).\n\nscenario: primitive-retry",
+  );
+  const log = path.join(root, "toolkit-buggy.log");
+  fs.writeFileSync(log, "");
+  const base0 = jobOf(r, id).base;
+  stepUntil(r, id, ["paused", "done", "needs-human", "rejected", "needs-info"], { max: 40, log });
+  const j = jobOf(r, id);
+  const w = stagesOf(r, id).join(" → ");
+  check(
+    "buggy: spec → toolkit → toolkit (the second try) → spec … → ready → paused(toolkit-pr)",
+    /spec → toolkit → toolkit → spec/.test(w) && j.stage === "paused" && j.waitFor === "toolkit-pr",
+    `${w} [${j.stage} ${j.waitFor ?? ""} ${j.pausedReason ?? ""}]`,
+  );
+  const baseFile = path.join(r.dir, ".kitchen", "toolkit-base-checks", `${base0}.json`);
+  const bc = fs.existsSync(baseFile) ? (JSON.parse(fs.readFileSync(baseFile, "utf8")) as { ok: boolean; failing: string[] }) : null;
+  check(
+    "buggy: the base's own check ran once per base sha and lists the drive the planted bug fails",
+    !!bc?.failing.includes("settings.toggle-dark"),
+    JSON.stringify(bc),
+  );
+  const ran = (fs.readFileSync(log, "utf8").match(/the base's own check at/g) ?? []).length;
+  check("buggy: cached: the second try reused it (one base run for two smith tries)", ran === 1, `${ran} runs`);
+  const rd = (n: number) => {
+    const f = path.join(jobDir(r, id), "rounds", "1", `toolkit-check-${n}.json`);
+    return fs.existsSync(f) ? (JSON.parse(fs.readFileSync(f, "utf8")) as { ok: boolean; failed?: string; known?: string[]; sha: string }) : null;
+  };
+  const c1 = rd(1);
+  const c2 = rd(2);
+  check(
+    "buggy: try 1 (the stub) failed the engine's check at the contract probe, not at the base's bug",
+    c1?.ok === false && c1.failed === "contract probe",
+    JSON.stringify({ ok: c1?.ok, failed: c1?.failed, known: c1?.known }),
+  );
+  check(
+    "buggy: try 2 passed with settings.toggle-dark tolerated as known (it fails on the base too)",
+    c2?.ok === true && !!c2.known?.includes("settings.toggle-dark") && c2.sha === j.toolkitRef,
+    JSON.stringify({ ok: c2?.ok, known: c2?.known }),
+  );
+  check(
+    "buggy: try 2's branch starts from try 1's commit",
+    (() => {
+      try {
+        git(r.dir, "merge-base", "--is-ancestor", `kitchen/toolkit/${id}-1`, `kitchen/toolkit/${id}-2`);
+        return true;
+      } catch {
+        return false;
+      }
+    })(),
+  );
+  check("buggy: two smith attempts", j.smith.attempts === 2, String(j.smith.attempts));
+  const tpr = shimState(shim).prs.find((p) => p.head === `kitchen/toolkit/${id}-2`);
+  check(
+    "buggy: the Toolkit PR names the drive that already fails on the base",
+    !!tpr && /Known on the base:.*settings\.toggle-dark/.test(tpr.body),
+    tpr?.body.split("\n").find((l) => l.includes("Known")) ?? "no PR",
+  );
+  check("buggy: no container of this job left running", kitchenContainers(j.slotId).length === 0);
+}
 const agent =
   tool === "fake"
     ? `{ tool: fake, script: ${JSON.stringify(path.join(HERE, "fake-agent.ts"))} }`

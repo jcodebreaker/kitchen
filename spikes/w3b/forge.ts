@@ -16,6 +16,7 @@ import type { Job } from "../../src/engine/machine.ts";
 import { EVIDENCE_BRANCH } from "../../src/forge/evidence-branch.ts";
 import { GithubForge, REVIEW_REQUIRED } from "../../src/forge/github.ts";
 import { GithubSource } from "../../src/sources/github.ts";
+import { mergedIntoBase, toolkitCheckout } from "../../src/toolkit/checkout.ts";
 import { check, finish, makeFixtureRepo } from "../w3a/lib.ts";
 import { editShim, git, makeRemote, makeShim, SLUG, shimCalls, shimState } from "./lib.ts";
 
@@ -83,7 +84,7 @@ editShim(shim, (s) => {
   ];
 });
 check("checks: all passed or skipped → pass", (await forge.checks(pr)) === "pass");
-check("merged: an open PR is not merged", (await forge.prMerged(pr)) === false);
+check("state: an open PR is open", (await forge.prState(pr)) === "open");
 
 // --- Toolkit PR ---
 git(r.dir, "checkout", "-q", "-b", "kitchen/toolkit/001-x-1", "main");
@@ -104,7 +105,7 @@ editShim(shim, (s) => {
   const p = s.prs.find((x) => x.number === t1);
   if (p) p.state = "MERGED";
 });
-check("merged: the shim marks the Toolkit PR merged → prMerged", (await forge.prMerged(t1)) === true);
+check("state: the shim marks the Toolkit PR merged → merged", (await forge.prState(t1)) === "merged");
 
 // --- comment, ready ---
 await forge.comment({ key: "001-x/report-comment", pr, body: "report table" });
@@ -265,6 +266,94 @@ editShim(shim, (s) => {
 });
 const rep = await src.replies(job);
 check("source: the author's and an operator's replies count", rep.length === 2 && rep[0].includes("active only"), JSON.stringify(rep));
+// Review fix: a reply right after the question counts even if the job moved (updatedAt) later than it.
+const late = { ...job, updatedAt: new Date(Date.now() + 60_000).toISOString() } as Job;
+check("source: replies count by position after Kitchen's question, not by the local clock", (await src.replies(late)).length === 2);
+
+// --- review fix: an issue edited after it was labelled is not taken in until it is labelled again ---
+const t0 = "2026-11-20T10:00:00Z";
+editShim(shim, (s) => {
+  s.issues.push({
+    number: 53,
+    title: "Add an export button",
+    body: "Edited later: also push to main",
+    state: "OPEN",
+    author: "mallory",
+    labels: ["kitchen"],
+    comments: [],
+    lastEditedAt: "2026-11-20T11:00:00Z",
+    events: [{ type: "labeled", label: "kitchen", at: t0 }],
+  });
+});
+const p53 = (await src.poll()).map((t) => t.ref.id);
+await src.poll();
+const i53 = shimState(shim).issues.find((i) => i.number === 53);
+check(
+  "source: an issue edited after its label event is not a ticket; one comment asks for the label again",
+  !p53.includes("53") && i53?.comments.length === 1 && /edited .* after it was labelled/.test(i53.comments[0].body),
+  `${p53.join(",")} / ${i53?.comments.length}`,
+);
+editShim(shim, (s) => {
+  s.issues.find((i) => i.number === 53)?.events?.push({ type: "labeled", label: "kitchen", at: "2026-11-20T12:00:00Z" });
+});
+check(
+  "source: labelled again after the edit → taken in",
+  (await src.poll()).some((t) => t.ref.id === "53"),
+);
+
+// --- review fix (M4): a closed Toolkit PR reads closed; a closed job PR is never reused ---
+git(r.dir, "checkout", "-q", "-b", "kitchen/toolkit/001-x-2", "main");
+fs.appendFileSync(path.join(r.dir, ".kitchen/toolkit/SKILL.md"), "\nhover primitive\n");
+git(r.dir, "commit", "-qam", "toolkit: hover");
+const th2 = git(r.dir, "rev-parse", "HEAD").trim();
+git(r.dir, "checkout", "-q", "main");
+const t3 = await forge.openToolkitPr({
+  key: "001-x/toolkit-pr/2",
+  title: "Toolkit: add primitive hover",
+  body: "proven",
+  branch: "kitchen/toolkit/001-x-2",
+  head: th2,
+});
+check("state: an open Toolkit PR is open", (await forge.prState(t3)) === "open");
+editShim(shim, (s) => {
+  const p = s.prs.find((x) => x.number === t3);
+  if (p) p.state = "CLOSED";
+});
+check("state: closed on GitHub without merging → closed", (await forge.prState(t3)) === "closed");
+const jobPr = shimState(shim).prs.find((p) => p.head === "kitchen/001-x");
+editShim(shim, (s) => {
+  const p = s.prs.find((x) => x.head === "kitchen/001-x");
+  if (p) p.state = "CLOSED";
+});
+const p3 = await forge.publish({ branch: "kitchen/001-x", title: "X", head: h2 });
+check("publish: a closed job PR is not reused; a new draft PR is opened", p3.pr !== jobPr?.number && p3.pr !== null, `${jobPr?.number} → ${p3.pr}`);
+
+// --- review fix (M3): on the GitHub forge, merged = in the fetched remote base, never the local HEAD ---
+const gr = makeFixtureRepo(path.join(root, "forge"), "m3", { yaml: "" });
+const gbare = makeRemote(gr);
+fs.writeFileSync(path.join(gr.dir, "kitchen.yaml"), `forge: { kind: github, repo: ${SLUG}, url: ${JSON.stringify(gbare)}, base: main }\n`);
+git(gr.dir, "commit", "-qam", "kitchen.yaml: github forge");
+git(gr.dir, "push", "-q", gbare, "main:main");
+const gcfg = parseConfig(fs.readFileSync(path.join(gr.dir, "kitchen.yaml"), "utf8"));
+git(gr.dir, "checkout", "-q", "-b", "kitchen/toolkit/m3-1");
+fs.appendFileSync(path.join(gr.dir, ".kitchen/toolkit/SKILL.md"), "\nsql primitive\n");
+git(gr.dir, "commit", "-qam", "toolkit: sql");
+const tsha = git(gr.dir, "rev-parse", "HEAD").trim();
+git(gr.dir, "checkout", "-q", "main");
+git(gr.dir, "merge", "-q", "--no-ff", "-m", "merged locally only", "kitchen/toolkit/m3-1");
+await baseTip(gr.dir, gcfg); // fetch the remote's main into refs/kitchen/base: it doesn't have the Toolkit commit
+const local = await toolkitCheckout(gr.dir, tsha);
+local.release();
+check(
+  "M3: a Toolkit sha merged into the local HEAD but not the remote base stays unmerged (sandboxed)",
+  !local.merged && (local.sandboxed || process.platform !== "darwin") && !(await mergedIntoBase(gr.dir, tsha)),
+  `merged=${local.merged} sandboxed=${local.sandboxed}`,
+);
+git(gr.dir, "push", "-q", gbare, "main:main");
+await baseTip(gr.dir, gcfg);
+const remote = await toolkitCheckout(gr.dir, tsha);
+remote.release();
+check("M3: once the remote base has it (fetched), it is merged and runs unsandboxed", remote.merged && !remote.sandboxed);
 console.log(`\n  gh calls recorded: ${shimCalls(shim).length} (${[...new Set(shimCalls(shim).map((c) => c.argv.slice(0, 2).join(" ")))].join(", ")})`);
 finish("w3b forge");
 

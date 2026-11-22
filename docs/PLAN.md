@@ -125,8 +125,8 @@ A paused job **releases its slot**. The runner checks `waitFor` on every tick an
 | waitFor | clears when |
 |---|---|
 | `backoff` | the backoff time has passed |
-| `toolkit-pr` | the forge shows the Toolkit PR merged |
-| `ci` | `gh pr checks` has finished |
+| `toolkit-pr` | the forge shows the Toolkit PR merged, or closed without merging (Ready then sends the job to needs-human) |
+| `ci` | `gh pr checks` has finished; inside Ready's window (`until`: no checks yet after a push, or a cancelled run) only a pass or fail ends it early |
 | `toolkit-ticket` | that ticket is closed |
 
 ### Transition table (machine.ts)
@@ -157,11 +157,13 @@ A paused job **releases its slot**. The runner checks `waitFor` on every tick an
 | verify | verify | INCONCLUSIVE: one free retry on a fresh instance (`down`, `reset`, `up`). Does not cost a round |
 | verify | paused (toolkit-ticket) | INCONCLUSIVE twice. A Toolkit ticket is filed and the job waits (doesn't cost a round). If the ticket is closed and the job still comes back INCONCLUSIVE twice more, it goes to needs-human |
 | verify | toolkit | TOOLKIT-GAP with `doctor=ok` and the missing primitive named, smith.attempts < 2 |
-| toolkit | drives / spec | the smith's Toolkit PR passes `toolkit check` on main plus that PR. `toolkitRef` is set to that sha, and the job goes back to `returnTo`: a job that came from `spec` returns to `spec`, one from `repro` returns to `repro`, and one from `drives` or `verify` returns to `drives`, because the drive may need rewriting |
+| toolkit | drives / spec | the smith's Toolkit PR passes `toolkit check` on main plus that PR (the contract probe, every drive using the new primitive, and every drive that passes on the base; a drive that already fails on the base, from the base's own check cached per base sha, is tolerated as known). `toolkitRef` is set to that sha, and the job goes back to `returnTo`: a job that came from `spec` returns to `spec`, one from `repro` returns to `repro`, and one from `drives` or `verify` returns to `drives`, because the drive may need rewriting |
+| toolkit | toolkit | the engine's check of the smith's commit fails (or the smith gives up), smith.attempts < 2: the second try starts from the first try's commit and reads `toolkit-check-<n>.json`. After that, needs-human (smith limit) |
 | review | ready / build | all lenses PASS / a blocking finding the reviewer can show |
-| ready | report | synced with base, CI green (`gh pr checks`), Toolkit PR (if any) merged, gate PASS. Re-verify on the synced HEAD only if base moved since verify |
+| ready | report | synced with base, HEAD pushed (Ready publishes it: the drives stage commits after build's push), CI green on it (`gh pr checks`; no checks is green only when the repo has no workflow files or `ci_grace_sec` passed since the push; a cancelled run is read once more), Toolkit PR (if any) merged, gate PASS. Re-verify on the synced HEAD only if base moved since verify |
+| ready | needs-human | the Toolkit PR was closed without merging (the reason names it) |
 | ready | paused (ci / toolkit-pr) | CI still running, or the Toolkit PR not merged yet |
-| ready | build | sync conflict, red CI, or a re-check that fails |
+| ready | build | sync conflict, red CI, or a re-check that fails. In build, a resolution the layer rules would cut a base change from aborts the merge → needs-human |
 | ready | gate | gate is no longer PASS on this HEAD (commits since it touch more than `features/*.md`): Gate runs again |
 | paused | `pausedFrom` | the `waitFor` condition clears |
 | report | done | report.html rendered with every id resolved. Evidence branch pushed, PR comment posted |
@@ -786,7 +788,7 @@ History: all of these are now part of §2 and §3, which are the current contrac
 | The smith edited the job worktree and the engine stripped its work | The smith works in its own engine worktree on `kitchen/toolkit/<job>-<n>` from the job's Toolkit, with the setup bridge on that worktree (`toolkit`, `toolkit_check`). The engine commits only `.kitchen/toolkit/` outside `features/`, runs the full `toolkit check` of that commit (sandboxed), requires describe to list the gap, opens the Toolkit PR through the forge, and pins `toolkitRef` to the commit. A failed check is written for the smith's second try (`toolkit-check-<n>.json`) |
 | A spec could not name a primitive that doesn't exist, so the toolkit stage was unreachable from spec | `roles/_proofs.md`: a behaviour only a missing primitive can observe names it as a plain segment (generic, read-only), never a workaround; spec-lint sends the job to the smith (the W3b real run named `sql`) |
 | Ready assumed "synced, base unmoved" | Ready: an open Toolkit PR pauses first; then the engine merges the base tip into the job branch (`mergeRev`; a merge driver in the config is refused). Conflict → build: the merge is restarted with markers for the builder and concluded by the engine's commit (a file only the base changed passes the builder's layer rules when it is exactly the base's version). Clean merge → `base` and `toolkitRef` move to the tip, the branch is pushed, and Gate, drives, Verify (and review) run again. Red CI → build with `ci.md` for the builder. Review runs again after a sync too (verify → review is the only exit); cheap on the medium model, left as is |
-| The base for a GitHub repo is the remote's, not the main checkout's | `refs/kitchen/base`, fetched from `forge.url` by engine git; a Toolkit sha is merged when it is in that ref or HEAD |
+| The base for a GitHub repo is the remote's, not the main checkout's | `refs/kitchen/base`, fetched from `forge.url` by engine git; a Toolkit sha is merged when it is in that ref (GitHub forge; never the local HEAD, W3b review) or in HEAD (local forge) |
 | GitHub forge | `src/forge/github.ts`: `gh` with the engine's env; draft PR found by branch; labels (`kitchen:review-required` on high risk, `kitchen-toolkit`); `gh pr checks` folded to none/pending/pass/fail (exit 8 = pending); comments and Toolkit tickets idempotent by a hidden key marker; ready-for-review at report. Pushes and fetches only through engine git to the explicit URL (ADR 0006 W3b section) |
 | Evidence branch on GitHub | W4's `evidence-branch.ts` builds the commit; the GitHub forge fetches the remote branch first, commits on top, pushes to the explicit URL, never forced. Engine git on the main repo runs with `cwd` = its gitdir, inside the work tree, so path-limited commands need `--full-tree`/`:(top)` (pruning matched nothing before) |
 | Issues as tickets | `src/sources/github.ts`: open issues with `source.label` (the trust boundary); needs-info question as an idempotent comment; replies count only from the issue's author or `source.operators`, never Kitchen's own |
@@ -796,8 +798,24 @@ History: all of these are now part of §2 and §3, which are the current contrac
 | Proof lines pass only strings, so a CLI Toolkit's list arg (`cli --argv`) took "done 1 2" as one word (smoke run 1: 3 of 3 fixture B tickets missed) | The template's `cli` splits a string argv like a shell line (`toolkit-template/lib/terminal.mjs`, and fixture B's bench Toolkit) |
 | Benchmark | `bench/set.yaml` (14 tuned on A, B, C; 6 held-out on D), hidden oracles in the spec format run through `prove()` on the final branch, `kitchen bench smoke|full|tuned|heldout`, `kitchen report --bench`. Every oracle is checked to FAIL on the base, and planted bugs' oracles to PASS once the plant is taken out (`spikes/w3b/oracles.ts`) |
 | Held-out set: 6 replays of real superchat-lite PRs | superchat-lite's stack is over this laptop's Docker budget (W2), so the held-out set is 6 tickets on fixture D, which no role prompt was tuned on. **Owed:** the superchat-lite replay set and the superchat-lite end-to-end ticket of the W3b exit, on a machine that can run its stack |
-| §0.2 on Claude (3 runs per ticket, the held-out set on D) | **Measured** (pre-W4 review/report): 53/60 correct = 88% (≥85% ✓); 0 false FAILs on controls ✓; held-out 94% vs tuned 86% ✓; traps all 3 runs ✗ (b-done-many and c-unused-invites 2/3, the misses ended needs-human; no `done` ever failed its oracle). **Not measurable here:** §0.3 (Codex quota until 2026-12-21), the superchat-lite replay held-out set, and the INCONCLUSIVE/flake rate per drive (not tallied by the bench yet) |
-| Not done | The real GitHub run (`spikes/w3b/github-live.ts`, needs the user's approval and a throwaway repo); Docker bind-mount rule (ADR 0008); dogfooding |
+| §0.2 on Claude (3 runs per ticket, the held-out set on D) | **Measured** (pre-W4 review/report): 53/60 correct = 88% (≥85% ✓); 0 false FAILs on controls ✓; held-out 94% vs tuned 86% ✓; traps all 3 runs ✗ (b-done-many and c-unused-invites 2/3, the misses ended needs-human; no `done` ever failed its oracle). **Not measurable here:** §0.3 (Codex quota until 2026-12-21), the superchat-lite replay held-out set, and the INCONCLUSIVE/flake rate per drive, which the bench now tallies (`src/bench/tally.ts`, a Drives table in each results file) but has not measured yet: the next bench run gives the first numbers |
+| Not done | The real GitHub run (`spikes/w3b/github-live.ts`, needs the user's approval and a throwaway repo); dogfooding. (The Docker bind-mount rule of ADR 0008 was built in the W3b review round, below) |
+
+## Changes from the Wave 3b review (spikes/w3b/results.md "Review fixes")
+
+| Finding | Change |
+|---|---|
+| The smith's proof ran the full check against the base app: a bug in the base that an existing drive exercises failed it (w3a `gap` 2/5) | The toolkit stage runs the base's own check once per base sha (drives only, failures listed, `.kitchen/toolkit-base-checks/<sha>.json`). The smith's check must pass the contract probe, every drive that uses the new primitive and every drive that passes on the base; drives that already fail on the base are tolerated as known (`toolkit check` `tolerate`), named in the Toolkit PR. A base that can't run its drives is an engine error. `toolkit → toolkit` while smith.attempts < 2: the second try starts from the first commit and reads `toolkit-check-<n-1>.json` |
+| Ready read CI for an older pushed head (the drives stage commits after build's push) | Ready publishes HEAD (`publish/<head>`) before reading checks; `ready → report` needs `pushed`; `job.pr` follows the PR HEAD was published to |
+| A sync resolution the layer rules refuse dropped the base's change silently | Any refused base-changed file aborts the sync merge → needs-human naming the files |
+| `mergedIntoBase` trusted the local HEAD on the GitHub forge | GitHub forge: only the fetched `refs/kitchen/base` (`mergeBaseRef`) |
+| A closed unmerged Toolkit PR paused the job forever; a closed job PR could be reused | `Forge.prState` (open/merged/closed); closed → needs-human with the reason (`ready > needs-human`); `prFor` finds open PRs only |
+| Sandboxed Toolkit code could `docker run -v $HOME:/h` (ADR 0008 residual) | A validating Engine-API proxy outside the sandbox (binds outside the repo, its worktrees and temp, privileged, host pid/network/ipc/userns, dangerous caps, privileged exec refused), the daemon's sockets denied inside the sandbox, a `docker` shim for readable errors. TCP endpoints, existing containers and merged Toolkits stay outside it (ADR 0008) |
+| a-primitive's oracle was a grep | It signs in through the app and reads `users.last_login_at` in the oracle app's Postgres (a `cmd` proof over loopback, `{port:<i>}` filled from the slot); a refused sign-in must leave it NULL |
+| CI with no checks yet / cancelled | No checks after a push is green only without workflow files, else after `ci_grace_sec` (default 120); a cancelled run is read once more, twice is red |
+| GitHub issues could be edited after the label (the trust boundary); `since: job.updatedAt` skipped early replies | An issue edited after its latest label event is not taken in (one comment asks for the label again); replies count by position after Kitchen's question |
+| Bench | a-too-big: needs-info / rejected only and no build stage (`expect.never`); INCONCLUSIVE/flake per drive tallied; oracle infrastructure errors retried once; results labelled with the Kitchen sha |
+| Evidence pruning read as deletion | ADR 0006: pruning removes a folder from the branch tip only; history keeps it; redaction is the protection |
 
 ## Changes from the Wave 3a review (round 2)
 

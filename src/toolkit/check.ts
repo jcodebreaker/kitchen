@@ -33,7 +33,8 @@ import {
 import { runToolkit, type ToolkitCall } from "./run.ts";
 import { acquireSlot, releaseSlot, type Slot } from "./slots.ts";
 
-export type CheckStep = { step: string; ok: boolean; secs: number; detail?: string; tail?: string };
+/** `known`: a drive that failed but was tolerated (`CheckOpts.tolerate`: it fails on the base too). */
+export type CheckStep = { step: string; ok: boolean; secs: number; detail?: string; tail?: string; known?: boolean };
 export type CheckReport = {
   ok: boolean;
   failed?: string;
@@ -46,6 +47,8 @@ export type CheckReport = {
   prepareSecs?: number;
   parallel: boolean;
   secs: number;
+  /** Drives that failed but were tolerated (`CheckOpts.tolerate`), each named once. */
+  tolerated: string[];
 };
 
 export type CheckOpts = {
@@ -66,6 +69,14 @@ export type CheckOpts = {
   timeouts?: { prepareMs?: number; upMs?: number; prepareStallMs?: number };
   /** The commit whose tracked files every feature `paths` glob must match (default: the main repo's HEAD, the base). */
   pathsRev?: string;
+  /**
+   * A drive that fails is tolerated (the check goes on and can still pass) when this says so. The smith's
+   * proof tolerates the drives that already fail on the base (a bug in the base app is not the smith's);
+   * the base's own run tolerates every drive, to list the failing ones. Both are in `report.tolerated`.
+   */
+  tolerate?: (drive: string, primitives: string[]) => boolean;
+  /** Only describe, features, prepare, up, doctor and the drives (twice, reset between): no contract probe, no second slot. */
+  drivesOnly?: boolean;
 };
 
 /** prepare fails when it prints nothing for this long (a hung download), long before its 30-minute deadline. */
@@ -100,7 +111,7 @@ export async function runToolkitCheck(o: CheckOpts): Promise<CheckReport> {
   const held: Slot[] = [];
   const up = new Set<string>();
   const jobDir = path.join(kitchenDir(o.repo), "checks", `${new Date().toISOString().replace(/[:.]/g, "-")}-${randomBytes(2).toString("hex")}`);
-  const report: CheckReport = { ok: false, steps, features: [], jobDir, entries: 0, parallel: false, secs: 0 };
+  const report: CheckReport = { ok: false, steps, features: [], jobDir, entries: 0, parallel: false, secs: 0, tolerated: [] };
 
   const step = (name: string, ok: boolean, secs: number, detail?: string, t?: string) => {
     steps.push({ step: name, ok, secs, ...(detail ? { detail } : {}), ...(t && !ok ? { tail: t } : {}) });
@@ -313,14 +324,25 @@ export async function runToolkitCheck(o: CheckOpts): Promise<CheckReport> {
         return step(label, false, (Date.now() - t) / 1000, (e as Error).message);
       }
     };
-    for (const c of checks) if (!(await drive(c, `drive ${c.drive}`))) return fail(`drive ${c.drive}`);
+    const primsOf = (name: string) => report.features.flatMap((f) => f.drives).find((d) => d.name === name)?.primitives ?? [];
+    /** A failed drive is tolerated (marked known, the check goes on) or fails the check. */
+    const driveOk = async (c: (typeof checks)[number], label: string) => {
+      if (await drive(c, label)) return true;
+      if (!o.tolerate?.(c.drive, primsOf(c.drive))) return false;
+      const s = steps.at(-1);
+      if (s) s.known = true;
+      if (!report.tolerated.includes(c.drive)) report.tolerated.push(c.drive);
+      print(`toolkit check: ${label} failed: tolerated (known)`);
+      return true;
+    };
+    for (const c of checks) if (!(await driveOk(c, `drive ${c.drive}`))) return fail(`drive ${c.drive}`);
 
     // 5. reset, then the drives again (a drive that changes data passes twice only if reset restores the seed)
     if (!o.smoke && !(await cmd("reset", [`--id=${a.id}`], `reset ${a.id}`, 120_000, okStatus)).ok) return fail("reset");
-    if (!o.smoke) for (const c of checks) if (!(await drive(c, `drive ${c.drive} after reset`))) return fail(`drive ${c.drive} after reset`);
+    if (!o.smoke) for (const c of checks) if (!(await driveOk(c, `drive ${c.drive} after reset`))) return fail(`drive ${c.drive} after reset`);
 
     // 6. the contract probe: every primitive once, then the calls the contract says must be refused
-    if (!o.smoke && !o.feature) {
+    if (!o.smoke && !o.feature && !o.drivesOnly) {
       const t4 = Date.now();
       const drives = report.features.flatMap((f) =>
         f.checks.map((c) => ({ drive: loadDrive(fs.readFileSync(path.join(fdir, f.file), "utf8"), c.drive), args: c.args })),
@@ -331,7 +353,7 @@ export async function runToolkitCheck(o: CheckOpts): Promise<CheckReport> {
     }
 
     // 7. two slots at once, unless the Toolkit says it can't
-    if (!o.feature && !o.smoke) {
+    if (!o.feature && !o.smoke && !o.drivesOnly) {
       if (desc.parallel) {
         const b = await slot("b");
         const upB = await cmd(

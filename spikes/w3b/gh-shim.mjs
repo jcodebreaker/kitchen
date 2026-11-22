@@ -100,6 +100,27 @@ else if (a === "pr" && b === "checks") {
   t.comments.push({ body: stdin, user: "kitchen-bot", created_at: now() });
   save(s);
   out(`https://github.com/${repo}/${a === "pr" ? "pull" : "issues"}/${num()}#issuecomment-${t.comments.length}`);
+} else if (a === "api" && b === "graphql") {
+  // The issue's edit/label history (sources/github.ts). An issue without `events` was labelled when it was made.
+  const f = (k) => argv[argv.findIndex((x, i) => argv[i - 1] === "-F" && x.startsWith(`${k}=`))]?.slice(k.length + 1);
+  const i = issueOf(Number(f("n")));
+  const events = i.events ?? (i.labels ?? []).map((name) => ({ type: "labeled", label: name, at: i.createdAt ?? "2000-01-01T00:00:00Z" }));
+  out({
+    data: {
+      repository: {
+        issue: {
+          lastEditedAt: i.lastEditedAt ?? null,
+          timelineItems: {
+            nodes: events.map((e) =>
+              e.type === "labeled"
+                ? { __typename: "LabeledEvent", createdAt: e.at, label: { name: e.label } }
+                : { __typename: "RenamedTitleEvent", createdAt: e.at },
+            ),
+          },
+        },
+      },
+    },
+  });
 } else if (a === "api") {
   // conversation comments (issues/N/comments, PRs share it) and inline review comments (pulls/N/comments)
   const m = /^repos\/[^/]+\/[^/]+\/(issues|pulls)\/(\d+)\/comments$/.exec(b);

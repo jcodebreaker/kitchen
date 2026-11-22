@@ -9,6 +9,7 @@ node spikes/w3b/forge.ts <scratch>          # no agent, no Docker (~5 s): GitHub
 node spikes/w3b/ready.ts <scratch>          # scripted agent, Docker (~12 min): CI pending → paused(ci), red CI → build, sync conflict → build → done
 node spikes/w3b/toolkit.ts fake <scratch>   # scripted agent, Docker (~6 min): the toolkit stage with a scripted smith that writes a real `sql` primitive
 node spikes/w3b/toolkit.ts claude <scratch> # REAL agents on Claude (sonnet strong, haiku medium): the same job, the smith included
+node spikes/w3b/docker-guard.ts <scratch>   # Docker, one small image (~1 min): an unmerged bin/dev's Docker goes through the guard (ADR 0008, M5)
 node spikes/w3b/oracles.ts <scratch> [ticket…]  # no agent: every benchmark oracle FAILS on the base; planted bugs' oracles PASS with the plant taken out
 KITCHEN_GH_TEST_REPO=<owner>/<throwaway> node spikes/w3b/github-live.ts --yes-this-repo-is-throwaway <scratch>
                                             # NOT RUN by the build: the forge.ts sequence against a real throwaway GitHub repo

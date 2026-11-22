@@ -121,6 +121,11 @@ export const ConfigSchema = z
       .object({ base_sec: z.number().positive().default(60), max_sec: z.number().positive().default(3600) })
       .strict()
       .prefault({}),
+    /**
+     * Ready, right after a push: a PR with no checks yet is green only when the repo has no workflow files
+     * (.github/workflows); otherwise Ready waits this long for CI to show up before it counts "none" as green.
+     */
+    ci_grace_sec: z.number().int().nonnegative().default(120),
     /** Report publishing: job folders on the `kitchen-evidence` branch older than this are pruned. */
     evidence_keep_days: z.number().int().positive().default(30),
     /** `kitchen toolkit maintain` runs by itself when the feature-mapped paths changed by more lines than this since the last maintain. */

@@ -55,6 +55,8 @@ export type ShimState = {
     author: string;
     labels: string[];
     comments: { body: string; user: string; created_at: string }[];
+    lastEditedAt?: string;
+    events?: { type: string; at: string; label?: string }[];
   }[];
   labels: string[];
   defaultChecks: { name: string; bucket: string }[];
