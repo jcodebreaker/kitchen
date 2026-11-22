@@ -8,7 +8,10 @@
 // fresh checkout with no node_modules, and the Toolkit's `prepare` (which may
 // install dependencies inside a container) runs after Gate. It runs under the
 // same sandbox, stamped like a check, once per worktree until the command or a
-// dependency file changes (jobs/<id>/checks-prepared.json).
+// dependency file changes (jobs/<id>/checks-prepared.json). The builder can write
+// to gitignored folders (node_modules) after that, so Gate and Verify forget the
+// cache on entry (forgetChecksPrepared): what they judge runs on dependencies
+// installed after the builder's last turn, never on ones it could have edited.
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -59,6 +62,21 @@ function readMarker(jobDir: string): Record<string, string> {
   } catch {
     return {};
   }
+}
+
+/**
+ * Forget that `checks_prepare` ran in the job worktree, so the next check or proof runs it again (Gate and
+ * Verify on entry: the builder may have edited the installed dependencies since). `npm ci`-style commands
+ * reinstall from scratch.
+ */
+export function forgetChecksPrepared(jobDir: string): void {
+  const m = readMarker(jobDir);
+  if (!Object.keys(m).length) return;
+  const worktree = readJob(jobDir).worktree;
+  if (!(worktree in m)) return;
+  delete m[worktree];
+  fs.writeFileSync(`${markerOf(jobDir)}.tmp`, `${JSON.stringify(m, null, 2)}\n`);
+  fs.renameSync(`${markerOf(jobDir)}.tmp`, markerOf(jobDir));
 }
 
 /**

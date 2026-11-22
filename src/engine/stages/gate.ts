@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { runGate } from "../../checks/gate.ts";
 import { riskFloor, seedTouched } from "../../checks/risk-floor.ts";
-import { checksPrepareOf } from "../../checks/run-checks.ts";
+import { checksPrepareOf, forgetChecksPrepared } from "../../checks/run-checks.ts";
 import type { Job } from "../machine.ts";
 import { roundDir, writeAtomic } from "../store.ts";
 import { changedFiles, diffStat, headOf } from "../worktree.ts";
@@ -42,6 +42,8 @@ export const gate: StageHandler = async (ctx) => {
   const head = await headOf(job);
   let g = readGate(ctx.jobDir, job.round);
   if (!g || g.head !== head) {
+    // The builder may have edited the installed dependencies (gitignored) after the last prepare: install again.
+    forgetChecksPrepared(ctx.jobDir);
     const r = await runGate({
       jobDir: ctx.jobDir,
       checks: ctx.config.checkList,
