@@ -1,7 +1,7 @@
 // Review findings (PLAN §2 review → ready/build, §7 W4 "precision"). Pure.
 //
 // A reviewer lens writes `review-<lens>.md`: a `VERDICT:` line, optional `VIEW:`
-// lines (ux/ui), then one `### F<n>: <title>` block per finding:
+// lines (any lens), then one `### F<n>: <title>` block per finding:
 //   - kind: blocking | note
 //   - confidence: high | medium | low
 //   - at: server.js:42           a line at HEAD, in this change
@@ -16,9 +16,12 @@
 // - `evidence:` ids of this job's verified manifest, stamped for HEAD;
 // - `requirement:` a requirement in scope. On its own (no line, no evidence) it
 //   blocks only when every criterion covering it is NON-DISCRIMINATING: then its
-//   PASS proves nothing and the requirement is unproven.
+//   PASS proves nothing and the requirement is unproven. With evidence and no line,
+//   the evidence must be about it: a view this lens asked for (`view:<lens>`, run as
+//   reviewer-<lens>) or a run stamped for a criterion that covers the requirement.
+//   Any other run (a PASS of another criterion) shows nothing about it.
 // Low confidence never blocks. A finding a person dismissed (`kitchen dismiss`),
-// raised again by the same lens on the same anchor, never blocks. Anything else is
+// raised again (dismissedBy) never blocks. Anything else is
 // a note, with the reason. Findings are merged only when they name the same file
 // and line (±1); distinct findings on one requirement all stay, and a merged one
 // keeps every member's title and why.
@@ -63,7 +66,9 @@ export type Anchors = {
   /** Requirements in scope whose covering criteria are all NON-DISCRIMINATING: a finding naming one blocks on its own. */
   unproven: readonly string[];
   /** The verified manifest's entries (the manifest is sealed per job, so they are this job's). */
-  evidence: readonly { id: string; sha: string; phase?: unknown }[];
+  evidence: readonly { id: string; sha: string; phase?: unknown; criterion?: unknown; role?: unknown }[];
+  /** The contract's criteria and the requirements each covers. */
+  criteria: readonly { id: string; covers: readonly string[] }[];
   /** Evidence must be stamped for this HEAD. */
   head: string;
 };
@@ -89,7 +94,7 @@ const CONF: Confidence[] = ["high", "medium", "low"];
 /** `VERDICT:` of a review file, upper-cased, or undefined. */
 export const verdictOf = (text: string) => /^\s*VERDICT:\s*([A-Za-z-]+)/m.exec(text)?.[1]?.toUpperCase();
 
-/** `VIEW: …` lines of a review file (ux/ui lenses ask the engine for more views this way). */
+/** `VIEW: …` lines of a review file (a lens asks the engine for more views this way). */
 export function viewsOf(text: string): string[] {
   return [...text.matchAll(/^\s*VIEW:\s*(.+?)\s*$/gm)].map((m) => m[1].replace(/^`(.*)`$/, "$1")).filter((v) => !/^(none|n\/a|-)$/i.test(v));
 }
@@ -207,20 +212,85 @@ export function anchorCheck(f: Finding, a: Anchors): { why: string; fixable: boo
       why: `${f.requirement} alone: its criteria passed and discriminate, so a finding on it needs a line in the change or evidence that shows it`,
       fixable: false,
     };
+  if (f.requirement && !f.at) {
+    const off = f.evidence.filter(
+      (id) =>
+        !evidenceShows(
+          f.lens,
+          f.requirement as string,
+          a.evidence.find((e) => e.id === id),
+          a,
+        ),
+    );
+    if (off.length)
+      return {
+        why: `evidence ${off.join(", ")} doesn't show ${f.requirement}: it is neither a view this lens asked for (view:${f.lens}) nor a run for a criterion covering ${f.requirement}`,
+        fixable: false,
+      };
+  }
   return null;
+}
+
+/** Evidence about `requirement` for `lens`: a view the lens asked for, or a run stamped for a criterion that covers the requirement. */
+function evidenceShows(lens: string, requirement: string, e: Anchors["evidence"][number] | undefined, a: Anchors): boolean {
+  if (!e) return false;
+  if (e.criterion === `view:${lens}`) return e.role === `reviewer-${lens}`;
+  return a.criteria.some((c) => c.id === e.criterion && c.covers.includes(requirement));
 }
 
 /** Why a finding's anchors don't show it, or null when it names at least one and every one it names holds. */
 export const anchorProblem = (f: Finding, a: Anchors): string | null => anchorCheck(f, a)?.why ?? null;
 
-/** Same lens and the same anchor (a line within DIFF_SLACK of it in the same file, or, with no line, the same requirement): a dismissed finding raised again. */
+/** Words of a title that carry its meaning (lower case, no stop words, no 1-2 letter words). */
+const STOP = new Set([
+  "the",
+  "and",
+  "for",
+  "not",
+  "but",
+  "its",
+  "with",
+  "from",
+  "that",
+  "this",
+  "when",
+  "into",
+  "are",
+  "was",
+  "has",
+  "have",
+  "still",
+  "again",
+  "any",
+  "every",
+  "after",
+  "before",
+  "never",
+  "does",
+  "doesn",
+  "isn",
+  "can",
+]);
+const words = (t: string) => new Set((t.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter((w) => w.length > 2 && !STOP.has(w)));
+/** Titles that share at least half of their significant words (of the longer one). */
+export function similarTitles(x: string, y: string): boolean {
+  const a = words(x);
+  const b = words(y);
+  if (!a.size || !b.size) return false;
+  const shared = [...a].filter((w) => b.has(w)).length;
+  return shared / Math.max(a.size, b.size) >= 0.5;
+}
+
+/**
+ * A dismissed finding raised again by the same lens: on the same line (same file, ±1), or on the same
+ * requirement with a similar title. A different finding near a dismissed one is not muted.
+ */
 export function dismissedBy(f: Finding, dismissed: readonly Dismissal[]): Dismissal | undefined {
   return dismissed.find(
     (d) =>
       d.lens === f.lens &&
-      (f.at && d.at
-        ? d.at.file === f.at.file && Math.abs(d.at.line - f.at.line) <= DIFF_SLACK
-        : !f.at && !d.at && !!f.requirement && d.requirement === f.requirement),
+      ((!!f.at && !!d.at && d.at.file === f.at.file && Math.abs(d.at.line - f.at.line) <= 1) ||
+        (!!f.requirement && d.requirement === f.requirement && !!d.title && similarTitles(d.title, f.title))),
   );
 }
 

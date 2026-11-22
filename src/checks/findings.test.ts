@@ -5,12 +5,14 @@ import {
   anchorProblem,
   changedLines,
   dedupe,
+  dismissedBy,
   fixableAnchors,
   judge,
   lensStats,
   parseAt,
   parseFindings,
   renderReview,
+  similarTitles,
   unparseable,
   verdictOf,
   viewsOf,
@@ -25,7 +27,16 @@ const anchors: Anchors = {
   evidence: [
     { id: "e1", sha: "old" },
     { id: "e2", sha: HEAD, phase: "base" },
-    { id: "e14", sha: HEAD },
+    { id: "e14", sha: HEAD, criterion: "C2", role: "engine" },
+    { id: "e15", sha: HEAD, criterion: "C1", role: "verifier" },
+    { id: "e20", sha: HEAD, criterion: "view:code", role: "reviewer-code" },
+    { id: "e21", sha: HEAD, criterion: "view:ux", role: "reviewer-ux" },
+    { id: "e22", sha: HEAD, criterion: "view:code", role: "reviewer-ux" },
+  ],
+  criteria: [
+    { id: "C1", covers: ["R1"] },
+    { id: "C2", covers: ["R2"] },
+    { id: "C3", covers: ["R3"] },
   ],
   head: HEAD,
 };
@@ -122,6 +133,33 @@ test("a requirement-only finding blocks only when its criteria are all NON-DISCR
   assert.equal(anchorProblem({ ...base, requirement: "R2", at: { file: "server.js", line: 87 } }, anchors), null);
 });
 
+test("a requirement-only finding's evidence must be about it: this lens's own view, or a run of a criterion covering the requirement", () => {
+  assert.equal(anchorProblem({ ...base, requirement: "R2", evidence: ["e14"] }, anchors), null, "C2 covers R2");
+  assert.equal(anchorProblem({ ...base, requirement: "R2", evidence: ["e20"] }, anchors), null, "the code lens's own view");
+  assert.match(
+    anchorProblem({ ...base, requirement: "R2", evidence: ["e15"] }, anchors) ?? "",
+    /^evidence e15 doesn't show R2: it is neither a view this lens asked for \(view:code\) nor a run for a criterion covering R2$/,
+    "a PASS of C1 (R1) shows nothing about R2",
+  );
+  assert.match(anchorProblem({ ...base, requirement: "R2", evidence: ["e21"] }, anchors) ?? "", /evidence e21 doesn't show R2/, "another lens's view");
+  assert.match(
+    anchorProblem({ ...base, requirement: "R2", evidence: ["e22"] }, anchors) ?? "",
+    /evidence e22 doesn't show R2/,
+    "view:code not run as reviewer-code",
+  );
+  assert.match(anchorProblem({ ...base, requirement: "R2", evidence: ["e14", "e15"] }, anchors) ?? "", /^evidence e15 doesn't show/, "every id must hold");
+  assert.equal(anchorProblem({ ...base, requirement: "R1", evidence: ["e15"] }, anchors), null);
+  assert.equal(anchorProblem({ ...base, lens: "ux", requirement: "R2", evidence: ["e21"] }, anchors), null, "the ux lens's own view");
+  assert.equal(
+    anchorProblem({ ...base, requirement: "R2", at: { file: "server.js", line: 87 }, evidence: ["e15"] }, anchors),
+    null,
+    "with a line in the change, the line carries it",
+  );
+  const [j] = judge([{ ...base, requirement: "R2", evidence: ["e15"] }], anchors);
+  assert.equal(j.blocks, false);
+  assert.match(j.downgraded ?? "", /^not demonstrable: evidence e15 doesn't show R2/);
+});
+
 test("changed lines from a diff: added lines and where a removal happened, per file (new side)", () => {
   const patch = `diff --git a/server.js b/server.js
 index 1..2 100644
@@ -179,6 +217,36 @@ test("a dismissed finding raised again by the same lens on the same anchor is a 
   const other = judge(parseFindings(CODE, "security", 2), anchors, d);
   assert.equal(other[0].blocks, true, "another lens on the same line is not the dismissed finding");
   assert.equal(lensStats("code", "BLOCKING", j, dedupe(j)).redismissed, 1);
+});
+
+test("re-raise: same lens and the same line (±1), or the same requirement in similar words; a different finding nearby is not muted", () => {
+  const d = [
+    {
+      finding: "code-1-6",
+      lens: "code",
+      round: 1,
+      by: "alice",
+      reason: null,
+      title: "the saved theme is never read back after the update",
+      at: { file: "server.js", line: 87 },
+      requirement: "R1",
+    },
+  ];
+  const f = (o: Partial<Parameters<typeof dismissedBy>[0]>) => dismissedBy({ ...base, ...o }, d)?.finding;
+  assert.equal(f({ title: "anything", at: { file: "server.js", line: 88 } }), "code-1-6", "same line ±1");
+  assert.equal(f({ title: "theme column takes any string", at: { file: "server.js", line: 90 } }), undefined, "3 lines away: a different finding");
+  assert.equal(f({ title: "the saved theme is still never read back", requirement: "R1" }), "code-1-6", "same requirement, similar title");
+  assert.equal(f({ title: "the saved theme is still never read back", requirement: "R1", at: { file: "server.js", line: 120 } }), "code-1-6");
+  assert.equal(f({ title: "the toggle has no label", requirement: "R1" }), undefined, "same requirement, another problem");
+  assert.equal(f({ title: "the saved theme is still never read back", requirement: "R2" }), undefined, "another requirement");
+  assert.equal(
+    f({ lens: "security", title: "the saved theme is never read back after the update", at: { file: "server.js", line: 87 }, requirement: "R1" }),
+    undefined,
+    "another lens",
+  );
+  assert.equal(similarTitles("the saved theme is never read back after the update", "the saved theme is still never read back"), true);
+  assert.equal(similarTitles("the theme update doesn't check the value it stores", "the saved theme is never read back after the update"), false);
+  assert.equal(similarTitles("", "x"), false);
 });
 
 test("the same line (±1) from two lenses is one finding that keeps both; distinct findings on one requirement all stay", () => {

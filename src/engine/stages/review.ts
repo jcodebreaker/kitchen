@@ -6,9 +6,10 @@
 //
 // Every lens sees the same packet: the ticket's requirements, the contract,
 // Verify's verdict (with NON-DISCRIMINATING flags), verify.md, seed-diff.md and
-// the diff. The UX and UI lenses also get Verify's stamped screenshots and may
-// ask for more views (`VIEW:` lines): the engine runs them (views.ts) and runs the
-// lens once more with the new evidence.
+// the diff. The UX and UI lenses also get Verify's stamped screenshots. Any lens
+// may ask for views of the running app (`VIEW:` lines; code and security too, so a
+// runtime-only problem can be shown): the engine runs them (views.ts), stamped
+// `view:<lens>`, and runs the lens once more with the new evidence.
 //
 // The engine decides what blocks (checks/findings.ts): a finding blocks only when
 // it is demonstrable (a line in this change, evidence stamped for HEAD, or a
@@ -54,7 +55,7 @@ import { hasToolkit } from "./toolkit-info.ts";
 import type { StageHandler } from "./types.ts";
 
 export const REVIEW_REQUIRED = "kitchen:review-required";
-/** Lenses that look at the running app's screenshots and may ask for views. */
+/** Lenses that are shown Verify's screenshots (every lens may ask for views). */
 const VISUAL = new Set(["ux", "ui"]);
 const INLINE_DIFF = 40_000;
 const MAX_SHOTS = 16;
@@ -192,15 +193,16 @@ export const review: StageHandler = async (ctx) => {
         ].join("\n"),
       },
     ];
-    const visualBlocks = async (): Promise<PromptBlock[]> => [
+    const visualBlocks = (): PromptBlock[] => [
       {
         title: "Screenshots Verify took (stamped for this HEAD; open them)",
         body: shots.length
           ? shots.map((s) => `- ${s.id} (criterion ${s.criterion}): ${shotPaths.get(s.file) ?? "(missing)"}`).join("\n")
           : "none: Verify took no screenshot. Ask for the views you need with VIEW: lines.",
       },
-      ...(hasToolkit(job) ? [await toolkitBlock(job, job.worktree)] : []),
     ];
+    // What a VIEW line can drive: every lens may ask for one.
+    const tk = hasToolkit(job) ? [await toolkitBlock(job, job.worktree)] : [];
     const dismissed = dismissalsOf(ctx.jobDir);
     const dismissedBlock = (lens: string): PromptBlock[] => {
       const mine = dismissed.filter((d) => d.lens === lens);
@@ -236,7 +238,7 @@ export const review: StageHandler = async (ctx) => {
           role: `reviewer-${lens}`,
           job,
           jobDir: ctx.jobDir,
-          blocks: [...common, ...(VISUAL.has(lens) ? await visualBlocks() : []), ...dismissedBlock(lens), ...more],
+          blocks: [...common, ...(VISUAL.has(lens) ? visualBlocks() : []), ...tk, ...dismissedBlock(lens), ...more],
           extra: [`Lens: ${lens}`, `Write: ${file}`, ...extra],
         }),
         dest: path.join(round, file),
@@ -249,7 +251,7 @@ export const review: StageHandler = async (ctx) => {
 
     // VIEW requests: the engine runs them (one app, one at a time) and re-runs that lens once with the new evidence.
     const rerun: { lens: string; views: ViewResult[] }[] = [];
-    for (const lens of lenses.filter((l) => VISUAL.has(l))) {
+    for (const lens of lenses) {
       const asked = viewsOf(texts.get(lens) ?? "").slice(0, MAX_VIEWS);
       if (!asked.length) continue;
       const rec = path.join(round, `views-${lens}-m${job.moves}.json`);
@@ -282,12 +284,9 @@ export const review: StageHandler = async (ctx) => {
       const fresh = verifyManifest(evidenceDir(ctx.jobDir), ctx.refresh().manifestHead, sealOf(ctx.refresh()));
       entries = fresh;
       await pool(rerun, ctx.config.concurrency, async ({ lens, views }) => {
+        // Every file of the view's runs (screenshots, and what each call returned: a lens that reads code reads those).
         const files = fresh.filter((e) => views.some((v) => v.evidence.includes(e.id))).flatMap((e) => e.files.map((f) => ({ id: e.id, file: f.path })));
-        const shown = copyEvidence(
-          ctx.jobDir,
-          packet,
-          files.filter((f) => f.file.endsWith(".png")),
-        );
+        const shown = copyEvidence(ctx.jobDir, packet, files);
         const body = views
           .map(
             (v) =>
@@ -325,6 +324,7 @@ export const review: StageHandler = async (ctx) => {
         return !!contract && cs.every((c) => weak.includes(c.id));
       }),
       evidence: entries,
+      criteria: contract?.criteria ?? [],
       head,
     };
     const findingsOfLens = async (lens: string) => {
