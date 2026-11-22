@@ -50,3 +50,29 @@ as soon as the first `tool_use` showed in the stream file, while `sleep 6` ran:
 
 The message was read right after the tool call it arrived during, acted on (the out file has its line), and marked
 read. Cost, tokens, session and the out file read as before.
+
+## A steer during the final answer (`late.mjs`, one haiku call, $0.0069)
+
+No tools: the model writes a 250-word paragraph; the steer ("end your answer with PINEAPPLE") is written 1.5 s
+after `system init`, while it writes. The first run of the script had a bug (it wrote a steer on every turn's
+`system init`, so it looped about 70 short turns before it was killed); its first two turns answer the question:
+
+```
+  1320 system init
+  2821 >>> writing steer
+  4547 assistant  msg_…wfiJ  text(1391 chars, ends "…to a risen, golden loaf.")
+  4878 result success   {"cost":0.00086089,"turns":1}
+  5195 system init
+  6394 assistant  msg_…x7na  thinking
+  7622 assistant  msg_…x7na  text(1401 chars, ends "…golden loaf. PINEAPPLE")
+  7953 result success   {"cost":0.00139682,"turns":1}
+```
+
+- **A message that arrives while the final answer is written is not seen by that answer.** That turn ends with its
+  own `result`; then, with stdin still open, Claude Code starts **a new turn** for the queued message (a fresh
+  `system init`, a new `message.id`) and acts on it.
+- So a message counts as answered only by an assistant event after a turn boundary that follows it (a tool result,
+  or a new `system init`); more blocks of the message it arrived during don't count (`ClaudeStream`).
+- **`total_cost_usd` is cumulative** over the session's turns (0.00086 → 0.00140 → …); **`num_turns` and `usage`
+  are per turn** (1 each), so the adapter sums them over every `result`.
+- Every turn starts with its own `system init`.

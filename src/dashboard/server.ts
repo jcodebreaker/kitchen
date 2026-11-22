@@ -15,7 +15,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
-import { jobDirOf, scanJobs } from "../engine/store.ts";
+import { JOB_ID, jobDirOf, scanJobs } from "../engine/store.ts";
 import { act, BadRequest } from "./actions.ts";
 import { snapshot } from "./data.ts";
 import { detail } from "./detail.ts";
@@ -72,16 +72,20 @@ export function dashboardServer(repo: string, o: { token?: string } = {}): http.
       if (req.method === "POST") {
         const m = /^\/api\/([a-z-]+)$/.exec(url.pathname);
         if (!m) return send(404, "text/plain", "not found\n");
+        // A refused POST is answered without reading its body, and the connection is closed after the answer.
+        const refuse = (code: number, why: string) => {
+          res.on("finish", () => req.destroy());
+          return send(code, "application/json", JSON.stringify({ ok: false, lines: [why] }), { connection: "close" });
+        };
         const no = refusePost(req.headers, token, port);
-        if (no) {
-          req.resume();
-          return json(no.code, { ok: false, lines: [no.why] });
-        }
+        if (no) return refuse(no.code, no.why);
+        const tooBig = `the request is over ${MAX_BODY} bytes`;
+        if (Number(req.headers["content-length"] ?? 0) > MAX_BODY) return refuse(413, tooBig);
         let size = 0;
         const chunks: Buffer[] = [];
         for await (const c of req) {
           size += (c as Buffer).length;
-          if (size > MAX_BODY) return json(413, { ok: false, lines: [`the request is over ${MAX_BODY} bytes`] });
+          if (size > MAX_BODY) return refuse(413, tooBig);
           chunks.push(c as Buffer);
         }
         let body: Record<string, unknown>;
@@ -111,8 +115,13 @@ export function dashboardServer(repo: string, o: { token?: string } = {}): http.
       if (url.pathname === "/setup.json") return json(200, setupView(repo));
       const m = /^\/jobs\/([^/]+)\/(report\.html|detail\.json)$/.exec(url.pathname);
       if (m) {
-        const id = decodeURIComponent(m[1]);
-        if (!scanJobs(repo).some((e) => e.id === id && e.job)) return send(404, "text/plain", "no such job\n");
+        let id: string;
+        try {
+          id = decodeURIComponent(m[1]);
+        } catch {
+          return send(400, "text/plain", "bad job id\n");
+        }
+        if (!JOB_ID.test(id) || !scanJobs(repo).some((e) => e.id === id && e.job)) return send(404, "text/plain", "no such job\n");
         if (m[2] === "detail.json") return json(200, await detail(repo, id));
         const f = path.join(jobDirOf(repo, id), "report.html");
         if (!fs.existsSync(f)) return send(404, "text/plain", "no report yet\n");

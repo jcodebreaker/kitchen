@@ -107,6 +107,15 @@ test("the page carries this launch's token, under a CSP that loads nothing from 
   assert.equal((await req({ method: "GET", path: "/fonts/../../package.json", headers: { host: `127.0.0.1:${port}` } })).code, 404);
 });
 
+test("hygiene: a prototype key is no action, a malformed % in a path is a 400, an announced oversize body is refused unread", async () => {
+  for (const name of ["constructor", "hasownproperty", "to-string"])
+    assert.equal((await req({ path: `/api/${name}`, headers: good(), body: steerBody() })).code, 400, name);
+  assert.equal((await req({ method: "GET", path: "/jobs/%E0%A4/detail.json", headers: { host: `127.0.0.1:${port}` } })).code, 400);
+  assert.equal((await req({ method: "GET", path: "/jobs/..%2F..%2Fetc/detail.json", headers: { host: `127.0.0.1:${port}` } })).code, 404);
+  const big = await req({ headers: { ...good(), "content-length": "999999" }, body: "" });
+  assert.equal(big.code, 413);
+});
+
 test("refusePost, pure: the order of the checks", () => {
   const h = { origin: "http://localhost:7357", "x-kitchen-token": TOKEN, "content-type": "application/json; charset=utf-8" };
   assert.equal(refusePost(h, TOKEN, 7357), null);

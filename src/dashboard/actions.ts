@@ -65,7 +65,7 @@ export const ACTIONS: Record<string, (repo: string, b: Body, out: Out) => Promis
 export async function act(repo: string, name: string, body: Body): Promise<ActionResult> {
   const lines: string[] = [];
   const out = (l: string) => lines.push(l);
-  const f = ACTIONS[name];
+  const f = Object.hasOwn(ACTIONS, name) ? ACTIONS[name] : undefined; // never a prototype key such as constructor
   if (!f) throw new BadRequest(`no action ${name}`);
   try {
     return { ok: (await f(repo, body, out)) === 0, lines };

@@ -10,7 +10,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { appendLedger } from "../ledger/append.ts";
-import { ownerAlive } from "../lock.ts";
+import { ownerAlive, withFileLock } from "../lock.ts";
 import { procsDirOf, reapGroups } from "../procs.ts";
 import { isActive, type Job } from "./machine.ts";
 import { addMessage, checkText, type Message } from "./messages.ts";
@@ -21,6 +21,7 @@ export type Out = (line: string) => void;
 type Control = { pause?: string; stop?: string };
 
 const controlFile = (jobDir: string) => path.join(jobDir, "control.json");
+const controlLock = (jobDir: string) => path.join(jobDir, "control.lock");
 
 export function readControl(jobDir: string): Control {
   try {
@@ -29,35 +30,44 @@ export function readControl(jobDir: string): Control {
     return {};
   }
 }
-const clearControl = (jobDir: string) => fs.rmSync(controlFile(jobDir), { force: true });
+/** Read-merge-write under a file lock: the CLI, a dashboard and the runner may all write it. */
+const writeControl = (jobDir: string, fn: (c: Control) => Control | null) =>
+  withFileLock(controlLock(jobDir), async () => {
+    const next = fn(readControl(jobDir));
+    if (next) writeAtomic(controlFile(jobDir), JSON.stringify(next));
+    else fs.rmSync(controlFile(jobDir), { force: true });
+  });
+const clearControl = (jobDir: string) => writeControl(jobDir, () => null);
 
 /** A runner is working on the job right now (its step's owner is alive). */
 export const runningNow = (j: Job) => !!j.running && ownerAlive({ pid: j.running.pid, start: j.running.start ?? null });
 
 /**
  * Make a pending pause or stop: the job goes to paused (by-you) from the stage it is in. A job that
- * is no longer in an active stage (done, needs you) drops the request. True when the job was parked.
+ * is no longer in an active stage (done, needs you) drops the request. While another live runner is in
+ * a step on the job, moveJob leaves it running ("busy") and the request waits for that runner.
  */
-export async function honorControl(repo: string, id: string, print: Out): Promise<boolean> {
+export async function honorControl(repo: string, id: string, print: Out): Promise<"parked" | "waits" | "none"> {
   const jobDir = jobDirOf(repo, id);
   const c = readControl(jobDir);
-  if (!c.pause && !c.stop) return false;
+  if (!c.pause && !c.stop) return "none";
   const job = readJobAt(jobDir);
   if (!isActive(job.stage)) {
-    clearControl(jobDir);
-    return false;
+    await clearControl(jobDir);
+    return "none";
   }
   const how = c.stop ? "stop" : "pause";
   const r = await moveJob(repo, job, { to: "paused", facts: { operator: how }, note: `kitchen ${how}` }, print, "human");
-  if (r !== "stale") clearControl(jobDir);
-  return r === "moved";
+  if (r === "busy" || r === "stale") return "waits";
+  await clearControl(jobDir);
+  return r === "moved" ? "parked" : "none";
 }
 
 export const stopRequested = (jobDir: string) => !!readControl(jobDir).stop;
 
 async function request(repo: string, job: Job, how: "pause" | "stop", out: Out): Promise<number> {
   const jobDir = jobDirOf(repo, job.id);
-  writeAtomic(controlFile(jobDir), JSON.stringify({ ...readControl(jobDir), [how]: new Date().toISOString() }));
+  await writeControl(jobDir, (c) => ({ ...c, [how]: new Date().toISOString() }));
   if (how === "stop") {
     const killed = await reapGroups(procsDirOf(jobDir));
     for (const g of killed) out(`${job.id}  killed ${g.what} (process group ${g.pgid})`);
@@ -70,11 +80,10 @@ async function request(repo: string, job: Job, how: "pause" | "stop", out: Out):
       detail: { killed: killed.map((g) => g.what) },
     });
   }
-  if (runningNow(readJobAt(jobDir))) {
-    out(how === "pause" ? `${job.id}  pausing after the current step (${job.stage})` : `${job.id}  stopping: the runner parks it`);
-    return 0;
-  }
-  return (await honorControl(repo, job.id, out)) ? 0 : 1;
+  // Decided under the job lock (moveJob): a runner that took the job a moment ago keeps it, and parks it itself.
+  const r = await honorControl(repo, job.id, out);
+  if (r === "waits") out(how === "pause" ? `${job.id}  pausing after the current step (${job.stage})` : `${job.id}  stopping: the runner parks it`);
+  return r === "none" ? 1 : 0;
 }
 
 function parkable(job: Job, how: string, out: Out): boolean {

@@ -65,24 +65,52 @@ test("pause with no runner on the job parks it at once (by-you); resume returns 
   assert.equal(await pause(repo, (await job("done")).id, out), 1, "a done job has nothing to pause");
 });
 
-test("pause while a runner works on the job: the request waits; the runner parks it after the step", async () => {
+/** Another process stands in for a `kitchen run` that is in a step on the job. */
+async function takenByRunner(id: string) {
+  const runner = spawn("sleep", ["30"], { stdio: "ignore" });
+  const pid = runner.pid as number;
+  await updateJob(repo, id, (x) => ({ ...x, running: { pid, start: processStart(pid), stage: "build", at: new Date().toISOString() } }));
+  return runner;
+}
+
+test("pause while a runner is in a step on the job: decided under the job lock, it waits; the runner parks it after the step", async () => {
   const j = await job();
-  await updateJob(repo, j.id, (x) => ({ ...x, running: { pid: process.pid, start: processStart(process.pid), stage: "build", at: new Date().toISOString() } }));
+  const runner = await takenByRunner(j.id);
+  try {
+    assert.equal(await pause(repo, j.id, out), 0);
+    assert.equal(readJobAt(jobDirOf(repo, j.id)).stage, "build", "the step finishes first");
+    assert.ok(readControl(jobDirOf(repo, j.id)).pause, "control.json is left for the runner");
+    assert.equal(await honorControl(repo, j.id, out), "waits", "asked again, it still waits while the runner is in");
+    // The step ends: its move clears `running`; the runner parks the job.
+    await updateJob(repo, j.id, (x) => ({ ...x, running: null }));
+    assert.equal(await honorControl(repo, j.id, out), "parked");
+    assert.equal(readJobAt(jobDirOf(repo, j.id)).stage, "paused");
+    assert.deepEqual(readControl(jobDirOf(repo, j.id)), {}, "the request is used up");
+  } finally {
+    runner.kill();
+  }
+});
+
+test("a runner that died mid-step does not hold a pause back", async () => {
+  const j = await job();
+  const runner = await takenByRunner(j.id);
+  runner.kill("SIGKILL");
+  await new Promise((r) => runner.once("exit", r));
   assert.equal(await pause(repo, j.id, out), 0);
-  assert.equal(readJobAt(jobDirOf(repo, j.id)).stage, "build", "the step finishes first");
-  assert.ok(readControl(jobDirOf(repo, j.id)).pause);
-  assert.equal(await honorControl(repo, j.id, out), true);
   assert.equal(readJobAt(jobDirOf(repo, j.id)).stage, "paused");
-  assert.deepEqual(readControl(jobDirOf(repo, j.id)), {}, "the request is used up");
 });
 
 test("resume on a job still running cancels a pause not made yet", async () => {
   const j = await job();
-  await updateJob(repo, j.id, (x) => ({ ...x, running: { pid: process.pid, start: processStart(process.pid), stage: "build", at: new Date().toISOString() } }));
-  await pause(repo, j.id, out);
-  assert.equal(await resume(repo, j.id, out), 0);
-  assert.deepEqual(readControl(jobDirOf(repo, j.id)), {});
-  assert.equal(await honorControl(repo, j.id, out), false);
+  const runner = await takenByRunner(j.id);
+  try {
+    await pause(repo, j.id, out);
+    assert.equal(await resume(repo, j.id, out), 0);
+    assert.deepEqual(readControl(jobDirOf(repo, j.id)), {});
+    assert.equal(await honorControl(repo, j.id, out), "none");
+  } finally {
+    runner.kill();
+  }
 });
 
 test("stop kills the job's agent process group now and parks the job", async () => {
@@ -148,7 +176,41 @@ test("a steer sent while the role runs reaches it through the inbox and is marke
   assert.match(got[0].text, /Operator note/);
   assert.match(got[0].text, /> add a test for the empty case/);
   assert.doesNotMatch(agent.calls[0].prompt, /Operator notes/, "not in the starting prompt");
-  for (let i = 0; i < 50 && readMessages(dir)[0].status !== "read"; i++) await new Promise((r) => setTimeout(r, 10));
   const [m] = readMessages(dir);
-  assert.deepEqual([m.status, m.by, m.via], ["read", "builder", "mid-run"]);
+  assert.deepEqual([m.status, m.by, m.via], ["read", "builder", "mid-run"], "marked before runRole returns");
+});
+
+test("steer → stop → resume: the steers the stopped role read go back to sent, and the next role's prompt has them", async () => {
+  const j = await job();
+  const dir = jobDirOf(repo, j.id);
+  await steer(repo, j.id, "use the existing formatter", out); // read next-role by the first run
+  const first = new FakeAdapter(async (req) => {
+    await steer(repo, j.id, "and keep the diff small", out);
+    const got = req.steer?.take() ?? [];
+    req.steer?.read(got.map((m) => m.id)); // read mid-run
+    return { line: "", ok: false }; // then `kitchen stop` kills it: no file
+  });
+  const dest = path.join(dir, "build.md");
+  await assert.rejects(runRole(ctxOf(j, first), { role: "builder", file: "build.md", tier: "read", prompt: "Build it.", dest }), /builder/);
+  assert.deepEqual(
+    readMessages(dir).map((m) => [m.status, m.by ?? null]),
+    [
+      ["sent", null],
+      ["sent", null],
+    ],
+  );
+  const second = new FakeAdapter(() => ({ file: "out", line: "ok" }));
+  await runRole(ctxOf(j, second), { role: "builder", file: "build.md", tier: "read", prompt: "Build it.", dest });
+  assert.match(second.calls[0].prompt, /> use the existing formatter/);
+  assert.match(second.calls[0].prompt, /> and keep the diff small/);
+  assert.ok(readMessages(dir).every((m) => m.status === "read" && m.via === "next-role"));
+});
+
+test("a role that never starts (run lock lost) gives its notes back", async () => {
+  const j = await job();
+  const dir = jobDirOf(repo, j.id);
+  await steer(repo, j.id, "note", out);
+  const ctx = { ...ctxOf(j, new FakeAdapter(() => ({ file: "x", line: "ok" }))), holdsLock: () => false };
+  await assert.rejects(runRole(ctx, { role: "builder", file: "build.md", tier: "read", prompt: "x", dest: path.join(dir, "b.md") }), /lock lost/);
+  assert.equal(readMessages(dir)[0].status, "sent");
 });

@@ -93,6 +93,20 @@ export async function markRead(jobDir: string, ids: string[], by: string, via: M
   });
 }
 
+/** Back to `sent`: the role that read them failed, was stopped or lost the run lock, so the next role reads them again. */
+export async function unread(jobDir: string, ids: string[]): Promise<void> {
+  if (!ids.length) return;
+  await rewrite(jobDir, (ms) => {
+    for (const m of ms)
+      if (ids.includes(m.id) && m.kind === "steer" && m.status === "read") {
+        m.status = "sent";
+        delete m.by;
+        delete m.readAt;
+        delete m.via;
+      }
+  });
+}
+
 /** Pure: steers quoted for the top of a role's prompt. Operator input, the same trust as `kitchen feedback`. */
 export function operatorNotes(ms: Pick<Message, "text" | "at">[]): string {
   if (!ms.length) return "";

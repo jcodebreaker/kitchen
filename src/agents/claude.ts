@@ -139,17 +139,23 @@ export const ANSWER_GRACE_MS = 5000;
  * answered, and when stdin may close. No I/O: the adapter feeds it lines and the clock.
  */
 export class ClaudeStream {
-  /** The last `result` event; null again once a later turn starts. */
+  /** The last `result` event; null again once a turn a queued message started is running. */
   result: ClaudeJson | null = null;
-  /** The last `result` ever seen, kept when a later turn never finishes. */
+  /** The last `result` seen, with turns and tokens summed over every turn (each result counts its own turn; its cost is already cumulative). */
   final: ClaudeJson | null = null;
   readonly written = new Set<string>();
-  private unanswered: string[] = [];
+  /**
+   * Written messages not answered yet. Claude Code takes a queued message at a turn boundary: after a
+   * tool result, or as a new turn (a fresh `system init`) once a `result` is out (spikes/w6-steer). So a
+   * message counts as answered by the first assistant event after such a boundary, never by more events
+   * of the message it arrived during.
+   */
+  private unanswered: { id: string; boundary: boolean }[] = [];
   private resultAt = 0;
   /** The last stdout line that was not JSON, for an error message. */
   junk = "";
 
-  /** Returns the ids the agent answered with this line (an assistant event after they were written). */
+  /** Returns the ids this line shows were answered. */
   line(text: string, now: number): string[] {
     let e: ClaudeJson;
     try {
@@ -159,26 +165,46 @@ export class ClaudeStream {
       return [];
     }
     if (e.type === "result") {
-      this.result = this.final = e;
+      this.final = this.final ? sumTurns(this.final, e) : e;
+      this.result = e;
       this.resultAt = now;
       return [];
     }
+    if (e.type === "user" || (e.type === "system" && e.subtype === "init")) {
+      for (const u of this.unanswered) u.boundary = true;
+      if (e.type === "system" && this.result && this.unanswered.length) this.result = null; // the turn a queued message started
+      return [];
+    }
     if (e.type !== "assistant") return [];
-    this.result = null; // a turn is running (one a late message started)
-    const read = this.unanswered;
-    this.unanswered = [];
+    const read = this.unanswered.filter((u) => u.boundary).map((u) => u.id);
+    this.unanswered = this.unanswered.filter((u) => !u.boundary);
     return read;
   }
 
   wrote(id: string) {
     this.written.add(id);
-    this.unanswered.push(id);
+    this.unanswered.push({ id, boundary: false });
   }
 
   /** stdin may close: a result is in and nothing written waits for an answer (or the wait is over). */
   canClose(now: number): boolean {
     return !!this.result && (!this.unanswered.length || now - this.resultAt > ANSWER_GRACE_MS);
   }
+}
+
+/** Pure: a later turn's result over an earlier one's. `num_turns` and `usage` are per turn, `total_cost_usd` is the session's so far. */
+export function sumTurns(a: ClaudeJson, b: ClaudeJson): ClaudeJson {
+  const u = (k: "input_tokens" | "output_tokens" | "cache_read_input_tokens" | "cache_creation_input_tokens") => (a.usage?.[k] ?? 0) + (b.usage?.[k] ?? 0);
+  return {
+    ...b,
+    num_turns: (a.num_turns ?? 0) + (b.num_turns ?? 0),
+    usage: {
+      input_tokens: u("input_tokens"),
+      output_tokens: u("output_tokens"),
+      cache_read_input_tokens: u("cache_read_input_tokens"),
+      cache_creation_input_tokens: u("cache_creation_input_tokens"),
+    },
+  };
 }
 
 export class ClaudeAdapter implements AgentAdapter {
@@ -199,6 +225,7 @@ export class ClaudeAdapter implements AgentAdapter {
       env: req.env,
       extendEnv: false,
       stdin: "pipe",
+      buffer: { stdout: false }, // read line by line below
       timeout: req.timeoutSec * 1000,
       forceKillAfterDelay: 5000,
       reject: false,
@@ -215,8 +242,9 @@ export class ClaudeAdapter implements AgentAdapter {
     sub.stdin?.on("error", () => {}); // the agent exited first: nothing more to write
     sub.stdin?.write(userLine(req.prompt + contractFooter(req)));
     let buf = "";
-    sub.stdout?.on("data", (d: Buffer | string) => {
-      buf += String(d);
+    sub.stdout?.setEncoding("utf8"); // a character split across chunks stays whole
+    sub.stdout?.on("data", (d: string) => {
+      buf += d;
       for (let i = buf.indexOf("\n"); i >= 0; i = buf.indexOf("\n")) {
         const text = buf.slice(0, i);
         buf = buf.slice(i + 1);

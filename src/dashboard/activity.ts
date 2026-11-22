@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { StringDecoder } from "node:string_decoder";
 
 /** One line of activity. `tool` is a call (open while `dur` is null), `res`/`bad` its outcome, `think` a short line of the agent's own text. */
 export type Ev = {
@@ -167,7 +168,8 @@ export class ActivityParser {
   }
 }
 
-type Cached = { size: number; mtime: number; off: number; rest: string; p: ActivityParser };
+/** `dec` keeps a character split across two reads whole. */
+type Cached = { size: number; mtime: number; off: number; rest: string; dec: StringDecoder; p: ActivityParser };
 const cache = new Map<string, Cached>();
 
 /** The events in an agent's stream or transcript file, parsing only what was added since the last call. */
@@ -180,7 +182,7 @@ export function activityOf(file: string, roots: string[] = []): Ev[] {
   }
   let c = cache.get(file);
   if (!c || st.size < c.size) {
-    c = { size: 0, mtime: 0, off: 0, rest: "", p: new ActivityParser(roots) };
+    c = { size: 0, mtime: 0, off: 0, rest: "", dec: new StringDecoder("utf8"), p: new ActivityParser(roots) };
     cache.set(file, c);
   }
   if (st.size > c.off) {
@@ -189,7 +191,7 @@ export function activityOf(file: string, roots: string[] = []): Ev[] {
       const buf = Buffer.alloc(st.size - c.off);
       fs.readSync(fd, buf, 0, buf.length, c.off);
       c.off = st.size;
-      const text = c.rest + buf.toString("utf8");
+      const text = c.rest + c.dec.write(buf);
       const parts = text.split("\n");
       c.rest = parts.pop() ?? "";
       for (const l of parts) if (l.trim()) c.p.feed(l);

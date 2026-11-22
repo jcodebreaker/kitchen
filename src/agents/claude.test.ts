@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, test } from "vitest";
 import type { AgentRequest } from "./adapter.ts";
-import { ClaudeAdapter, ClaudeStream, claudeArgs, userLine } from "./claude.ts";
+import { ANSWER_GRACE_MS, ClaudeAdapter, ClaudeStream, claudeArgs, userLine } from "./claude.ts";
 
 const FAKE = `#!/usr/bin/env node
 const out = (o) => process.stdout.write(JSON.stringify(o) + "\\n");
@@ -98,20 +98,43 @@ test("without a result, the error is the agent's own line (rate limits still rea
   assert.equal(r.error, "Error: not logged in");
 });
 
-test("stdin stays open for a written message no assistant event answered yet, then closes", () => {
+const ev = (o: object) => JSON.stringify(o);
+const asst = (id: string) => ev({ type: "assistant", message: { id, content: [{ type: "text", text: "…" }] } });
+
+test("a message written during a tool call is answered by the first assistant event after the tool result", () => {
   const s = new ClaudeStream();
-  assert.equal(s.canClose(0), false, "no result yet");
-  s.line(JSON.stringify({ type: "assistant", message: { content: [] } }), 0);
+  s.line(asst("A"), 0); // tool_use
   s.wrote("m1");
-  s.line(JSON.stringify({ type: "result", subtype: "success" }), 100);
-  assert.equal(s.canClose(200), false, "m1 waits for its answer");
-  assert.deepEqual(s.line(JSON.stringify({ type: "assistant", message: { content: [] } }), 300), ["m1"], "a new turn answers it");
-  assert.equal(s.canClose(400), false, "that turn has no result yet");
-  s.line(JSON.stringify({ type: "result", subtype: "success", num_turns: 3 }), 500);
-  assert.equal(s.canClose(600), true);
-  assert.equal(s.final?.num_turns, 3, "the last result counts");
+  assert.deepEqual(s.line(asst("A"), 10), [], "another block of the message it arrived during: not answered");
+  s.line(ev({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t", content: "ok" }] } }), 20);
+  assert.deepEqual(s.line(asst("B"), 30), ["m1"]);
+  s.line(ev({ type: "result", subtype: "success", num_turns: 2, total_cost_usd: 0.01 }), 40);
+  assert.equal(s.canClose(41), true);
+});
+
+test("a message written during the final answer gets its own turn: stdin stays open for it, turns and tokens add up (spikes/w6-steer/late.mjs)", () => {
+  const s = new ClaudeStream();
+  s.line(ev({ type: "system", subtype: "init" }), 0);
+  s.wrote("m1"); // the model is writing its answer
+  assert.deepEqual(s.line(asst("A"), 10), [], "the answer it arrived during never saw it");
+  s.line(ev({ type: "result", subtype: "success", num_turns: 1, total_cost_usd: 0.0009, usage: { input_tokens: 10, output_tokens: 300 } }), 20);
+  assert.equal(s.canClose(30), false, "m1 waits for its turn");
+  s.line(ev({ type: "system", subtype: "init" }), 330); // Claude Code starts a turn for the queued message
+  assert.equal(s.canClose(6000), false, "that turn is running: the grace no longer applies");
+  assert.deepEqual(s.line(asst("B"), 1000), ["m1"]);
+  s.line(ev({ type: "result", subtype: "success", num_turns: 1, total_cost_usd: 0.0014, usage: { input_tokens: 12, output_tokens: 310 } }), 1300);
+  assert.equal(s.canClose(1301), true);
+  assert.equal(s.final?.num_turns, 2, "num_turns is per turn: summed");
+  assert.equal(s.final?.total_cost_usd, 0.0014, "total_cost_usd is already cumulative: the last one");
+  assert.deepEqual([s.final?.usage?.input_tokens, s.final?.usage?.output_tokens], [22, 610]);
+});
+
+test("a written message no turn takes: stdin closes after the grace, the message stays unread", () => {
+  const s = new ClaudeStream();
+  s.line(asst("A"), 0);
+  s.line(ev({ type: "result", subtype: "success" }), 10);
   s.wrote("m2");
-  assert.equal(s.canClose(700), false);
-  assert.equal(s.canClose(6000), true, "an unanswered message stops waiting after the grace");
+  assert.equal(s.canClose(100), false);
+  assert.equal(s.canClose(ANSWER_GRACE_MS + 11), true);
   assert.equal(userLine("hi").trim(), JSON.stringify({ type: "user", message: { role: "user", content: [{ type: "text", text: "hi" }] } }));
 });

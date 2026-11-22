@@ -131,7 +131,7 @@ export async function resume(repo: string, ref: string, out: Out): Promise<numbe
   const job = findJob(repo, ref);
   const c = readControl(jobDirOf(repo, job.id));
   if (isActive(job.stage) && (c.pause || c.stop)) {
-    cancelControl(repo, job.id);
+    await cancelControl(repo, job.id);
     out(`${job.id}  ${c.stop ? "stop" : "pause"} cancelled: it keeps running ${job.stage}`);
     return 0;
   }

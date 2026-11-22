@@ -15,7 +15,7 @@ import { kitchenHome } from "../../home.ts";
 import { appendLedger } from "../../ledger/append.ts";
 import { procsDirOf, reapGroups } from "../../procs.ts";
 import type { AgentRunRef } from "../machine.ts";
-import { markRead, operatorNotes, steerLine, unreadSteers } from "../messages.ts";
+import { markRead, operatorNotes, steerLine, unread, unreadSteers } from "../messages.ts";
 import { scratchOf, updateJob, writeAtomic } from "../store.ts";
 import { ensureWorktree } from "../worktree.ts";
 import { LockLost, RoleFailure, type StageContext } from "./types.ts";
@@ -70,13 +70,13 @@ export async function runRole(
   const model = modelFor(ctx.config, o.role);
   const t0 = Date.now();
   // Steers sent before this role started (a paused job, an engine-only step, a Codex role) open its prompt.
+  // Every steer this run reads is put back to `sent` if the run doesn't produce its file (failed, stopped,
+  // timed out, rate limited) or the lock is lost first: job roles never resume a session, so the next
+  // role must read them again.
   const notes = unreadSteers(ctx.jobDir);
-  await markRead(
-    ctx.jobDir,
-    notes.map((m) => m.id),
-    o.role,
-    "next-role",
-  );
+  const delivered = notes.map((m) => m.id);
+  const marking: Promise<void>[] = [];
+  await markRead(ctx.jobDir, delivered, o.role, "next-role");
   const stream = path.join("activity", `m${job.moves}-${o.role}-${t0}.jsonl`);
   const req: AgentRequest = {
     role: o.role,
@@ -94,7 +94,8 @@ export async function runRole(
     steer: {
       take: () => unreadSteers(ctx.jobDir).map((m) => ({ id: m.id, text: steerLine(m.text) })),
       read: (ids) => {
-        markRead(ctx.jobDir, ids, o.role, "mid-run").catch((e) => ctx.log(`messages: ${(e as Error).message}`));
+        delivered.push(...ids);
+        marking.push(markRead(ctx.jobDir, ids, o.role, "mid-run").catch((e) => ctx.log(`messages: ${(e as Error).message}`)));
       },
     },
     ...(o.bridge
@@ -103,9 +104,25 @@ export async function runRole(
         ? { bridge: bridgeServer({ repo: ctx.repo, job: job.id, role: o.role }) }
         : {}),
   };
-  if (!ctx.holdsLock()) throw new LockLost(`run lock lost before ${o.role} started`);
+  // Marks made while it ran land before anything else reads the thread.
+  const giveBack = async () => {
+    await Promise.all(marking);
+    await unread(ctx.jobDir, delivered);
+  };
+  if (!ctx.holdsLock()) {
+    await giveBack();
+    throw new LockLost(`run lock lost before ${o.role} started`);
+  }
   ctx.log(`${o.role}: ${ctx.agent.name} ${model} (${o.tier}) → ${o.file}`);
-  const r = await ctx.agent.run(req);
+  let r: Awaited<ReturnType<typeof ctx.agent.run>>;
+  try {
+    r = await ctx.agent.run(req);
+  } catch (e) {
+    await giveBack();
+    throw e;
+  }
+  await Promise.all(marking);
+  if (!r.ok || !r.outPath) await unread(ctx.jobDir, delivered);
   const secs = (Date.now() - t0) / 1000;
   // A wrapper (a scripted adapter passing a real run through) reports what really ran.
   const ran = r.ran ?? { adapter: ctx.agent.name, model };

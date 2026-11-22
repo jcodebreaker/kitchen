@@ -19,7 +19,7 @@ import { KITCHEN_MARKER } from "../checks/report-render.ts";
 import { type Config, loadConfig } from "../config.ts";
 import { type Forge, forgeFor, isTrusted } from "../forge/forge.ts";
 import { appendLedger } from "../ledger/append.ts";
-import { self } from "../lock.ts";
+import { ownerAlive, self } from "../lock.ts";
 import { procsDirOf, reapGroups } from "../procs.ts";
 import { retroDue, runRetro } from "../retro/retro.ts";
 import { dismissalsIn } from "../retro/signals.ts";
@@ -34,7 +34,7 @@ import { takeTicket } from "./base.ts";
 import { honorControl, stopRequested } from "./control.ts";
 import { ensureJobToolkit } from "./job-toolkit.ts";
 import { acquireRunLock } from "./lock.ts";
-import { type Facts, isActive, type Job, move, type Stage } from "./machine.ts";
+import { type Facts, isActive, type Job, move, pausedByYou, type Stage } from "./machine.ts";
 import { HANDLERS } from "./stages/index.ts";
 import { hasToolkit } from "./stages/toolkit-info.ts";
 import { LockLost, type Proposal, RoleFailure, type StageContext } from "./stages/types.ts";
@@ -167,7 +167,8 @@ export async function runKitchen(o: RunOpts): Promise<{ steps: number; moves: nu
         const jobs = listJobs(repo).filter(wanted);
         const runnable = jobs.filter((j) => isActive(j.stage) && !inFlight.has(j.id)).sort(byOldest);
         while (runnable.length && inFlight.size < concurrency) dispatch(runnable.shift() as Job);
-        const waiting = jobs.filter((j) => j.stage === "paused");
+        // A job a person paused waits for `kitchen resume`, not for this runner: like needs-human, it keeps no runner alive.
+        const waiting = jobs.filter((j) => j.stage === "paused" && !pausedByYou(j));
         if (!inFlight.size && !runnable.length && !waiting.length) break;
         await Promise.race([...inFlight.values(), new Promise((r) => setTimeout(r, tickMs))]);
       }
@@ -370,7 +371,7 @@ async function step(repo: string, start: Job, d: Deps, print: (l: string) => voi
   const me = self();
   if (!d.holdsLock()) return; // another runner has the lock: it runs the job
   // A pause or stop asked for while the job waited for a slot: parked instead of run.
-  if (await honorControl(repo, start.id, print)) return;
+  if ((await honorControl(repo, start.id, print)) === "parked") return;
   let job = await updateJob(repo, start.id, (j) => {
     if (j.stage === start.stage) j.running = { pid: me.pid, start: me.start, stage: j.stage, at: new Date().toISOString() };
     return j;
@@ -403,7 +404,7 @@ async function step(repo: string, start: Job, d: Deps, print: (l: string) => voi
     p = await handler(ctx);
   } catch (e) {
     // `kitchen stop` killed the agent: the stage's result is dropped and the job parked where it was.
-    if (stopRequested(jobDir) && (await honorControl(repo, job.id, print))) return;
+    if (stopRequested(jobDir) && (await honorControl(repo, job.id, print)) === "parked") return;
     const fresh = readJobAt(jobDir);
     const msg = (e as Error).message;
     if (e instanceof LockLost || !d.holdsLock()) {
@@ -437,7 +438,7 @@ async function step(repo: string, start: Job, d: Deps, print: (l: string) => voi
     print(`${short(job)}  ${job.stage}: run lock lost, ${job.stage} → ${p.to} not made; the runner that holds the lock resumes it`);
     return;
   }
-  if (stopRequested(jobDir) && (await honorControl(repo, job.id, print))) return;
+  if (stopRequested(jobDir) && (await honorControl(repo, job.id, print)) === "parked") return;
   const r = await moveJob(repo, job, p, print);
   if (r === "moved") stats.moves++;
   else if (r === "refused") stats.refused++;
@@ -462,12 +463,18 @@ export async function moveJob(
   by: "runner" | "human" = "runner",
   /** `filed` keys recorded in the same job.json write as the move (handled-once markers: a crash can't split them). */
   filed: string[] = [],
-): Promise<"moved" | "refused" | "stale"> {
-  let outcome: "moved" | "refused" | "stale" = "stale";
+): Promise<"moved" | "refused" | "stale" | "busy"> {
+  let outcome: "moved" | "refused" | "stale" | "busy" = "stale";
   const lines: string[] = [];
   let after: Job | null = null;
   await updateJob(repo, seen.id, (fresh) => {
     if (fresh.stage !== seen.stage || fresh.moves !== seen.moves) return fresh; // moved by someone else meanwhile
+    // A pause or stop never parks a job another live runner is in a step on: that runner parks it after (control.ts).
+    const parking = by === "human" && (p.facts.operator === "pause" || p.facts.operator === "stop");
+    if (parking && fresh.running && fresh.running.pid !== process.pid && ownerAlive({ pid: fresh.running.pid, start: fresh.running.start ?? null })) {
+      outcome = "busy";
+      return fresh;
+    }
     const now = new Date().toISOString();
     const log = (j: Job, to: Stage, row: string, note?: string) => {
       appendLedger(repo, {
