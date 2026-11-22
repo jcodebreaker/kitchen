@@ -208,6 +208,30 @@ export async function diffStat(job: Job): Promise<{ file: string; lines: number 
     });
 }
 
+/** Lines added and removed per file from the base to the worktree as it is now, uncommitted and new files included (the dashboard's Changes). */
+export async function liveDiffStat(job: Job): Promise<{ p: string; a: number; d: number }[]> {
+  const git = await gitOf(job);
+  const out = (await git.run(["diff", "--numstat", "--no-ext-diff", "--no-textconv", job.base, "--", "."])).stdout;
+  const rows = out
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => {
+      const [a, d, p] = l.split("\t");
+      return { p, a: Number(a) || 0, d: Number(d) || 0 };
+    });
+  const extra = (await git.run(["ls-files", "--others", "--exclude-standard", "--", "."])).stdout.split("\n").filter(Boolean);
+  for (const p of extra) {
+    if (p === OUTBOX || p.startsWith(`${OUTBOX}/`)) continue;
+    let a = 0;
+    try {
+      const st = fs.lstatSync(path.join(job.worktree, p)); // a symlink is not followed
+      if (st.isFile() && st.size < 2_000_000) a = fs.readFileSync(path.join(job.worktree, p), "utf8").split("\n").length;
+    } catch {}
+    rows.push({ p, a, d: 0 });
+  }
+  return rows.filter((r) => r.p !== OUTBOX && !r.p.startsWith(`${OUTBOX}/`));
+}
+
 /**
  * The smith's own worktree (PLAN §2 Toolkit layers): `.worktrees/_smith-<job>-<n>` on the
  * Toolkit branch `kitchen/toolkit/<job>-<n>`, started from the Toolkit the job runs now. The

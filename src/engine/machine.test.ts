@@ -862,6 +862,23 @@ const cases: Case[] = [
   },
   { row: "*>paused", job: { stage: "build" }, to: "paused", facts: f({ adapter: { error: "boom" } }), refused: /no rate limit/ },
   { row: "*>paused", job: { stage: "needs-human" }, to: "paused", facts: f({ adapter: { rateLimited: true, until: NOW } }), refused: /runs no agent/ },
+  // ADR 0009: a person pauses or stops a job; only kitchen resume wakes it
+  {
+    row: "*>paused(by-you)",
+    job: { stage: "build" },
+    to: "paused",
+    facts: f({ operator: "pause" }),
+    expect: (j) => assert.deepEqual([j.pausedFrom, j.pausedReason, j.waitFor], ["build", "by-you", undefined]),
+  },
+  {
+    row: "*>paused(by-you)",
+    job: { stage: "review" },
+    to: "paused",
+    facts: f({ operator: "stop" }),
+    expect: (j) => assert.deepEqual([j.pausedFrom, j.pausedReason], ["review", "by-you: stopped"]),
+  },
+  { row: "*>paused(by-you)", job: { stage: "done" }, to: "paused", facts: f({ operator: "pause" }), refused: /nothing to pause/ },
+  { row: "*>paused(by-you)", job: { stage: "build" }, to: "paused", facts: f({}), refused: /kitchen pause/ },
   {
     row: "*>needs-human",
     job: { stage: "gate", ...spent },

@@ -8,9 +8,11 @@ import path from "node:path";
 import readline from "node:readline/promises";
 import { loadConfig } from "../config.ts";
 import { plainCheckout } from "../engine/git.ts";
+import { MAX_MESSAGE } from "../engine/messages.ts";
+import { writeAtomic } from "../engine/store.ts";
 import { forgeFor } from "../forge/forge.ts";
 import { serveSetupBridge } from "../init/bridge.ts";
-import { toolkitBuild } from "../init/build.ts";
+import { type Question, questionsFile, toolkitBuild } from "../init/build.ts";
 import { installSkill } from "../init/files.ts";
 import { quickInit, readQuickRecord } from "../init/quick.ts";
 import { detachInit, initLog, readStatus, statusReport, tracked } from "../init/status.ts";
@@ -279,4 +281,30 @@ async function toolkitDown(id: string, out: (l: string) => void): Promise<number
   await releaseSlot(id);
   out(`toolkit down: ${id} stopped and its slot freed`);
   return 0;
+}
+
+/**
+ * The Setup's questions answered from the dashboard: the same as writing the answers file and running
+ * `kitchen toolkit build --answers <file> --detach`. Only ids the waiting questions name are taken.
+ */
+export function answerSetup(repo: string, answers: Record<string, unknown>, out: (l: string) => void, cli = CLI): number {
+  const s = readStatus(repo);
+  if (s?.state !== "questions") {
+    out("toolkit build: no questions are waiting (kitchen toolkit build --status)");
+    return 1;
+  }
+  let qs = s.questions ?? [];
+  if (!qs.length)
+    try {
+      qs = (JSON.parse(fs.readFileSync(questionsFile(repo), "utf8")) as { questions: Question[] }).questions ?? [];
+    } catch {}
+  const clean: Record<string, string> = {};
+  for (const [k, v] of Object.entries(answers)) {
+    if (!qs.some((q) => q.id === k)) throw new Error(`no setup question ${k}`);
+    if (typeof v !== "string" || v.length > MAX_MESSAGE) throw new Error(`the answer to ${k} must be text of at most ${MAX_MESSAGE} characters`);
+    clean[k] = v.trim();
+  }
+  const file = path.join(repo, ".kitchen", "setup-answers.json");
+  writeAtomic(file, `${JSON.stringify({ answers: clean }, null, 2)}\n`);
+  return detachInit(repo, cli, ["--answers", file], out);
 }

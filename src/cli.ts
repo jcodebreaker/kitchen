@@ -4,13 +4,14 @@
 //   kitchen run [--once] [--detach] [<job>]
 //   kitchen status
 //   kitchen resume <id|n> · feedback <id> [--to <stage>] ["<text>"] · reject <id>
+//   kitchen steer <id> "<text>" · pause <id> · stop <id>       talk to a running job, park it (src/engine/control.ts, ADR 0009)
 //   kitchen report [--bench]
 //   kitchen bench smoke|full|tuned|heldout [--tool claude|codex] [--runs n] [--only a,b] [--concurrency n] [--max-usd x] [--out dir]   (src/bench/run.ts)
 //   kitchen init [--tool claude|codex] [--toolkit] · kitchen toolkit build [--answers <file>] [--detach] [--status] [--verbose] · toolkit check [--feature x] [--src dir] · toolkit up · toolkit down --id <id>   (src/cli/toolkit-commands.ts)
 //   kitchen drive <job> <C> [--repro] [--arg k=v]… [--role r]   one criterion's proof (src/proof/prove.ts)
 //   kitchen drive <job> --view "<view>" [--role reviewer-ux]     one extra view for a UX/UI lens (src/engine/views.ts)
 //   kitchen dismiss <job> [<finding-id>] [--reason "<why>"]      list a job's findings, or say one was not useful (ledger, per lens)
-//   kitchen dashboard [--port 7357]                              the board, on 127.0.0.1, read-only (src/dashboard/server.ts)
+//   kitchen dashboard [--port 7357]                              the jobs, on 127.0.0.1; steer, answer, pause from it (src/dashboard/server.ts)
 //   kitchen migrate [--dry-run]                                  kitchen.yaml schema + Toolkit template files (src/migrate/migrate.ts)
 //   kitchen retro [status | unmute <lens>/<category> | approve <n>]   mutes and lesson drafts (src/retro/retro.ts)
 //   kitchen toolkit maintain [--force]                           pstack's maintain pass (src/toolkit/maintain.ts)
@@ -21,7 +22,7 @@ import { serveBridge } from "./bridge/mcp.ts";
 import * as cmd from "./cli/commands.ts";
 
 const USAGE =
-  'usage: kitchen ticket "<text>" | run [--once] [--detach] [<job>] | status | resume <id|n> | feedback <id> [--to <stage>] ["<text>"] | reject <id> | report [--bench] [--json] | retro [status | unmute <lens>/<category> | approve <n>] | migrate [--dry-run] | dashboard [--port n] | bench smoke|full|tuned|heldout […] | init [--tool claude|codex] [--toolkit] | toolkit build [--answers <file>] [--detach] [--verbose] | toolkit build --status [--wait <s>] | toolkit check [--feature x] [--src dir] | toolkit up | toolkit down --id <id> | drive <job> <C> [--repro] [--arg k=v]… | drive <job> --view "<view>" | dismiss <job> <finding> [--reason "<why>"] | toolkit maintain [--force] | mcp …';
+  'usage: kitchen ticket "<text>" | run [--once] [--detach] [<job>] | status | resume <id|n> | feedback <id> [--to <stage>] ["<text>"] | reject <id> | steer <id> "<text>" | pause <id> | stop <id> | report [--bench] [--json] | retro [status | unmute <lens>/<category> | approve <n>] | migrate [--dry-run] | dashboard [--port n] | bench smoke|full|tuned|heldout […] | init [--tool claude|codex] [--toolkit] | toolkit build [--answers <file>] [--detach] [--verbose] | toolkit build --status [--wait <s>] | toolkit check [--feature x] [--src dir] | toolkit up | toolkit down --id <id> | drive <job> <C> [--repro] [--arg k=v]… | drive <job> --view "<view>" | dismiss <job> <finding> [--reason "<why>"] | toolkit maintain [--force] | mcp …';
 
 const HELP = `kitchen: turns tickets into proven, reviewed pull requests (Claude Code or Codex)
 
@@ -38,9 +39,11 @@ Work
   kitchen ticket "<what you want>"        a ticket from a prompt (or label a GitHub issue: source.kind github)
   kitchen run [--detach] [--once] [<job>] work the queue (--detach: in the background, log in .kitchen/run.log)
   kitchen status [--json]                 one row per job (--json: one JSON array)
-  kitchen dashboard [--port 7357]         the board in a browser, on 127.0.0.1, read-only
+  kitchen dashboard [--port 7357]         the jobs in a browser, on 127.0.0.1: watch them, message them, pause them
   kitchen feedback <id> ["<text>"] [--to <stage>]   answer a job that needs you, or send a done one back
-  kitchen reject <id> · resume <id>
+  kitchen steer <id> "<text>"              message a running job: its agent reads it at its next step
+  kitchen pause <id> · stop <id> · resume <id>   park a job after its step, or now; wake it
+  kitchen reject <id>
   kitchen dismiss <job> [<finding>] [--reason "<why>"]  list its findings, or say one was not useful
 
 Learning
@@ -61,7 +64,11 @@ const COMMAND_HELP: Record<string, string> = {
   status:
     "kitchen status [--json]\n\nOne row per job: id, title, stage, round, when it last moved, PR, report.\n  --json   the jobs as one JSON array, nothing else",
   resume:
-    "kitchen resume <id|n>\n\nWakes a paused job: it goes back to the stage it paused in. A job that needs you takes kitchen feedback instead.\nA job paused no-toolkit takes the Toolkit once it is on your base branch (kitchen toolkit build, then merge kitchen/setup); without one it goes on with checks and tests only, unless it is high risk.",
+    "kitchen resume <id|n>\n\nWakes a paused job: it goes back to the stage it paused in and reads the messages sent while it was paused. On a job still running, it cancels a pause or stop not made yet. A job that needs you takes kitchen feedback instead.\nA job paused no-toolkit takes the Toolkit once it is on your base branch (kitchen toolkit build, then merge kitchen/setup); without one it goes on with checks and tests only, unless it is high risk or checks can't prove it.",
+  steer:
+    'kitchen steer <id> "<text>"\n\nA message for a job while it runs: add context, redirect it, ask what it is doing. A running Claude agent reads it after the tool call it is in, without stopping. Otherwise (Codex, a step with no agent, a paused job) the next agent role reads it, quoted as operator notes. The thread is .kitchen/jobs/<id>/messages.jsonl.',
+  pause: "kitchen pause <id>\n\nLets the current step finish, then parks the job (paused, by-you) until kitchen resume.",
+  stop: "kitchen stop <id>\n\nKills the job's running agent (and the checks it started) now and parks the job (paused, by-you). kitchen resume runs the stage again.",
   feedback:
     'kitchen feedback <id> ["<text>"] [--to <stage>]\n\nAnswers a job that needs you, or sends a done job back to build with your text.\n  --to <stage>   for a needs-human job: where it goes, at or before the stage it stopped in (intake ... verify)',
   reject: "kitchen reject <id>\n\nCloses a job without a PR.",
@@ -71,7 +78,8 @@ const COMMAND_HELP: Record<string, string> = {
     "kitchen retro [status | unmute <lens>/<category> | approve <n>]\n\nWith no argument, runs the retro now: mutes review categories people keep dismissing, proposes lesson tickets as drafts.\n  status                     the mutes and drafts\n  unmute <lens>/<category>   that category blocks again\n  approve <n>                turn draft n into a ticket",
   migrate:
     "kitchen migrate [--dry-run]\n\nBrings kitchen.yaml's schema and the Toolkit's template files up to this Kitchen; prints each change as a diff.\n  --dry-run   print, change nothing; exit 1 when there is something to change (for CI), 0 when not",
-  dashboard: "kitchen dashboard [--port 7357]\n\nThe board in a browser, on 127.0.0.1, read-only. Ctrl-C stops it.",
+  dashboard:
+    "kitchen dashboard [--port 7357]\n\nThe jobs in a browser, on 127.0.0.1 only: a list or a board, each job's live activity, checks and changes, and the Setup run. From it you answer, steer, pause, resume, stop, reject and follow up: the same engine code as the CLI verbs. Ctrl-C stops it.",
   bench:
     "kitchen bench smoke|full|tuned|heldout [--tool claude|codex] [--runs n] [--only a,b] [--concurrency n] [--max-usd x] [--out dir]\n\nThe benchmark (from a clone of Kitchen only).",
   init: "kitchen init [--tool claude|codex] [--toolkit] | init --skill\n\nQuick init, in seconds: writes kitchen.yaml with the checks it finds (package.json, Makefile, pyproject.toml, go.mod, Cargo.toml; one short agent call only when none are obvious), installs the /kitchen skill, adds Kitchen's .gitignore entries, and runs the checks once. No Toolkit, no app start, no Docker.\n  --tool      claude (default) or codex\n  --skill     only the /kitchen skill\n  --toolkit   then build the Toolkit too (kitchen toolkit build; its flags --answers, --detach, --verbose… pass through)",
@@ -171,6 +179,12 @@ async function main(argv: string[]): Promise<number> {
       return cmd.feedback(repo, need("<id>"), pos.slice(1).join(" "), out, { to });
     case "reject":
       return cmd.reject(repo, need("<id>"), out);
+    case "steer":
+      return (await cmd.steer(repo, need("<id>"), pos.slice(1).join(" "), out)).code;
+    case "pause":
+      return cmd.pause(repo, need("<id>"), out);
+    case "stop":
+      return cmd.stop(repo, need("<id>"), out);
     case "report":
       if (flags.has("--bench")) {
         for (const l of (await import("./bench/run.ts")).benchReport(repo)) out(l);

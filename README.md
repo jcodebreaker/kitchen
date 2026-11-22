@@ -74,7 +74,7 @@ Or tell `/kitchen` what you want in Claude Code or Codex. With GitHub, label an 
 ```sh
 kitchen run --detach             # works the queue in the background; log in .kitchen/run.log
 kitchen status                   # one row per job: stage, round, PR, report
-kitchen dashboard                # the board in your browser: http://127.0.0.1:7357
+kitchen dashboard                # every job in your browser: http://127.0.0.1:7357
 ```
 
 For the first second after `run --detach`, `kitchen status` may still say `runner: not running`; run it again. `status` doesn't wait: run it whenever you want to look (or keep the dashboard open, it refreshes itself). Without GitHub every job shows `no PR`; that is normal.
@@ -83,7 +83,7 @@ A ticket goes through intake (is it clear, how risky), spec (acceptance criteria
 
 Until Kitchen can drive your app (step 6), a job is proven by your checks and by tests (`test <file>` and `cmd` proofs), and its Report says so. A ticket whose criteria need the running app pauses with `paused(no-toolkit)`: build the Toolkit (step 6) and it goes on, or `kitchen resume <id>` to go on without it, with those criteria marked "not proven (no Toolkit)". A high-risk ticket (auth, payments, migrations) waits for the Toolkit.
 
-If a job needs you, `kitchen status` says `needs-info` or `needs-human` with the reason. Answer with `kitchen feedback <id> "<your answer>"`, or drop it with `kitchen reject <id>`.
+If a job needs you, `kitchen status` says `needs-info` or `needs-human` with the reason. Answer with `kitchen feedback <id> "<your answer>"`, or drop it with `kitchen reject <id>`. You can also talk to a job while it runs (`kitchen steer <id> "keep the diff small"`), or park it (`kitchen pause`, `kitchen stop`, `kitchen resume`): see [Commands](#commands). The dashboard does all of this from the browser.
 
 ### 5. Read the Report and merge
 
@@ -148,10 +148,45 @@ Jobs use the Toolkit that is on your main branch, so this merge is what lets the
 
 Risk decides how heavy the path is: low-risk tickets get inline criteria and a light review, high-risk ones (auth, payments, migrations) get a full spec, a security review, and are always marked for a human.
 
+## Commands
+
+| command | what it does |
+|---|---|
+| `kitchen ticket "<what you want>"` | files a ticket; `kitchen run` takes it in |
+| `kitchen run [--detach] [--once] [<job>]` | works the queue (`--detach`: in the background, log in `.kitchen/run.log`) |
+| `kitchen status [--json]` | one row per job |
+| `kitchen dashboard [--port 7357]` | the jobs in your browser (see [Dashboard](#dashboard)) |
+| `kitchen feedback <id> ["<text>"] [--to <stage>]` | answers a job that needs you; on a done job, a follow-up: another Build round |
+| `kitchen steer <id> "<text>"` | a message for a running job: add context, redirect it, ask what it is doing. A Claude agent reads it after the tool call it is in, without stopping. Codex, a step with no agent (Gate, Verify's engine part, Ready) and a paused job get it at the start of the next agent role, quoted as operator notes |
+| `kitchen pause <id>` | lets the current step finish, then parks the job (`paused(by-you)`) |
+| `kitchen stop <id>` | kills the job's agent (and the checks it started) now, then parks it; resume runs that stage again |
+| `kitchen resume <id>` | wakes a paused job where it stopped; it reads the messages sent while it was paused. A job you paused keeps no `kitchen run` waiting for it (like one that needs you), so start `kitchen run --detach` again if it has ended: `kitchen status` and the dashboard say when it isn't running |
+| `kitchen reject <id>` | closes a job without a PR |
+| `kitchen dismiss <job> [<finding>] [--reason "…"]` | lists a job's review findings, or says one was not useful |
+| `kitchen report [--json]` | the measures from the ledger |
+| `kitchen init …`, `kitchen toolkit …`, `kitchen migrate`, `kitchen retro …` | setup and maintenance: `kitchen --help` |
+
+A job's steering thread is `.kitchen/jobs/<id>/messages.jsonl`: each message with who sent it, when, and its status (`sent`, then `read` by a role, `mid-run` or `next-role`). Only Kitchen writes it. Message text has the trust of `kitchen feedback`: it is your request about the work, quoted to agents, never an instruction to Kitchen itself; it is capped at 4,000 characters.
+
+## Dashboard
+
+`kitchen dashboard` serves every job on http://127.0.0.1:7357 (this machine only), and refreshes itself while jobs run:
+
+- **List** (the default) groups the jobs into Needs you, Running and Done; **Board** puts the running ones in stage columns. The page remembers which you chose.
+- Each running job shows a live line (the call its agent is making right now, with a shimmer while it runs), the time in its current stage (frozen while paused; a job that needs you shows how long it has waited; the job's total age is in its panel), its changed files and a six-step stage track: Intake, Build, Gate, Verify, Review, Report.
+- Click a job for its panel: the stage track, then **Activity** (every stage with what its agents did: their reasoning lines, each tool call with its time, file edits with +/− counts, your messages and whether they were read), **Checks** (each criterion and its last verdict) and **Changes** (files and line counts from the base). The Report link is there once it exists.
+- **One composer per job**, in its panel or under its row: answer a job that needs you, steer a running one, leave a note on a paused one, follow up on a done one (another Build round). Pause, Resume, Stop and Reject sit beside it. **New ticket** files a ticket.
+- **Setup** shows `kitchen toolkit build`'s steps (after a quick `kitchen init` only: "Toolkit not built"); its questions can be answered right there (the same as `kitchen toolkit build --answers <file> --detach`). A job paused `no-toolkit` shows as needing you, with its reason, a copy of `kitchen toolkit build` and Resume.
+- Keys: `J`/`K` move, `Enter` opens, `R` messages the selected job, `Esc` closes, `⌘K` (or Ctrl-K) opens the command palette. Light and dark follow your system; the Theme button switches. It works down to a phone's width.
+
+Every button is a CLI verb: the page sends `POST /api/<verb>` and the server calls the same engine function as the command, so the browser can do nothing `kitchen` can't. Jobs move only while `kitchen run` works the queue; the page says so when it isn't running.
+
+Safety: the server listens on 127.0.0.1 and refuses any other `Host` (DNS rebinding). It makes a random 32-byte token when it starts and puts it in the page it serves; every POST must carry it in an `x-kitchen-token` header, as `application/json`, and from the page's own origin. A cross-site page can send neither that header nor that content type, and can't read the token. The page loads nothing from elsewhere (its fonts, Geist and Geist Mono under the SIL Open Font License, are served by Kitchen) under a strict Content-Security-Policy. Another program running as you could read the token from the page, but it could run `kitchen` itself anyway.
+
 ## Learning: report, dashboard, retro
 
 - `kitchen report` prints the measures Kitchen keeps from its first run: merge-ready rate over tickets taken in, first-pass verdict rate, rounds per job, escalation reasons, Toolkit gaps per job, INCONCLUSIVE and flake rate per drive, time (agent time and wall clock) and cost per job and per risk path, findings dismissed per review lens, primitive PRs per job. `--json` for the numbers.
-- `kitchen dashboard` serves the board (stage columns, each job's full id, risk, round, when it last moved and what it last did, verdict chips, cost, time, Report link) on 127.0.0.1 only, read-only. Light and dark.
+- `kitchen dashboard` serves the jobs in your browser; see [Dashboard](#dashboard).
 - **Retro.** Every 5 finished jobs (`retro.every_jobs`), Kitchen looks back. A review finding you dismiss (`kitchen dismiss <job> <finding> --reason "…"`, or a "not useful" reply naming the finding on the PR, in the same sentence) counts against its lens and its category (each finding has one: security, correctness, performance, naming, style, types, tests, docs, ux, ui); after 3 (`retro.mute_after`) that category stops blocking for that lens (it is still shown as a note). Security findings are never muted, in any lens: neither one in the `security` category nor one that mentions auth, a token, a session, permissions, ownership, injection, SQL, XSS, CSRF, a leak, a secret, a password, a credential or access. A security finding is dismissed only with a reason ("security-1-2 is not useful because …", or `--reason`). The rest of a PR comment that dismisses something is still feedback; a comment that only dismisses is not. PR replies are read for jobs done in the last 30 days (`retro.lookback_days`). `kitchen retro status` lists mutes; `kitchen retro unmute <lens>/<category>` lifts one. The retro also proposes up to 3 lesson tickets (a lint rule, a check, a Toolkit fix, or an AGENTS.md note) as **drafts**: Kitchen never works on its own proposal until you approve it (`kitchen retro approve <n>`, or on GitHub, add the `kitchen` label to the issue). It never edits Kitchen's own prompts.
 
 ## Configuration
