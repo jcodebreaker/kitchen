@@ -164,6 +164,7 @@ Risk decides how heavy the path is: low-risk tickets get inline criteria and a l
 | `kitchen reject <id>` | closes a job without a PR |
 | `kitchen dismiss <job> [<finding>] [--reason "…"]` | lists a job's review findings, or says one was not useful |
 | `kitchen report [--json]` | the measures from the ledger |
+| `kitchen skills` | which role skills are installed for your agent tool, where, and how to install a missing one (see [Role skills](#role-skills)) |
 | `kitchen init …`, `kitchen toolkit …`, `kitchen migrate`, `kitchen retro …` | setup and maintenance: `kitchen --help` |
 
 A job's steering thread is `.kitchen/jobs/<id>/messages.jsonl`: each message with who sent it, when, and its status (`sent`, then `read` by a role, `mid-run` or `next-role`). Only Kitchen writes it. Message text has the trust of `kitchen feedback`: it is your request about the work, quoted to agents, never an instruction to Kitchen itself; it is capped at 4,000 characters.
@@ -233,8 +234,51 @@ Every key, with its default:
 | `feedback` | `{ trusted: [], trust_associations: [OWNER, MEMBER, COLLABORATOR] }` | whose PR comments count |
 | `forge` | `{ kind: local, base: main }` | `github` with `repo: owner/name` (and optional `url`) for PRs |
 | `source` | `{ kind: prompt, label: kitchen, operators: [] }` | `github`: labelled issues are tickets |
+| `skills` | `{ enabled: true }` | role skills (see [Role skills](#role-skills)); `enabled: false` runs every role on its prompt alone; `host: claude\|codex` says where to look for the `fake` tool |
 
 `kitchen migrate --dry-run` shows what an upgrade of Kitchen would change in `kitchen.yaml` and in the Toolkit's template files, and exits 1 when there is something to change (0 when there is nothing), so CI can check it; `kitchen migrate` writes it (you commit it).
+
+## Role skills
+
+Each role can get proven outside skills as guidance: test-first building for a feature, bug diagnosis for a bug, a security review on a high-risk change (decision: `docs/adr/0014-role-skills.md` in the source repository). Kitchen doesn't ship or install them; it uses the ones installed where your agent tool loads skills:
+
+- **Claude Code:** `<repo>/.claude/skills/<name>/SKILL.md`, `~/.claude/skills/<name>/SKILL.md`, and the skills of plugins installed in `~/.claude/plugins/installed_plugins.json` and enabled in `~/.claude/settings.json` or the repo's `.claude/settings.json` / `settings.local.json` (named `<plugin>:<name>`; the bare name matches too).
+- **Codex:** `.agents/skills` from the working folder up to the repo root, `~/.agents/skills`, and `$CODEX_HOME/skills` (default `~/.codex/skills`).
+
+A skill counts only as a readable, non-empty `SKILL.md`. `kitchen init` and `kitchen skills` list what is there; before each agent role a job checks again. A **required** skill that is missing stops the job before any agent runs, as `needs-human` with the skill, the tool and how to install it; install it and answer the job (`kitchen feedback <id> "installed"`). A missing optional skill is skipped and logged. Kitchen never installs a skill.
+
+Roles run sealed off (no settings, no slash commands), so Kitchen quotes each skill's `SKILL.md` (frontmatter removed, at most 12,000 characters each and 24,000 per role) under a "Skills" heading at the end of the role's prompt, as guidance. A skill never changes a role's tools, permissions or verdicts: code still decides. Each role run records in the ledger and `job.json` the skill's name, path, tool and the sha256 of its `SKILL.md`; the Report has a "Skills used" table per role; the dashboard shows them on each step; and a role that runs again with a changed skill logs a warning.
+
+A ticket may ask for more skills for the builder with a line `Skills: a, b` (outside code blocks): they are added as required, never removing one. Interactive skills (they ask questions nobody is there to answer) are refused.
+
+The registry, `skills/registry.json` (the table below is generated from it):
+
+<!-- skills-registry:start (generated from skills/registry.json: npm run skills:readme) -->
+| Role | Required | Picked by kind / surface / risk | Optional | Fallback if missing |
+|---|---|---|---|---|
+| builder | — | kind bug → `diagnosing-bugs`; kind feature/ui → `tdd`; kind feature/ui → `implement`; kind chore → `codebase-design` | `codebase-design`, the ticket's `Skills:` line (required) | the role prompt alone (today's behaviour) |
+| intake | — | — | `domain-modeling` | the role prompt |
+| spec | — | — | `to-spec` | the role prompt |
+| reviewer-code | — | — | `code-review`, `codebase-design` | the roles/_review.md checklist |
+| reviewer-security | `security-review` (high risk) | security surface → `security-review` | — | halt: high risk needs it |
+| reviewer-ui | — | ui surface → `impeccable` | — | the reviewer-ui.md rubric; the Report says degraded |
+| reviewer-ux | — | — | — | the role prompt |
+| verifier | — | — | — | none: the verifier judges only what needs eyes |
+| report | — | — | `humanizer` | the role prompt |
+
+Never loaded (interactive): `grilling`, `grill-me`, `grill-with-docs`, `wizard`, `triage`, `ask-matt`, `to-questionnaire`.
+<!-- skills-registry:end -->
+
+**Bench them before keeping them.** From a clone of Kitchen, run the same subset with and without skills, on the same machine (the skills installed for your agent tool are the ones measured), and compare correct rate, rounds and cost. Each side is paid agent runs, roughly $10–25 on the smoke subset:
+
+```sh
+kitchen skills                                                          # what the "with" side will load
+kitchen bench smoke --tool claude --runs 3 --max-usd 25                 # with skills → bench/results/<date>-smoke-claude.md
+kitchen bench smoke --tool claude --runs 3 --max-usd 25 --no-skills     # without → bench/results/<date>-smoke-claude-noskills.md
+kitchen report --bench                                                  # both runs, one line each
+```
+
+A skill that doesn't raise the correct rate or lower cost or rounds beyond the bench's noise comes out of the registry.
 
 ## Safety model
 
