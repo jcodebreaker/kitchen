@@ -19,14 +19,20 @@ import { kitchenDir, listJobs, writeAtomic } from "../engine/store.ts";
 import { ownerAlive, processStart, withFileLock } from "../lock.ts";
 import { validate } from "./contract.ts";
 import { runToolkit } from "./run.ts";
+import { sandboxedBin, wrappedBin } from "./sandbox.ts";
 import { listSlots } from "./slots.ts";
 
 export const TOOLKIT_BIN = path.join(".kitchen", "toolkit", "bin", "dev");
 const PREFIX = "_toolkit@";
 export const short = (sha: string) => sha.slice(0, 12);
 
-/** `release` drops this process's lease; until then (or until the process dies) GC leaves the checkout alone. */
-export type Checkout = { sha: string; dir: string; bin: string; git: GitRepo; release: () => void };
+/**
+ * `release` drops this process's lease; until then (or until the process dies) GC leaves the checkout alone.
+ * `bin` is what to run: for a sha not merged into the base (`merged: false`, agent-written code no human
+ * has reviewed: init's check of kitchen/setup, `toolkit check --rev …`) it is the sandbox-exec wrapper
+ * (ADR 0008; `sandboxed: false` where the OS has none), else the checkout's own bin/dev.
+ */
+export type Checkout = { sha: string; dir: string; bin: string; git: GitRepo; merged: boolean; sandboxed: boolean; release: () => void };
 
 const checkoutsRoot = (repo: string) => path.join(repo, ".worktrees");
 const markerOf = (repo: string, sha: string) => path.join(kitchenDir(repo), "toolkit-checkouts", `${short(sha)}.json`);
@@ -67,12 +73,26 @@ export async function resolveRev(repo: string, rev: string): Promise<string> {
   return (await git.run(["rev-parse", "--verify", `${rev}^{commit}`])).stdout.trim();
 }
 
-/** The checkout of `sha`, created if missing, leased to this process (call `release` when done). Throws if the base has no Toolkit at that sha. */
+/** Whether `sha` is merged: an ancestor of the base (the main checkout's HEAD), so a human has taken it in. */
+export async function mergedIntoBase(repo: string, sha: string): Promise<boolean> {
+  const git = await openGit(plainCheckout(repo));
+  try {
+    await git.run(["merge-base", "--is-ancestor", sha, "HEAD"]);
+    return true;
+  } catch {
+    return false; // exit 1 (not an ancestor), or no HEAD: not merged either way
+  }
+}
+
+/**
+ * The checkout of `sha`, created if missing, leased to this process (call `release` when done).
+ * Throws if the base has no Toolkit at that sha. A sha not merged into the base runs sandboxed (ADR 0008).
+ */
 export async function toolkitCheckout(repo: string, rev: string): Promise<Checkout> {
   repo = fs.realpathSync(repo);
   const sha = await resolveRev(repo, rev);
   fs.mkdirSync(path.dirname(gcLock(repo)), { recursive: true });
-  return withFileLock(gcLock(repo), async () => {
+  const co = await withFileLock(gcLock(repo), async () => {
     const release = takeLease(repo, sha);
     try {
       return { ...(await checkoutOf(repo, sha)), release };
@@ -81,9 +101,12 @@ export async function toolkitCheckout(repo: string, rev: string): Promise<Checko
       throw e;
     }
   });
+  if (await mergedIntoBase(repo, sha)) return { ...co, merged: true, sandboxed: false };
+  const sb = sandboxedBin(co.bin);
+  return { ...co, bin: sb.bin, merged: false, sandboxed: sb.sandboxed };
 }
 
-async function checkoutOf(repo: string, sha: string): Promise<Omit<Checkout, "release">> {
+async function checkoutOf(repo: string, sha: string): Promise<Omit<Checkout, "release" | "merged" | "sandboxed">> {
   const id = `${PREFIX}${short(sha)}`;
   const dir = path.join(checkoutsRoot(repo), id);
   const main = await openGit(plainCheckout(repo));
@@ -229,7 +252,7 @@ export function slotShas(repo: string, slots = listSlots(), alive = ownerAlive):
   const out = new Set<string>();
   for (const s of slots) {
     if (!alive({ pid: s.pid, start: s.pidStart ?? null })) continue;
-    let bin = s.toolkitBin;
+    let bin = wrappedBin(s.toolkitBin) ?? s.toolkitBin; // a sandboxed run's wrapper names the checkout's bin/dev
     try {
       bin = fs.realpathSync(bin);
     } catch {}

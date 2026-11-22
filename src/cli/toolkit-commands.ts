@@ -135,6 +135,8 @@ export async function w2(name: string, argv: string[]): Promise<number> {
 async function toolkitUp(repo: string, o: { rev?: string; src?: string }, out: (l: string) => void): Promise<number> {
   repo = plainCheckout(repo).workTree;
   const co = await toolkitCheckout(repo, o.rev ?? "HEAD");
+  if (!co.merged)
+    out(`toolkit up: ${co.sha.slice(0, 12)} is not merged into the base: bin/dev runs ${co.sandboxed ? "under sandbox-exec" : "UNSANDBOXED"} (ADR 0008)`);
   const src = path.resolve(o.src ?? co.dir);
   let slotId: string | null = null;
   // Ctrl-C from the first moment: a stop that comes during prepare or up still brings the slot down.

@@ -5,12 +5,16 @@
 // Toolkit (fixture A's) still passes the full `toolkit_check` through the bridge,
 // Docker included. Nothing secret is printed: the planted script reports only
 // whether each read worked.
+// Round 2: `kitchen init`'s own check of the kitchen/setup commit (and
+// `toolkit check --rev kitchen/setup`) runs a planted, working bin/dev that
+// writes a marker when it can read ~/.ssh or $KITCHEN_HOME/engine.key: no
+// marker while the sha is unmerged, the marker once merged (unsandboxed by design).
 //   node spikes/w2/sandbox.ts [scratch dir]          (macOS; Docker: one app stack, two at the parallel step)
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { check, finish, fixtureRepo, HERE, ourContainers } from "./lib.ts";
+import { check, finish, fixtureRepo, git, HERE, kitchen, ourContainers, type Repo } from "./lib.ts";
 
 const root = path.resolve(process.argv[2] ?? path.join(HERE, ".work", "sandbox"));
 fs.rmSync(root, { recursive: true, force: true });
@@ -71,6 +75,81 @@ for (const [name] of targets) {
   check(`through the bridge, bin/dev can't read ${name}`, read[name] === false, `sandboxed ${read[name]}, unsandboxed ${unsandboxed.read[name]}`);
 }
 check("the same reads work unsandboxed (the denial is the sandbox's)", unsandboxed.read["KITCHEN_HOME/engine.key"] === true, JSON.stringify(unsandboxed.read));
+
+// ---------- round 2: init's own check of kitchen/setup (not merged) is sandboxed too ----------
+// A planted Toolkit that works (the probe spike's fake) and, on every call, writes a
+// marker naming what it could read of ~/.ssh and $KITCHEN_HOME/engine.key (names only).
+// Sandboxed it can read neither, writes nothing and passes; unsandboxed it leaks.
+const marker = path.join(root, "leaked.txt");
+const leaked = () => (fs.existsSync(marker) ? fs.readFileSync(marker, "utf8").trim().split("\n") : []);
+const plantDir = path.join(root, "plant");
+fs.mkdirSync(path.join(plantDir, ".kitchen", "toolkit", "bin"), { recursive: true });
+fs.mkdirSync(path.join(plantDir, ".kitchen", "toolkit", "features"), { recursive: true });
+const leak = `for (const [what, f, dir] of ${JSON.stringify([
+  ["~/.ssh", path.join(os.homedir(), ".ssh"), true],
+  ["KITCHEN_HOME/engine.key", path.join(r.home, "engine.key"), false],
+])}) {
+  try {
+    if (dir) fs.readdirSync(f); else fs.readFileSync(f);
+    fs.appendFileSync(${JSON.stringify(marker)}, \`\${process.argv[2]} read \${what}\\n\`);
+  } catch {}
+}
+const state =`;
+fs.writeFileSync(
+  path.join(plantDir, ".kitchen", "toolkit", "bin", "dev"),
+  fs.readFileSync(path.join(HERE, "fake-toolkit.mjs"), "utf8").replace("const state =", leak),
+  {
+    mode: 0o755,
+  },
+);
+fs.writeFileSync(
+  path.join(plantDir, ".kitchen", "toolkit", "features", "home.md"),
+  "# Home\n```drive\ndrive: home.look\nsteps:\n  - open: { path: / }\n  - read: { target: body }\n```\n```kitchen\npaths: [server.js]\n```\n",
+);
+const pr: Repo = {
+  dir: path.join(root, "planted-init"),
+  home: r.home,
+  env: { ...process.env, KITCHEN_HOME: r.home, KITCHEN_TOOLKIT_STATE: path.join(root, "state"), W2_PLANT_DIR: plantDir },
+};
+fs.mkdirSync(pr.dir, { recursive: true });
+fs.writeFileSync(path.join(pr.dir, "server.js"), "// app\n");
+fs.writeFileSync(path.join(pr.dir, "kitchen.yaml"), `agent: { tool: fake, script: ${JSON.stringify(path.join(HERE, "fake-setup.ts"))} }\n`);
+git(root, "init", "-q", "-b", "main", pr.dir);
+git(pr.dir, "add", "-A");
+git(pr.dir, "commit", "-q", "-m", "planted");
+
+execFileSync(path.join(plantDir, ".kitchen", "toolkit", "bin", "dev"), ["describe", `--src=${plantDir}`], { env: pr.env });
+const control = leaked();
+check("control: the planted bin/dev leaks when run unsandboxed", control.includes("describe read KITCHEN_HOME/engine.key"), control.join("; "));
+fs.rmSync(marker, { force: true });
+
+const answers = path.join(root, "answers.json");
+fs.writeFileSync(answers, JSON.stringify({ answers: { q1: "alice" } }));
+const init = kitchen(pr, ["init", "--answers", answers], { timeoutMs: 300_000 });
+check(
+  "kitchen init: its check of the kitchen/setup commit runs bin/dev under sandbox-exec, and passes",
+  init.code === 0 && /is not merged into the base: bin\/dev runs under sandbox-exec/.test(init.out) && /toolkit check: PASS/.test(init.out),
+  init.out
+    .split("\n")
+    .filter((l) => /not merged|PASS|FAIL|done|refus/.test(l))
+    .join(" | "),
+);
+check("kitchen init: the planted bin/dev read nothing (no marker)", leaked().length === 0, leaked().join("; "));
+
+const rev = kitchen(pr, ["toolkit", "check", "--rev", "kitchen/setup"], { timeoutMs: 300_000 });
+check(
+  "toolkit check --rev kitchen/setup: sandboxed, passes, read nothing",
+  rev.code === 0 && /runs under sandbox-exec/.test(rev.out) && leaked().length === 0,
+  `exit ${rev.code}; ${leaked().join("; ") || "no marker"}`,
+);
+
+git(pr.dir, "merge", "-q", "--ff-only", "kitchen/setup");
+const merged = kitchen(pr, ["toolkit", "check"], { timeoutMs: 300_000 });
+check(
+  "after the merge the same Toolkit runs unsandboxed (by design: a human took it in), and the marker shows it could read",
+  merged.code === 0 && !/not merged/.test(merged.out) && leaked().some((l) => /engine\.key/.test(l)),
+  `exit ${merged.code}; ${leaked().length} marker lines, e.g. ${leaked()[0] ?? "none"}`,
+);
 
 // A normal Toolkit still passes the whole check through the bridge, sandboxed.
 const a = makeSetupBridge({ repo: r.dir, worktree: r.dir });

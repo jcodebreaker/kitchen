@@ -1,10 +1,11 @@
-// The OS sandbox for bin/dev runs the setup bridge starts (ADR 0008). The setup
-// agent writes bin/dev, and `kitchen setup-mcp` runs it outside the agent's own
-// sandbox (with network and Docker), so on macOS every such run goes through
-// `sandbox-exec` with a profile that denies reading or writing the developer's
-// credentials and Kitchen's own secrets, and allows everything else bin/dev
-// needs (the repo, temp, the Docker socket and CLI config, the network).
-// Linux: not handled yet (no profile; the bridge says so on start).
+// The OS sandbox for agent-written bin/dev that no human has merged yet (ADR 0008):
+// the setup bridge's runs (`kitchen setup-mcp`), and every run of a Toolkit sha
+// that is not an ancestor of the base (init's own check and its fix rounds,
+// `toolkit check --rev kitchen/setup`, `toolkit up --rev …`: checkout.ts). On
+// macOS each such run goes through `sandbox-exec` with a profile that denies
+// reading or writing the developer's credentials and Kitchen's own secrets, and
+// allows everything else bin/dev needs (the repo, temp, the Docker socket and
+// CLI config, the network). Linux: not handled yet (no profile; logged).
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -24,6 +25,8 @@ const DENIED_IN_HOME = [
   ".gnupg",
   ".netrc",
   ".git-credentials",
+  ".npmrc",
+  ".pypirc",
   ".claude",
   ".claude.json",
   ".config/claude",
@@ -91,6 +94,17 @@ export function sandboxedBin(bin: string, o: { home?: string; kHome?: string } =
   );
   fs.chmodSync(wrapper, 0o700);
   return { bin: wrapper, sandboxed: true };
+}
+
+/** The real bin/dev behind a wrapper `sandboxedBin` wrote, or null when `bin` is not one (checkout GC: a slot running a wrapper uses its checkout). */
+export function wrappedBin(bin: string): string | null {
+  if (!/^dev-[0-9a-f]{12}$/.test(path.basename(bin)) || path.basename(path.dirname(bin)) !== "sandbox") return null;
+  try {
+    const m = /^exec \S+ -f '(?:[^']|'\\'')*' '((?:[^']|'\\'')*)' "\$@"$/m.exec(fs.readFileSync(bin, "utf8"));
+    return m ? m[1].replace(/'\\''/g, "'") : null;
+  } catch {
+    return null;
+  }
 }
 
 const sh = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;

@@ -19,8 +19,8 @@ import { kitchenHome } from "../home.ts";
 import { RESERVED_ARGS } from "../proof/drive-format.ts";
 import { PREPARE_STALL_MS, runToolkitCheck } from "../toolkit/check.ts";
 import { runToolkit } from "../toolkit/run.ts";
+import { sandboxedBin } from "../toolkit/sandbox.ts";
 import { acquireSlot, releaseSlot, type Slot } from "../toolkit/slots.ts";
-import { sandboxedBin } from "./sandbox.ts";
 
 const CLI = path.resolve(import.meta.dirname, "..", `cli${path.extname(import.meta.filename)}`);
 const PROTOCOL = "2025-06-18";
