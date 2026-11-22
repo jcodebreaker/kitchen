@@ -7,7 +7,7 @@
 // if it still passes after that, the job goes on and Verify flags it.
 import fs from "node:fs";
 import path from "node:path";
-import { lintSpec, parseRequirements } from "../../checks/spec-lint.ts";
+import { lintSpec, parseRequirements, withSpecMarks } from "../../checks/spec-lint.ts";
 import { testLayout } from "../../checks/test-layout.ts";
 import { nothingPolicy } from "../contract.ts";
 import { ensureUp } from "../instance.ts";
@@ -52,8 +52,9 @@ export const spec: StageHandler = async (ctx) => {
   if (thrown.refused.length) ctx.log(`the spec role's worktree edits were thrown away: ${thrown.refused.map((x) => x.split(":")[0]).join(", ")}`);
   const view = hasToolkit(job) ? await toolkitView(job, job.worktree) : { primitives: [], drives: {} };
   // Rule 7: the criteria must cover the requirements intake read in the ticket.
+  // The spec may re-mark a (negative) one as (unchanged) in its own ## Requirements (withSpecMarks).
   const intakeFile = path.join(ctx.jobDir, "intake.md");
-  const requirements = parseRequirements(fs.existsSync(intakeFile) ? fs.readFileSync(intakeFile, "utf8") : "");
+  const requirements = withSpecMarks(parseRequirements(fs.existsSync(intakeFile) ? fs.readFileSync(intakeFile, "utf8") : ""), r.text);
   const lint = lintSpec(r.text, {
     kind: job.kind,
     toolkit: view,

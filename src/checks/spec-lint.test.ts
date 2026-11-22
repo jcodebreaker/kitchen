@@ -5,7 +5,7 @@ import { parseProof } from "../proof/proof-line.ts";
 import { changedExistingDrive, lintFeatureFile } from "./feature-lint.ts";
 import { gateOutcome } from "./gate.ts";
 import { riskFloor, seedTouched } from "./risk-floor.ts";
-import { guardCriteria, lintSpec, newDrivesOf, parseCriteria, parseRequirements } from "./spec-lint.ts";
+import { guardCriteria, lintSpec, newDrivesOf, parseCriteria, parseRequirements, withSpecMarks } from "./spec-lint.ts";
 
 test('rule 3: `$x == ""` counts as a negative: an earlier step must make something', () => {
   const read = 'toolkit login --as alice ; toolkit read --target "[data-testid=owner]" --save owner';
@@ -81,6 +81,18 @@ test("rule 7: an (unchanged) requirement is a regression guard, proven positivel
   // Only a criterion that covers guards alone is a guard for the base check.
   const both = `${C("C4", "x", "cmd node src/cli.ts status", 'contains "ID"')}\n  covers: R1, R2`;
   assert.deepEqual(guardCriteria(parseCriteria(spec(json, same, noAnsi, both)), three), ["C2"]);
+  // The spec may re-mark a negative as a guard (a-primitive: "the UI does not show it"), nothing else.
+  const re = withSpecMarks(reqs, "## Requirements\n- R3 (unchanged): the JSON output stays as it is, no colours today\n- R1 (out of scope): x\n");
+  assert.deepEqual(
+    re.map((r) => [r.id, r.negative, !!r.unchanged, r.outOfScope]),
+    [
+      ["R1", false, false, false],
+      ["R2", false, true, false],
+      ["R3", false, true, false],
+      ["R4", true, false, false],
+    ],
+  );
+  assert.match(re[2].text, /re-marked \(unchanged\) by the spec/);
 });
 
 const toolkit = { primitives: ["login", "press", "read", "open", "reload", "screenshot", "http", "type"], drives: { "settings.toggle-dark": ["user"] } };

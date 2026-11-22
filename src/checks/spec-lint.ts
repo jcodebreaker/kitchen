@@ -137,6 +137,23 @@ export function parseRequirements(md: string): Requirement[] {
   return out;
 }
 
+/**
+ * The requirements a spec is held to: intake's, except that the spec may re-mark a `(negative)` one as
+ * `(unchanged)` in its own `## Requirements` (`- R4 (unchanged): the settings page stays as it is, why`),
+ * when what intake read as "must not show" is a boundary the change leaves alone (nothing shows it today,
+ * nothing must show it after). Nothing else intake wrote can change (no dropping, no out of scope). The
+ * re-mark is kept in the text, for the review and the report. Pure.
+ */
+export function withSpecMarks(intake: Requirement[], specMd: string): Requirement[] {
+  const spec = parseRequirements(specMd);
+  return intake.map((r) => {
+    const s = spec.find((x) => x.id === r.id);
+    return r.negative && !r.outOfScope && s?.unchanged
+      ? { ...r, negative: false, unchanged: true, text: `${r.text} (re-marked (unchanged) by the spec: ${s.text})` }
+      : r;
+  });
+}
+
 /** `## New drives` list items: `- settings.display-name: what it does`, name → description. */
 export function newDriveLines(md: string): Record<string, string> {
   const out: Record<string, string> = {};

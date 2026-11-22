@@ -38,7 +38,6 @@ import {
   viewsOf,
 } from "../../checks/findings.ts";
 import { seedTouched } from "../../checks/risk-floor.ts";
-import { parseRequirements } from "../../checks/spec-lint.ts";
 import { isTestOrBuildConfig } from "../../checks/test-layout.ts";
 import type { Config } from "../../config.ts";
 import { appendLedger } from "../../ledger/append.ts";
@@ -51,7 +50,7 @@ import { once, roundDir, writeAtomic } from "../store.ts";
 import { MAX_VIEWS, runView, type ViewResult } from "../views.ts";
 import { commitLog, diffPatch, diffStat, fileAtHead, headOf } from "../worktree.ts";
 import { nonDiscriminating } from "./base-check.ts";
-import { contractBlock, dismissalsOf, fileBlock, toolkitBlock } from "./context.ts";
+import { contractBlock, dismissalsOf, fileBlock, jobRequirements, toolkitBlock } from "./context.ts";
 import { type PromptBlock, prompt } from "./prompts.ts";
 import { runRole } from "./role.ts";
 import { hasToolkit } from "./toolkit-info.ts";
@@ -166,8 +165,7 @@ export const review: StageHandler = async (ctx) => {
     // The packet every lens reads (inside the worktree: read-tier file tools open it there).
     const patch = await diffPatch(job);
     fs.writeFileSync(path.join(packet, "diff.patch"), patch);
-    const intakeText = fs.existsSync(path.join(ctx.jobDir, "intake.md")) ? fs.readFileSync(path.join(ctx.jobDir, "intake.md"), "utf8") : "";
-    const reqs = parseRequirements(intakeText);
+    const reqs = jobRequirements(ctx.jobDir);
     const verdictFile = lastVerdictFile(ctx.jobDir, job.round);
     const verifyFile = newest(ctx.jobDir, job.round, /^verify-m\d+\.md$/);
     const shots = screenshotsOf(entries, head);

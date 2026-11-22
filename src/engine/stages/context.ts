@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { Dismissal, Member } from "../../checks/findings.ts";
+import { parseRequirements, type Requirement, withSpecMarks } from "../../checks/spec-lint.ts";
 import { inLayout, type TestLayout, testLayout } from "../../checks/test-layout.ts";
 import { contractOf } from "../contract.ts";
 import type { Job } from "../machine.ts";
@@ -19,6 +20,12 @@ export function contractBlock(jobDir: string): PromptBlock {
 export function fileBlock(jobDir: string, file: string, title = file): PromptBlock[] {
   const p = path.join(jobDir, file);
   return fs.existsSync(p) ? [{ title, body: fs.readFileSync(p, "utf8") }] : [];
+}
+
+/** The requirements the contract is held to: intake.md's, with the spec's re-marks (spec-lint withSpecMarks). */
+export function jobRequirements(jobDir: string): Requirement[] {
+  const read = (f: string) => (fs.existsSync(path.join(jobDir, f)) ? fs.readFileSync(path.join(jobDir, f), "utf8") : "");
+  return withSpecMarks(parseRequirements(read("intake.md")), read("spec.md"));
 }
 
 /** The ticket as it came in (ticket.md), or "". */

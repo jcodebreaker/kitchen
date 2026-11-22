@@ -16,7 +16,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { checksPrepareOf } from "../../checks/run-checks.ts";
-import { type BaseNegative, type Criterion, guardCriteria, parseRequirements } from "../../checks/spec-lint.ts";
+import { type BaseNegative, type Criterion, guardCriteria } from "../../checks/spec-lint.ts";
 import { type ClauseResult, isJudged } from "../../proof/assert.ts";
 import { prove } from "../../proof/prove.ts";
 import { namedDrives, testFilesOf } from "../contract.ts";
@@ -25,6 +25,7 @@ import { freshUp, resetUp } from "../instance.ts";
 import type { Job } from "../machine.ts";
 import { writeAtomic } from "../store.ts";
 import { changedFiles, headOf } from "../worktree.ts";
+import { jobRequirements } from "./context.ts";
 import { FEATURES_DIR, featureDrives, hasToolkit } from "./toolkit-info.ts";
 import type { StageContext } from "./types.ts";
 
@@ -41,10 +42,9 @@ export type BaseCheck = {
   afterDrives?: { head: string; files: string[]; results: BaseResult[]; passing: string[] };
 };
 
-/** The contract's regression guards, from intake.md's `(unchanged)` requirements. */
+/** The contract's regression guards, from the `(unchanged)` requirements (intake.md's, with the spec's re-marks). */
 function guardsOf(jobDir: string, criteria: Criterion[]): string[] {
-  const f = path.join(jobDir, "intake.md");
-  return guardCriteria(criteria, parseRequirements(fs.existsSync(f) ? fs.readFileSync(f, "utf8") : ""));
+  return guardCriteria(criteria, jobRequirements(jobDir));
 }
 
 /**
@@ -57,7 +57,7 @@ export function baseNegativeProblems(pending: BaseNegative[], b: BaseCheck | nul
   if (!b) return [];
   const out: string[] = [];
   const how =
-    'If the requirement means existing behaviour stays as it is, mark it `(unchanged)` in intake.md and prove it positively (the same output, `$x == …`); if something must disappear, make it show first in an earlier step of the same proof (its text as an arg: `toolkit <feature>.create --name "<text>" ; … ; open --path /list`), or read a value after a step that makes something and assert `$v != "<the wrong value>"`';
+    'If the requirement means existing behaviour stays as it is, mark it `(unchanged)` (intake: in its `## Requirements`; the spec: re-mark it in its own `## Requirements`, `- R4 (unchanged): … — why`) and prove it positively (the same output, `$x == …`); if something must disappear, make it show first in an earlier step of the same proof (its text as an arg: `toolkit <feature>.create --name "<text>" ; … ; open --path /list`), or read a value after a step that makes something and assert `$v != "<the wrong value>"`';
   for (const n of pending) {
     const skipped = b.skipped.find((s) => s.criterion === n.criterion);
     const r = b.results.find((x) => x.criterion === n.criterion);
