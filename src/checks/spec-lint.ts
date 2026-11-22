@@ -1,34 +1,36 @@
 // spec-lint (PLAN §2 "Spec format"): the engine's check of a verification
 // contract, the spec's `## Criteria` or a low-risk ticket's inline criteria in
-// intake.md. Pure. Rules:
+// intake.md. Pure. Rules, in the order they are numbered in messages:
 //   1. every criterion has a `proof:` of kind toolkit, cmd or test (proof-line.ts)
 //   2. every primitive it names is in `describe`; every feature drive (a dotted
 //      name) is in the Toolkit's feature files, with the args that drive takes, or
 //      is a new feature drive for this job, declared under `## New drives` (the
 //      verifier writes it in the drives stage). A missing primitive is a Toolkit
-//      gap (→ toolkit stage)
+//      gap (→ toolkit stage). An `argv`/`body` arg that looks like JSON (`[…]`,
+//      `{…}`) must parse
 //   3. `expect: judged` only for a criterion about layout, appearance, visual
 //      style, tone or copy quality, and its proof takes a screenshot; every other
 //      expect is mechanical and must parse (assert.ts). A negative expect (`not
 //      visible`, `not contains`, `!=`) holds whenever the thing never existed, so
-//      it must be backed (negativeBacking): (a) created: an earlier step of the
-//      same proof makes what must not show (its text is an arg of that step);
-//      (b) a value read: `$v != "…"` / `json … != …` on a value a step of this
-//      proof reads and keeps (`--save v`, or the last output); the runtime
-//      refuses an unsaved, empty, missing or failed subject (assert.ts), so it
-//      holds only on a real value that differs; (c) shown on the base: anything else
-//      is left to the base check (`baseNegatives`): the clause must be FALSE on
-//      the base, the thing is there before the change (base-check.ts
-//      baseNegativeProblems). A repro criterion's expect must be able to be false
-//      with every step run (not `ok` alone, no `read --equals` step), and an arg
-//      that looks like JSON (`[…]`, `{…}`) must parse
-//   9. a seed user a proof names (`--as`, `--user`, `--admin`, `username = '…'`)
-//      is in describe's `seed_users`, or an earlier step of the proof makes it
+//      it must be backed (negativeBacking): (a) made: a making step earlier in the
+//      same proof (a feature drive, a writing `http`) was given that very text;
+//      or the text names what a making step or a `cli` command was given (a 5+
+//      letter word of it) AND a positive clause of the same expect shows that made
+//      thing; (b) a value read after a write: `$v != "…"` / `json … != …` on a
+//      value a step saves (`--save v`, or the last output) AFTER a making step;
+//      the runtime refuses an unsaved, empty, missing, failed or error-page subject
+//      (assert.ts); (c) shown on the base: anything else is left to the base check
+//      (`baseNegatives`): the clause must be FALSE on the base, the thing is there
+//      before the change (base-check.ts baseNegativeProblems). `$x == ""` needs a
+//      making step, else it is refused here. A literal whose length the criterion
+//      states ("a 200-character title") must have that length
 //   4. nothing touches a protected path (kitchen.yaml `protected`, the Toolkit's
 //      primitives): no `test` file, `cmd` word or criterion text names one; a
 //      `cmd` stays in the worktree (no absolute or `..` path, `~`, `$HOME`, env
 //      dump or network tool)
-//   5. a bug has a `repro: true` criterion with a mechanical expect; only a bug has one
+//   5. a bug has a `repro: true` criterion with a mechanical expect; only a bug has
+//      one. A repro's expect must be able to be false with every step run (not
+//      `ok` alone, no `read --equals` step, no step pinned to an error outcome)
 //   6. ids are unique
 //   7. the spec matches the ticket, structurally (ADR 0003: no agent checks the
 //      spec): intake.md lists the ticket's requirements (`## Requirements`, R1…Rn,
@@ -36,13 +38,16 @@
 //      every criterion `covers:` at least one R, every R in scope is covered by a
 //      criterion, a negative R ("no owner shown for regular users": something must
 //      not appear) by at least one criterion whose mechanical expect asserts an
-//      absence, and an unchanged R (a regression guard: "`list` output stays the
-//      same") by a mechanical criterion, positive or negative: the old behaviour
-//      still produces the same output or exit
+//      absence (also when the spec re-marked it, withSpecMarks), and an unchanged R
+//      (a regression guard: "`list` output stays the same") by a mechanical
+//      criterion, positive or negative: the old behaviour still produces the same
+//      output or exit
 //   8. a `test` proof's file is where the repo's tests live (the test runner's own
 //      globs, checks/test-layout.ts), when the layout is known
+//   9. a seed user a proof names (`--as`, `--user`, `--admin`, `username = '…'`)
+//      is in describe's `seed_users`, or an earlier step of the proof makes it
 import path from "node:path";
-import { absentString, type Clause, ExpectError, isJudged, negativeClauses, parseExpect } from "../proof/assert.ts";
+import { absentString, type Clause, ExpectError, isJudged, negativeClauses, parseExpect, wantedStrings } from "../proof/assert.ts";
 import { checkPrimArgs, DriveFormatError } from "../proof/drive-format.ts";
 import { ProofLineError, parseProof, type Segment, words } from "../proof/proof-line.ts";
 import { inLayout, type TestLayout } from "./test-layout.ts";
@@ -51,9 +56,11 @@ export type Criterion = { id: string; text: string; proof: string | null; expect
 /**
  * One requirement intake read in the ticket. `negative`: it says something must not appear or happen (needs an
  * absence assertion); `unchanged`: a regression guard, existing behaviour stays as it is (a positive "still the
- * same" criterion proves it); `outOfScope`: intake rescoped it away (with a note).
+ * same" criterion proves it); `remarked`: a negative the spec re-marked as a boundary the change leaves alone
+ * (withSpecMarks): still a negative, but its absence may already hold on the base; `outOfScope`: intake rescoped
+ * it away (with a note).
  */
-export type Requirement = { id: string; text: string; negative: boolean; unchanged?: boolean; outOfScope: boolean };
+export type Requirement = { id: string; text: string; negative: boolean; unchanged?: boolean; remarked?: boolean; outOfScope: boolean };
 /** A negative clause no earlier step backs: the base check must show it is FALSE there (the thing exists before the change). */
 export type BaseNegative = { criterion: string; clause: string };
 export type LintResult = {
@@ -141,17 +148,32 @@ export function parseRequirements(md: string): Requirement[] {
  * The requirements a spec is held to: intake's, except that the spec may re-mark a `(negative)` one as
  * `(unchanged)` in its own `## Requirements` (`- R4 (unchanged): the settings page stays as it is, why`),
  * when what intake read as "must not show" is a boundary the change leaves alone (nothing shows it today,
- * nothing must show it after). Nothing else intake wrote can change (no dropping, no out of scope). The
- * re-mark is kept in the text, for the review and the report. Pure.
+ * nothing must show it after). The re-mark waives one thing only: the base check's "the clause must be FALSE
+ * on the base" (the boundary holds there by design). The requirement stays negative: a criterion covering it
+ * must still assert the absence (rule 7), backed by a making step or run on the base, where it must hold
+ * (a guard). Never on a job with a security surface (`security: true`): the re-mark is ignored there and
+ * remarkProblems refuses it. Nothing else intake wrote can change (no dropping, no out of scope). The re-mark is
+ * kept in the text, for the review and the report. Pure.
  */
-export function withSpecMarks(intake: Requirement[], specMd: string): Requirement[] {
+export function withSpecMarks(intake: Requirement[], specMd: string, o: { security?: boolean } = {}): Requirement[] {
+  if (o.security) return intake;
   const spec = parseRequirements(specMd);
   return intake.map((r) => {
     const s = spec.find((x) => x.id === r.id);
-    return r.negative && !r.outOfScope && s?.unchanged
-      ? { ...r, negative: false, unchanged: true, text: `${r.text} (re-marked (unchanged) by the spec: ${s.text})` }
-      : r;
+    return r.negative && !r.outOfScope && s?.unchanged ? { ...r, remarked: true, text: `${r.text} (re-marked (unchanged) by the spec: ${s.text})` } : r;
   });
+}
+
+/** The spec's re-marks refused: any re-mark on a job with a security surface (a leak is never a "boundary"). Pure. */
+export function remarkProblems(intake: Requirement[], specMd: string, o: { security?: boolean } = {}): string[] {
+  if (!o.security) return [];
+  const spec = parseRequirements(specMd);
+  return intake
+    .filter((r) => r.negative && !r.outOfScope && spec.find((x) => x.id === r.id)?.unchanged)
+    .map(
+      (r) =>
+        `${r.id} ("${r.text}") is a negative on a job with a security surface: the spec may not re-mark it (unchanged); prove the absence on something that would show it (made by an earlier step of the same proof, or shown on the current code)`,
+    );
 }
 
 /** `## New drives` list items: `- settings.display-name: what it does`, name → description. */
@@ -229,16 +251,31 @@ export const absenceClauses = (expect: string): Clause[] => {
 /** A step that makes something: a feature drive, or an `http` call that writes. */
 const makes = (s: Segment) => s.kind === "toolkit" && (s.drive || (s.name === "http" && /^(POST|PUT|PATCH|DELETE)$/i.test(s.args.method ?? "")));
 
+/** Arg keys that say where a step went or who did it, not what it made. */
+const NOT_MADE = /^(path|target|method|as|user|admin|expect_status|expect_exit|attr|timeout)$/;
+/** What earlier steps were given to make something: a making step's (or, with `cli`, a command's) arg values, minus where it went and who did it. */
+const madeArgs = (segs: Segment[], withCli: boolean): string[] =>
+  segs
+    .slice(0, -1)
+    .flatMap((s) => (s.kind === "toolkit" && (makes(s) || (withCli && !s.drive && s.name === "cli")) ? Object.entries(s.args) : []))
+    .filter(([k]) => !NOT_MADE.test(k))
+    .map(([, v]) => v.toLowerCase());
+
 /**
  * Rule 3: how each negative clause of a toolkit proof is backed. A negative holds whenever its thing never
  * existed, so it counts only when
- *  (a) created: what must not show is an arg value of an earlier segment
- *      (`projects.create --user bob-admin --name "Bob plan" ; … ; open --path /projects`), or names one (a word
- *      of 5+ letters of such an arg: `cli --argv "add Zebra" ; … ` then `not contains "[x] 7 Zebra"`);
- *  (b) a value read: `$v != "…"` / `$v not contains "…"` / `json … != …` on a value a step of this proof
- *      reads and keeps (a primitive's `--save v`, or the last output): at run time assert.ts fails such a
- *      clause when the value wasn't saved, is empty, is missing at its path or is a failed response, so it
- *      can only hold on a real value that differs (`$amt != "8910"`, `$b not contains "true"` read by `sql`);
+ *  (a) made: a making step earlier in the proof (a feature drive, a writing `http`) was given that text
+ *      (`projects.create --user bob-admin --name "Bob plan" ; … ; open --path /projects` then
+ *      `text "Bob plan" not visible`); who did it and where it went don't count (`--as bob` makes nothing).
+ *      Or the text names what a making step or a `cli` command was given (a 5+ letter word of it:
+ *      `cli --argv "add Zebra" ; …` then `not contains "[x] 7 Zebra"`) AND a positive clause of the same expect
+ *      shows that thing (`contains "Zebra"`): the read is shown to list what was made, so the phrase's absence
+ *      means something;
+ *  (b) a value read after a write: `$v != "…"` / `json … != …` on a value a step saves (`--save v`, or the
+ *      last output) after a making step (`http --method POST … ; read --target total --save t` then
+ *      `$t != "0"`): at run time assert.ts fails such a clause when the value wasn't saved, is empty, is
+ *      missing at its path, is a failed response or an error page, so it holds only on a real value that
+ *      differs. Only `!=`: `not contains` on a saved page is the (c) case like any other absence;
  *  (c) shown on the base: anything else goes to the base check, where it must be FALSE (base-check.ts).
  * Equality to empty (`$o == ""`) names nothing that must not show: it needs an earlier making step, else it
  * is refused (`refuse`). Pure.
@@ -247,29 +284,28 @@ export function negativeBacking(expect: string, segs: Segment[]): { refuse?: str
   const clauses = parseExpect(expect);
   for (const c of emptyEquals(clauses)) if (!segs.slice(0, -1).some(makes)) return { refuse: c.src, base: [] };
   const base: string[] = [];
-  const earlier = segs
-    .slice(0, -1)
-    .flatMap((s) => (s.kind === "toolkit" ? Object.values(s.args) : []))
-    .map((v) => v.toLowerCase());
-  // Words of what earlier steps that write (a drive, a writing `http`, a `cli` command) were given, not where they went.
-  const madeWords = segs
-    .slice(0, -1)
-    .flatMap((s) => (s.kind === "toolkit" && (makes(s) || s.name === "cli") ? Object.entries(s.args) : []))
-    .filter(([k]) => !/^(path|target|method|as|expect_status|expect_exit)$/.test(k))
-    .flatMap(([, v]) => v.toLowerCase().split(/[^\p{L}\p{N}_-]+/u))
+  const made = madeArgs(segs, false);
+  const madeWords = madeArgs(segs, true)
+    .flatMap((v) => v.split(/[^\p{L}\p{N}_-]+/u))
     .filter((w) => w.length >= 5);
+  // What the same expect asks to be there: a made word one of these shows is on the read.
+  const shown = clauses.flatMap(wantedStrings).map((w) => w.toLowerCase());
+  const firstMaking = segs.findIndex(makes);
   const saved = new Map<string, number>();
   segs.forEach((s, i) => {
     if (s.kind === "toolkit" && s.save) saved.set(s.save, i);
   });
   for (const c of negativeClauses(clauses)) {
     const x = absentString(c)?.toLowerCase();
-    if (x && earlier.some((v) => v === x || (Math.min(v.length, x.length) >= 3 && (v.includes(x) || x.includes(v))))) continue; // (a)
-    // (a) the absent text names a thing an earlier step made: a word of 5+ letters of its args (`cli --argv "add Zebra"` … `not contains "[x] 7 Zebra"`).
-    if (x && madeWords.some((w) => x.includes(w))) continue;
-    if ((c.kind === "var" || c.kind === "json") && c.value !== null && String(c.value) !== "") {
+    // (a) a making step was given this very text (or text containing it).
+    if (x && x.length >= 3 && made.some((v) => v === x || v.includes(x))) continue;
+    // (a) the text names a made thing, and a positive clause of the same expect shows it.
+    if (x && madeWords.some((w) => x.includes(w) && shown.some((p) => p.includes(w)))) continue;
+    // (b) `!=` on a value read after a making step.
+    if ((c.kind === "var" || c.kind === "json") && c.op === "!=" && c.value !== null && String(c.value) !== "" && firstMaking >= 0) {
       const subject = c.kind === "var" ? c.name : c.subject;
-      if (subject === null || saved.has(subject)) continue; // (b) a value read and kept by a step of this proof
+      const at = subject === null ? segs.length - 1 : saved.get(subject);
+      if (at !== undefined && at > firstMaking) continue;
     }
     base.push(c.src); // (c)
   }
@@ -341,7 +377,7 @@ export const coverageProblem = (criteria: Criterion[], reqs: Requirement[]): str
  * design (the old behaviour stays), so the base check doesn't count them as non-discriminating. Pure.
  */
 export function guardCriteria(criteria: Criterion[], reqs: Requirement[]): string[] {
-  const guard = new Set(reqs.filter((r) => r.unchanged && !r.outOfScope).map((r) => r.id));
+  const guard = new Set(reqs.filter((r) => (r.unchanged || r.remarked) && !r.outOfScope).map((r) => r.id));
   return criteria.filter((c) => c.covers.length > 0 && c.covers.every((r) => guard.has(r))).map((c) => c.id);
 }
 
@@ -405,6 +441,8 @@ export function lintSpec(
         throw e;
       }
     } else if (kindOf === "toolkit") return `${c.id}: a toolkit proof needs an expect: line (ok, text … visible, $var == …, judged …)`;
+    const len = statedLengthProblem(c.text, segs, c.expect);
+    if (len) return `${c.id}: ${len}`;
     // 4b. a cmd or test proof stays in the worktree
     for (const s of segs) {
       const why = s.kind === "cmd" ? cmdProblem(s.cmd) : s.kind === "test" ? cmdProblem(s.file) : null;
@@ -486,11 +524,77 @@ export function reproProblem(expect: string, segs: Segment[]): string | null {
   // Pinning the bug's own outcome on a step (`--expect_status 400`, `--expect_exit 1`) makes the step pass on the base
   // and fail once the bug is fixed: the repro then can never pass (d-qty-100).
   const pin = segs.find(
-    (s) => s.kind === "toolkit" && ((Number(s.args.expect_status) >= 400 && !s.drive) || (s.args.expect_exit !== undefined && s.args.expect_exit !== "0")),
+    (s) => s.kind === "toolkit" && (Number(s.args.expect_status) >= 400 || (s.args.expect_exit !== undefined && s.args.expect_exit !== "0")),
   );
   if (pin)
     return 'a repro pins an error outcome on a step (`--expect_status 4xx/5xx` or `--expect_exit` other than 0): that step passes on the buggy base and fails once the bug is fixed. Don\'t pin it: save it (`toolkit read --target status --save code`) and assert the right value in the expect (`$code == "201"`, `exit 0`)';
   return null;
+}
+
+/** The literals a criterion's proof and expect spell out: arg values, their shell words and JSON list items, cmd words, expect strings. */
+function literalsOf(segs: Segment[], expect: string | null): string[] {
+  const out: string[] = [];
+  const jsonList = (v: string): string[] | null => {
+    try {
+      const j = JSON.parse(v) as unknown;
+      return Array.isArray(j) ? j.filter((x): x is string => typeof x === "string") : null;
+    } catch {
+      return null;
+    }
+  };
+  // A JSON list (`--argv '["add","…"]'`): its items; else the value and its shell words (`--argv "add '…'"`).
+  const add = (v: string) => {
+    const items = jsonList(v);
+    if (items) out.push(...items);
+    else {
+      out.push(v);
+      try {
+        out.push(...words(v));
+      } catch {}
+    }
+  };
+  for (const s of segs) {
+    if (s.kind === "toolkit") Object.values(s.args).forEach(add);
+    else if (s.kind === "cmd") add(s.cmd);
+  }
+  if (expect && !isJudged(expect))
+    try {
+      for (const c of parseExpect(expect)) {
+        const v = absentString(c) ?? wantedStrings(c)[0];
+        if (v) out.push(v);
+      }
+    } catch {}
+  return out;
+}
+
+/**
+ * Rule 3: a literal whose length the criterion states ("a 201-character title", "200 characters is still fine",
+ * "longer than 200 characters") must have it: a long literal typed by hand is easily miscounted (b-control-long-
+ * title: "200-character" was 230, so a correct build failed). Only when the proof holds a literal of 20 or more
+ * characters. `N-character`, `exactly N characters`, `N characters long` mean exactly N; `over/more than/longer
+ * than N characters` more than N; `up to/at most/within N characters` at most N; a bare "N characters" nothing. Pure.
+ */
+export function statedLengthProblem(text: string, segs: Segment[], expect: string | null): string | null {
+  const long = [...new Set(literalsOf(segs, expect).filter((v) => [...v].length >= 20))];
+  if (!long.length) return null;
+  // Exactly N: "a 201-character title", "exactly 200 characters", "200 characters long"; a comparative before N
+  // bounds it. A bare "200 characters" (a limit named in passing) states nothing about a literal.
+  const stated = [
+    ...text.matchAll(
+      /\b(?:(over|more than|longer than|above|exceeding|up to|at most|within|no more than|under|less than|fewer than|exactly)\s+)?(\d{2,})(-char(?:acter)?s?\b|\s+char(?:acter)?s?(\s+long)?\b)/gi,
+    ),
+  ]
+    .filter((m) => m[1] || m[3].startsWith("-") || m[4])
+    .map((m) => ({ cmp: (m[1] ?? "").toLowerCase().replace("exactly", ""), n: Number(m[2]) }));
+  if (!stated.length) return null;
+  const lens = long.map((v) => [...v].length);
+  const fits = ({ cmp, n }: { cmp: string; n: number }) =>
+    lens.some((l) =>
+      /up to|at most|within|no more/.test(cmp) ? l <= n : /over|more|longer|above|exceeding/.test(cmp) ? l > n : /under|less|fewer/.test(cmp) ? l < n : l === n,
+    );
+  if (stated.some(fits)) return null;
+  const want = stated.map((s) => `${s.cmp ? `${s.cmp} ` : ""}${s.n}`).join(" or ");
+  return `the criterion says ${want} characters, but no literal in its proof or expect has that length (${[...new Set(lens)].sort((a, b) => a - b).join(", ")} characters): count again; a long literal is easiest to get right as repeated 10-character blocks ("0123456789" × 20 = 200 characters)`;
 }
 
 /** Args a primitive reads as JSON when they look like it (the cli's `argv` list, an `http` `body`). */

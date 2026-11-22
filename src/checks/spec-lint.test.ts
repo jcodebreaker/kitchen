@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
 import { type BaseCheck, baseNegativeProblems, guardBaseProblems } from "../engine/stages/base-check.ts";
+import { evaluate, parseExpect } from "../proof/assert.ts";
 import { parseProof } from "../proof/proof-line.ts";
 import { changedExistingDrive, lintFeatureFile } from "./feature-lint.ts";
 import { gateOutcome } from "./gate.ts";
 import { riskFloor, seedTouched } from "./risk-floor.ts";
-import { guardCriteria, lintSpec, newDrivesOf, parseCriteria, parseRequirements, withSpecMarks } from "./spec-lint.ts";
+import { guardCriteria, lintSpec, newDrivesOf, parseCriteria, parseRequirements, remarkProblems, withSpecMarks } from "./spec-lint.ts";
 
 test('rule 3: `$x == ""` counts as a negative: an earlier step must make something', () => {
   const read = 'toolkit login --as alice ; toolkit read --target "[data-testid=owner]" --save owner';
@@ -81,15 +82,16 @@ test("rule 7: an (unchanged) requirement is a regression guard, proven positivel
   // Only a criterion that covers guards alone is a guard for the base check.
   const both = `${C("C4", "x", "cmd node src/cli.ts status", 'contains "ID"')}\n  covers: R1, R2`;
   assert.deepEqual(guardCriteria(parseCriteria(spec(json, same, noAnsi, both)), three), ["C2"]);
-  // The spec may re-mark a negative as a guard (a-primitive: "the UI does not show it"), nothing else.
+  // The spec may re-mark a negative as a boundary (a-primitive: "the UI does not show it"), nothing else: it stays a
+  // negative (its absence must still be asserted), marked so its absence may hold on the base.
   const re = withSpecMarks(reqs, "## Requirements\n- R3 (unchanged): the JSON output stays as it is, no colours today\n- R1 (out of scope): x\n");
   assert.deepEqual(
-    re.map((r) => [r.id, r.negative, !!r.unchanged, r.outOfScope]),
+    re.map((r) => [r.id, r.negative, !!r.unchanged, !!r.remarked, r.outOfScope]),
     [
-      ["R1", false, false, false],
-      ["R2", false, true, false],
-      ["R3", false, true, false],
-      ["R4", true, false, false],
+      ["R1", false, false, false, false],
+      ["R2", false, true, false, false],
+      ["R3", true, false, true, false],
+      ["R4", true, false, false, false],
     ],
   );
   assert.match(re[2].text, /re-marked \(unchanged\) by the spec/);
@@ -201,14 +203,26 @@ test("rule 3: a negative is backed by a creating step, by a value read after a m
   assert.deepEqual(lint(made).baseNegatives, [], "created by an earlier step");
   // … or named in it: the row of the task an earlier command added (b-done-many), not a word of a path or selector.
   const cli = { ...toolkit, primitives: [...toolkit.primitives, "cli"] };
+  // … when a positive clause of the same expect shows the made thing (final fixes L2).
   const zebra = 'toolkit cli --argv "add Zebra" ; toolkit cli --argv "done 7 99" ; toolkit cli --argv "list --all"';
-  assert.deepEqual(lintSpec(spec(C("C1", "x", zebra, 'not contains "[x]   7  Zebra"')), { kind: "feature", toolkit: cli }).baseNegatives, []);
+  assert.deepEqual(
+    lintSpec(spec(C("C1", "x", zebra, 'contains "Zebra" and not contains "[x]   7  Zebra"')), { kind: "feature", toolkit: cli }).baseNegatives,
+    [],
+  );
+  assert.equal(lintSpec(spec(C("C1", "x", zebra, 'not contains "[x]   7  Zebra"')), { kind: "feature", toolkit: cli }).baseNegatives.length, 1);
   assert.equal(lint(spec(C("C1", "x", leak, 'text "projects" not visible'))).baseNegatives.length, 1);
-  // (b) a value read after a step that makes something (d-discount: the under-100 order's amount is not the discounted one).
-  const order = "toolkit http --method POST --path /orders --body '{\"qty\":3}' ; toolkit read --target amount --save amt";
-  assert.deepEqual(lint(spec(C("C1", "x", order, '$amt != "8910"'))).baseNegatives, []);
-  // … or any value a primitive reads and saves (a-primitive: `sql … --save b` then `$b not contains "true"`); not a drive's own save.
-  assert.deepEqual(lint(spec(C("C1", "x", `${leak} ; toolkit read --target owner --save o`, '$o != "bob"'))).baseNegatives, []);
+  // (b) `!=` on a value read after a step that makes something (the total after an item is added is not the old one).
+  const add = "toolkit http --method POST --path /cart --body '{\"qty\":3}' ; toolkit read --target total --save t";
+  assert.deepEqual(lint(spec(C("C1", "x", add, '$t != "0"'))).baseNegatives, []);
+  // … not a value read before any making step, and not `not contains` on a saved page (final fixes H1): the base check.
+  assert.equal(lint(spec(C("C1", "x", `${leak} ; toolkit read --target owner --save o`, '$o != "bob"'))).baseNegatives.length, 1);
+  assert.equal(
+    lint(spec(C("C1", "x", "toolkit read --target total --save t ; toolkit http --method POST --path /cart --body '{\"qty\":3}'", '$t != "0"'))).baseNegatives
+      .length,
+    1,
+    "read before the write",
+  );
+  assert.equal(lint(spec(C("C1", "x", add, '$t not contains "0"'))).baseNegatives.length, 1);
   assert.equal(lint(spec(C("C1", "x", "toolkit settings.toggle-dark --user alice", '$theme != "Light"'))).baseNegatives.length, 1);
   // Equality to empty still needs a making step, refused at once.
   assert.match(lint(spec(C("C1", "x", `${leak} ; toolkit read --target owner --save o`, '$o == ""'))).reason ?? "", /never existed/);
@@ -232,7 +246,9 @@ test("rule 3 (c): the base check backs a negative only when it is FALSE on the b
   assert.match(baseNegativeProblems(pending, base("pass", true))[0], /already holds on the base.*\(unchanged\)/);
   assert.match(baseNegativeProblems(pending, base("step-failed", false))[0], /doesn't run on the base/);
   assert.match(baseNegativeProblems(pending, base("", false, true))[0], /can't be checked on the base/);
-  assert.deepEqual(baseNegativeProblems(pending, null), [], "no Toolkit: nothing to run");
+  assert.match(baseNegativeProblems(pending, null)[0] ?? "", /could not run/, "nothing ran: refused, never waved through (H3)");
+  // A negative the spec re-marked as a boundary (its criterion a guard) may hold on the base.
+  assert.deepEqual(baseNegativeProblems(pending, base("pass", true), ["C3"]), []);
   // A regression guard must hold on the base (d-control-version: `json .ok` on an http step's {status, body}).
   assert.match(guardBaseProblems(["C3"], base("assert-fail", false))[0], /guards existing behaviour .* fails on the current code/);
   assert.deepEqual(guardBaseProblems(["C3"], base("pass", true)), []);
@@ -363,4 +379,125 @@ test("a job may add drives to a feature file but not change an existing one", ()
   assert.equal(changedExistingDrive(a, `${a}\n${b}`), null, "added a drive");
   assert.match(changedExistingDrive(a, a.replace("body", "main")) ?? "", /f.a already exists/);
   assert.match(changedExistingDrive(a, b) ?? "", /f.a already exists/, "removed");
+});
+
+// Final fixes: the reviewer's probes (scratchpad probe.ts, remark.ts), each one a must-refuse.
+test("probes H1/L1/L2: a negative with nothing made is left to the base check, where holding is refused", () => {
+  const view = {
+    primitives: ["open", "read", "http", "cli", "text", "screenshot", "sql"],
+    drives: { "projects.create": ["user", "name"] },
+    seedUsers: ["alice", "bob"],
+  };
+  const reqs = [{ id: "R1", text: "alice must not see Bob's plan", negative: true, outOfScope: false }];
+  const L = (proof: string, expect: string) =>
+    lintSpec(`## Criteria\n- [C1] x\n  proof: ${proof}\n  expect: ${expect}\n  covers: R1\n`, { kind: "feature", toolkit: view, requirements: reqs });
+  const probes: [string, string][] = [
+    ["toolkit open --path /projects --as alice", 'text "Bob plan" not visible'],
+    // H1: a saved page or value is not backing by itself.
+    ["toolkit open --path /projects --as alice ; read --target main --save page", '$page not contains "Bob plan"'],
+    ['toolkit open --path /projects --as alice ; read --target "li:first-child" --save t', '$t != "Bob plan"'],
+    // L1: `--as bob` makes nothing ("Bob plan" contains "bob").
+    ["toolkit open --path /projects --as bob ; open --path /projects --as alice", 'text "Bob plan" not visible'],
+    // L2: a phrase holding a made word, with nothing showing the made thing; a cli that only reads.
+    ['toolkit cli --argv "add Zebra" ; cli --argv "list"', 'not contains "Zebra (overdue)"'],
+    ['toolkit cli --argv "list --overdue" ; cli --argv "stats"', 'not contains "overdue: 3"'],
+  ];
+  // On the base none of them shows the thing: every one holds there, so every one is refused.
+  for (const [proof, expect] of probes) {
+    const r = L(proof, expect);
+    assert.ok(r.ok, `${proof} :: ${r.reason}`);
+    assert.deepEqual(r.baseNegatives, [{ criterion: "C1", clause: expect }], `${proof} is not backed by the lint alone`);
+    const held: BaseCheck = {
+      head: "b",
+      key: "k",
+      results: [{ criterion: "C1", status: "pass", evidence: ["e1"], clauses: [{ clause: expect, pass: true, got: "" }] }],
+      skipped: [],
+      passing: ["C1"],
+    };
+    assert.match(baseNegativeProblems(r.baseNegatives, held)[0] ?? "", /already holds on the base/, proof);
+  }
+  // What still backs one: the thing made by a making step with that text; a made word shown by a positive clause.
+  assert.deepEqual(
+    L('toolkit projects.create --user bob --name "Bob plan" ; open --path /projects --as alice', 'text "Bob plan" not visible').baseNegatives,
+    [],
+  );
+  assert.deepEqual(L('toolkit cli --argv "add Zebra" ; cli --argv "list"', 'contains "Zebra" and not contains "Zebra (overdue)"').baseNegatives, []);
+});
+
+test("probe H1 at run time: a saved value that is an error page proves no absence", () => {
+  const cs = parseExpect('$page not contains "Bob plan"');
+  const r = evaluate(cs, { ok: true, exit: 0, output: "", vars: { page: "403 Forbidden: admins only" } });
+  assert.equal(r.pass, false);
+  assert.match(r.why ?? "", /error page/);
+  // … nor a saved http response that failed, whatever its body says.
+  const j = evaluate(parseExpect('$r != "Bob plan"'), {
+    ok: true,
+    exit: 0,
+    output: "",
+    vars: { r: '{"error":"nope"}' },
+    responses: { r: { status: 403, full: '{"status":403,"body":{"error":"nope"}}' } },
+  });
+  assert.equal(j.pass, false);
+  assert.match(j.why ?? "", /status 403/);
+  // An error the same expect asserts is the expected outcome.
+  assert.equal(
+    evaluate(parseExpect('$page contains "Forbidden" and $page not contains "Bob plan"'), {
+      ok: true,
+      exit: 0,
+      output: "",
+      vars: { page: "Forbidden: admins only" },
+    }).pass,
+    true,
+  );
+});
+
+test("probe H2: a re-marked negative still needs its absence asserted; it may hold on the base; never on a security job", () => {
+  const view = { primitives: ["open", "read", "http", "cli", "text", "screenshot"], drives: {}, seedUsers: ["alice", "bob"] };
+  const intake = parseRequirements("## Requirements\n- R1: admins see each project's owner\n- R2 (negative): regular users see no owner\n");
+  const owner = '- [C1] admin sees owner\n  proof: toolkit open --path /projects --as bob\n  expect: text "Owner:" visible\n  covers: R1\n';
+  const marks = "## Requirements\n- R2 (unchanged): the regular user's page stays as it is\n\n";
+  // The reviewer's probe: re-marked, then "proven" with a positive check.
+  const positive = `${marks}## Criteria\n${owner}- [C2] alice page still lists projects\n  proof: toolkit open --path /projects --as alice\n  expect: text "Projects" visible\n  covers: R2\n`;
+  const reqs = withSpecMarks(intake, positive);
+  const r = lintSpec(positive, { kind: "feature", toolkit: view, requirements: reqs });
+  assert.equal(r.ok, false);
+  assert.match(r.reason ?? "", /R2 says what must not happen/);
+  // With the absence asserted it lints; it is a guard (must hold on the base, not counted as non-discriminating).
+  const absent = `${marks}## Criteria\n${owner}- [C2] alice sees no owner\n  proof: toolkit open --path /projects --as alice\n  expect: text "Projects" visible and text "Owner:" not visible\n  covers: R2\n`;
+  const ok = lintSpec(absent, { kind: "feature", toolkit: view, requirements: withSpecMarks(intake, absent) });
+  assert.ok(ok.ok, ok.reason ?? "");
+  assert.deepEqual(guardCriteria(ok.criteria, withSpecMarks(intake, absent)), ["C2"]);
+  const held: BaseCheck = {
+    head: "b",
+    key: "k",
+    results: [{ criterion: "C2", status: "pass", evidence: ["e1"], clauses: [{ clause: 'text "Owner:" not visible', pass: true, got: "" }] }],
+    skipped: [],
+    passing: [],
+  };
+  assert.deepEqual(baseNegativeProblems(ok.baseNegatives, held, ["C2"]), []);
+  assert.deepEqual(guardBaseProblems(["C2"], held), []);
+  const skipped: BaseCheck = { ...held, results: [], skipped: [{ criterion: "C2", why: "needs what the base doesn't have: x.y" }] };
+  assert.match(baseNegativeProblems(ok.baseNegatives, skipped, ["C2"])[0] ?? "", /can't be checked on the base/, "it must still run on the base");
+  // A security job: no re-mark.
+  assert.deepEqual(withSpecMarks(intake, absent, { security: true }), intake);
+  assert.match(remarkProblems(intake, absent, { security: true })[0] ?? "", /security surface/);
+  assert.deepEqual(remarkProblems(intake, absent), []);
+});
+
+test("rule 3: a long literal must have the length the criterion states (b-control-long-title #2: 230 for 200)", () => {
+  const cli = { ...toolkit, primitives: [...toolkit.primitives, "cli"] };
+  const L = (text: string, n: number, expect = 'exit 0 and contains "Added task"') =>
+    lintSpec(spec(C("C1", text, `toolkit cli --argv '["add","${"x".repeat(n)}"]'`, expect)), { kind: "feature", toolkit: cli });
+  assert.match(L("A 200-character title is still accepted.", 230).reason ?? "", /says 200 characters.*\(230/);
+  assert.ok(L("A 200-character title is still accepted.", 200).ok);
+  assert.ok(L("A title longer than 200 characters is refused", 201).ok);
+  assert.match(L("A title longer than 200 characters is refused", 200).reason ?? "", /longer than 200/);
+  assert.ok(L("A title within the limit (max 200 characters) is accepted", 150).ok, "a bare limit states nothing about the literal");
+  assert.ok(L("A short title is accepted", 230).ok, "no length stated");
+});
+
+test("probe: a repro may not pin the bug's outcome through a feature drive's expect_status either", () => {
+  const view = { primitives: ["read", "http"], drives: { "orders.create": ["qty", "expect_status"] } };
+  const md = spec(C("C1", "x", "toolkit orders.create --qty 100 --expect_status 400 ; toolkit read --target status --save code", '$code == "201"', true));
+  assert.match(lintSpec(md, { kind: "bug", toolkit: view }).reason ?? "", /pins an error outcome/);
 });

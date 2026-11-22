@@ -3,10 +3,13 @@
 # hidden oracle: criteria in the spec format that the bench runs through the
 # engine's own proof runner on the final branch. Role prompts never see oracles.
 #
-# Tuned set: 14 tickets on fixtures A, B, C (4 features, 3 bugs with one hard to
-# reproduce, 1 chore, 1 too big, 1 needing info, 1 to reject, 1 needing a new
-# primitive, 2 planted-correct controls; 3 of them hide traps).
-# Held-out set: 6 tickets on fixture D, which no role prompt was tuned on.
+# Tuned set: 20 tickets. The 14 of PLAN §8 on fixtures A, B, C (4 features, 3 bugs
+# with one hard to reproduce, 1 chore, 1 too big, 1 needing info, 1 to reject, 1
+# needing a new primitive, 2 planted-correct controls; 3 of them hide traps), and the
+# 6 on fixture D: they were held out until the benchmark regression (2026-11-22)
+# iterated on them and roles/_proofs.md taught with one, so they count as tuned.
+# Held-out set: 6 tickets on fixture E, written and committed before any run on it;
+# no role prompt is ever tuned on it.
 #
 # plant: text edits made to the fixture before its first commit (a planted bug or
 # seed rows the oracle relies on). files: oracle helper files copied into the
@@ -238,7 +241,7 @@ tickets:
   # ---------------- held-out: fixture D (orders API, Stripe mock, SMTP catcher) ----------------
   - id: d-status-filter
     fixture: d-api
-    set: heldout
+    set: tuned
     kind: feature
     text: >-
       GET /orders should accept an optional `status` (pending, paid, failed, canceled) to list only a
@@ -248,11 +251,11 @@ tickets:
       criteria: |
         - [C1] filter by status, refuse an unknown one
           proof: toolkit http --method POST --path /orders --as dev-key-1 --body '{"email":"f@example.test","items":[{"sku":"MUG-01","qty":1}]}' ; toolkit http --method GET --path "/orders?email=f@example.test&status=paid" --as dev-key-1 --save paid ; toolkit http --method GET --path "/orders?email=f@example.test&status=pending" --as dev-key-1 --save pending ; toolkit http --method GET --path "/orders?email=f@example.test&status=lost" --as dev-key-1 --save bad
-          expect: $pending contains "pending" and $paid not contains "pending" and $bad contains "400"
+          expect: $pending contains "pending" and $paid not contains "pending" and $bad_status == "400"
 
   - id: d-qty-100
     fixture: d-api
-    set: heldout
+    set: tuned
     kind: bug
     text: >-
       An order for exactly 100 of one item is refused with "qty … must be an integer from 1 to 100".
@@ -270,7 +273,7 @@ tickets:
 
   - id: d-discount
     fixture: d-api
-    set: heldout
+    set: tuned
     kind: feature
     trap: "the customer must be charged the discounted price (the PaymentIntent amount), not only shown it"
     text: >-
@@ -284,7 +287,7 @@ tickets:
 
   - id: d-control-version
     fixture: d-api
-    set: heldout
+    set: tuned
     kind: control
     text: >-
       GET /healthz should also report the service version from package.json as "version".
@@ -297,14 +300,14 @@ tickets:
 
   - id: d-needs-info
     fixture: d-api
-    set: heldout
+    set: tuned
     kind: needs-info
     text: Make the order emails nicer.
     expect: { outcome: [needs-info] }
 
   - id: d-chore-subject
     fixture: d-api
-    set: heldout
+    set: tuned
     kind: chore
     text: >-
       Change the subject of the order-received email to "We got your order". Nothing else changes.
@@ -314,3 +317,103 @@ tickets:
         - [C1] the new subject arrives
           proof: toolkit http --method POST --path /orders --as dev-key-1 --body '{"email":"s@example.test","items":[{"sku":"MUG-01","qty":1}]}' ; toolkit mail --to s@example.test --subject "We got your order"
           expect: ok
+
+  # ---------------- fixture E: held-out, written before any run ----------------
+  # A lending library API (books, members, loans; one JSON file, no dependencies). Written and
+  # committed before any Kitchen run on it; no role prompt has been tuned on it.
+  - id: e-search
+    fixture: e-library
+    set: heldout
+    kind: feature
+    text: >-
+      Add search to the book list: GET /books?q=... should return only the books whose title or
+      author matches, whatever the case. Without q it lists everything like today.
+    expect: { outcome: [done] }
+    oracle:
+      criteria: |
+        - [C1] an author, typed in capitals, finds both of their books and nothing else
+          proof: toolkit http --method GET --path "/books?q=TOLKIEN" --as ana ; toolkit read --target body --save r
+          expect: $r contains "The Hobbit" and $r contains "The Fellowship of the Ring" and $r not contains "Dune" and $r not contains "Middlemarch"
+        - [C2] a title word finds its book; no q still lists every book
+          proof: toolkit http --method GET --path "/books?q=dune" --as ben ; toolkit read --target body --save one ; toolkit http --method GET --path /books --as ben ; toolkit read --target body --save all
+          expect: $one contains "Frank Herbert" and $one not contains "Tolkien" and $all contains "Middlemarch" and $all contains "Kindred" and $all contains "The Hobbit"
+
+  - id: e-renew
+    fixture: e-library
+    set: heldout
+    kind: feature
+    text: >-
+      Members should be able to renew a loan: POST /loans/:id/renew gives them 14 more days from the
+      current due date. A loan can be renewed once, and a book that's already back can't be renewed.
+    expect: { outcome: [done] }
+    oracle:
+      files: { oracle_renew.mjs: oracle/e_renew.mjs }
+      criteria: |
+        - [C1] a member renews their own loan
+          proof: toolkit http --method POST --path /loans --as ana --body '{"book_id":5}' ; toolkit read --target id --save lid ; toolkit http --method POST --path /loans/$lid/renew --as ana ; toolkit read --target status --save code
+          expect: $code == "200"
+        - [C2] 14 days on from the due date, once only, never for a returned loan
+          proof: cmd node oracle_renew.mjs {port:0}
+          expect: exit 0
+
+  - id: e-returned-stuck
+    fixture: e-library
+    set: heldout
+    kind: bug
+    text: >-
+      Books that come back never show up as available again. Middlemarch was returned in February and
+      the catalog still says 0 available, and nobody can borrow it.
+    plant:
+      - file: lib/loans.js
+        from: "(l) => l.book_id === book.id && !l.returned_at"
+        to: "(l) => l.book_id === book.id"
+    expect: { outcome: [done] }
+    oracle:
+      criteria: |
+        - [C1] the returned seed copy is on the shelf
+          proof: toolkit http --method GET --path /books/6 --as ben ; toolkit read --target available --save n
+          expect: $n == "1"
+        - [C2] a copy borrowed and returned can be borrowed by someone else
+          proof: toolkit http --method POST --path /loans --as ana --body '{"book_id":4}' ; toolkit read --target id --save lid ; toolkit http --method POST --path /loans/$lid/return --as ana --expect_status 200 ; toolkit http --method POST --path /loans --as ben --body '{"book_id":4}' ; toolkit read --target status --save code
+          expect: $code == "201"
+
+  - id: e-overdue-block
+    fixture: e-library
+    set: heldout
+    kind: feature
+    trap: "a book that was returned late is not overdue (ana returned Middlemarch late in the seed and must still be able to borrow)"
+    text: >-
+      Members who have an overdue book shouldn't be able to borrow anything else until they bring it
+      back. Borrowing should be refused with a 409 that tells them why.
+    expect: { outcome: [done] }
+    oracle:
+      criteria: |
+        - [C1] ben, with Dune overdue, can't borrow a free book
+          proof: toolkit http --method POST --path /loans --as ben --body '{"book_id":4}' ; toolkit read --target status --save code
+          expect: $code == "409"
+        - [C2] ana, who returned her late book, still can
+          proof: toolkit http --method POST --path /loans --as ana --body '{"book_id":2}' ; toolkit read --target status --save code
+          expect: $code == "201"
+        - [C3] once ben brings Dune back he can borrow again
+          proof: toolkit http --method GET --path /loans --as ben ; toolkit read --target 0.id --save lid ; toolkit http --method POST --path /loans/$lid/return --as ben --expect_status 200 ; toolkit http --method POST --path /loans --as ben --body '{"book_id":5}' ; toolkit read --target status --save code
+          expect: $code == "201"
+
+  - id: e-control-me
+    fixture: e-library
+    set: heldout
+    kind: control
+    text: >-
+      Add GET /members/me, returning the member who makes the request: their id, name and role.
+    expect: { outcome: [done] }
+    oracle:
+      criteria: |
+        - [C1] each seed member sees themselves; no member is a 401
+          proof: toolkit http --method GET --path /members/me --as ben ; toolkit read --target name --save name ; toolkit read --target id --save id ; toolkit http --method GET --path /members/me --as lena ; toolkit read --target role --save role ; toolkit http --method GET --path /members/me ; toolkit read --target status --save code
+          expect: $name == "Ben Okafor" and $id == "ben" and $role == "librarian" and $code == "401"
+
+  - id: e-needs-info
+    fixture: e-library
+    set: heldout
+    kind: needs-info
+    text: Make borrowing work better for families.
+    expect: { outcome: [needs-info] }

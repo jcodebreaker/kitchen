@@ -7,7 +7,7 @@
 // if it still passes after that, the job goes on and Verify flags it.
 import fs from "node:fs";
 import path from "node:path";
-import { guardCriteria, lintSpec, parseRequirements, withSpecMarks } from "../../checks/spec-lint.ts";
+import { guardCriteria, lintSpec, parseRequirements, remarkProblems, withSpecMarks } from "../../checks/spec-lint.ts";
 import { testLayout } from "../../checks/test-layout.ts";
 import { nothingPolicy } from "../contract.ts";
 import { ensureUp } from "../instance.ts";
@@ -52,16 +52,21 @@ export const spec: StageHandler = async (ctx) => {
   if (thrown.refused.length) ctx.log(`the spec role's worktree edits were thrown away: ${thrown.refused.map((x) => x.split(":")[0]).join(", ")}`);
   const view = hasToolkit(job) ? await toolkitView(job, job.worktree) : { primitives: [], drives: {} };
   // Rule 7: the criteria must cover the requirements intake read in the ticket.
-  // The spec may re-mark a (negative) one as (unchanged) in its own ## Requirements (withSpecMarks).
+  // The spec may re-mark a (negative) one as a boundary in its own ## Requirements (withSpecMarks): it stays a
+  // negative whose absence may hold on the base; never on a job with a security surface.
   const intakeFile = path.join(ctx.jobDir, "intake.md");
-  const requirements = withSpecMarks(parseRequirements(fs.existsSync(intakeFile) ? fs.readFileSync(intakeFile, "utf8") : ""), r.text);
-  const lint = lintSpec(r.text, {
+  const intakeReqs = parseRequirements(fs.existsSync(intakeFile) ? fs.readFileSync(intakeFile, "utf8") : "");
+  const security = job.surfaces?.includes("security") ?? false;
+  const requirements = withSpecMarks(intakeReqs, r.text, { security });
+  const linted = lintSpec(r.text, {
     kind: job.kind,
     toolkit: view,
     protected: ctx.config.protected,
     requirements,
     testLayout: testLayout(job.worktree, ctx.config.test_cmd),
   });
+  const remarks = remarkProblems(intakeReqs, r.text, { security });
+  const lint = remarks.length ? { ...linted, ok: false, reason: [...(linted.reason ? [linted.reason] : []), ...remarks].join("\n") } : linted;
   if (!lint.ok) {
     ctx.log(`spec-lint: ${lint.reason}`);
     writeAtomic(path.join(ctx.jobDir, "spec-refused.md"), `REASON: ${lint.reason}\n\n${r.text}`);
@@ -72,7 +77,7 @@ export const spec: StageHandler = async (ctx) => {
     const b = await runBaseCheck(ctx, job, lint.criteria);
     // spec-lint rule 3 (c): a negative no earlier step backs must be false on the base, and a regression guard
     // must hold there. A refusal like the lint's.
-    const neg = [...baseNegativeProblems(lint.baseNegatives, b), ...guardBaseProblems(guards, b)];
+    const neg = [...baseNegativeProblems(lint.baseNegatives, b, guards), ...guardBaseProblems(guards, b)];
     if (neg.length) {
       ok = false;
       reason = neg.join("\n");

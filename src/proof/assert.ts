@@ -7,7 +7,8 @@
 //   text "Saved" visible              the page's body text contains it (the engine reads `body` after the proof)
 //   text "Error" not visible
 //   contains "dark" · not contains "x" the proof's last output contains it (a command step: its stdout or stderr)
-//   json .theme == "dark"             a JSON path into the last output (a command step: its stdout)
+//   json .theme == "dark"             a JSON path into the last output (a command step: its stdout; an http
+//                                     step: its body, or the {status, body} response for a key the body lacks)
 //   json $me.body.theme == "dark"     … or into a saved var (a drive's `save:`)
 //   rows == 3 · rows $list >= 1 · row count 2   length of a JSON array (or of `rows`/`body` in an object; else non-empty lines)
 //   $theme == "Dark" · $theme != "Light" · $me contains "dark"
@@ -25,7 +26,13 @@ export type Outcome = {
   vars: Record<string, string>;
   /** `body` text read after the proof, for `text … visible`. */
   pageText?: string;
+  /** The last output came from an http step: `output` is its body; this is its status and the whole response. */
+  response?: Response;
+  /** The same for a var saved from an http step (`--save v`). */
+  responses?: Record<string, Response>;
 };
+/** An http step's response, kept beside its body: the status (a failed one proves no absence) and the `{status, body}` text. */
+export type Response = { status: number; full: string };
 
 type Op = "==" | "!=" | "contains" | "not contains" | ">=" | "<=" | ">" | "<";
 type Lit = string | number | boolean | null;
@@ -152,7 +159,7 @@ export function parseExpect(expect: string): Clause[] {
 }
 
 /** The strings a clause asks to be there (positive clauses only): `text "X" visible`, `contains "X"`, `== "X"`. */
-function wantedStrings(c: Clause): string[] {
+export function wantedStrings(c: Clause): string[] {
   if (c.kind === "text") return c.visible ? [c.text] : [];
   if (c.kind === "contains") return c.negate ? [] : [c.text];
   if ((c.kind === "json" || c.kind === "var") && (c.op === "==" || c.op === "contains") && typeof c.value === "string") return [c.value];
@@ -262,8 +269,14 @@ export function failedSubject(text: string | undefined, expected: string[] = [])
 export function evaluate(clauses: Clause[], o: Outcome): AssertResult {
   const expected = clauses.flatMap(wantedStrings);
   const results: ClauseResult[] = clauses.map((c): ClauseResult => {
-    const subject = (name: string | null): { ok: true; v: string } | { ok: false; got: string } =>
-      name === null ? { ok: true, v: o.output } : name in o.vars ? { ok: true, v: o.vars[name] } : { ok: false, got: `$${name} was not saved` };
+    const subject = (name: string | null): { ok: true; v: string; resp?: Response } | { ok: false; got: string } =>
+      name === null
+        ? { ok: true, v: o.output, resp: o.response }
+        : name in o.vars
+          ? { ok: true, v: o.vars[name], resp: o.responses?.[name] }
+          : { ok: false, got: `$${name} was not saved` };
+    const failedResponse = (resp: Response | undefined) =>
+      resp && resp.status >= 400 ? `the response failed (status ${resp.status}): its absence proves nothing` : null;
     switch (c.kind) {
       case "ok":
         return { clause: c.src, pass: o.ok, got: o.ok ? "all steps ok" : `failed (exit ${o.exit})` };
@@ -287,9 +300,12 @@ export function evaluate(clauses: Clause[], o: Outcome): AssertResult {
         const s = subject(c.subject);
         if (!s.ok) return { clause: c.src, pass: false, got: s.got };
         let v: unknown = tryJson(s.v);
+        // An http step's body; a key it lacks is read from the {status, body} response (`.status`, `.body.ok`).
+        const k0 = c.path[0];
+        if (s.resp && typeof k0 === "string" && !(v && typeof v === "object" && !Array.isArray(v) && k0 in v)) v = tryJson(s.resp.full);
         if (v === undefined) return { clause: c.src, pass: false, got: `not JSON: ${show(s.v)}` };
         const negative = c.op === "!=" || c.op === "not contains";
-        const top = negative ? failedSubject(s.v) : null;
+        const top = negative ? (failedResponse(s.resp) ?? failedSubject(s.v)) : null;
         if (top?.startsWith("the response failed")) return { clause: c.src, pass: false, got: top };
         for (const k of c.path) v = v && typeof v === "object" ? (v as Record<string | number, unknown>)[k] : undefined;
         if (negative && (v === undefined || v === null || v === ""))
@@ -305,9 +321,10 @@ export function evaluate(clauses: Clause[], o: Outcome): AssertResult {
       case "var": {
         const s = subject(c.name);
         if (!s.ok) return { clause: c.src, pass: false, got: s.got };
+        // A saved value that failed, is empty or is an error page proves no absence, as for the last output.
         if (c.op === "!=" || c.op === "not contains") {
-          const bad = failedSubject(s.v, expected);
-          if (bad && !bad.startsWith("the page looks")) return { clause: c.src, pass: false, got: `$${c.name} ${bad}` };
+          const bad = failedResponse(s.resp) ?? failedSubject(s.v, expected);
+          if (bad) return { clause: c.src, pass: false, got: `$${c.name} ${bad}` };
         }
         return { clause: c.src, pass: compare(s.v, c.op, c.value), got: show(s.v) };
       }

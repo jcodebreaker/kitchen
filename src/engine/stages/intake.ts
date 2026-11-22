@@ -63,10 +63,10 @@ export const intake: StageHandler = async (ctx) => {
   // hold there. The inline criteria run on the base now (the worktree at the base, a fresh app); build reuses the
   // result for the same criteria.
   const guards = criteria?.ok ? guardCriteria(criteria.criteria, requirements) : [];
-  if (criteria?.ok && decision === "ACCEPT" && (criteria.baseNegatives.length || guards.length) && hasToolkit(ctx.job)) {
+  if (criteria?.ok && decision === "ACCEPT" && (criteria.baseNegatives.length || guards.length)) {
     const job = await ensureWorktree(ctx.repo, ctx.refresh());
     const b = await runBaseCheck(ctx, job, criteria.criteria);
-    const why = [...baseNegativeProblems(criteria.baseNegatives, b), ...guardBaseProblems(guards, b)];
+    const why = [...baseNegativeProblems(criteria.baseNegatives, b, guards), ...guardBaseProblems(guards, b)];
     if (why.length) Object.assign(criteria, { ok: false, reason: why.join("\n") });
   }
   const refusal =

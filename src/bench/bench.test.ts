@@ -1,16 +1,18 @@
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import type { LedgerLine } from "../ledger/append.ts";
+import { measures } from "../ledger/measures.ts";
 import { fillPorts, retryOracle } from "./oracle.ts";
-import { expectationMet, type RunResult, resultsMarkdown, summarize } from "./run.ts";
+import { agentInfraError, expectationMet, type RunResult, resultsMarkdown, section02, section02Lines, summarize } from "./run.ts";
 import { applyPlant, type BenchTicket, loadSet, pick } from "./set.ts";
-import { driveRuns, jobDriveTally, sumDrives, type TallyEntry } from "./tally.ts";
+import { jobDriveTally, sumDrives } from "./tally.ts";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..");
 
 describe("bench set", () => {
   const set = loadSet(ROOT);
-  it("has the tuned set PLAN §8 asks for, and a held-out set of 6", () => {
-    const tuned = set.filter((t) => t.set === "tuned");
+  it("has the tuned set PLAN §8 asks for (plus D, tuned on in the regression), and 6 held-out tickets on E", () => {
+    const tuned = set.filter((t) => t.set === "tuned" && t.fixture !== "d-api");
     const count = (k: string) => tuned.filter((t) => t.kind === k).length;
     expect(tuned.length).toBe(14);
     expect(count("feature")).toBe(4);
@@ -18,7 +20,10 @@ describe("bench set", () => {
     expect(tuned.filter((t) => t.kind === "bug" && t.hard).length).toBe(1);
     expect([count("chore"), count("too-big"), count("needs-info"), count("reject"), count("primitive"), count("control")]).toEqual([1, 1, 1, 1, 1, 2]);
     expect(tuned.filter((t) => t.trap).length).toBe(3);
-    expect(set.filter((t) => t.set === "heldout").length).toBe(6);
+    const heldout = set.filter((t) => t.set === "heldout");
+    expect(heldout.length).toBe(6);
+    expect(heldout.every((t) => t.fixture === "e-library")).toBe(true);
+    expect(set.filter((t) => t.fixture === "d-api" && t.set === "tuned").length).toBe(6);
   });
   it("smoke is 5 tickets: a feature, a bug, a trap, a control, a low-risk one", () => {
     const smoke = pick(set, "smoke");
@@ -127,47 +132,28 @@ describe("bench oracle", () => {
 });
 
 describe("bench drive tally", () => {
-  const e = (id: string, o: Partial<TallyEntry>): TallyEntry => ({ id, sha: "s1", tree: "t1", criterion: "C1", role: "engine", ok: true, ...o });
-  it("groups stamped steps into drive runs (a step's retries stay in its run)", () => {
-    const runs = driveRuns([
-      e("e1", { drive: "settings.dark", line: 1 }),
-      e("e2", { drive: "settings.dark", line: 2, ok: false }),
-      e("e3", { drive: "settings.dark", line: 2, attempt: 1 }),
-      e("e4", { drive: "settings.dark", line: 1 }),
-      e("e5", { drive: "primitive:login", line: 0 }),
-      e("e6", { drive: "primitive:login", line: 0, ok: false }),
-      e("e7", {}),
-      e("e8", { drive: "settings.dark", line: 1, gap: "drag", ok: false }),
-    ]);
-    expect(runs.map((x) => [x.drive, x.ok, x.entries.join(" ")])).toEqual([
-      ["settings.dark", true, "e1 e2 e3"],
-      ["settings.dark", true, "e4"],
-      ["primitive:login", true, "e5"],
-      ["primitive:login", false, "e6"],
-    ]);
-  });
-  it("counts INCONCLUSIVE per drive from the verdicts, and a flake only on the same tree", () => {
-    const entries = [
-      e("e1", { drive: "settings.dark", line: 1 }),
-      e("e2", { drive: "settings.dark", line: 2, ok: false }),
-      e("e3", { drive: "settings.dark", line: 1 }),
-      e("e4", { drive: "settings.dark", line: 2 }),
-      e("e5", { drive: "home.count", line: 1, ok: false, criterion: "C2" }),
-      e("e6", { drive: "home.count", line: 1, sha: "s2", tree: "t2", criterion: "C2" }),
+  // One flake definition (final fixes D): Verify's proof lines, as `kitchen report` reads them.
+  const proof = (job: string, criterion: string, head: string, result: string, drives: string[]) =>
+    ({
+      job,
+      stage: "verify",
+      round: 1,
+      event: "proof",
+      key: `${job}/${criterion}/${head}/${Math.random()}`,
+      result,
+      detail: { criterion, head, drives },
+    }) as unknown as LedgerLine;
+  it("counts INCONCLUSIVE per drive and a flake only for a PASS and a non-PASS on the same HEAD and criterion", () => {
+    const lines = [
+      proof("j1", "C1", "h1", "INCONCLUSIVE", ["settings.dark"]),
+      proof("j1", "C1", "h1", "PASS", ["settings.dark"]),
+      proof("j1", "C2", "h1", "FAIL", ["home.count"]),
+      proof("j1", "C2", "h2", "PASS", ["home.count"]),
     ];
-    const verdict = (c1: string, ids1: string, c2: string, ids2: string) =>
-      [
-        `VERDICT: ${c1}`,
-        "",
-        "| criterion | decided by | result | evidence | why |",
-        "|---|---|---|---|---|",
-        `| C1 | engine | ${c1} | ${ids1} | settings.dark: step "x" failed |`,
-        `| C2 | engine | ${c2} | ${ids2} |  |`,
-      ].join("\n");
-    const t = jobDriveTally(entries, [verdict("INCONCLUSIVE", "e1 e2", "FAIL", "e5"), verdict("PASS", "e3 e4", "PASS", "e6")]);
+    const t = jobDriveTally(measures(lines).drives);
     expect(t).toEqual([
       { drive: "home.count", verifies: 2, inconclusive: 0, runs: 2, passed: 1, failed: 1, flaky: false },
-      { drive: "settings.dark", verifies: 2, inconclusive: 1, runs: 2, passed: 1, failed: 1, flaky: true },
+      { drive: "settings.dark", verifies: 2, inconclusive: 1, runs: 2, passed: 1, failed: 0, flaky: true },
     ]);
     const all = sumDrives([
       { fixture: "a-web", drives: t },
@@ -183,6 +169,52 @@ describe("bench drive tally", () => {
       runs: 3,
       flakyJobs: 1,
     });
-    expect(all.length).toBe(2);
+  });
+});
+
+describe("§0.2 judged by code", () => {
+  const r = (ticket: string, o: Partial<RunResult> = {}): RunResult =>
+    ({
+      ticket,
+      fixture: "a-web",
+      set: "tuned",
+      kind: "feature",
+      trap: false,
+      control: false,
+      run: 1,
+      expected: ["done"],
+      outcome: "done",
+      oracle: "pass",
+      toolkitPr: false,
+      correct: true,
+      rounds: 1,
+      verifyFails: 0,
+      secs: 1,
+      usd: 0,
+      path: "",
+      ...o,
+    }) as RunResult;
+  it("prints PASS/FAIL per line, names the controls, and counts held-out controls apart", () => {
+    const rs = [
+      ...Array.from({ length: 17 }, (_, i) => r(`t${i}`)),
+      r("trap", { trap: true }),
+      r("trap", { trap: true, run: 2, correct: false }),
+      r("ctl", { kind: "control", control: true, verifyFails: 1 }),
+      r("ctl", { kind: "control", control: true, run: 2, verifyFails: 1 }),
+      r("e-ctl", { kind: "control", control: true, set: "heldout", verifyFails: 3 }),
+      r("e1", { set: "heldout", correct: false }),
+      r("e2", { set: "heldout" }),
+    ];
+    const s = section02(rs);
+    expect(s.map((l) => l.pass)).toEqual([true, false, false, false]);
+    expect(s[1].detail).toContain("missed: trap #2");
+    expect(s[2].detail).toMatch(/^2 over 2 runs of ctl; held-out controls \(not in this line\): 3 over 1 runs of e-ctl/);
+    expect(section02Lines(rs)[0]).toMatch(/^§0.2 PASS {2}≥85% of runs correct: 22\/24/);
+    expect(section02([r("x")]).map((l) => l.pass)).toEqual([true, null, null, null]);
+  });
+  it("an agent adapter's infrastructure error is told apart from a judgment", () => {
+    expect(agentInfraError({ outcome: "needs-human", reason: "adapter-error: reviewer-code: Error: claude not found in PATH" })).toBe(true);
+    expect(agentInfraError({ outcome: "needs-human", reason: "adapter-error: builder: max turns" })).toBe(false);
+    expect(agentInfraError({ outcome: "needs-human", reason: "round limit" })).toBe(false);
   });
 });

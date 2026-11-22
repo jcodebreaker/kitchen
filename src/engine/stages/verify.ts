@@ -17,7 +17,7 @@
 // verifier says so) gets one free retry on a fresh instance, then a Toolkit ticket.
 import fs from "node:fs";
 import path from "node:path";
-import { checksPrepareOf } from "../../checks/run-checks.ts";
+import { checksPrepareOf, forgetChecksPrepared } from "../../checks/run-checks.ts";
 import { type ArgsDelta, decideVerdict, type ProofRecord, renderVerdict } from "../../checks/verdict.ts";
 import { appendLedger } from "../../ledger/append.ts";
 import { drivesOf } from "../../ledger/measures.ts";
@@ -85,6 +85,8 @@ export const verify: StageHandler = async (ctx) => {
 
   // Step 0 + 1: fresh instance, then every proof, engine only.
   if (todo.length) {
+    // cmd/test proofs run on dependencies installed now, not on ones a role could have edited since Gate.
+    forgetChecksPrepared(ctx.jobDir);
     if (hasToolkit(job)) await freshUp(job, ctx.jobDir, ctx.log);
     for (const c of todo) {
       if (hasToolkit(job)) await resetUp(job, ctx.jobDir);

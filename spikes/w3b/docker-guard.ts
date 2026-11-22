@@ -167,6 +167,35 @@ check(
 );
 spawnSync("docker", ["compose", "-p", `${NAME}-h`, "down", "--remove-orphans"], { cwd: repo, stdio: "ignore" });
 
+// (h) W3b round 2 / ADR 0008, ownership: requests on existing containers only for ones created through the guard.
+// A container this spike starts outside the guard (named kitchen-*, as another job's or another project's would be)
+// can't be exec'd, stopped, removed, read or inspected from inside; one the sandboxed bin/dev created can.
+// (Only kitchen-* containers are ever touched: never another project's.)
+const foreign = `${NAME}-foreign`;
+const fr = spawnSync("docker", ["run", "-d", "--name", foreign, "--memory", "32m", IMAGE, "sleep", "120"], { encoding: "utf8" });
+check("(h) a container started outside the guard (the control)", fr.status === 0, fr.stderr.trim());
+for (const [what, cmd] of [
+  ["exec", `docker exec ${foreign} true`],
+  ["stop", `docker stop -t 0 ${foreign}`],
+  ["rm -f", `docker rm -f ${foreign}`],
+  ["logs", `docker logs ${foreign}`],
+  ["inspect", `docker inspect ${foreign}`],
+  ["kill", `docker kill ${foreign}`],
+  ["cp out of it", `docker cp ${foreign}:/etc/hostname -`],
+] as const) {
+  const h = sandboxed(`${cmd} >/dev/null; echo rc=$?`);
+  check(`(h) ${what} on a container the guard didn't create is refused`, /rc=[1-9]/.test(h.out) && KITCHEN.test(h.err + h.out), `${h.out.trim()} ${h.err.trim().split("\n").at(-1)}`);
+}
+const still = spawnSync("docker", ["inspect", "-f", "{{.State.Running}}", foreign], { encoding: "utf8" });
+check("(h) and it is still running, untouched", still.stdout.trim() === "true", still.stdout.trim() || still.stderr.trim());
+const pr = sandboxed(`docker container prune -f >/dev/null; echo rc=$?`);
+check("(h) container prune is refused", /rc=[1-9]/.test(pr.out) && KITCHEN.test(pr.err + pr.out), pr.err.trim().split("\n").at(-1) ?? "");
+const own = sandboxed(
+  `docker run -d --name ${NAME}-own --memory 32m ${IMAGE} sleep 60 >/dev/null && docker exec ${NAME}-own true && docker logs ${NAME}-own >/dev/null && docker stop -t 0 ${NAME}-own >/dev/null && docker rm ${NAME}-own >/dev/null; echo rc=$?`,
+);
+check("(h) its own container: exec, logs, stop, rm all work", /rc=0/.test(own.out), `${own.out.trim()} ${own.err.trim().split("\n").at(-1) ?? ""}`);
+spawnSync("docker", ["rm", "-f", foreign], { stdio: "ignore" });
+
 // (f) docker exec -i with stdin, the wrapper's stdin carried through to it
 const f = sandboxed(
   `docker run -d --name ${NAME}-f --memory 64m ${IMAGE} sleep 60 >/dev/null && docker inspect -f '{{.State.Running}}' ${NAME}-f >&2 && docker exec -i ${NAME}-f cat; docker rm -f ${NAME}-f >/dev/null`,

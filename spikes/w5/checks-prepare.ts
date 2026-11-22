@@ -7,6 +7,10 @@
 //   3. Gate again on the same HEAD: the install is cached (no second npm ci)
 //   4. a `test` proof through prove(), as Verify runs it: passes, no new install
 //   5. a lockfile change: the next Gate installs again
+//   6. (final fixes E) a builder edits the gitignored node_modules after the
+//      install (a `tsc` that always passes): Gate's entry forgets the install
+//      (forgetChecksPrepared, as the gate and verify stages do), so the next Gate
+//      installs again and the edit is gone
 //   node spikes/w5/checks-prepare.ts [scratch]
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -14,7 +18,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runGate } from "../../src/checks/gate.ts";
-import { checksPrepareOf } from "../../src/checks/run-checks.ts";
+import { checksPrepareOf, forgetChecksPrepared } from "../../src/checks/run-checks.ts";
 import { parseConfig } from "../../src/config.ts";
 import { ensureWorktree, headOf } from "../../src/engine/worktree.ts";
 import { prove } from "../../src/proof/prove.ts";
@@ -101,6 +105,18 @@ check(
   "5. a lockfile change: the next Gate installs again",
   g4.lines.some((l) => /checks_prepare/.test(l)),
   g4.result,
+);
+// The builder's sandbox can write node_modules (gitignored, so no commit shows it): a tsc that always passes.
+const tsc = path.join(job.worktree, "node_modules", "typescript", "bin", "tsc");
+fs.writeFileSync(tsc, "#!/usr/bin/env node\nprocess.exit(0);\n");
+const cached = await gate(true);
+check("6a. without forgetting, Gate trusts the cached install (the hole)", !cached.lines.some((l) => /checks_prepare/.test(l)), cached.result);
+forgetChecksPrepared(jd); // what the gate and verify stages do on entry
+const g5 = await gate(true);
+check(
+  "6b. Gate's entry forgets it: installed again, the tampered tsc is gone",
+  g5.lines.some((l) => /PASS checks_prepare/.test(l)) && !/process\.exit\(0\)/.test(fs.readFileSync(tsc, "utf8")),
+  g5.lines.filter((l) => l.startsWith("-")).join(" | "),
 );
 console.log(`    (${Math.round((Date.now() - t0) / 1000)} s)`);
 finish("checks-prepare");

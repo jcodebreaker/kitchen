@@ -17,7 +17,7 @@ export type Plant = z.infer<typeof Plant>;
 export const TicketSchema = z
   .object({
     id: z.string().regex(/^[a-z0-9-]+$/),
-    fixture: z.enum(["a-web", "b-cli", "c-adopt", "d-api"]),
+    fixture: z.enum(["a-web", "b-cli", "c-adopt", "d-api", "e-library"]),
     set: z.enum(["tuned", "heldout"]),
     kind: z.enum(["feature", "bug", "chore", "too-big", "needs-info", "reject", "primitive", "control"]),
     tiers: z.array(z.enum(["smoke"])).default([]),
