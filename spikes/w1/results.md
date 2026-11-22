@@ -1,19 +1,19 @@
 # W1 results
 
-Run on 2026-11-22, macOS, Node 26.9, git 2.39, Claude Code 2.1.330, Codex CLI 0.171.0. Rerun with `README.md`. Last full rerun after the Wave 1 review fixes (see "Review fixes" below).
+Run on 2026-11-22, macOS, Node 26.9, git 2.39, Claude Code 2.1.330, Codex CLI 0.171.0. Rerun with `README.md`. Last full rerun after the Wave 1 round-2 review fixes (see "Review fixes" below).
 
 | exit check | result | evidence |
 |---|---|---|
 | Scripted jobs walk every stage path (fake adapter) | **PASS** 54/54 | `paths.ts`, paths below |
 | Every refused move prints its reason | **PASS** | 5 refusals across the runs, each `<id>  refused <from> → <to>: <reason>` or `refused no move <from> → <to>` |
-| kill -9 mid-stage, restart, resume, no duplicate side effects, no orphaned agent or check | **PASS** 30/30 | `kill.ts`, below |
-| Faults: refused human commands, corrupt job, half-made worktree, engine-error, empty lock, torn ledger | **PASS** 18/18 | `faults.ts`, below |
+| kill -9 mid-stage, restart, resume, no duplicate side effects, no orphaned agent or check | **PASS** 34/34 | `kill.ts`, below |
+| Faults: refused human commands, corrupt job, half-made worktree, engine-error, empty lock, torn ledger, lost lock, torn procs record | **PASS** 27/27 | `faults.ts`, below |
 | `run --detach` survives its shell, `status` shows it | **PASS** 8/8 | `detach.ts` |
 | Builder `checks` tool on `kitchen mcp` | **PASS** 7/7 | `bridge-checks.ts` |
 | Real smoke, Claude haiku | **PASS** 5/5 | 1 call, 8.5 s, $0.0021, 24k in / 1.5k out tokens (before the review fixes) |
 | Real smoke, Codex gpt-6-luna | **PASS** 5/5 | 1 call, 23.8 s, 117k in (mostly cached) / 0.9k out tokens (before the review fixes) |
 | Codex smoke on fixture A (PLAN §7), default `cheap` tier | **PASS** 6/6 | 1 call, gpt-5.6-luna, 33.7 s, below |
-| Unit tests | **PASS** 217 tests | `npm test`; the machine test fails if any table row lacks a legal or a refused case |
+| Unit tests | **PASS** 228 tests | `npm test`; the machine test fails if any table row lacks a legal or a refused case |
 
 ## Stage paths (`paths.ts`, from the de-duplicated ledger)
 
@@ -60,6 +60,8 @@ Details checked along the way: the gap job's `toolkitRef` is pinned (`6724d7ac09
 
 **Part 3, a gate check.** A kitchen.yaml check that runs `sleep 600` (once) hangs the gate; kill -9. The check was its own process group and outlived the runner; the restart printed `killed check slow left running by pid … (process group …)`, `pgrep -g` finds nothing left in the group (shell and `sleep` both gone), and the job finished.
 
+**Part 4, a check started through the bridge.** The stub builder starts the real bridge from its `--mcp-config` (a child in the agent's group, as Claude starts it), calls `checks` (one hangs in `sleep 600`), then SIGKILLs its own group: agent and bridge die without an exit handler, the check (its own group, recorded `by` the bridge) lives on. When the adapter returns, runRole prints `<id>  build: killed check slow left running by pid <bridge> (process group <check>)` before the retried builder starts; the check's group is empty (`pgrep -g`), the job finishes, no `procs/` records are left. With the reap commented out the same run fails 3 checks (the check outlives the stage).
+
 ## Faults (`faults.ts`)
 
 - **Refused human commands change nothing.** `kitchen reject` ×3 on a job in build: each `refused no move build → rejected`, exit 1, and `job.json` byte for byte unchanged (no refusal counted, never needs-human); `kitchen resume` on it likewise. `kitchen feedback` ×3 on a done job: the first moves done → build, the next two are refused (`no move build → build`), the job stays in build with `attempts.refused` 0, and only the accepted feedback text is kept for the builder. The runner then finishes it.
@@ -68,6 +70,8 @@ Details checked along the way: the gap job's `toolkitRef` is pinned (`6724d7ac09
 - **engine-error.** A job whose base commit doesn't exist: `git worktree add` fails, is retried once (`error (retried next tick)`), then `build → needs-human` with `engine-error: git worktree failed (exit 255): fatal: not a valid branch point …` and `escalatedFrom: build` (it was `adapter-error` before).
 - **Empty run.lock.** A fresh empty lock file is waited on for its 2 s grace (2.0 s), then taken over (`took over the run lock (unreadable lock file)`); one empty for 10 s is taken over at once. The runner now creates the lock with temp file + `link()`, so a lock file is never empty while it is written.
 - **Torn ledger line.** A ledger whose last line has no newline: the next append starts on its own line, and every line after the torn one parses.
+- **Run lock lost mid-stage.** The `slow` builder is running when `run.lock` is rewritten to name another live process with a fresh heartbeat. When the builder returns: `<id>  build: run lock lost, left for the runner that holds it` and `run: lost the run lock to another runner, stopping`; job.json stays in build and the ledger has no move after the lock was lost; the lock still names its new owner; nothing was published (no PR, no push), but the builder's file and its `agentRuns` entry are kept. Once that owner is gone the next `kitchen run` takes the lock over, reuses the builder's file (one builder run), publishes once (1 PR, 1 push) and finishes the job.
+- **Torn or start-less procs record.** Two live detached `sleep`s; one gets a torn record (`{"pgid":<pid>,"sta`), the other a record with `start: null`. `kitchen run` kills neither (a pgid alone can't tell the recorded group from one that reused the pid), removes both records, and runs the job to done.
 
 ## Detach (`detach.ts`)
 
@@ -101,3 +105,15 @@ One ticket ("Add a CONTRIBUTING.md that tells contributors to run `npm test` …
 | needs-human → build skipped spec/repro | `escalatedFrom`; feedback returns there, `--to <stage>` overrides (ADR 0007) | `paths.ts` inconclusive, rounds; `machine.test.ts` |
 | Torn ledger last line | append closes it with `\n` first | `faults.ts` 6 |
 | Codex tier map | `cheap: gpt-5.6-luna` (same generation as `strong: gpt-5.6-terra`), configurable via `agent.models` | fixture A smoke |
+
+## Review fixes (Wave 1 review, round 2)
+
+| finding | fix | proof |
+|---|---|---|
+| MAJOR: `kitchen feedback --to` took any active stage (ready, report): a job could reach done without gate, drives or verify | `--to` only names intake, spec, repro, build, drives or verify, at or before `escalatedFrom` (build when none); the machine refuses others with the reason (`--to ready: feedback goes to one of …`, `--to build: it is past spec, where the job escalated from`) and the feedback text is not kept (ADR 0007) | `machine.test.ts` (legal: verify→build, report→drives, verify→verify, gate→intake, none→build; refused: spec→build, none→drives, gate/toolkit/review/ready/report from report); `paths.ts` rounds (`--to build` from gate) |
+| A bridge check outlives its agent when the agent group is SIGKILLed | runRole, once the agent returns, reaps the job's `procs/` records whose owner (`by`) is dead (`reapGroups(dir, { deadOwners: true })`), logs `orphan-killed`; a live owner's records are left alone | `kill.ts` part 4 (fails without the reap) |
+| A torn procs record (start null) killed whatever group had that pgid | records written with `writeAtomic`; a record that can't be read, or has no start time, is removed and nothing is killed; residual window (record written just after spawn) commented in `procs.ts` | `faults.ts` 8 |
+| `setsid` escapes the process group | documented in the `procs.ts` header and ADR 0006 "Worktree code" residual risk | docs |
+| No lost-lock spike | `faults.ts` 7; runRole now also checks the lock after the agent returns (the file is kept for the new owner), so a stage does nothing more (commit, publish) once the lock is lost | `faults.ts` 7 |
+
+Seen while proving it, not changed: when the loop stops on a lost lock it does not wait for in-flight stages, so its `finally` releases their slots (`slot 0 released (build)`) while the stage is still finishing; the new owner's startup reap kills that runner's agents anyway.

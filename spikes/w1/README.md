@@ -6,8 +6,8 @@ Every script builds throwaway repos under the scratch dir you give it (default `
 
 ```sh
 node spikes/w1/paths.ts <scratch>          # every stage path with the fake adapter (free, ~30 s)
-node spikes/w1/kill.ts <scratch>           # kill -9 mid-stage (in-process fake, a real agent subprocess, a gate check), restart, resume; run-lock take-over by heartbeat age (free)
-node spikes/w1/faults.ts <scratch>         # refused human commands, corrupt job.json, half-made worktree, engine-error, empty run.lock, torn ledger line (free)
+node spikes/w1/kill.ts <scratch>           # kill -9 mid-stage (in-process fake, a real agent subprocess, a gate check), restart, resume; a bridge check outliving its SIGKILLed agent; run-lock take-over by heartbeat age (free)
+node spikes/w1/faults.ts <scratch>         # refused human commands, corrupt job.json, half-made worktree, engine-error, empty run.lock, torn ledger line, run lock lost mid-stage, torn procs records (free)
 node spikes/w1/detach.ts <scratch>         # `run --detach` outlives its shell; `status` shows it (free, ~10 s)
 node spikes/w1/bridge-checks.ts <scratch>  # the builder's `checks` tool on `kitchen mcp`, over stdio (free)
 node spikes/w1/smoke.ts claude <scratch>   # ONE real agent call: intake on haiku through the runner
@@ -29,5 +29,5 @@ The forge is `forge: { kind: fake }`: a JSON file (`.kitchen/fake-forge.json`) h
 
 - `lib.ts`: repo builder, CLI runner, PASS/FAIL tally, ledger path reader.
 - `fake-script.ts`, `scenarios.ts`: the scripted roles.
-- `stub-agent.ts`: the `claude` stand-in for `kill.ts` part 2.
+- `stub-agent.ts`: the `claude` stand-in for `kill.ts` parts 2 and 4 (with `<repo>/bridge-kill`, the builder starts the bridge, runs `checks`, and SIGKILLs its own group).
 - `paths.ts`, `kill.ts`, `faults.ts`, `detach.ts`, `bridge-checks.ts`, `smoke.ts`: the exit checks.
