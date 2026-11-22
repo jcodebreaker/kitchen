@@ -735,6 +735,19 @@ test("a move the table doesn't have is refused with a reason", () => {
   assert.ok("refused" in r2);
 });
 
+test("the move to done stamps doneAt (the PR-comment cutoff); later moves keep it, the next done restamps it", () => {
+  const d = move(baseJob({ stage: "report" }), "done", { now: "2026-11-22T10:00:00Z", report: report() });
+  assert.ok("job" in d);
+  assert.equal(d.job.doneAt, "2026-11-22T10:00:00Z");
+  const b = move(d.job, "build", { now: "2026-11-22T11:00:00Z", operator: "feedback" });
+  assert.ok("job" in b);
+  assert.equal(b.job.doneAt, "2026-11-22T10:00:00Z");
+  assert.equal(b.job.updatedAt, "2026-11-22T11:00:00Z");
+  const d2 = move({ ...b.job, stage: "report" }, "done", { now: "2026-11-22T12:00:00Z", report: report() });
+  assert.ok("job" in d2);
+  assert.equal(d2.job.doneAt, "2026-11-22T12:00:00Z");
+});
+
 test("INCONCLUSIVE path: free retry, then paused with a ticket, then needs-human after the ticket", () => {
   let j = baseJob({ stage: "verify" });
   const step = (to: Stage, facts: Facts) => {
