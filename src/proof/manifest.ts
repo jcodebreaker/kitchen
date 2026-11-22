@@ -37,7 +37,8 @@ export type Stamp = {
 };
 export type Entry = Stamp & Record<string, unknown>;
 export type ManifestHead = { n: number; hash: string; mac: string };
-export type Seal = { scope: string; key: Buffer };
+/** `floor`: the job's head counter ($KITCHEN_HOME/heads/<uid>); a head below it was rolled back. */
+export type Seal = { scope: string; key: Buffer; floor: number };
 
 export class ManifestTampered extends Error {}
 
@@ -81,6 +82,7 @@ function checkMac(head: ManifestHead, seal: Seal) {
 export function verifyManifest(dir: string, expected: ManifestHead, seal: Seal): Entry[] {
   if (!expected || typeof expected.n !== "number") throw new ManifestTampered("no expected manifest head given: refused");
   checkMac(expected, seal);
+  if (expected.n < seal.floor) throw new ManifestTampered(`head has ${expected.n} entries but the engine already recorded ${seal.floor}: rolled back, refused`);
   const text = readText(path.join(dir, MANIFEST));
   if (text === null || text === "") {
     if (expected.n === 0) return [];

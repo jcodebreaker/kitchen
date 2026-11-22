@@ -23,7 +23,7 @@ import {
   type Value,
   type WaitStep,
 } from "./drive-format.ts";
-import { evidenceDir, type ProofJob, readJob, sealOf, withJobLock, writeJob } from "./job.ts";
+import { evidenceDir, jobGit, type ProofJob, readJob, sealOf, storeHead, withJobLock } from "./job.ts";
 import { appendEntry, type Entry, type ManifestHead, nextId, verifyManifest } from "./manifest.ts";
 import { type SourceStamp, sourceStamp } from "./source-stamp.ts";
 
@@ -107,7 +107,7 @@ async function runLocked(o: DriveOpts): Promise<DriveResult> {
   const seal = sealOf(job);
   const ev = evidenceDir(o.jobDir);
   verifyManifest(ev, job.manifestHead, seal); // refuse before running anything on a tampered record
-  const source = await sourceStamp(job.worktree);
+  const source = await sourceStamp(jobGit(job));
   const { drive, args } = buildDrive(job, o.request);
 
   const vars: Record<string, string> = {};
@@ -156,7 +156,7 @@ async function runLocked(o: DriveOpts): Promise<DriveResult> {
       seal,
     );
     job.manifestHead = r.head;
-    writeJob(o.jobDir, job);
+    storeHead(o.jobDir, job);
     return r.entry;
   };
 
