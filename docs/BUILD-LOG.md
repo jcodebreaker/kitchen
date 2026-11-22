@@ -111,7 +111,18 @@ One entry per wave: what was built, review rounds and scores, what is proven, an
 - `toolkit up|down|maintain` are not built.
 - `prepare` has no stall detection (a hung download waits for the 30-minute timeout).
 
-## Wave 3a: proof and the core path (review round 2 fixes done, awaiting re-review; round 1 6.5/10)
+## Wave 3a: proof and the core path (done, 9/10: Claude complete, Codex re-proof owed)
+
+**Review rounds:** 6.5 → 7.5 → 8.5 → 9.
+
+**Conditional on Codex:** the 9 is withdrawn if the Codex run of the admin ticket fails to reach review once the quota resets on 2026-12-21.
+
+**Stands on:**
+- a structural check that the spec covers every requirement in the ticket;
+- a base check after drives;
+- builder limits on the files that proofs and checks run through;
+- sandboxed cmd/test proofs and sandboxed gate and builder checks;
+- evidence redacted when it is written.
 
 **Built**
 - `src/proof/assert.ts`: mechanical `expect:` matchers (`ok`, exit code, `text "…" visible`, contains, JSON path into the output or a `$var`, row count, `$var` comparisons, `and`). `src/proof/proof-line.ts`: the `proof:` line parser. `src/proof/prove.ts`: one criterion's proof through `kitchen drive` (toolkit segments via runDrive, cmd/test via stampCommand), then assert. `kitchen drive <job> <C> [--repro] [--arg k=v]…` on the CLI.
