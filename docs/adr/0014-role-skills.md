@@ -1,6 +1,6 @@
 # Roles load skills: a pinned registry, a readiness check, and a bench that keeps only what helps
 
-**Status.** Proposed, 2026-11-22. **Needs the user's approval of the table below before any code.** The idea of a lane → skill registry with a readiness check comes from super-board v3.3.0 (`scripts/super-board-skills-ready.py`, `skills-readiness.md`), MIT © 2026 Eric Tech; no code was copied.
+**Status.** Accepted, 2026-11-22. The user approved the table and left it to Claude to fold in super-board's proven lane skills where they fit. The bench decides which ones stay. The idea of a lane → skill registry with a readiness check comes from super-board v3.3.0 (`scripts/super-board-skills-ready.py`, `skills-readiness.md`), MIT © 2026 Eric Tech; no code was copied.
 
 **Problem.** Each Kitchen role is one prompt file (`roles/*.md`) that knows nothing outside itself. Proven outside skills, such as test-first building, bug diagnosis or a security review, would make roles better at their one job. Loading them blindly could also make roles worse, slower or unreproducible.
 
@@ -21,6 +21,14 @@ It maps each role to required, optional and fallback skills, plus helpers picked
 | reviewer-ux | — | — | — | role prompt |
 | verifier | — | — | — | none: the verifier judges only what needs eyes |
 | report | — | — | `humanizer` (plain prose) | role prompt |
+
+**Taken from super-board's lane registry** (`scripts/super-board-skills-ready.py:20-42`), each still subject to the bench:
+- builder: `codebase-design` for refactor and tech-debt tickets; `implement` for features alongside `tdd`.
+- reviewer-code: `codebase-design` as a second lens.
+- Not taken:
+  - `verification-before-completion` (nothing installs it, and Kitchen's engine already verifies);
+  - `ponytail` (a plugin with no pin; super-board itself falls back to a prompt);
+  - vitest and playwright helpers (only conditional there; Kitchen's Toolkit drives the app).
 
 **Never loaded in unattended roles:** interactive skills (grilling, wizard, triage, ask-matt). They ask questions nobody is there to answer.
 
