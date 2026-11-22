@@ -1,0 +1,5 @@
+# The Toolkit is the only way any stage touches the running app
+
+Every project gets a Toolkit, built once at setup (adopting the developer's existing dev environment, or building one with them) and grown as the app grows. No stage starts, drives or tests the app any other way; a capability the Toolkit lacks is a Toolkit gap, fixed by a separate Toolkit smith on its own branch and proven against main, never worked around inside a job. The Toolkit may be written in any language, but it must provide `up`, `doctor` and `down`, each taking an id and printing one line of JSON, and `kitchen toolkit check` must prove it end to end before jobs run. We chose this because the reference factory's reviewers improvised how to run the app from prose every time, could not sign in, and so mostly read diffs. The Toolkit's shape is ported from pstack's verification skills (MIT, credited).
+
+**Amended by ADR 0005:** only Toolkit primitives must be proven against main; feature drives land inside the job's pull request.

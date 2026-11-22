@@ -1,0 +1,486 @@
+<title>Kitchen Architecture</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one wide pipeline diagram (scrolls on its own), then reference sections in a single 1100px column. */
+:root {
+  --bg: #f2f3f1;          /* brushed steel, slight green bias */
+  --panel: #ffffff;
+  --fg: #1a1e21;
+  --muted: #5d666b;
+  --line: #c9cfcc;
+  --agent: #0f6e66;       /* judgment: an agent decides */
+  --agent-tint: #e1f0ee;
+  --script: #3a4248;      /* deterministic: a script decides */
+  --toolkit: #a86a06;     /* the Toolkit: drives the real app */
+  --toolkit-tint: #fbf0dc;
+  --fail: #b8401a;        /* loops back */
+  --human: #1a1e21;
+  --display: "Space Grotesk", "Helvetica Neue", Arial, sans-serif;
+  --body: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #121517; --panel: #1a1f22; --fg: #e8ecea; --muted: #9aa5a9; --line: #343c40;
+  --agent: #4fc4b6; --agent-tint: #15302d; --script: #b9c3c8; --toolkit: #e7a93a; --toolkit-tint: #33270f;
+  --fail: #f0794f; --human: #e8ecea; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #121517; --panel: #1a1f22; --fg: #e8ecea; --muted: #9aa5a9; --line: #343c40;
+  --agent: #4fc4b6; --agent-tint: #15302d; --script: #b9c3c8; --toolkit: #e7a93a; --toolkit-tint: #33270f;
+  --fail: #f0794f; --human: #e8ecea; color-scheme: dark }
+
+body { background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 15px; line-height: 1.55; }
+.wrap { max-width: 1100px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 40px 72px; display: grid; gap: 56px; }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; letter-spacing: -0.01em; }
+h1 { font-size: clamp(2rem, 5vw, 3rem); line-height: 1.05; }
+h2 { font-size: 1.5rem; }
+h3 { font-size: 1.05rem; }
+p { margin: 0; max-width: 68ch; }
+code, .mono { font-family: var(--mono); font-size: 0.86em; }
+.eyebrow { font-family: var(--mono); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+header { display: grid; gap: 14px; }
+.status { display: flex; flex-wrap: wrap; gap: 8px; }
+.pill { font-family: var(--mono); font-size: 12px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.pill.draft { border-color: var(--toolkit); color: var(--toolkit); }
+section { display: grid; gap: 18px; }
+
+/* diagram */
+.diagram { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow-x: auto; }
+.diagram svg { display: block; min-width: 1120px; width: 100%; height: auto; }
+.legend { display: flex; flex-wrap: wrap; gap: 18px; font-size: 13px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 8px; }
+.sw { width: 18px; height: 12px; border-radius: 3px; display: inline-block; }
+.sw.agent { background: var(--agent-tint); border: 1.5px solid var(--agent); }
+.sw.script { background: transparent; border: 1.5px dashed var(--script); }
+.sw.toolkit { background: var(--toolkit-tint); border: 1.5px solid var(--toolkit); }
+.sw.fail { background: var(--fail); height: 2px; border-radius: 0; }
+.sw.human { background: var(--human); }
+
+svg .lane { font: 600 11px var(--mono); fill: var(--muted); letter-spacing: 0.08em; }
+svg .name { font: 600 14px var(--display); fill: var(--fg); }
+svg .sub { font: 400 11px var(--body); fill: var(--muted); }
+svg .subm { font: 400 10.5px var(--mono); fill: var(--muted); }
+svg .lbl { font: 500 10.5px var(--mono); fill: var(--fail); }
+svg .lblt { font: 500 10.5px var(--mono); fill: var(--toolkit); }
+svg .lbla { font: 500 10.5px var(--mono); fill: var(--agent); }
+svg .inv { font: 600 14px var(--display); fill: var(--bg); }
+svg .invs { font: 400 11px var(--body); fill: var(--bg); opacity: 0.8; }
+svg .b-agent { fill: var(--agent-tint); stroke: var(--agent); stroke-width: 1.5; }
+svg .b-script { fill: var(--panel); stroke: var(--script); stroke-width: 1.5; stroke-dasharray: 5 4; }
+svg .b-toolkit { fill: var(--toolkit-tint); stroke: var(--toolkit); stroke-width: 1.8; }
+svg .b-src { fill: var(--panel); stroke: var(--line); stroke-width: 1.2; }
+svg .b-human { fill: var(--human); }
+svg .b-band { fill: var(--bg); opacity: 0.55; }
+svg .a { fill: none; stroke: var(--muted); stroke-width: 1.5; }
+svg .a-fail { fill: none; stroke: var(--fail); stroke-width: 1.5; }
+svg .a-tk { fill: none; stroke: var(--toolkit); stroke-width: 1.5; stroke-dasharray: 4 4; }
+svg .a-agent { fill: none; stroke: var(--agent); stroke-width: 1.5; }
+svg .head { fill: var(--muted); }
+svg .head-fail { fill: var(--fail); }
+svg .head-tk { fill: var(--toolkit); }
+svg .head-agent { fill: var(--agent); }
+
+/* tables */
+.tbl { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+table { border-collapse: collapse; width: 100%; min-width: 760px; font-size: 14px; }
+th, td { text-align: left; vertical-align: top; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+tr:last-child td { border-bottom: 0; }
+th { font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 500; }
+td.stage { font-family: var(--display); font-weight: 600; white-space: nowrap; }
+td .k { display: block; font-family: var(--mono); font-size: 11px; color: var(--muted); font-weight: 400; }
+.who { font-family: var(--mono); font-size: 12px; white-space: nowrap; }
+.who.agent { color: var(--agent); }
+.who.script { color: var(--script); }
+.who.human { color: var(--fg); font-weight: 600; }
+
+/* components */
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+.comp { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; display: grid; gap: 8px; align-content: start; min-width: 0; }
+.comp .path { font-family: var(--mono); font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.comp ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 14px; }
+.comp .tag { font-family: var(--mono); font-size: 11px; color: var(--toolkit); }
+
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
+pre.tree { margin: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; font-family: var(--mono); font-size: 12.5px; line-height: 1.6; overflow-x: auto; color: var(--fg); }
+pre.tree .c { color: var(--muted); }
+
+.decisions { display: grid; gap: 10px; }
+.dec { display: grid; grid-template-columns: 56px 1fr; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.dec:last-child { border-bottom: 0; }
+.dec .id { font-family: var(--mono); font-size: 12px; color: var(--muted); padding-top: 2px; }
+.dec.open .id { color: var(--toolkit); font-weight: 600; }
+.dec b { font-weight: 600; }
+.note { font-size: 13px; color: var(--muted); }
+a { color: var(--agent); }
+:focus-visible { outline: 2px solid var(--agent); outline-offset: 2px; }
+@media (max-width: 520px) { .dec { grid-template-columns: 1fr; gap: 2px; } }
+</style>
+
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">devkitchen · architecture · v0 proposal</div>
+  <h1>Kitchen</h1>
+  <p>An open-source pipeline that takes a ticket and hands you a pull request that has been <b>proven by driving your real app</b>, not just read. Agents (Claude Code or Codex) make the judgment calls. A TypeScript CLI owns every state change, check and retry. Your project's Toolkit is the only way anything touches the running app.</p>
+  <div class="status">
+    <span class="pill draft">v1 design · all questions settled · ADRs 0001–0004</span>
+    <span class="pill">npx devkitchen init</span>
+    <span class="pill">Claude Code · Codex</span>
+    <span class="pill">human merges by default</span>
+  </div>
+</header>
+
+<section>
+  <div class="eyebrow">The whole thing</div>
+  <div class="diagram" role="img" aria-label="Kitchen architecture: setup builds a proven Toolkit once; each ticket goes through intake, spec, build, gate, verify, review and ready; a human merges; a ledger and retro feed lessons back as new tickets.">
+  <svg viewBox="0 0 1280 640" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="head"/></marker>
+      <marker id="mf" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="head-fail"/></marker>
+      <marker id="mt" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="head-tk"/></marker>
+      <marker id="ma" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="head-agent"/></marker>
+    </defs>
+
+    <!-- lane bands -->
+    <rect x="10" y="18" width="1260" height="128" rx="8" class="b-band"/>
+    <rect x="10" y="456" width="1260" height="120" rx="8" class="b-band"/>
+    <text x="24" y="40" class="lane">ONCE PER PROJECT</text>
+    <text x="24" y="206" class="lane">EVERY TICKET</text>
+    <text x="24" y="478" class="lane">ACROSS JOBS</text>
+
+    <!-- SETUP LANE -->
+    <rect x="190" y="58" width="150" height="66" rx="8" class="b-script"/>
+    <text x="204" y="84" class="name">kitchen init</text>
+    <text x="204" y="104" class="subm">npx devkitchen init</text>
+
+    <rect x="370" y="58" width="190" height="66" rx="8" class="b-agent"/>
+    <text x="384" y="84" class="name">Setup agent</text>
+    <text x="384" y="104" class="sub">dev env exists? adopt it : build it</text>
+
+    <rect x="590" y="48" width="300" height="86" rx="10" class="b-toolkit"/>
+    <text x="606" y="74" class="name">Toolkit</text>
+    <text x="606" y="94" class="subm">up · doctor · down  --id &lt;job&gt;  → JSON</text>
+    <text x="606" y="112" class="subm">drive cmds · features/ · evidence/</text>
+    <text x="606" y="128" class="sub">any stack · lives in your repo</text>
+
+    <rect x="920" y="58" width="160" height="66" rx="8" class="b-script"/>
+    <text x="934" y="84" class="name">toolkit check</text>
+    <text x="934" y="104" class="sub">proven end to end once</text>
+
+    <rect x="1110" y="58" width="150" height="66" rx="8" class="b-script"/>
+    <text x="1124" y="84" class="name">kitchen.yaml</text>
+    <text x="1124" y="104" class="sub">checks · protected · routing</text>
+
+    <path d="M340 91 H366" class="a" marker-end="url(#m)"/>
+    <path d="M560 91 H586" class="a" marker-end="url(#m)"/>
+    <path d="M890 91 H916" class="a" marker-end="url(#m)"/>
+    <path d="M1080 91 H1106" class="a" marker-end="url(#m)"/>
+
+    <!-- SOURCES -->
+    <rect x="20" y="222" width="150" height="112" rx="8" class="b-src"/>
+    <text x="34" y="244" class="name">Tickets</text>
+    <text x="34" y="266" class="sub">GitHub issue (label)</text>
+    <text x="34" y="284" class="sub">/kitchen ticket "…"</text>
+    <text x="34" y="300" class="sub">  + optional grilling</text>
+    <text x="34" y="318" class="sub">kitchen ticket (CLI)</text>
+
+    <!-- PIPELINE -->
+    <rect x="200" y="246" width="118" height="66" rx="8" class="b-agent"/>
+    <text x="212" y="272" class="name">Intake</text>
+    <text x="212" y="292" class="sub">kind · risk · surfaces</text>
+
+    <rect x="340" y="246" width="118" height="66" rx="8" class="b-agent"/>
+    <text x="352" y="272" class="name">Spec</text>
+    <text x="352" y="292" class="sub">criteria + proof each</text>
+
+    <rect x="480" y="246" width="118" height="66" rx="8" class="b-agent"/>
+    <text x="492" y="272" class="name">Build</text>
+    <text x="492" y="292" class="sub">worktree · draft PR</text>
+
+    <rect x="620" y="246" width="118" height="66" rx="8" class="b-script"/>
+    <text x="632" y="272" class="name">Gate</text>
+    <text x="632" y="292" class="sub">your checks · script</text>
+
+    <rect x="760" y="240" width="124" height="78" rx="9" class="b-toolkit"/>
+    <text x="772" y="266" class="name">Verify</text>
+    <text x="772" y="285" class="sub">drives every criterion</text>
+    <text x="772" y="302" class="subm">never the builder</text>
+
+    <rect x="906" y="246" width="118" height="66" rx="8" class="b-agent"/>
+    <text x="918" y="272" class="name">Review</text>
+    <text x="918" y="292" class="sub">diff lenses · by risk</text>
+
+    <rect x="1046" y="246" width="110" height="66" rx="8" class="b-script"/>
+    <text x="1058" y="272" class="name">Ready</text>
+    <text x="1058" y="292" class="sub">sync · re-check</text>
+
+    <rect x="1174" y="246" width="88" height="66" rx="8" class="b-human"/>
+    <text x="1186" y="272" class="inv">You</text>
+    <text x="1186" y="292" class="invs">merge</text>
+
+    <!-- Report -->
+    <rect x="1046" y="352" width="216" height="58" rx="8" class="b-agent"/>
+    <text x="1058" y="376" class="name">Report</text>
+    <text x="1058" y="396" class="sub">HTML · cites evidence by id</text>
+    <path d="M1101 312 V348" class="a" marker-end="url(#m)"/>
+    <path d="M1218 352 V316" class="a" marker-end="url(#m)"/>
+    <text x="1180" y="430" class="subm">on PR + dashboard</text>
+
+    <!-- spec-lint marker -->
+    <rect x="356" y="320" width="86" height="20" rx="4" class="b-script"/>
+    <text x="364" y="334" class="subm">spec-lint</text>
+
+    <!-- main flow arrows -->
+    <path d="M170 279 H196" class="a" marker-end="url(#m)"/>
+    <path d="M318 279 H336" class="a" marker-end="url(#m)"/>
+    <path d="M458 279 H476" class="a" marker-end="url(#m)"/>
+    <path d="M598 279 H616" class="a" marker-end="url(#m)"/>
+    <path d="M738 279 H756" class="a" marker-end="url(#m)"/>
+    <path d="M884 279 H902" class="a" marker-end="url(#m)"/>
+    <path d="M1024 279 H1042" class="a" marker-end="url(#m)"/>
+    <path d="M1156 279 H1170" class="a" marker-end="url(#m)"/>
+
+    <!-- Toolkit drives: dashed amber -->
+    <path d="M640 134 L548 242" class="a-tk" marker-end="url(#mt)"/>
+    <text x="560" y="196" class="lblt">self-check</text>
+    <path d="M790 134 L810 236" class="a-tk" marker-end="url(#mt)"/>
+    <text x="806" y="196" class="lblt">drive</text>
+
+    <!-- Toolkit smith -->
+    <rect x="930" y="164" width="170" height="52" rx="8" class="b-agent"/>
+    <text x="942" y="186" class="name">Toolkit smith</text>
+    <text x="942" y="204" class="sub">own branch · proven on main</text>
+    <path d="M858 240 L944 220" class="a-agent" marker-end="url(#ma)"/>
+    <text x="842" y="226" class="lbla">TOOLKIT-GAP</text>
+    <path d="M960 164 L880 136" class="a-agent" marker-end="url(#ma)"/>
+    <text x="986" y="156" class="lbla">extends · ≤2 tries</text>
+
+    <!-- fail loops back to Build -->
+    <path d="M679 312 V352 H556 V316" class="a-fail" marker-end="url(#mf)"/>
+    <text x="606" y="347" class="lbl">FAIL + log</text>
+    <path d="M822 318 V378 H539 V316" class="a-fail" marker-end="url(#mf)"/>
+    <text x="640" y="373" class="lbl">FAIL + evidence</text>
+    <path d="M965 312 V404 H522 V316" class="a-fail" marker-end="url(#mf)"/>
+    <text x="700" y="399" class="lbl">CHANGES (only what a reviewer can show)</text>
+    <text x="522" y="426" class="subm">max rounds → needs a human</text>
+
+    <!-- intake side exits -->
+    <text x="206" y="334" class="subm">NEEDS-INFO · REJECT</text>
+    <path d="M226 312 V350 M226 350 H120 V338" class="a-agent" marker-end="url(#ma)"/>
+    <text x="126" y="366" class="lbla">cut scope → new tickets</text>
+
+    <!-- ACROSS JOBS -->
+    <rect x="480" y="494" width="380" height="66" rx="8" class="b-script"/>
+    <text x="494" y="520" class="name">Ledger</text>
+    <text x="494" y="540" class="sub">every stage appends: verdict, rounds, cost, time, escalation reason</text>
+
+    <rect x="890" y="494" width="200" height="66" rx="8" class="b-agent"/>
+    <text x="904" y="520" class="name">Retro</text>
+    <text x="904" y="540" class="sub">same lesson twice → fix proposal</text>
+
+    <rect x="1110" y="494" width="150" height="66" rx="8" class="b-script"/>
+    <text x="1124" y="520" class="name">kitchen report</text>
+    <text x="1124" y="540" class="sub">+ dashboard.html</text>
+
+    <path d="M860 527 H886" class="a" marker-end="url(#m)"/>
+    <path d="M1090 527 H1106" class="a" marker-end="url(#m)"/>
+    <path d="M670 446 V490" class="a" marker-end="url(#m)" stroke-dasharray="2 4"/>
+    <text x="680" y="472" class="subm">all stages write</text>
+    <path d="M990 560 V604 H60 V338" class="a-agent" marker-end="url(#ma)"/>
+    <text x="240" y="598" class="lbla">lint rule · check · Toolkit fix · AGENTS.md last → filed as a ticket you approve</text>
+  </svg>
+  </div>
+  <div class="legend">
+    <span><i class="sw agent"></i>agent decides (Claude Code or Codex, headless)</span>
+    <span><i class="sw script"></i>script decides (deterministic, in the CLI)</span>
+    <span><i class="sw toolkit"></i>drives your real app through the Toolkit</span>
+    <span><i class="sw fail"></i>goes back to the same builder</span>
+    <span><i class="sw human"></i>you</span>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">What a job goes through</div>
+  <h2>Stages and their contracts</h2>
+  <p class="note">Every agent reads files, writes exactly one file, and answers with one line. A script reads that line and moves the job, or refuses with a reason. The kitchen names are optional flavour for the docs.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Stage</th><th>Who</th><th>Writes</th><th>Moves on when</th></tr></thead>
+    <tbody>
+      <tr><td class="stage">Intake<span class="k">the order</span></td><td class="who agent">agent · strong</td><td>ACCEPT, NEEDS-INFO or REJECT. Kind (feature, bug, chore), risk, surfaces. A smaller scope if the ticket is too big.</td><td>Script reads the header. Every part cut from scope is filed as a new ticket, so nothing is dropped.</td></tr>
+      <tr><td class="stage">Spec<span class="k">mise en place</span></td><td class="who agent">agent</td><td>A short <b>verification contract</b>, not a long document: each acceptance criterion names how it will be proven (a Toolkit drive, a command, or a test). The builder may only tick criteria off, never edit them.</td><td><b>spec-lint</b> passes: no criterion needs a protected file, and every drive the spec names exists in the Toolkit. A missing drive becomes a Toolkit gap now, before any code is written. For bugs, Verify reproduces the bug first.</td></tr>
+      <tr><td class="stage">Build<span class="k">the line</span></td><td class="who agent">agent · strong</td><td>Commits on its own branch and worktree, a draft PR, build notes. May self-check with its own Toolkit instance.</td><td>Tree clean, branch pushed, PR open. The builder's own evidence is a hint, never the proof.</td></tr>
+      <tr><td class="stage">Gate<span class="k">temp check</span></td><td class="who script">script</td><td>Gate report pinned to the commit.</td><td>Your checks pass from main's copy of the config, and no protected path changed.</td></tr>
+      <tr><td class="stage">Verify<span class="k">taste test</span></td><td class="who agent">agent · fresh</td><td>One Verdict per criterion, with screenshots, logs and side effects in <code>evidence/</code>.</td><td>PASS on every criterion. FAIL goes back to Build. TOOLKIT-GAP pauses the job for the Toolkit smith. INCONCLUSIVE counts as FAIL.</td></tr>
+      <tr><td class="stage">Review<span class="k">chef's eye</span></td><td class="who agent">agents · routed</td><td>One file per lens: code always, security, UX and UI when intake flags the surface.</td><td>No blocking finding. A finding blocks only if the reviewer can show it (a failing run, a wrong line). Findings are de-duplicated and confidence-filtered, and each lens's precision is tracked in the ledger; a lens or category that keeps being dismissed is muted.</td></tr>
+      <tr><td class="stage">Ready<span class="k">the pass</span></td><td class="who script">script + 1 verifier</td><td>Ready report on the PR, evidence linked.</td><td>Synced with main, then Gate and a single Verify pass again on the synced head. The PR is marked ready.</td></tr>
+      <tr><td class="stage">Report<span class="k">the bill</span></td><td class="who agent">agent · medium</td><td>An HTML page: what was done, each criterion with its Verdict, the tests that ran, screenshots and logs. Proof is cited only by evidence id.</td><td>The CLI swaps each id for the real file and refuses an id that doesn't exist, so made-up proof can't be saved. Linked from the PR and the dashboard.</td></tr>
+      <tr><td class="stage">Merge<span class="k">service</span></td><td class="who human">you</td><td></td><td>You merge. Auto-merge for low-risk tickets with no UI or security surface is an opt-in setting, off by default.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section>
+  <div class="eyebrow">Not every ticket gets every stage</div>
+  <h2>Risk sets the path</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>Risk</th><th>Path</th><th>A human</th></tr></thead>
+    <tbody>
+      <tr><td class="stage">low<span class="k">small chore, no UI, no security</span></td><td>Intake writes the criteria inline, so there is no separate Spec. Build, Gate, one short Verify drive, a code review only above a diff-size limit, then Ready and Report.</td><td>Merges. Auto-merge is possible if the project opts in.</td></tr>
+      <tr><td class="stage">medium</td><td>Every stage.</td><td>Merges.</td></tr>
+      <tr><td class="stage">high<span class="k">data, money, auth, migrations</span></td><td>Every stage, plus the security lens. Verify drives every related feature in the feature map.</td><td>Always reviews the diff, the Verdicts and the Report before merging.</td></tr>
+    </tbody>
+  </table></div>
+  <p class="note">Rules for the whole pipeline: agents check other agents only at Verify and Review, and everything else is checked by structure or scripts. Cost is shown per job and never stops one.</p>
+</section>
+
+<section>
+  <div class="eyebrow">Closed laptop, lost session</div>
+  <h2>Picking a job back up</h2>
+  <p>Everything a job needs is stored as files in the repo: its stage, round, worktree, evidence, and each agent run's session id. The CLI keeps a lock with its process id and a heartbeat, so it can tell a dead run from a live one. Next day, <code>kitchen run</code> (or <code>/kitchen</code>) cleans up stale Toolkit instances, runs <code>doctor</code> and <code>up</code> again, and continues every job from its stage. A step that was cut off re-runs from its start with a fresh agent that gets the earlier files. Every step is safe to run twice. <code>kitchen status</code> lists each job as number and slug (<code>012-dark-mode-toggle</code>), title, stage and when it last moved. <code>kitchen resume 012</code> picks one.</p>
+</section>
+
+<section>
+  <div class="eyebrow">What I will build</div>
+  <h2>Components</h2>
+  <div class="grid">
+    <div class="comp">
+      <h3>kitchen CLI</h3>
+      <div class="path">src/cli/</div>
+      <ul><li><code>init</code>, <code>ticket</code>, <code>run</code>, <code>status</code>, <code>toolkit check</code>, <code>report</code></li><li>One-line output per action, so a skill can relay it</li></ul>
+    </div>
+    <div class="comp">
+      <h3>Engine</h3>
+      <div class="path">src/engine/ machine.ts · store.ts · scheduler.ts</div>
+      <ul><li>Stage machine as one transition table that refuses illegal moves</li><li>Job state as plain files, so any run resumes</li><li>Scheduler: concurrency, worktrees, one Toolkit id per job</li></ul>
+    </div>
+    <div class="comp">
+      <h3>Agent adapters</h3>
+      <div class="path">src/agents/ claude.ts · codex.ts</div>
+      <ul><li>Run a role headless: <code>claude -p</code> or <code>codex exec</code></li><li>Same role prompt, same output file, either tool</li><li>Model per role from config</li></ul>
+    </div>
+    <div class="comp">
+      <h3>Roles</h3>
+      <div class="path">roles/*.md</div>
+      <ul><li>setup, intake, spec, builder, verifier</li><li>reviewer-code, reviewer-security, reviewer-ux, reviewer-ui</li><li>toolkit-smith, retro</li></ul>
+    </div>
+    <div class="comp">
+      <h3>Checks (scripts)</h3>
+      <div class="path">src/checks/</div>
+      <ul><li>gate, spec-lint, verdict parser, evidence check</li><li>ready: sync main, re-gate, re-verify</li><li>The only code that may pass or fail a job</li></ul>
+    </div>
+    <div class="comp">
+      <h3>Toolkit kit</h3>
+      <div class="path">toolkit/ template · contract · generator</div>
+      <div class="tag">ported from pstack, MIT, credited</div>
+      <ul><li>Adopt-or-build interview, then generate</li><li>Contract: <code>up</code>/<code>doctor</code>/<code>down --id</code>, one JSON line</li><li>Upkeep pass keeps the feature map honest</li></ul>
+    </div>
+    <div class="comp">
+      <h3>Sources and forge</h3>
+      <div class="path">src/sources/ · src/forge/</div>
+      <ul><li>GitHub issues by label, prompt tickets, CLI tickets</li><li>GitHub PRs through <code>gh</code></li><li>Small interfaces, so GitLab or Linear can follow</li></ul>
+    </div>
+    <div class="comp">
+      <h3>Ledger and report</h3>
+      <div class="path">src/ledger/ · dashboard.html</div>
+      <ul><li>One JSON line per stage per job</li><li>First-pass rate, rounds, cost per merged PR, escalation reasons, Toolkit gaps</li><li>Static dashboard, no server</li></ul>
+    </div>
+    <div class="comp">
+      <h3>Skills</h3>
+      <div class="path">skills/kitchen/ for Claude Code and Codex</div>
+      <ul><li><code>/kitchen ticket "…"</code>, with optional grilling</li><li><code>/kitchen run</code>, <code>/kitchen status</code></li><li>Thin: they call the CLI and relay its lines</li></ul>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">Where things live</div>
+  <h2>Two trees</h2>
+  <div class="cols">
+<pre class="tree">your-project/              <span class="c"># after npx devkitchen init</span>
+├── kitchen.yaml          <span class="c"># checks, protected paths, routing, merge</span>
+├── .kitchen/
+│   ├── toolkit/          <span class="c"># committed: yours, grows with the app</span>
+│   │   ├── SKILL.md
+│   │   ├── bin/dev       <span class="c"># up · doctor · down · drive…</span>
+│   │   └── features/
+│   ├── jobs/&lt;id&gt;/        <span class="c"># ignored: intake, spec, rounds, evidence</span>
+│   └── ledger.jsonl      <span class="c"># ignored</span>
+├── .claude/skills/kitchen/
+└── .agents/skills/kitchen/   <span class="c"># Codex</span></pre>
+<pre class="tree">kitchen/                   <span class="c"># this repo, npm: devkitchen</span>
+├── GLOSSARY.md
+├── docs/adr/
+├── src/
+│   ├── cli/  engine/  agents/
+│   ├── checks/  sources/  forge/
+│   └── ledger/
+├── roles/                <span class="c"># one prompt per role</span>
+├── toolkit/              <span class="c"># template, contract, generator</span>
+├── skills/kitchen/
+└── dashboard.html</pre>
+  </div>
+  <p class="note">The Codex skill path is a guess until I check the current Codex docs.</p>
+</section>
+
+<section>
+  <div class="eyebrow">Compared with the zazencodes factory</div>
+  <h2>What changes</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>Concern</th><th>zazencodes</th><th>Kitchen</th></tr></thead>
+    <tbody>
+      <tr><td>Running the app</td><td>Each reviewer improvises from prose in AGENTS.md. No sign-in, no forms.</td><td>One proven Toolkit, with seeded users and its own instance per job. Grows with the app.</td></tr>
+      <tr><td>Who proves it works</td><td>The builder writes its own evidence. The approver spot-checks one criterion.</td><td>A separate verifier drives every criterion and saves evidence.</td></tr>
+      <tr><td>Bad specs</td><td>Found after building. Job 003 burned three rounds on a protected file.</td><td>spec-lint before building, Toolkit gaps found at spec time.</td></tr>
+      <tr><td>Cut scope</td><td>Written in intake.md, then forgotten.</td><td>Filed as new tickets.</td></tr>
+      <tr><td>Orchestration</td><td>One Claude Code session spawns subagents. Claude only.</td><td>A CLI owns the loop and runs roles headless. Claude Code or Codex.</td></tr>
+      <tr><td>Risk routing</td><td>Intake rates risk. A table picks the review model.</td><td>Risk decides what needs a human, how deep Verify drives, and which review lenses run, not which model reviews. That's where the evidence points. The ledger shows whether the ratings held up.</td></tr>
+      <tr><td>After syncing main</td><td>Gate only.</td><td>Gate and one verifier.</td></tr>
+      <tr><td>Merging</td><td>The approver merges what it trusts.</td><td>You merge. Auto-merge is opt-in.</td></tr>
+      <tr><td>Learning</td><td>None.</td><td>Ledger plus retro. A lesson seen twice becomes a proposed lint rule, check or Toolkit fix.</td></tr>
+      <tr><td>Licence</td><td>GPL-3.0.</td><td>Our own code. pstack parts are MIT and credited.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section>
+  <div class="eyebrow">Why these choices</div>
+  <h2>What the evidence says</h2>
+  <p class="note">Most production numbers are reported by the vendors themselves. Academic studies are marked as such.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Choice</th><th>Strength</th><th>What it rests on</th></tr></thead>
+    <tbody>
+      <tr><td>A verifier that never wrote the code</td><td class="who agent">strong</td><td>Models don't reliably fix their own mistakes without outside feedback (Huang et al., ICLR 2024). In METR's samples, maintainers would not merge many PRs that had passed the tests. Anthropic's harness (Mar 2026) uses a separate evaluator that drives the app with Playwright, because agents "confidently praise" their own work.</td></tr>
+      <tr><td>Bugs reproduce first</td><td class="who agent">strong</td><td>Google Passerine fixed about 30% more bugs when given reproduction tests. In SWT-bench (NeurIPS 2024), checking patches against generated failing tests roughly doubled precision.</td></tr>
+      <tr><td>Review that cuts noise</td><td class="who agent">medium</td><td>Uber, Cursor Bugbot and Google Tricorder all lean on confidence filters, de-duplication and muting categories that developers dismiss. Bugbot replaced 8 voting passes with one exploring agent.</td></tr>
+      <tr><td>Rules promoted or pruned by feedback</td><td class="who agent">medium</td><td>Bugbot's learned rules (Apr 2026) come from dismissals and from bugs it missed. Vendor-reported.</td></tr>
+      <tr><td>Risk scores for gating</td><td class="who agent">medium</td><td>Meta's Diff Risk Score (2025): 42% more changes landed and 52% fewer outages during code freezes. There's no evidence for using risk to pick the review model.</td></tr>
+      <tr><td>Long specs before building</td><td class="who script">weak</td><td>An ESEM 2026 study found spec documents did not reduce defects. The part that seems to help is agreeing how success will be checked, so Kitchen's Spec stays a short verification contract.</td></tr>
+      <tr><td>Several builds per ticket plus a judge</td><td class="who script">deferred</td><td>Gains on benchmarks only with a trained critic or tests to pick the winner. No production data on cost per merged PR.</td></tr>
+      <tr><td>Rounds, escalation reasons, revert rate, cost per merged PR</td><td class="who script">new ground</td><td>No public system was found that publishes these. Kitchen's ledger measures them, and counts merge rate as merged PRs out of tickets taken in, not out of PRs opened.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section>
+  <div class="eyebrow">Decisions</div>
+  <h2>Settled, and what I need from you</h2>
+  <div class="decisions">
+    <div class="dec"><span class="id">Q1</span><div><b>Open source, for every developer.</b> Setup must be easy from Claude Code or Codex.</div></div>
+    <div class="dec"><span class="id">Q2–3</span><div><b>Setup adopts or builds the dev environment, then builds the Toolkit.</b> The Toolkit is the one contract every stage uses.</div></div>
+    <div class="dec"><span class="id">Q4–6</span><div><b>The Toolkit keeps growing.</b> Jobs extend it for new features. A Toolkit gap pauses the job while a separate smith builds the tool on its own branch, proven on main, at most two tries.</div></div>
+    <div class="dec"><span class="id">Q7–9</span><div><b>A TypeScript CLI owns the loop</b>, run with npx, with Claude Code and Codex as adapters. The Toolkit can be any language. It must provide <code>up</code>, <code>doctor</code> and <code>down</code> with an id and JSON output.</div></div>
+    <div class="dec"><span class="id">Q10–12</span><div><b>Tickets come from GitHub issues or a prompt.</b> The product is Kitchen, the repo is <code>pttx/kitchen</code>, the npm package is <code>devkitchen</code>.</div></div>
+    <div class="dec"><span class="id">Q13</span><div><b>You merge by default.</b> Auto-merge for low-risk tickets is opt-in.</div></div>
+    <div class="dec"><span class="id">Q14</span><div><b>The stages above</b>, accepted for now: Spec as a short verification contract, spec-lint before building, Verify as its own stage, and bugs reproduced first. Kept under watch in case it proves too heavy.</div></div>
+    <div class="dec"><span class="id">Q15</span><div><b>Risk sets the path</b>: low risk takes the short path, high adds security and a human. It doesn't pick which model reviews.</div></div>
+    <div class="dec"><span class="id">Q16</span><div><b>Report stage.</b> A medium-model agent writes the HTML, citing proof only by evidence id, and the CLI fills in the real files. Agents check other agents only at Verify and Review.</div></div>
+    <div class="dec"><span class="id">Q17</span><div><b>Resume from files</b>, using a lock plus heartbeat. Jobs are named by number and slug, with the title shown.</div></div>
+    <div class="dec"><span class="id">Q18</span><div><b>Retro</b> mutes noisy review categories by itself and files bigger lessons as tickets you approve. Kitchen never rewrites its own rules.</div></div>
+    <div class="dec"><span class="id">Q19</span><div><b>Left out of v1:</b> competing builds, cloud runners, GitLab and Linear, and Windows.</div></div>
+    <div class="dec"><span class="id">Q20</span><div><b>Defaults:</b> two jobs at once. The strongest model for intake and build, a medium model for verify, review and report, a cheap one for retro. Ticket text is data, never instructions. Secrets stay out of the Toolkit. <b>No cost cap.</b> Cost is shown, never enforced.</div></div>
+  </div>
+</section>
+
+</div>

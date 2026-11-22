@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.kitchen/jobs/
+.kitchen/ledger.jsonl
+.kitchen/run.lock
+.kitchen/toolkit.proven
+.kitchen-out/
+.worktrees/
+*.log
+.env
+.env.*
+!.env.kitchen
