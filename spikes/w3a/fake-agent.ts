@@ -159,6 +159,40 @@ const write = (cwd: string, rel: string, text: string) => {
   fs.writeFileSync(path.join(cwd, rel), text);
 };
 
+/**
+ * scenario: replay. A real run's intake.md, spec.md and feature drives, with a scripted
+ * builder whose files come from $W3A_REPLAY/files (e2e.ts `wrong`: the real builder's
+ * change, mutated to leak every project to regular users). The engine's proofs decide.
+ */
+function replay(req: AgentRequest, mode: string): FakeStep {
+  const dir = process.env.W3A_REPLAY ?? "";
+  const copyTree = (from: string, to: string) => {
+    if (fs.existsSync(from)) fs.cpSync(from, to, { recursive: true });
+  };
+  if (req.role === "intake") return { file: fs.readFileSync(path.join(dir, "intake.md"), "utf8"), line: "replayed intake" };
+  if (req.role === "spec") return { file: fs.readFileSync(path.join(dir, "spec.md"), "utf8"), line: "replayed spec" };
+  if (req.role === "builder") {
+    copyTree(path.join(dir, "files"), req.cwd);
+    return { file: "STATUS: READY\n\nThe scripted wrong builder.\n", line: "READY (wrong builder)" };
+  }
+  if (req.role === "verifier" && mode === "drives") {
+    copyTree(path.join(dir, "features"), path.join(req.cwd, ".kitchen", "toolkit", "features"));
+    copyTree(path.join(dir, "tests"), req.cwd);
+    return { file: "DRIVES: OK\n", line: "DRIVES: OK (replayed)" };
+  }
+  if (req.role === "verifier" && mode === "verify") {
+    // Judge every judged criterion PASS on the ids the engine listed: only the mechanical proofs decide here.
+    const blocks = req.prompt.split(/\n- (?=C\d+ \(stamped)/).slice(1);
+    const lines = blocks.flatMap((b) => {
+      const c = /^(C\d+)/.exec(b)?.[1] ?? "";
+      const ids = [...b.matchAll(/^\s+- (e\d+):/gm)].map((m) => m[1]);
+      return [`JUDGED ${c}: PASS`, `EVIDENCE ${c}: ${ids.join(" ")}`];
+    });
+    return { file: `VERDICT: PASS\n${lines.join("\n")}\n`, line: "VERDICT: PASS" };
+  }
+  return { file: "STATUS: READY\n", line: "ok" };
+}
+
 /** The smith "merges" a primitive: the Toolkit's describe (generated from bin/dev's table) lists it from now on. */
 function addPrimitive(repo: string, name: string) {
   const f = path.join(repo, ".kitchen", "toolkit", "bin", "dev");
@@ -182,6 +216,7 @@ export default async function script(req: AgentRequest): Promise<FakeStep> {
   s[key] = n;
   save(s);
   const attacks = scenario === "attacks";
+  if (scenario === "replay") return replay(req, mode);
 
   if (req.role === "intake")
     return { file: "DECISION: ACCEPT\nKIND: bug\nRISK: medium\nSURFACES: ui\nREASON: dark mode is lost on reload\n", line: "ACCEPT bug medium" };
