@@ -711,3 +711,18 @@ History: all of these are now part of §2 and §3, which are the current contrac
 | An older `job.json` + manifest pair (both signed) could be restored | Per-job counter `$KITCHEN_HOME/heads/<uid>`; a lower head is refused as a rollback |
 | Network denial was only seen through push failures | The integrity probe checks `curl` and a direct `nc` to an IP on both tools |
 | A stamp's tree vs the running app | A stamp records the worktree tree at drive time; the fresh `up` before Verify makes the running app match it |
+
+## Changes from Wave 2 (spikes/w2/results.md)
+
+| Finding | Change |
+|---|---|
+| `toolkit check` needs concrete args for every drive, and the re-proof needs to know which source paths a feature lives in | Each `features/<x>.md` carries one fenced `kitchen` block: `paths: [globs]` and one `check: { drive, args }` line per drive. Parsed by the engine (`src/toolkit/contract.ts`), like the drives |
+| `describe` had no version and no surface | `describe` prints `contract: 1` (required by `toolkit check`), `surface: web\|cli\|api` (a `web` Toolkit must list the generic primitives), `seed_users` (snake case, plain strings) |
+| The setup agent has no network and no Docker, so it can't run the Toolkit it writes | The setup role gets its own engine bridge, `kitchen setup-mcp` (`toolkit` = one bin/dev command in its own slot; `toolkit_check` = the real check on its worktree). Like every Toolkit run it uses the untrusted env; it runs code the agent wrote outside the agent's sandbox, which is what `toolkit check` does anyway (same residual risk as app code, ADR 0006) |
+| Writing a Toolkit from nothing is slow and error-prone | `toolkit-template/`: a generic `bin/dev` (flags, ids, state, JSON lines, generated `describe`, cleanup of everything it started) plus optional browser and terminal modules; the setup role fills in `app.mjs`, `SKILL.md` and `features/` only |
+| Setup is two agent passes | `survey` (headless, ≤3 questions in a json block) and `build`, which resumes the survey's session; up to 2 `fix` rounds fed with the engine check's failed steps |
+| Where init's output lands | `kitchen.yaml`, `.gitignore` entries and the skill go into the working tree (the user commits them); the Toolkit (and any dev-environment files the build path adds, as a separate commit) goes on the branch `kitchen/setup`. `toolkit.proven` names that commit (`branch: kitchen/setup`); a fast-forward merge needs no re-proof |
+| A queue pause needs somewhere to live | `.kitchen/queue.json` (`kitchen status` prints it). It stays paused until the base moves again or the Toolkit ticket is closed; then the re-proof runs again. A base without a Toolkit yet (init's branch not merged) is not re-checked |
+| Machines that can't run a project's stack | `kitchen init --generate-only`: the setup agent writes the Toolkit but may only run `describe`; the engine checks describe and the feature files statically and writes no `toolkit.proven` |
+| `toolkit up\|down\|maintain` | Not built in W2 (W3b/W4); `kitchen toolkit check` is |
+| Jobs still run the repo's own `.kitchen/toolkit/bin/dev` (W1) | The engine-owned checkout (`src/toolkit/checkout.ts`) is built and used by `toolkit check`, the re-proof and init; switching jobs' `toolkitBin` to it lands with the smith and PR pinning (W3b) |

@@ -1,0 +1,124 @@
+{
+  "head": "e91173afc8b7",
+  "model": "sonnet",
+  "effort": "medium",
+  "at": "2026-11-22T06:26:09.209Z",
+  "exit": 0,
+  "secs": 228.688,
+  "runs": [
+    {
+      "mode": "survey",
+      "ok": true,
+      "secs": 53.016,
+      "usd": 0.2709681,
+      "inTok": 341782,
+      "outTok": 7638,
+      "model": "sonnet",
+      "tool": "claude",
+      "sessionId": "dcf81a27-22f1-4de2-bf20-e9629e50e289",
+      "line": "The one thing I couldn't settle from the code is whether the `claude` harness will honour a mocked model URL. The survey lists that and two other risks."
+    },
+    {
+      "mode": "build",
+      "ok": true,
+      "secs": 173.617,
+      "usd": 0.9883868,
+      "inTok": 1841754,
+      "outTok": 25445,
+      "model": "sonnet",
+      "tool": "claude",
+      "sessionId": "dcf81a27-22f1-4de2-bf20-e9629e50e289",
+      "line": "The Superchat Toolkit is written but has never run: `toolkit_check` passed only its describe and feature-file steps, so CHECK is NOT-RUN and `setup.md` lists every unproven step."
+    }
+  ],
+  "usd": 1.2593549,
+  "steps": {
+    "config": {
+      "file": "kitchen.yaml",
+      "tool": "claude",
+      "written": false
+    },
+    "skills": {
+      "files": [
+        ".claude/skills/kitchen/SKILL.md",
+        ".agents/skills/kitchen/SKILL.md"
+      ]
+    },
+    "gitignore": {
+      "added": [
+        ".kitchen/jobs/",
+        ".kitchen/checks/",
+        ".kitchen/scratch/",
+        ".kitchen/init/",
+        ".kitchen/ledger.jsonl",
+        ".kitchen/run.lock",
+        ".kitchen/run.log",
+        ".kitchen/toolkit.proven",
+        ".kitchen/toolkit-checkouts/",
+        ".kitchen/queue.json",
+        ".kitchen/tickets.jsonl",
+        ".kitchen/setup-questions.json",
+        ".kitchen/setup-answers.json",
+        ".kitchen-out/",
+        ".worktrees/"
+      ]
+    },
+    "worktree": {
+      "path": ".worktrees/_setup",
+      "branch": "kitchen/setup",
+      "base": "e91173afc8b72fd3864c433bdf275b13aa2988fd"
+    },
+    "template": {
+      "copied": true,
+      "existing": false
+    },
+    "survey": {
+      "sessionId": "dcf81a27-22f1-4de2-bf20-e9629e50e289",
+      "questions": []
+    },
+    "answers": {},
+    "build": {
+      "status": "READY",
+      "sessionId": "dcf81a27-22f1-4de2-bf20-e9629e50e289"
+    },
+    "commit": {
+      "sha": "86fa53995bf796103a9d81680d7d0fbe2d9a211f",
+      "commits": [
+        "86fa53995bf7"
+      ]
+    },
+    "check": {
+      "ok": true,
+      "sha": "86fa53995bf796103a9d81680d7d0fbe2d9a211f",
+      "secs": 0.2,
+      "parallel": true,
+      "static": true
+    }
+  },
+  "files": [
+    ".claude",
+    ".gitignore",
+    "SKILL.md",
+    "TEMPLATE.md",
+    "app.mjs",
+    "bin",
+    "features",
+    "lib",
+    "mock-llm.mjs",
+    "package.json",
+    ".claude/.cc-writes",
+    "bin/dev",
+    "features/README.md",
+    "features/conversation.md",
+    "features/engine-api.md",
+    "features/models-settings.md",
+    "lib/browser-daemon.mjs",
+    "lib/browser.mjs",
+    "lib/common.mjs"
+  ],
+  "diffstat": ".env.kitchen                                 |   7 +\n .kitchen/toolkit/.gitignore                  |   1 +\n .kitchen/toolkit/SKILL.md                    |  67 +++++++\n .kitchen/toolkit/TEMPLATE.md                 |  22 +++\n .kitchen/toolkit/app.mjs                     | 187 ++++++++++++++++++++\n .kitchen/toolkit/bin/dev                     | 254 +++++++++++++++++++++++++++\n .kitchen/toolkit/features/README.md          |  32 ++++\n .kitchen/toolkit/features/conversation.md    |  49 ++++++\n .kitchen/toolkit/features/engine-api.md      |  40 +++++\n .kitchen/toolkit/features/models-settings.md |  48 +++++\n .kitchen/toolkit/lib/browser-daemon.mjs      | 146 +++++++++++++++\n .kitchen/toolkit/lib/browser.mjs             |  69 ++++++++\n .kitchen/toolkit/lib/common.mjs              | 213 ++++++++++++++++++++++\n .kitchen/toolkit/mock-llm.mjs                |  81 +++++++++\n .kitchen/toolkit/package.json                |  10 ++\n 15 files changed, 1226 insertions(+)",
+  "setupMd": "STATUS: READY\nSURFACE: web\nPATH: adopt\nFEATURES: 3\nCHECK: NOT-RUN\nREASON: the machine can't run the stack; `toolkit_check` passed only describe and the feature-file check (3 files, 3 drives). Nothing was started.\n\n# Superchat Toolkit: summary for review\n\n## What was adopted\nThe repo's own stack, `deployment/compose.yaml` (postgres + engine; the engine serves the web and starts one host container per person). `app.mjs` runs it as the Compose project `kitchen-superchat-<id>`. Per instance it sets:\n- the web, engine and mock ports;\n- `ENGINE_PUBLIC_URL` (so each host dials back to the right engine port);\n- `COMPOSE_PROJECT_NAME`, which is also the host-name prefix.\n\nPorts in order: web, engine, mock model, browser daemon.\n\n## What was built\n- `.kitchen/toolkit/mock-llm.mjs`: a model-provider stand-in (Anthropic `/v1/messages` including streaming and `count_tokens`, OpenAI `/v1/chat/completions`, model lists). It always replies `Kitchen mock reply.` and records each POST (last user text) so the `model_requests` primitive can read it.\n- `.env.kitchen`: fake values only (postgres password, proxy secret, vault key, LiteLLM key).\n- Primitives: the browser module's generic ones, plus `login` (single-user mode has no form: it opens `/` as `local`), `api` (engine API, same origin), `model_requests`, `hosts`.\n- Features:\n  - `conversation.send`: send a message and see the reply.\n  - `models-settings.open`: Settings > Models.\n  - `engine-api.health`: engine `/health` plus the served web.\n- `lib/terminal.mjs` deleted; `playwright` pinned in the Toolkit's `package.json`.\n\n## Externals\nModel provider (Anthropic / OpenRouter / LiteLLM): **mock**. `LITELLM_BASE_URL` and `LITELLM_API_KEY` make `start.sh` choose `config.litellm.yaml.tmpl`, so all calls go through the engine's model proxy to the mock at `host.docker.internal:<mock port>`. Anthropic and OpenRouter keys are blank. Everything else is off (S3, OTLP, Phoenix).\n\n## Unproven (all of it ran nowhere)\n- `prepare`: the image build (`deployment/build.sh`), the image-stamp cache and the Playwright browser install.\n- `up`, `doctor`, `reset`, `down` and every drive. Specifically:\n  - Whether `docker compose up --wait` works with these env values. The vault key is a fake 43-char base64url string; I haven't checked that the engine accepts it.\n  - Whether the engine starts a host from `superchat/host:local` and the host reaches the engine at `host.docker.internal` on a given Docker setup.\n  - Whether the `claude` harness accepts the mock's streaming events and base URL through the engine's model proxy. This was the open risk in the survey.\n  - Whether the engine lists `kitchen-model` from the mock's `/v1/models`. The Models drive and the Settings > Models entry rely on that.\n  - Whether the mock's `/v1/models` and `/model/info` shapes match what the engine reads; I guessed them.\n- Selectors were read from the source, not from a run: `fieldset[aria-label='Message composer'] textarea`, the `Send` button, `[data-testid=message-user-bubble]`, `[aria-label='Settings']`, `settings-nav-models`, `models-panel`. The `wait ... until: { text }` form comes from the template README and wasn't exercised.\n- Host cleanup: `down` and `reset` remove containers named `^<project>-host-` and volumes named `^<project>-host`. I don't know the host volume naming, so volumes may be missed.\n- Reset is `compose down -v` plus a stack restart, not a snapshot restore. It is slow, but it is a real empty install.\n- Stand-ins that real use won't have: the model is a fixed-reply mock, so nothing involving model content (decks, memory edits, tool calls, titles) is proven. There is no sign-in: only single-user mode, so the multi-person header path (`X-Forwarded-Email` + proxy secret) is untested.\n- Images are keyed by `git ls-files -s`, so uncommitted edits in the checkout don't trigger a rebuild.\n- `playwright` is pinned to 1.49.1 without a lockfile; `prepare` will write one on first run, and it should be committed.\n",
+  "surveyMd": "# Survey: Superchat\n\n## What it is\nOne persistent assistant per person (Conversation, memory, files, background work). Web UI (React/Vite, `web/app`) served by the Python engine `omnigent` (`engine/`). There is no app server: the browser talks only to the engine. Per-person \"hosts\" are Docker containers the engine starts over the Docker socket (`docker` is the only host provider).\n\n## Surface\nPrimary: **web** (browser at the engine's web port). The same engine also serves an HTTP API (`/health`, `/v1/...`, `engine/omnigent/server/API.md`), usable for seeding and read-back.\n\n## How it runs\n- Documented path (AGENTS.md: follow `docs/setup.md`, don't run the engine by hand): `deployment/setup.sh` builds `superchat/host:local` (compose profile `build`) and `superchat/engine:local`, then `docker compose --env-file .env -f deployment/compose.yaml up -d --wait`. Services: `postgres:16-alpine` (schema `engine`, `deployment/postgres/schemas.sql`) and `engine`. The image build is heavy (Node web build, Python venv with CPU torch, host image with Chromium), so `prepare` must do the builds and cache them.\n- Ports: web `SUPERCHAT_WEB_PORT` (5173) and engine API `SUPERCHAT_ENGINE_PORT` (8012), both mapped to container port 8000. `ENGINE_PUBLIC_URL` (default `http://host.docker.internal:<engine port>`) is where each host's runner dials back, so it must follow the per-instance engine port.\n- Env (`.env.kitchen`, fake values): `POSTGRES_PASSWORD`, `OMNIGENT_PROXY_SECRET`, `OMNIGENT_VAULT_KEY` (32 random bytes, base64url), `SUPERCHAT_WEB_PORT`, `SUPERCHAT_ENGINE_PORT`, `ENGINE_PUBLIC_URL`, `COMPOSE_PROJECT_NAME`, plus the model settings below.\n- Data: Postgres volume, `artifact-data` at `/data`, and per-person host volumes. Compose volume names are fixed per project, so the project name keeps instances apart.\n\n## Auth and seed users\nLocal mode (`OMNIGENT_LOCAL_SINGLE_USER=1`): a request with no identity header is the one local person, so there is no sign-in form. Several people need `OMNIGENT_LOCAL_SINGLE_USER=0` plus `X-Forwarded-Email` and `X-Omnigent-Proxy-Secret` (= `OMNIGENT_PROXY_SECRET`) on every request; the web has no login form. Plan: single-user mode for drives; seed user = the local person; an `api` primitive can act as `kitchen@example.test` through the header and secret. The generic `login` primitive has no form to fill, so it will be a documented no-op; to be proven.\n\n## Externals\n- **Model provider (Anthropic / OpenRouter / LiteLLM): mock.** `deployment/engine/config.litellm.yaml.tmpl` (chosen when `LITELLM_BASE_URL` and `LITELLM_API_KEY` are set) sends every model call through the engine's model proxy to a base URL I control. The Toolkit starts a small mock (in `.kitchen/toolkit/`) speaking Anthropic `/v1/messages` (streaming SSE), `/v1/chat/completions` and a model list for the pickers. It returns canned replies and records each request so a primitive can read it. It must be reachable from the engine container (`host.docker.internal`) and use a per-instance port.\n- Hosts: real per-person containers started through the Docker socket, not mocked. The harness inside (`claude` CLI or `pi`) reaches the model only through the engine proxy, so the mock covers it.\n- Off by default and left off: S3/R2 artifacts, OTLP traces, Phoenix. The dev mailbox (`OMNIGENT_DEV_MAILBOX`, a markdown file standing in for the owner's inbox) may serve as a mail stand-in.\n\n## Isolation\nFeasible: a compose project per id (`ctx.compose`), ports from the slot, `OMNIGENT_HOST_NAME_PREFIX` = the project name so hosts are named per instance. Risk: the engine starts host containers itself, outside the compose project, so `down` must remove them by that prefix/label, not by guessing. Plan `parallel: true`, to be proven by the second-instance step of `toolkit_check`.\n\n## Top features (source paths)\n1. **Conversation with the Assistant** (rounds): `web/app/src/pages/app`, `web/app/src/pages/shell`, `engine/omnigent/superchat/`, `docs/conversation.md`.\n2. **Settings > Models**: `web/app/src/pages/SettingsOverlay.tsx`, `web/app/src/features/models`.\n3. **Memory, Knowledge, Daily notes**: `web/app/src/features/{memory,knowledge,daily-notes}`.\n4. **Files and artifacts (documents, sheets, decks, charts)**: `web/app/src/features/{files,artifacts,documents,sheets,decks,charts}`, `docs/artifacts.md`, `docs/decks.md`.\n5. **Automations, Topics, Projects**: `web/app/src/features/{automations,topics,projects}`.\nThe final set (4 to 5 files) depends on what the mock model can drive; anything needing a model-made artifact depends on the mock's canned replies.\n\n## Plan: adopt\nWrap the repo's own Compose stack, adding only what is Toolkit-specific:\n- `app.mjs`: surface `web`, ports `{needs: 3, order: [web, engine, mock]}`. `prepare` builds the host and engine images (via `deployment/build.sh`) and installs Playwright with its browser. `up` writes the per-instance env, starts the model mock with `ctx.spawn`, runs `ctx.compose(['up','-d','--wait'])` under a project name from the id, and waits for `/health` and the web index. `reset` recreates the stack's data (`down -v`, `up`) and clears the mock's record. `down` removes the compose project and the host containers with this instance's prefix.\n- Modules: keep `lib/browser.mjs`, delete `lib/terminal.mjs`. Extra primitives: `model_requests` (what the mock received), `api` (an engine call as the local person), `host_list` (this instance's host containers).\n- Outside `.kitchen/toolkit/`: `.env.kitchen` only.\n\n## Risks I can't settle from the code\n- Whether the host image (Ubuntu, Chromium, `claude`/`pi` CLIs) builds on the network `prepare` has (apt, npm, PyPI).\n- Whether the `claude` harness honours the mock base URL through the engine's model proxy. If not, drives needing a model reply can't run and features are limited to UI and API state.\n- The first Conversation starts the person's host (slow), so drives need long `wait`s.\n\n```json\n[]\n```\n",
+  "log": "/private/tmp/claude-501/-Users-simo-pttx/58ffbf3c-d628-41d8-aabb-4f73bfb4d366/scratchpad/runs/superchat/init.log",
+  "note": "first run of the spike compared main...kitchen/setup, but this clone is on durable-conversation, so the commit check failed in the spike; diffstat re-read from HEAD..kitchen/setup after the fix (the spike now diffs against the cloned HEAD)"
+}

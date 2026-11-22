@@ -1,0 +1,110 @@
+{
+  "fixture": "c-adopt",
+  "tool": "claude",
+  "model": "sonnet",
+  "effort": "medium",
+  "at": "2026-11-22T06:47:27.807Z",
+  "init": {
+    "exit": 0,
+    "secs": 331.204,
+    "questions": null
+  },
+  "agent": {
+    "runs": [
+      {
+        "mode": "survey",
+        "ok": true,
+        "secs": 22.739,
+        "usd": 0.12650680000000003,
+        "inTok": 127351,
+        "outTok": 3360,
+        "model": "sonnet",
+        "tool": "claude",
+        "sessionId": "27eed94b-8065-4ca6-90c5-d6d353cf760e",
+        "line": "Survey done: `survey.md` is written. I chose to adopt the existing docker-compose setup for this web app, and I have no questions for the developer."
+      },
+      {
+        "mode": "build",
+        "ok": true,
+        "secs": 240.921,
+        "usd": 0.47093999999999997,
+        "inTok": 567244,
+        "outTok": 15277,
+        "model": "sonnet",
+        "tool": "claude",
+        "sessionId": "27eed94b-8065-4ca6-90c5-d6d353cf760e",
+        "line": "One thing a reviewer should know: in the engine's Docker setup, the compose bind mount of `./db` into `/docker-entrypoint-initdb.d` didn't run the schema and seed. I didn't confirm the cause. `up` now waits 20s for the seed and, if the tables are missing, pipes `db/001_schema.sql` and `db/002_seed.sql` through `psql` itself. The passing check used that fallback."
+      }
+    ],
+    "secs": 263.65999999999997,
+    "usd": 0.5974468,
+    "inTok": 694595,
+    "outTok": 18637
+  },
+  "fixes": 0,
+  "baseCheck": {
+    "code": 0,
+    "secs": 67.737
+  },
+  "proven": {
+    "sha": "b5b8f6974ff8700508648323041d1dd0e0906f96",
+    "at": "2026-11-22T06:47:27.759Z",
+    "parallel": true,
+    "features": [
+      {
+        "file": "features/auth.md",
+        "paths": [
+          "server.js",
+          "db/**"
+        ]
+      },
+      {
+        "file": "features/invites.md",
+        "paths": [
+          "server.js",
+          "db/**"
+        ]
+      },
+      {
+        "file": "features/projects.md",
+        "paths": [
+          "server.js",
+          "db/**"
+        ]
+      },
+      {
+        "file": "features/settings.md",
+        "paths": [
+          "server.js"
+        ]
+      }
+    ],
+    "prepareSecs": 1.933,
+    "secs": 67.446
+  },
+  "commits": [
+    "b5b8f69 kitchen setup: Toolkit (bin/dev, SKILL.md, features, .env.kitchen)",
+    "d9940c9 fixture c-adopt"
+  ],
+  "toolkitFiles": [
+    ".gitignore",
+    "SKILL.md",
+    "TEMPLATE.md",
+    "app.mjs",
+    "bin",
+    "features",
+    "lib",
+    "package-lock.json",
+    "package.json",
+    "bin/dev",
+    "features/README.md",
+    "features/auth.md",
+    "features/invites.md",
+    "features/projects.md",
+    "features/settings.md",
+    "lib/browser-daemon.mjs",
+    "lib/browser.mjs",
+    "lib/common.mjs"
+  ],
+  "log": "/private/tmp/claude-501/-Users-simo-pttx/58ffbf3c-d628-41d8-aabb-4f73bfb4d366/scratchpad/runs/c-claude/init.log"
+}

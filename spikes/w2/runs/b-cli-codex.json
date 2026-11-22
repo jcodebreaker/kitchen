@@ -1,0 +1,110 @@
+{
+  "fixture": "b-cli",
+  "tool": "codex",
+  "model": "gpt-6-luna",
+  "effort": "medium",
+  "at": "2026-11-22T06:44:28.852Z",
+  "init": {
+    "exit": 0,
+    "secs": 211.894,
+    "questions": null
+  },
+  "agent": {
+    "runs": [
+      {
+        "mode": "survey",
+        "ok": true,
+        "secs": 61.976,
+        "inTok": 194740,
+        "outTok": 2812,
+        "model": "gpt-6-luna",
+        "tool": "codex",
+        "sessionId": "01a201fc-7d50-7af1-be35-70dfcf37ad27",
+        "line": "Survey written to `.kitchen-out/survey.md`."
+      },
+      {
+        "mode": "build",
+        "ok": true,
+        "secs": 145.596,
+        "inTok": 1091602,
+        "outTok": 9166,
+        "model": "gpt-6-luna",
+        "tool": "codex",
+        "sessionId": "01a201fc-7d50-7af1-be35-70dfcf37ad27",
+        "line": "Toolkit built and verified; `setup.md` records `STATUS: READY` and `CHECK: PASS`."
+      }
+    ],
+    "secs": 207.572,
+    "usd": null,
+    "inTok": 1286342,
+    "outTok": 11978
+  },
+  "fixes": 0,
+  "baseCheck": {
+    "code": 0,
+    "secs": 3.843
+  },
+  "proven": {
+    "sha": "2d3ff398dbe1494440c374a0d1f62cd4660b001c",
+    "at": "2026-11-22T06:44:28.794Z",
+    "parallel": true,
+    "features": [
+      {
+        "file": "features/find-review.md",
+        "paths": [
+          "tasks/cli.py",
+          "tasks/store.py"
+        ]
+      },
+      {
+        "file": "features/import-export.md",
+        "paths": [
+          "tasks/cli.py",
+          "tasks/store.py",
+          "seed/demo.csv"
+        ]
+      },
+      {
+        "file": "features/purge.md",
+        "paths": [
+          "tasks/cli.py",
+          "tasks/store.py"
+        ]
+      },
+      {
+        "file": "features/task-management.md",
+        "paths": [
+          "tasks/cli.py",
+          "tasks/store.py",
+          "tasks/db.py",
+          "tasks/migrations/**"
+        ]
+      }
+    ],
+    "prepareSecs": 0.063,
+    "secs": 3.559
+  },
+  "commits": [
+    "2d3ff39 kitchen setup: Toolkit (bin/dev, SKILL.md, features, .env.kitchen)",
+    "5365f06 fixture b-cli"
+  ],
+  "toolkitFiles": [
+    ".gitignore",
+    "SKILL.md",
+    "TEMPLATE.md",
+    "app.mjs",
+    "bin",
+    "features",
+    "lib",
+    "package.json",
+    "bin/dev",
+    "features/README.md",
+    "features/find-review.md",
+    "features/import-export.md",
+    "features/purge.md",
+    "features/task-management.md",
+    "lib/common.mjs",
+    "lib/terminal.mjs"
+  ],
+  "log": "/private/tmp/claude-501/-Users-simo-pttx/58ffbf3c-d628-41d8-aabb-4f73bfb4d366/scratchpad/runs/b-codex/init.log"
+}

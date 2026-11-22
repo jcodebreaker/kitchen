@@ -1,0 +1,112 @@
+{
+  "fixture": "a-web",
+  "tool": "claude",
+  "model": "sonnet",
+  "effort": "medium",
+  "at": "2026-11-22T06:40:30.003Z",
+  "init": {
+    "exit": 0,
+    "secs": 165.639,
+    "questions": null
+  },
+  "agent": {
+    "runs": [
+      {
+        "mode": "survey",
+        "ok": true,
+        "secs": 17.988,
+        "usd": 0.1207131,
+        "inTok": 113709,
+        "outTok": 2006,
+        "model": "sonnet",
+        "tool": "claude",
+        "sessionId": "a4bc9ed8-027d-468e-9d78-bb50e4d081f6",
+        "line": "Survey written to `.kitchen-out/survey.md`: a web app on Postgres with a build plan, no externals and no questions for the developer. I haven't started on the Toolkit yet."
+      },
+      {
+        "mode": "build",
+        "ok": true,
+        "secs": 126.211,
+        "usd": 0.4394929,
+        "inTok": 430092,
+        "outTok": 15454,
+        "model": "sonnet",
+        "tool": "claude",
+        "sessionId": "a4bc9ed8-027d-468e-9d78-bb50e4d081f6",
+        "line": "The Toolkit is built and `toolkit_check` passes. That covers all 4 drives on a fresh instance and again after reset, plus a second instance at the same time. `setup.md` is written. The unused `lib/terminal.mjs` is still in the toolkit folder because my shell was denied before I could delete it."
+      }
+    ],
+    "secs": 144.199,
+    "usd": 0.560206,
+    "inTok": 543801,
+    "outTok": 17460
+  },
+  "fixes": 0,
+  "baseCheck": {
+    "code": 0,
+    "secs": 22.165
+  },
+  "proven": {
+    "sha": "03d225c62be2b316cfce5c868e9ae5e209e39aaf",
+    "at": "2026-11-22T06:40:29.965Z",
+    "parallel": true,
+    "features": [
+      {
+        "file": "features/admin-invites.md",
+        "paths": [
+          "server.js",
+          "db/001_schema.sql"
+        ]
+      },
+      {
+        "file": "features/create-project.md",
+        "paths": [
+          "server.js",
+          "db/001_schema.sql"
+        ]
+      },
+      {
+        "file": "features/dark-mode.md",
+        "paths": [
+          "server.js",
+          "db/001_schema.sql"
+        ]
+      },
+      {
+        "file": "features/sign-in.md",
+        "paths": [
+          "server.js",
+          "db/**"
+        ]
+      }
+    ],
+    "prepareSecs": 1.045,
+    "secs": 21.935
+  },
+  "commits": [
+    "03d225c kitchen setup: Toolkit (bin/dev, SKILL.md, features, .env.kitchen)",
+    "df8fbc5 fixture a-web"
+  ],
+  "toolkitFiles": [
+    ".gitignore",
+    "SKILL.md",
+    "TEMPLATE.md",
+    "app.mjs",
+    "bin",
+    "features",
+    "lib",
+    "package-lock.json",
+    "package.json",
+    "bin/dev",
+    "features/README.md",
+    "features/admin-invites.md",
+    "features/create-project.md",
+    "features/dark-mode.md",
+    "features/sign-in.md",
+    "lib/browser-daemon.mjs",
+    "lib/browser.mjs",
+    "lib/common.mjs",
+    "lib/terminal.mjs"
+  ],
+  "log": "/private/tmp/claude-501/-Users-simo-pttx/58ffbf3c-d628-41d8-aabb-4f73bfb4d366/scratchpad/runs/a-claude2/init.log"
+}

@@ -126,7 +126,7 @@ async function teardown(id) {
   for (const [name, pid] of Object.entries(state.pids ?? {})) if (await killGroup(pid)) stopped.push(name);
   for (const c of state.compose ?? []) {
     const f = c.files.flatMap((x) => ["-f", x]);
-    if (run("docker", ["compose", "-p", c.project, ...f, "down", "-v", "--remove-orphans"], { cwd: c.cwd, quiet: true }).code === 0) stopped.push(c.project);
+    if (run("docker", ["compose", "-p", c.project, ...f, "down", "-v", "--remove-orphans", "--rmi", "local"], { cwd: c.cwd, quiet: true }).code === 0) stopped.push(c.project);
   }
   const labelled = run("docker", ["ps", "-aq", "--filter", `label=kitchen.toolkit=${app.name}`, "--filter", `label=kitchen.id=${id}`], { quiet: true })
     .stdout.split("\n")
