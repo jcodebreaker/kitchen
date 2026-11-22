@@ -114,19 +114,20 @@ export async function maintainDue(
   const git = await openGit(plainCheckout(repo));
   const head = (await git.run(["rev-parse", "HEAD"])).stdout.trim();
   if (head === since) return { due: false, lines: 0, since, files: [] };
-  const globs = (await git.run(["ls-tree", "-r", "--name-only", "HEAD", ".kitchen/toolkit/features/"])).stdout
+  // The feature files as committed at HEAD. Engine git runs with the gitdir as its cwd (inside the work tree for a plain checkout): so --full-tree, full shas, and `--` after revisions.
+  const dir = ".kitchen/toolkit/features";
+  const names = (await git.run(["ls-tree", "--full-tree", "--name-only", `${head}:${dir}`]).catch(() => ({ stdout: "" }))).stdout
     .split("\n")
-    .filter((f) => f.endsWith(".md") && !f.endsWith("README.md"))
-    .flatMap((f) => {
-      try {
-        return parseFeature(path.basename(f), fs.readFileSync(path.join(repo, f), "utf8")).paths;
-      } catch {
-        return [];
-      }
-    });
+    .filter((f) => f.endsWith(".md") && f !== "README.md");
+  const globs: string[] = [];
+  for (const f of names) {
+    try {
+      globs.push(...parseFeature(f, (await git.run(["show", `${head}:${dir}/${f}`])).stdout).paths);
+    } catch {} // a feature file that doesn't parse maps nothing; maintain itself reports it
+  }
   let numstat: string;
   try {
-    numstat = (await git.run(["diff", "--numstat", "--no-ext-diff", "--no-textconv", since, head])).stdout;
+    numstat = (await git.run(["diff", "--numstat", "--no-ext-diff", "--no-textconv", since, head, "--"])).stdout;
   } catch {
     return { due: true, lines: Number.POSITIVE_INFINITY, since, files: [] }; // the baseline is gone (rewritten history)
   }

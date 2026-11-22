@@ -29,7 +29,18 @@ const git = (...a: string[]) =>
 const log = path.join(root, "w4-maintain.log");
 // Containers of other runs on this machine (labelled the same) are not ours to count.
 const before = new Set(kitchenContainers());
-const ours = () => kitchenContainers().filter((c) => !before.has(c));
+// This spike makes no job, so a job slot's container (kitchen-a-web-NNN-…, another session's run on this machine) is never ours.
+const nameOf = (c: string) => {
+  try {
+    return execFileSync("docker", ["inspect", "--format", "{{.Name}}", c], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  } catch {
+    return "/gone"; // stopped between ps and inspect
+  }
+};
+const ours = () =>
+  kitchenContainers()
+    .filter((c) => !before.has(c))
+    .filter((c) => !/^\/(gone$|kitchen-a-web-\d{3}-)/.test(nameOf(c)));
 
 // The app changes; the Toolkit's settings feature file doesn't.
 const server = path.join(r.dir, "server.js");
