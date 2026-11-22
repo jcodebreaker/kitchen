@@ -260,12 +260,14 @@ function describe() {
     : [];
   out({
     status: "ok",
+    contract: 1,
     toolkit: "fixture-a-web",
+    surface: "web",
     lifecycle: LIFECYCLE,
     primitives: Object.entries(PRIMITIVES).map(([name, p]) => ({ name, ...p })),
     ports: { needs: 3, order: ["app", "postgres", "browser-driver"] },
     features,
-    seedUsers,
+    seed_users: seedUsers,
     externals: [],
     parallel: true,
   });

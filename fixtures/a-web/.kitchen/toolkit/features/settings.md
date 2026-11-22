@@ -43,6 +43,15 @@ steps:
 Proof for a spec criterion: `$theme` is `Dark`, `$me` contains `"theme":"dark"`,
 and `$before` was `false`.
 
+## Kitchen
+
+Source paths this feature lives in (a change there re-proves the Toolkit) and the args `kitchen toolkit check` drives it with.
+
+```kitchen
+paths: [server.js, "db/**"]
+check: { drive: settings.toggle-dark, args: { user: alice } }
+```
+
 ## Gotchas
 
 - Toggling is a flip, not a set: run it from seed state (`reset`) or the second
