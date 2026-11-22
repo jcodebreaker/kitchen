@@ -89,11 +89,15 @@ export async function prove(o: ProveOpts): Promise<ProveResult> {
   const common = { jobDir: o.jobDir, criterion: o.stampAs ?? c.id, role: o.role, tag: o.tag, source: o.source };
   let lastExit: number | null = null;
   // A command step's output is {exit, stdout, stderr} (the cli primitive): `json`, `rows` and `--save` read its
-  // stdout, `contains` what the terminal shows (stdout and stderr), `exit` its exit code.
+  // stdout, `contains` what the terminal shows (stdout and stderr), `exit` its exit code. An http step's output
+  // is {status, body}: `json`, `rows` and `--save` read its body (a key the body lacks still reads the
+  // response: `json .status`), `contains` the whole response; a failed status proves no absence.
   const setOutput = (out: unknown) => {
     const cmd = commandOut(out);
-    outcome.output = cmd ? cmd.stdout : text(out);
-    outcome.shown = cmd ? [cmd.stdout, cmd.stderr].filter((x) => x.trim()).join("\n") : undefined;
+    const resp = cmd ? null : responseOut(out);
+    outcome.output = cmd ? cmd.stdout : resp ? text(resp.body) : text(out);
+    outcome.shown = cmd ? [cmd.stdout, cmd.stderr].filter((x) => x.trim()).join("\n") : resp ? resp.full : undefined;
+    outcome.response = resp ? { status: resp.status, full: resp.full } : undefined;
   };
   try {
     if (segs[0].kind === "toolkit") {
@@ -117,8 +121,15 @@ export async function prove(o: ProveOpts): Promise<ProveResult> {
             ...(waitTimedOut ? { waitText: r.failedAt?.wait } : {}),
           });
         }
-        // `--save <var>` on a primitive segment: its output, as a drive's `save:` keeps it.
-        if (s.save) outcome.vars[s.save] = outcome.output;
+        // `--save <var>` on a primitive segment: its output, as a drive's `save:` keeps it (an http step's body;
+        // its status as `$<var>_status`).
+        if (s.save) {
+          outcome.vars[s.save] = outcome.output;
+          if (outcome.response) {
+            outcome.vars[`${s.save}_status`] = String(outcome.response.status);
+            outcome.responses = { ...outcome.responses, [s.save]: outcome.response };
+          }
+        }
       }
       outcome.ok = true;
       // A command step (the cli primitive) is ok whatever its exit code: the last one's exit is the proof's,
@@ -172,6 +183,24 @@ export function commandOut(out: unknown): { exit: number; stdout: string; stderr
   const o = out as { stdout?: unknown; stderr?: unknown };
   if (typeof o.stdout !== "string" && typeof o.stderr !== "string") return null;
   return { exit, stdout: typeof o.stdout === "string" ? o.stdout : "", stderr: typeof o.stderr === "string" ? o.stderr : "" };
+}
+
+/** An http step's output (`{status, body}`, as an object or its JSON text), or null. */
+export function responseOut(out: unknown): { status: number; body: unknown; full: string } | null {
+  let o = out;
+  if (typeof o === "string" && o.startsWith("{")) {
+    try {
+      o = JSON.parse(o);
+    } catch {
+      return null;
+    }
+  }
+  if (!o || typeof o !== "object" || Array.isArray(o)) return null;
+  const r = o as Record<string, unknown>;
+  const status = r.status;
+  if (typeof status !== "number" || !Number.isInteger(status) || status < 100 || status > 599 || !("body" in r)) return null;
+  if (!Object.keys(r).every((k) => k === "status" || k === "body" || k === "headers")) return null;
+  return { status, body: r.body, full: typeof out === "string" ? out : JSON.stringify(out) };
 }
 
 /** The exit code a command step reported (`{exit, stdout, stderr}`, the cli primitive), or null. */

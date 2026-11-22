@@ -8,7 +8,7 @@ import { parseRequirements, type Requirement, withSpecMarks } from "../../checks
 import { inLayout, type TestLayout, testLayout } from "../../checks/test-layout.ts";
 import { contractOf } from "../contract.ts";
 import type { Job } from "../machine.ts";
-import { roundDir } from "../store.ts";
+import { readJobAt, roundDir } from "../store.ts";
 import type { PromptBlock } from "./prompts.ts";
 import { toolkitBrief } from "./toolkit-info.ts";
 
@@ -22,10 +22,14 @@ export function fileBlock(jobDir: string, file: string, title = file): PromptBlo
   return fs.existsSync(p) ? [{ title, body: fs.readFileSync(p, "utf8") }] : [];
 }
 
-/** The requirements the contract is held to: intake.md's, with the spec's re-marks (spec-lint withSpecMarks). */
+/** The requirements the contract is held to: intake.md's, with the spec's re-marks (spec-lint withSpecMarks; none on a security job). */
 export function jobRequirements(jobDir: string): Requirement[] {
   const read = (f: string) => (fs.existsSync(path.join(jobDir, f)) ? fs.readFileSync(path.join(jobDir, f), "utf8") : "");
-  return withSpecMarks(parseRequirements(read("intake.md")), read("spec.md"));
+  let security = false;
+  try {
+    security = readJobAt(jobDir).surfaces?.includes("security") ?? false;
+  } catch {}
+  return withSpecMarks(parseRequirements(read("intake.md")), read("spec.md"), { security });
 }
 
 export async function toolkitBlock(job: Job, src: string): Promise<PromptBlock> {
