@@ -13,7 +13,7 @@ import { ensureUp } from "../instance.ts";
 import { writeAtomic } from "../store.ts";
 import { commitWith, ensureWorktree } from "../worktree.ts";
 import { runBaseCheck } from "./base-check.ts";
-import { fileBlock, toolkitBlock } from "./context.ts";
+import { fileBlock, humanFeedback, toolkitBlock } from "./context.ts";
 import { prompt } from "./prompts.ts";
 import { runRole } from "./role.ts";
 import { hasToolkit, toolkitView } from "./toolkit-info.ts";
@@ -33,6 +33,13 @@ export const spec: StageHandler = async (ctx) => {
       blocks: [
         ...fileBlock(ctx.jobDir, "intake.md"),
         ...fileBlock(ctx.jobDir, "spec-refused.md", "Your last spec.md was refused: fix this"),
+        // A person sent the job back here (`kitchen feedback --to spec`): their words, and the spec they reacted to.
+        ...(humanFeedback(ctx.jobDir).length
+          ? [
+              { title: "Feedback from a human (address it; it overrides your earlier spec)", body: humanFeedback(ctx.jobDir).join("\n\n") },
+              ...fileBlock(ctx.jobDir, "spec.md", "Your earlier spec.md"),
+            ]
+          : []),
         await toolkitBlock(job, job.worktree),
       ],
     }),

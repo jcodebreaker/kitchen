@@ -12,21 +12,11 @@ import { ensureUp } from "../instance.ts";
 import { once, roundDir, writeAtomic } from "../store.ts";
 import { commitWith, ensureWorktree, fileAtHead, pendingFiles } from "../worktree.ts";
 import { runBaseCheck } from "./base-check.ts";
-import { contractBlock, earlierRoundsBlock, toolkitBlock } from "./context.ts";
+import { contractBlock, earlierRoundsBlock, humanFeedback, toolkitBlock } from "./context.ts";
 import { prompt } from "./prompts.ts";
 import { headers, runRole } from "./role.ts";
 import { hasToolkit } from "./toolkit-info.ts";
 import type { StageHandler } from "./types.ts";
-
-/** Human feedback (`kitchen feedback`) the builder must address, newest last. */
-function feedback(jobDir: string): string[] {
-  const d = path.join(jobDir, "feedback");
-  if (!fs.existsSync(d)) return [];
-  return fs
-    .readdirSync(d)
-    .sort()
-    .map((f) => fs.readFileSync(path.join(d, f), "utf8").trim());
-}
 
 export const build: StageHandler = async (ctx) => {
   let job = await ensureWorktree(ctx.repo, ctx.refresh());
@@ -35,7 +25,7 @@ export const build: StageHandler = async (ctx) => {
   if (contract?.file === "intake.md" && job.kind !== "bug" && job.round === job.roundStart)
     await runBaseCheck(ctx, job, contract.criteria).catch((e) => ctx.log(`base check skipped: ${(e as Error).message}`));
   if (hasToolkit(job) && job.slot) await ensureUp(job, ctx.jobDir, ctx.log).catch((e) => ctx.log(`app not up for the builder: ${(e as Error).message}`));
-  const fb = feedback(ctx.jobDir);
+  const fb = humanFeedback(ctx.jobDir);
   const repro = job.reproFiles ?? [];
   const proofFiles = (contract?.criteria ?? []).flatMap(testFilesOf).filter((f) => !repro.includes(f));
   const checkFiles = filesChecksRunThrough([...ctx.config.checkList.map((c) => c.run), ctx.config.test_cmd]);

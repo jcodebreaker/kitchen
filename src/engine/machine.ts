@@ -161,8 +161,11 @@ export type Facts = {
     ticket?: string;
   };
   toolkit?: { checkPassed: boolean; sha: string; pr: number | null };
-  /** nonDiscriminating: criteria that already held on the base (base-check.json), for the report (W4). */
-  review?: { pass: boolean; blocking?: string; nonDiscriminating?: string[] };
+  /**
+   * pass: no finding blocks (checks/findings.ts: only a demonstrable, confident one can). blocking: the blocking findings, one line.
+   * nonDiscriminating: criteria that already held on the base (base-check.json). findings/notes: counts after merging across lenses.
+   */
+  review?: { pass: boolean; blocking?: string; nonDiscriminating?: string[]; findings?: number; notes?: number };
   ready?: {
     synced: boolean;
     conflict: boolean;
@@ -173,6 +176,8 @@ export type Facts = {
     recheckFailed: boolean;
   };
   report?: { rendered: boolean; idsResolved: boolean; evidencePushed: boolean; commented: boolean; localForge: boolean; refusal?: string };
+  /** done → build: a review comment on the PR from a trusted person (the runner reads it through the forge). */
+  prComment?: { id: string; author: string; trusted: boolean };
   /** paused: the waitFor condition cleared. */
   waitCleared?: boolean;
   adapter?: { rateLimited?: boolean; authFailure?: boolean; until?: string; error?: string };
@@ -805,7 +810,11 @@ export const TABLE: readonly Row[] = [
     from: "done",
     to: "build",
     when: "`kitchen feedback` or a trusted review comment on the PR; the round budget resets",
-    guard: operatorIs("feedback"),
+    guard: check(
+      (_j, f) => f.operator === "feedback" || !!f.prComment?.trusted,
+      (_j, f) =>
+        f.prComment ? `PR comment ${f.prComment.id} by ${f.prComment.author} is not from a trusted person` : "needs `kitchen feedback` or a trusted PR comment",
+    ),
     apply: resetBudget,
   },
   // any active stage

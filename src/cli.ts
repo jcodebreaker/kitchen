@@ -7,13 +7,16 @@
 //   kitchen report
 //   kitchen init [--answers <file>] [--tool claude|codex] [--detach] · init --status  ·  kitchen toolkit check [--feature x] [--src dir] · toolkit up · toolkit down --id <id>   (src/cli/toolkit-commands.ts)
 //   kitchen drive <job> <C> [--repro] [--arg k=v]… [--role r]   one criterion's proof (src/proof/prove.ts)
+//   kitchen drive <job> --view "<view>" [--role reviewer-ux]     one extra view for a UX/UI lens (src/engine/views.ts)
+//   kitchen dismiss <job> <finding-id> [--reason "<why>"]        a review finding was not useful (ledger, per lens)
+//   kitchen toolkit maintain [--force]                           pstack's maintain pass (src/toolkit/maintain.ts)
 //   kitchen mcp --job <id> --role <role> [--repo <dir>]   the engine bridge (src/bridge/mcp.ts)
 import path from "node:path";
 import { serveBridge } from "./bridge/mcp.ts";
 import * as cmd from "./cli/commands.ts";
 
 const USAGE =
-  'usage: kitchen ticket "<text>" | run [--once] [--detach] [<job>] | status | resume <id|n> | feedback <id> [--to <stage>] ["<text>"] | reject <id> | report | init [--answers <file>] [--detach] | init --status [--wait <s>] | toolkit check [--feature x] [--src dir] | toolkit up | toolkit down --id <id> | drive <job> <C> [--repro] [--arg k=v]… | mcp …';
+  'usage: kitchen ticket "<text>" | run [--once] [--detach] [<job>] | status | resume <id|n> | feedback <id> [--to <stage>] ["<text>"] | reject <id> | report | init [--answers <file>] [--detach] | init --status [--wait <s>] | toolkit check [--feature x] [--src dir] | toolkit up | toolkit down --id <id> | drive <job> <C> [--repro] [--arg k=v]… | drive <job> --view "<view>" | dismiss <job> <finding> [--reason "<why>"] | toolkit maintain [--force] | mcp …';
 
 async function main(argv: string[]): Promise<number> {
   const [name, ...rest] = argv;
@@ -33,6 +36,8 @@ async function main(argv: string[]): Promise<number> {
   let to: string | undefined;
   const driveArgs: Record<string, string> = {};
   let role = "operator";
+  let viewArg: string | undefined;
+  let reason: string | undefined;
   const pos: string[] = [];
   const flags = new Set<string>();
   for (let i = 0; i < rest.length; i++) {
@@ -44,6 +49,8 @@ async function main(argv: string[]): Promise<number> {
       if (eq < 1) throw new Error(`--arg takes name=value, got ${kv}`);
       driveArgs[kv.slice(0, eq)] = kv.slice(eq + 1);
     } else if (rest[i] === "--role" && name === "drive") role = rest[++i] ?? role;
+    else if (rest[i] === "--view" && name === "drive") viewArg = rest[++i];
+    else if (rest[i] === "--reason" && name === "dismiss") reason = rest[++i];
     else if (rest[i].startsWith("--")) flags.add(rest[i]);
     else pos.push(rest[i]);
   }
@@ -69,7 +76,14 @@ async function main(argv: string[]): Promise<number> {
       return cmd.reject(repo, need("<id>"), out);
     case "report":
       return cmd.report(repo, out);
+    case "dismiss":
+      if (!pos[1]) throw new Error('kitchen dismiss needs <job> <finding-id> [--reason "<why>"]');
+      return cmd.dismiss(repo, need("<job>"), pos[1], reason, out);
     case "drive":
+      if (viewArg !== undefined) {
+        if (!viewArg.trim()) throw new Error('kitchen drive --view needs a view: "/path [--as user]", a feature drive, or toolkit segments');
+        return cmd.view(repo, need("<job>"), viewArg, role === "operator" ? "reviewer-operator" : role, out);
+      }
       for (const f of flags) if (f !== "--repro") throw new Error(`kitchen drive: unknown flag ${f}`);
       if (!pos[1]) throw new Error("kitchen drive needs <job> <criterion>");
       return cmd.drive(repo, need("<job>"), pos[1], { repro: flags.has("--repro"), args: driveArgs, role }, out);

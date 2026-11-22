@@ -4,7 +4,9 @@
 
 import { randomBytes } from "node:crypto";
 import path from "node:path";
+import { loadConfig } from "../config.ts";
 import { plainCheckout } from "../engine/git.ts";
+import { forgeFor } from "../forge/forge.ts";
 import { serveSetupBridge } from "../init/bridge.ts";
 import { initCmd } from "../init/init.ts";
 import { detachInit, readStatus, statusReport, tracked } from "../init/status.ts";
@@ -115,10 +117,16 @@ export async function w2(name: string, argv: string[]): Promise<number> {
     if (!id) throw new Error("usage: kitchen toolkit down --id <id>");
     return toolkitDown(id, out);
   }
+  if (pos[0] === "maintain") {
+    const r = await (await import("../toolkit/maintain.ts")).maintain({
+      repo,
+      forge: forgeFor(plainCheckout(repo).workTree, loadConfig(plainCheckout(repo).workTree)),
+      print: out,
+    });
+    return r.outcome === "blocked" ? 1 : 0;
+  }
   if (pos[0] !== "check") {
-    console.error(
-      "usage: kitchen toolkit check [--feature <drive|feature>] [--src <worktree>] | up [--rev <ref>] [--src <dir>] | down --id <id>   (maintain comes later)",
-    );
+    console.error("usage: kitchen toolkit check [--feature <drive|feature>] [--src <worktree>] | up [--rev <ref>] [--src <dir>] | down --id <id> | maintain");
     return 2;
   }
   const r = await checkAtRef(repo, { rev: str(flags.rev), src: str(flags.src), feature: str(flags.feature), print: out });

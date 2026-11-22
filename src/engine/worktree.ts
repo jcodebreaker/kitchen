@@ -204,3 +204,13 @@ export async function diffStat(job: Job): Promise<{ file: string; lines: number 
       return { file, lines: (Number(a) || 0) + (Number(d) || 0) };
     });
 }
+
+/** The job's whole diff from the base to HEAD, as a patch (for reviewers and the report). */
+export async function diffPatch(job: Job): Promise<string> {
+  return (await (await gitOf(job)).run(["diff", "--no-ext-diff", "--no-textconv", "--no-color", job.base, "HEAD"])).stdout;
+}
+
+/** The job branch's commits since the base, one line each. */
+export async function commitLog(job: Job): Promise<string> {
+  return (await (await gitOf(job)).run(["log", "--no-color", "--format=%h %s", `${job.base}..HEAD`])).stdout.trim();
+}

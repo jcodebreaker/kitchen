@@ -3,13 +3,21 @@
 // after it, but a crash in between runs it again, so each method looks first.
 // W1 ships `local` (no remote) and `fake` (a JSON file the spikes edit).
 // GitHub comes in W3b.
+// W4 adds: publishEvidence (the `kitchen-evidence` branch, evidence-branch.ts),
+// label (`kitchen:review-required`), reviewComments (done → build from a trusted
+// person's PR comment) and openPr (`kitchen toolkit maintain`'s one Toolkit PR).
 import fs from "node:fs";
 import path from "node:path";
 import type { Config } from "../config.ts";
 import { writeAtomic } from "../engine/store.ts";
 import { withFileLock } from "../lock.ts";
+import { commitEvidence, EVIDENCE_BRANCH } from "./evidence-branch.ts";
 
 export type CiState = "none" | "pending" | "pass" | "fail";
+/** A review comment on a PR. `association`: the author's relation to the repo (GitHub's author_association: OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR, NONE…). */
+export type PrComment = { id: string; pr: number; author: string; association: string; body: string; at: string };
+/** Where a job's published folder is: the branch commit, and a link prefix for files in it (`<url>report.html`). */
+export type Published = { commit: string; url: string; pruned: string[] };
 
 export interface Forge {
   readonly kind: "local" | "fake" | "github";
@@ -22,9 +30,40 @@ export interface Forge {
   /** A Toolkit ticket, found by key. Returns its ref. */
   fileTicket(o: { key: string; title: string; body: string }): Promise<string>;
   ticketClosed(ref: string): Promise<boolean>;
-  /** A PR comment, found by key. */
+  /** A PR comment, found by key (posted once; a second call with the key edits nothing). */
   comment(o: { key: string; pr: number | null; body: string }): Promise<void>;
-  pushEvidence(o: { key: string; job: string; dir: string }): Promise<boolean>;
+  /** A label on the PR, found by key. */
+  label(o: { key: string; pr: number | null; label: string }): Promise<void>;
+  /**
+   * The job's published folder: `bundle` (report.html, evidence/, published.json, already redacted) becomes
+   * `<job>/` on the `kitchen-evidence` branch, folders older than `keepDays` pruned (evidence-branch.ts).
+   */
+  publishEvidence(o: { key: string; job: string; bundle: string; keepDays: number }): Promise<Published>;
+  /** Review comments on a PR, oldest first (Kitchen's own comments excluded). */
+  reviewComments(pr: number | null): Promise<PrComment[]>;
+  /** A PR for a branch the engine made (maintain's Toolkit PR), found by key. */
+  openPr(o: { key: string; branch: string; head: string; title: string; body: string }): Promise<number>;
+}
+
+/** Records of the local forge (no remote): one JSON line per side effect, so a run can be inspected. */
+const localLog = (repo: string) => path.join(repo, ".kitchen", "local-forge.jsonl");
+function localRecord(repo: string, o: Record<string, unknown> & { key: string }): boolean {
+  const f = localLog(repo);
+  const lines = fs.existsSync(f) ? fs.readFileSync(f, "utf8").split("\n").filter(Boolean) : [];
+  if (lines.some((l) => (JSON.parse(l) as { key: string }).key === o.key)) return false;
+  fs.mkdirSync(path.dirname(f), { recursive: true });
+  fs.appendFileSync(f, `${JSON.stringify({ ...o, at: new Date().toISOString() })}\n`);
+  return true;
+}
+export function readLocalForge(repo: string): (Record<string, unknown> & { key: string; kind: string })[] {
+  const f = localLog(repo);
+  return fs.existsSync(f)
+    ? fs
+        .readFileSync(f, "utf8")
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => JSON.parse(l))
+    : [];
 }
 
 /** No remote: nothing is pushed, no PR, no CI; Toolkit tickets are lines in .kitchen/tickets.jsonl that a human closes with `kitchen resume`. */
@@ -56,9 +95,30 @@ export class LocalForge implements Forge {
   async ticketClosed() {
     return false;
   }
-  async comment() {}
-  async pushEvidence() {
-    return false;
+  /** No PR to comment on: the comment is recorded in .kitchen/local-forge.jsonl. */
+  async comment(o: { key: string; pr: number | null; body: string }) {
+    localRecord(this.repo, { kind: "comment", ...o });
+  }
+  async label(o: { key: string; pr: number | null; label: string }) {
+    localRecord(this.repo, { kind: "label", ...o });
+  }
+  /** The branch stays in this repo (nothing is pushed); the url is `<branch>:<job>/`. */
+  async publishEvidence(o: { key: string; job: string; bundle: string; keepDays: number }): Promise<Published> {
+    const r = await commitEvidence({ repo: this.repo, job: o.job, bundle: o.bundle, keepDays: o.keepDays });
+    localRecord(this.repo, { kind: "evidence", key: `${o.key}/${r.commit}`, job: o.job, commit: r.commit });
+    return { commit: r.commit, url: `${EVIDENCE_BRANCH}:${o.job}/`, pruned: r.pruned };
+  }
+  async reviewComments(): Promise<PrComment[]> {
+    return [];
+  }
+  /** No remote: the branch is the PR; recorded with a local number. */
+  async openPr(o: { key: string; branch: string; head: string; title: string; body: string }): Promise<number> {
+    const prs = readLocalForge(this.repo).filter((x) => x.kind === "pr");
+    const had = prs.find((x) => x.key === o.key);
+    if (had) return Number(had.n);
+    const n = prs.length + 1;
+    localRecord(this.repo, { kind: "pr", n, ...o });
+    return n;
   }
 }
 
@@ -67,24 +127,43 @@ export type FakeForgeState = {
   prs: { n: number; branch: string; title: string; head: string; checks: CiState; merged: boolean; pushes: number; creates: number }[];
   toolkitPrs: { n: number; key: string; title: string; merged: boolean; calls: number }[];
   tickets: { ref: string; key: string; title: string; closed: boolean; calls: number }[];
-  comments: { key: string; pr: number | null; calls: number }[];
-  evidence: { key: string; job: string; calls: number }[];
+  comments: { key: string; pr: number | null; body: string; calls: number }[];
+  evidence: { key: string; job: string; commit: string; calls: number }[];
+  labels: { key: string; pr: number | null; label: string; calls: number }[];
+  /** Review comments people left on PRs (the spikes add them). */
+  reviewComments: PrComment[];
+  /** PRs the engine opened for its own branches (maintain). */
+  branchPrs: { n: number; key: string; branch: string; head: string; title: string; body: string; calls: number }[];
   next: number;
   /** Checks state given to new PRs. */
   defaultChecks: CiState;
 };
 
-const emptyFake = (): FakeForgeState => ({ prs: [], toolkitPrs: [], tickets: [], comments: [], evidence: [], next: 1, defaultChecks: "pass" });
+const emptyFake = (): FakeForgeState => ({
+  prs: [],
+  toolkitPrs: [],
+  tickets: [],
+  comments: [],
+  evidence: [],
+  labels: [],
+  reviewComments: [],
+  branchPrs: [],
+  next: 1,
+  defaultChecks: "pass",
+});
 
 export function readFakeForge(file: string): FakeForgeState {
   return fs.existsSync(file) ? { ...emptyFake(), ...(JSON.parse(fs.readFileSync(file, "utf8")) as FakeForgeState) } : emptyFake();
 }
 
+/** A JSON file instead of a remote. Its evidence branch is real: it is committed in `repo` (as a push would leave it). */
 export class FakeForge implements Forge {
   readonly kind = "fake" as const;
   readonly file: string;
-  constructor(file: string) {
+  private readonly repo: string | undefined;
+  constructor(file: string, repo?: string) {
     this.file = file;
+    this.repo = repo;
   }
   private async edit<T>(fn: (s: FakeForgeState) => T): Promise<T> {
     return withFileLock(`${this.file}.lock`, async () => {
@@ -145,27 +224,68 @@ export class FakeForge implements Forge {
     await this.edit((s) => {
       let c = s.comments.find((x) => x.key === o.key);
       if (!c) {
-        c = { key: o.key, pr: o.pr, calls: 0 };
+        c = { key: o.key, pr: o.pr, body: o.body, calls: 0 };
         s.comments.push(c);
       }
       c.calls++;
     });
   }
-  pushEvidence(o: { key: string; job: string }) {
-    return this.edit((s) => {
+  async label(o: { key: string; pr: number | null; label: string }) {
+    await this.edit((s) => {
+      let l = s.labels.find((x) => x.key === o.key);
+      if (!l) {
+        l = { key: o.key, pr: o.pr, label: o.label, calls: 0 };
+        s.labels.push(l);
+      }
+      l.calls++;
+    });
+  }
+  async publishEvidence(o: { key: string; job: string; bundle: string; keepDays: number }): Promise<Published> {
+    if (!this.repo) throw new Error("the fake forge has no repo to keep the evidence branch in");
+    const r = await commitEvidence({ repo: this.repo, job: o.job, bundle: o.bundle, keepDays: o.keepDays });
+    await this.edit((s) => {
       let e = s.evidence.find((x) => x.key === o.key);
       if (!e) {
-        e = { key: o.key, job: o.job, calls: 0 };
+        e = { key: o.key, job: o.job, commit: r.commit, calls: 0 };
         s.evidence.push(e);
       }
+      e.commit = r.commit;
       e.calls++;
-      return true;
+    });
+    return { commit: r.commit, url: `fake://${EVIDENCE_BRANCH}/${o.job}/`, pruned: r.pruned };
+  }
+  async reviewComments(pr: number | null): Promise<PrComment[]> {
+    if (pr === null) return [];
+    return readFakeForge(this.file)
+      .reviewComments.filter((c) => c.pr === pr)
+      .sort((a, b) => a.at.localeCompare(b.at));
+  }
+  openPr(o: { key: string; branch: string; head: string; title: string; body: string }) {
+    return this.edit((s) => {
+      let p = s.branchPrs.find((x) => x.key === o.key);
+      if (!p) {
+        p = { n: s.next++, ...o, calls: 0 };
+        s.branchPrs.push(p);
+      }
+      p.head = o.head;
+      p.calls++;
+      return p.n;
     });
   }
 }
 
 export function forgeFor(repo: string, cfg: Config): Forge {
-  if (cfg.forge.kind === "fake") return new FakeForge(path.resolve(repo, cfg.forge.file ?? ".kitchen/fake-forge.json"));
+  if (cfg.forge.kind === "fake") return new FakeForge(path.resolve(repo, cfg.forge.file ?? ".kitchen/fake-forge.json"), repo);
   if (cfg.forge.kind === "github") throw new Error("forge: github comes in W3b");
   return new LocalForge(repo);
+}
+
+/**
+ * Whether a PR comment may send a done job back to build: its author is listed in kitchen.yaml
+ * `feedback.trusted`, or their association with the repo is in `feedback.trust_associations`.
+ * Pure. Anyone else's comment is ignored (and logged), so a drive-by comment can't steer the builder.
+ */
+export function isTrusted(c: Pick<PrComment, "author" | "association">, f: Config["feedback"]): boolean {
+  if (f.trusted.some((t) => t.toLowerCase() === c.author.toLowerCase())) return true;
+  return f.trust_associations.map((a) => a.toUpperCase()).includes(c.association.toUpperCase());
 }
