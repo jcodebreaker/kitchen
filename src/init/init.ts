@@ -29,8 +29,6 @@ const WT_ID = "_setup";
 const IDENTITY = { GIT_AUTHOR_NAME: "Kitchen", GIT_AUTHOR_EMAIL: "kitchen@localhost", GIT_COMMITTER_NAME: "Kitchen", GIT_COMMITTER_EMAIL: "kitchen@localhost" };
 /** Never committed from the setup worktree, whatever the repo's .gitignore says. */
 const NOT_COMMITTED = [
-  ":(exclude).kitchen-out",
-  ":(exclude).kitchen-out/**",
   ":(exclude,glob)**/node_modules/**",
   ":(exclude,glob)**/__pycache__/**",
   ":(exclude,glob)**/.venv/**",
@@ -410,6 +408,8 @@ async function tracked(git: Awaited<ReturnType<typeof openGit>>, file: string): 
 
 /** Engine commits on kitchen/setup: the dev environment the build path added, then the Toolkit, each reviewable alone. */
 async function commitSetup(wt: { gitDir: string; workTree: string }, base: string): Promise<{ sha: string; commits: string[] }> {
+  // The agents' outbox is never committed (its file was copied already); an exclude pathspec for it trips git when the repo ignores it.
+  fs.rmSync(path.join(wt.workTree, ".kitchen-out"), { recursive: true, force: true });
   const git = await openGit(wt);
   const commits: string[] = [];
   const commit = async (paths: string[], message: string) => {
