@@ -136,7 +136,8 @@ function ctxOf(j: Awaited<ReturnType<typeof job>>, agent: FakeAdapter): StageCon
     repo,
     job: j,
     jobDir,
-    config: parseConfig("version: 1"),
+    // Role skills off: these tests read the prompt exactly, and must not depend on the skills installed on this machine.
+    config: parseConfig("version: 1\nskills: { enabled: false }"),
     agent,
     forge: {} as StageContext["forge"],
     source: {} as StageContext["source"],

@@ -40,10 +40,12 @@ export const pausedByYou = (j: Pick<Job, "stage" | "pausedReason">) => j.stage =
 export const WAITING: readonly Stage[] = ["needs-info", "needs-human", "paused", "rejected"];
 
 export type Risk = "low" | "medium" | "high";
-export type Kind = "feature" | "bug" | "chore";
+export type Kind = "feature" | "bug" | "ui" | "chore";
 /** no-toolkit: the ticket needs Kitchen to drive the app and the repo has no Toolkit yet (ADR 0010). */
 export type WaitFor = "backoff" | "toolkit-pr" | "ci" | "toolkit-ticket" | "no-toolkit";
 export type TicketRef = { source: "prompt" | "github"; id: string; url?: string };
+/** One skill a role run was given (ADR 0014): its SKILL.md, pinned by sha256; `chars` of it reached the prompt. */
+export type SkillUse = { name: string; path: string; host: "claude" | "codex"; sha256: string; chars: number; truncated: boolean };
 export type AgentRunRef = {
   key: string;
   role: string;
@@ -60,6 +62,9 @@ export type AgentRunRef = {
   usd?: number;
   secs: number;
   at: string;
+  /** The skills quoted into its prompt, and the optional ones it went without (not installed). */
+  skills?: SkillUse[];
+  skillsSkipped?: string[];
 };
 
 export type Job = {
@@ -141,7 +146,7 @@ export type Lint = { ok: boolean; reason?: string; missingPrimitive?: string };
 /** NO-TOOLKIT (overall): nothing proved the change, or a requirement, without the app (ADR 0010). */
 export type Verdict = "PASS" | "FAIL" | "INCONCLUSIVE" | "TOOLKIT-GAP" | "NO-TOOLKIT";
 /** review-unparseable: a lens said VERDICT: BLOCKING twice without a finding the engine could read (never a silent PASS). */
-export type Escalation = "round-limit" | "smith-limit" | "adapter-error" | "engine-error" | "refused" | "review-unparseable";
+export type Escalation = "round-limit" | "smith-limit" | "adapter-error" | "engine-error" | "refused" | "review-unparseable" | "skill-missing";
 
 /** What guards read. Gathered by the caller (stage handlers, runner, CLI) from files, git and the forge. */
 export type Facts = {
@@ -1057,7 +1062,7 @@ export const TABLE: readonly Row[] = [
     id: "*>needs-human",
     from: "*",
     to: "needs-human",
-    when: "round limit, smith limit, an adapter error that repeats (not a rate limit), a stage whose result was refused twice, or a review lens that said BLOCKING twice without a readable finding",
+    when: "round limit, smith limit, an adapter error that repeats (not a rate limit), a stage whose result was refused twice, a review lens that said BLOCKING twice without a readable finding, or a required skill that is not installed (before any agent runs)",
     guard: all(
       check(
         (j) => isActive(j.stage),
@@ -1076,6 +1081,8 @@ export const TABLE: readonly Row[] = [
             return j.attempts.refused + 1 >= 2 ? null : "first refused move is retried";
           case "review-unparseable":
             return j.stage === "review" ? null : "review-unparseable comes from review";
+          case "skill-missing":
+            return null;
           default:
             return "no escalation reason";
         }

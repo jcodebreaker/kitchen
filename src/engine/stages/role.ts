@@ -18,6 +18,7 @@ import type { AgentRunRef } from "../machine.ts";
 import { markRead, operatorNotes, steerLine, unread, unreadSteers } from "../messages.ts";
 import { scratchOf, updateJob, writeAtomic } from "../store.ts";
 import { ensureWorktree } from "../worktree.ts";
+import { skillsFor } from "./skills.ts";
 import { LockLost, RoleFailure, type StageContext } from "./types.ts";
 
 const BRIDGE_ROLES = new Set(["builder", "verifier", "smith", "spec", "repro"]);
@@ -68,6 +69,9 @@ export async function runRole(
   const cwd = o.cwd ?? (job.worktree || ctx.repo);
   const outDir = o.tier === "read" ? path.join(scratchOf(ctx.repo, job.id), `${o.role}-m${job.moves}`) : undefined;
   const model = modelFor(ctx.config, o.role);
+  // Role skills (ADR 0014): a required one missing anywhere on the job's path throws SkillMissing here,
+  // before this role or any later one spends money; the found ones are quoted at the end of the prompt.
+  const skills = skillsFor(ctx, job, o.role, cwd);
   const t0 = Date.now();
   // Steers sent before this role started (a paused job, an engine-only step, a Codex role) open its prompt.
   // Every steer this run reads is put back to `sent` if the run doesn't produce its file (failed, stopped,
@@ -80,7 +84,7 @@ export async function runRole(
   const stream = path.join("activity", `m${job.moves}-${o.role}-${t0}.jsonl`);
   const req: AgentRequest = {
     role: o.role,
-    prompt: operatorNotes(notes) + o.prompt,
+    prompt: operatorNotes(notes) + o.prompt + (skills.section ? `\n\n${skills.section}` : ""),
     cwd,
     model,
     tier: o.tier,
@@ -153,6 +157,8 @@ export async function runRole(
     usd: r.usage?.usd,
     secs,
     at: ctx.now().toISOString(),
+    ...(skills.uses.length ? { skills: skills.uses } : {}),
+    ...(skills.skipped.length ? { skillsSkipped: skills.skipped.map((m) => m.name) } : {}),
   };
   appendLedger(ctx.repo, {
     job: job.id,
@@ -166,7 +172,15 @@ export async function runRole(
     model: ran.model,
     secs,
     usd: r.usage?.usd,
-    detail: { line: r.line, sessionId: r.sessionId, error: r.error, inTok: r.usage?.inTok, outTok: r.usage?.outTok },
+    detail: {
+      line: r.line,
+      sessionId: r.sessionId,
+      error: r.error,
+      inTok: r.usage?.inTok,
+      outTok: r.usage?.outTok,
+      ...(skills.uses.length ? { skills: skills.uses.map((u) => ({ name: u.name, path: u.path, host: u.host, sha256: u.sha256 })) } : {}),
+      ...(skills.skipped.length ? { skillsSkipped: skills.skipped.map((m) => m.name) } : {}),
+    },
   });
   if (!r.ok || !r.outPath) {
     const why = r.error ?? (r.outPath ? r.line : `no ${o.file} written`);

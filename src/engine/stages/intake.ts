@@ -40,7 +40,7 @@ export const intake: StageHandler = async (ctx) => {
   });
   const h = headers(r.text);
   const decision = pick(h.DECISION, DECISIONS);
-  const kind = pick<Kind>(h.KIND, ["feature", "bug", "chore"]);
+  const kind = pick<Kind>(h.KIND, ["feature", "bug", "ui", "chore"]);
   const risk = pick<Risk>(h.RISK, ["low", "medium", "high"]);
   const surfaces = (h.SURFACES ?? "")
     .toLowerCase()
