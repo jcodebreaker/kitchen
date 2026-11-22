@@ -1,14 +1,19 @@
 // What the dashboard shows (dashboard/dashboard.html), read from `.kitchen/` only:
 // job.json, the latest verdict and review of each job, report.html's presence, the
-// ledger (cost, the §0 measures), the run lock and the retro's mutes. Read-only.
+// ledger (cost, the §0 measures), the run lock, the retro's mutes, each job's
+// steering thread and the live line of the agent working on it. Read-only.
 import fs from "node:fs";
 import path from "node:path";
+import { runningNow } from "../engine/control.ts";
 import { readRunLock, staleReason } from "../engine/lock.ts";
-import { isActive, type Job, roundsUsed } from "../engine/machine.ts";
+import { BY_YOU_STOPPED, isActive, type Job, pausedByYou, roundsUsed, type Stage } from "../engine/machine.ts";
+import { readMessages } from "../engine/messages.ts";
 import { jobDirOf, scanJobs } from "../engine/store.ts";
+import { liveDiffStat } from "../engine/worktree.ts";
 import { type LedgerLine, readLedger } from "../ledger/append.ts";
 import { measures } from "../ledger/measures.ts";
 import { readRetroState } from "../retro/state.ts";
+import { activityOf, type Ev } from "./activity.ts";
 
 /** The board's columns, left to right; a paused job sits in the column it paused from. */
 export const COLUMNS = [
@@ -24,6 +29,90 @@ export const COLUMNS = [
 ] as const;
 
 export type Chip = { id: string; result: string };
+/** The six steps of the stage track: a job's stages folded the way a person reads them. */
+export type Phase = "intake" | "build" | "gate" | "verify" | "review" | "report";
+const PHASE: Record<Stage, Phase | null> = {
+  intake: "intake",
+  "needs-info": "intake",
+  spec: "intake",
+  repro: "intake",
+  build: "build",
+  gate: "gate",
+  drives: "verify",
+  verify: "verify",
+  toolkit: "verify",
+  review: "review",
+  ready: "report",
+  report: "report",
+  done: "report",
+  "needs-human": null,
+  paused: null,
+  rejected: null,
+};
+/** Who works in a stage, as the page names it; null: Kitchen itself (an automatic step, no agent). */
+const AGENT: Partial<Record<Stage, string>> = {
+  intake: "Intake agent",
+  spec: "Spec agent",
+  repro: "Repro agent",
+  build: "Build agent",
+  drives: "Verify agent",
+  toolkit: "Toolkit smith",
+  review: "Review agents",
+  report: "Report agent",
+};
+/** The stage a job's track and agent are read from: where it paused or escalated from, else where it is. */
+export function workStage(j: Pick<Job, "stage" | "pausedFrom" | "escalatedFrom">): Stage {
+  if (j.stage === "paused") return j.pausedFrom ?? "intake";
+  if (j.stage === "needs-info") return "intake";
+  if (j.stage === "needs-human" || j.stage === "rejected") return j.escalatedFrom ?? "intake";
+  return j.stage;
+}
+export const phaseOf = (j: Pick<Job, "stage" | "pausedFrom" | "escalatedFrom">): Phase => PHASE[workStage(j)] ?? "intake";
+export const agentOf = (s: Stage): string | null => AGENT[s] ?? null;
+export type JobState = "you" | "run" | "paused" | "done" | "rejected";
+export function stateOf(j: Pick<Job, "stage">): JobState {
+  if (j.stage === "needs-info" || j.stage === "needs-human") return "you";
+  if (j.stage === "paused") return "paused";
+  if (j.stage === "done") return "done";
+  if (j.stage === "rejected") return "rejected";
+  return "run";
+}
+/** What a job that needs you asks: intake's question (question.md), or why it escalated. */
+export function questionOf(j: Job, dir: string): string | null {
+  if (j.stage === "needs-info") {
+    try {
+      const q = fs
+        .readFileSync(path.join(dir, "question.md"), "utf8")
+        .replace(/<!--[\s\S]*?-->/g, "")
+        .trim();
+      if (q) return q;
+    } catch {}
+  }
+  return j.stage === "needs-info" || j.stage === "needs-human" ? (j.pausedReason ?? "It needs your answer to go on.") : null;
+}
+/** The agent stream files of the stage entry the job is in now, oldest first (activity/m<moves>-<role>-<t0>.jsonl). */
+export function liveStreams(dir: string, moves: number): { role: string; file: string; t0: number }[] {
+  const d = path.join(dir, "activity");
+  if (!fs.existsSync(d)) return [];
+  return fs
+    .readdirSync(d)
+    .flatMap((f) => {
+      const m = /^m(\d+)-(.+)-(\d+)\.jsonl$/.exec(f);
+      return m && Number(m[1]) === moves ? [{ role: m[2], file: path.join(d, f), t0: Number(m[3]) }] : [];
+    })
+    .sort((a, b) => a.t0 - b.t0);
+}
+
+const DIFFS = new Map<string, { at: number; files: FileStat[] }>();
+async function changesOf(j: Job, now: number): Promise<FileStat[]> {
+  if (!j.worktree || !j.gitDir || !fs.existsSync(j.worktree)) return [];
+  const c = DIFFS.get(j.id);
+  if (c && now - c.at < (isActive(j.stage) ? 2500 : 60_000)) return c.files;
+  const files = await liveDiffStat(j).catch(() => c?.files ?? []);
+  DIFFS.set(j.id, { at: now, files });
+  return files;
+}
+export type FileStat = { p: string; a: number; d: number };
 export type JobCard = {
   id: string;
   title: string;
@@ -49,11 +138,34 @@ export type JobCard = {
   active: boolean;
   pr: number | null;
   report: string | null;
+  // ADR 0009: what the interactive page needs
+  state: JobState;
+  phase: Phase;
+  /** Who works in the job's stage (null: an automatic step). */
+  agent: string | null;
+  /** A job that needs you: what it asks. */
+  q: string | null;
+  /** Paused by a person: "pause" or "stop". */
+  pausedBy: "pause" | "stop" | null;
+  /** The last thing the agent working on it now did, and which role that is. */
+  live: Ev | null;
+  liveRole: string | null;
+  /** A runner is working on it right now. */
+  runnerOn: boolean;
+  /** Files changed from the base (worktree as it is now). */
+  files: FileStat[];
+  /** Steering messages no agent has read yet. */
+  unread: number;
+  doneAt: string | null;
 };
 
 export type Snapshot = {
   repo: string;
   at: string;
+  /** Spent today (local day), from the ledger. */
+  usdToday: number;
+  tool: string | null;
+  toolkitProven: boolean;
   runner: { running: boolean; text: string };
   columns: { id: string; title: string }[];
   jobs: JobCard[];
@@ -120,7 +232,7 @@ export function stepOf(l: LedgerLine): string {
   return `${l.event}${l.result ? ` ${String(l.result)}` : ""}`;
 }
 
-export function snapshot(repo: string, now = Date.now()): Snapshot {
+export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot> {
   const lines = readLedger(repo);
   const m = measures(lines);
   const lastLine = new Map<string, LedgerLine>();
@@ -151,6 +263,9 @@ export function snapshot(repo: string, now = Date.now()): Snapshot {
       } catch {}
     const active = isActive(j.stage) || j.stage === "paused";
     const end = active ? now : Date.parse(j.updatedAt);
+    const streams = isActive(j.stage) ? liveStreams(dir, j.moves) : [];
+    const cur = streams.at(-1);
+    const evs = cur ? activityOf(cur.file, [j.worktree, repo]) : [];
     jobs.push({
       id: j.id,
       title: j.title,
@@ -176,15 +291,35 @@ export function snapshot(repo: string, now = Date.now()): Snapshot {
       active,
       pr: j.pr,
       report: fs.existsSync(path.join(dir, "report.html")) ? `jobs/${encodeURIComponent(j.id)}/report.html` : null,
+      state: stateOf(j),
+      phase: phaseOf(j),
+      agent: agentOf(workStage(j)),
+      q: questionOf(j, dir),
+      pausedBy: pausedByYou(j) ? (j.pausedReason === BY_YOU_STOPPED ? "stop" : "pause") : null,
+      live: evs.at(-1) ?? null,
+      liveRole: cur?.role ?? null,
+      runnerOn: runningNow(j),
+      files: await changesOf(j, now),
+      unread: readMessages(dir).filter((x) => x.kind === "steer" && x.status === "sent").length,
+      doneAt: j.doneAt ?? null,
     });
   }
   const lock = readRunLock(repo);
   const stale = lock ? staleReason(lock.info, now) : null;
   const done = m.jobs.filter((j) => j.done);
+  const today = new Date(now).toDateString();
+  const usdToday = lines.reduce((a, l) => a + (typeof l.usd === "number" && new Date(l.t).toDateString() === today ? l.usd : 0), 0);
+  let tool: string | null = null;
+  try {
+    tool = /^\s*agent:\s*\{[^}]*tool:\s*(\w+)/m.exec(fs.readFileSync(path.join(repo, "kitchen.yaml"), "utf8"))?.[1] ?? "claude";
+  } catch {}
   const med = (xs: number[]) => (xs.length ? [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)] : 0);
   return {
     repo: path.basename(repo),
     at: new Date(now).toISOString(),
+    usdToday,
+    tool,
+    toolkitProven: fs.existsSync(path.join(repo, ".kitchen", "toolkit.proven")),
     runner:
       lock && !stale ? { running: true, text: `running, pid ${lock.info?.pid}` } : { running: false, text: stale ? `not running (${stale})` : "not running" },
     columns: COLUMNS.map((c) => ({ id: c.id, title: c.title })),

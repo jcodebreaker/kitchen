@@ -31,3 +31,22 @@ node spikes/w6-steer/spike.mjs            # one haiku call, about $0.002
 - The stream carries no echo of the injected user message. The adapter counts a message as read once an assistant
   event arrives after it was written; one that was written but never followed by an assistant event goes back to the
   queue for the next role.
+
+## Kitchen's adapter on a real `claude` (`adapter.ts`, one haiku call, $0.0020)
+
+```sh
+npx tsx spikes/w6-steer/adapter.ts
+```
+
+`ClaudeAdapter.run` with the scrubbed env, the sandbox settings and a steer inbox. The steer was queued 1.5 s in,
+as soon as the first `tool_use` showed in the stream file, while `sleep 6` ran:
+
+```
+1517ms  queue steer m1
+9359ms  read m1
+{ "ok": true, "line": "Done: `spike.md` is written with \"done\" on line 1 and \"PINEAPPLE\" on line 2.",
+  "usage": { "usd": 0.00196334, "inTok": 35373, "outTok": 652 }, "read": ["m1"], "out": "done\nPINEAPPLE\n" }
+```
+
+The message was read right after the tool call it arrived during, acted on (the out file has its line), and marked
+read. Cost, tokens, session and the out file read as before.
