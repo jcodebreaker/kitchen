@@ -9,7 +9,7 @@
 //   kitchen init [--answers <file>] [--tool claude|codex] [--detach] · init --status  ·  kitchen toolkit check [--feature x] [--src dir] · toolkit up · toolkit down --id <id>   (src/cli/toolkit-commands.ts)
 //   kitchen drive <job> <C> [--repro] [--arg k=v]… [--role r]   one criterion's proof (src/proof/prove.ts)
 //   kitchen drive <job> --view "<view>" [--role reviewer-ux]     one extra view for a UX/UI lens (src/engine/views.ts)
-//   kitchen dismiss <job> <finding-id> [--reason "<why>"]        a review finding was not useful (ledger, per lens)
+//   kitchen dismiss <job> [<finding-id>] [--reason "<why>"]      list a job's findings, or say one was not useful (ledger, per lens)
 //   kitchen dashboard [--port 7357]                              the board, on 127.0.0.1, read-only (src/dashboard/server.ts)
 //   kitchen migrate [--dry-run]                                  kitchen.yaml schema + Toolkit template files (src/migrate/migrate.ts)
 //   kitchen retro [status | unmute <lens>/<category> | approve <n>]   mutes and lesson drafts (src/retro/retro.ts)
@@ -39,7 +39,7 @@ Work
   kitchen dashboard [--port 7357]         the board in a browser, on 127.0.0.1, read-only
   kitchen feedback <id> ["<text>"] [--to <stage>]   answer a job that needs you, or send a done one back
   kitchen reject <id> · resume <id>
-  kitchen dismiss <job> <finding> [--reason "<why>"]  a review finding was not useful
+  kitchen dismiss <job> [<finding>] [--reason "<why>"]  list its findings, or say one was not useful
 
 Learning
   kitchen report [--bench] [--json]       the measures from the ledger
@@ -77,7 +77,7 @@ const COMMAND_HELP: Record<string, string> = {
   drive:
     'kitchen drive <job> <C> [--repro] [--arg k=v]... [--role r] | drive <job> --view "<view>"\n\nRuns one criterion\'s proof by hand (or one extra view for a review lens) and stamps the evidence.',
   dismiss:
-    'kitchen dismiss <job> <finding> [--reason "<why>"]\n\nA review finding was not useful: the builder ignores it and the lens won\'t block on it again. A security finding needs --reason.',
+    "kitchen dismiss <job> [<finding>] [--reason \"<why>\"]\n\nWithout a finding id, lists the job's review findings. With one, it records that the finding was not useful: the builder ignores it and the lens won't block on it again. A security finding needs --reason.",
   mcp: "kitchen mcp --job <id> --role <role> [--repo <dir>]\n\nThe engine bridge agents drive the app through (started by Kitchen, not by hand).",
 };
 
@@ -178,7 +178,6 @@ async function main(argv: string[]): Promise<number> {
       for (const f of flags) if (f !== "--dry-run") throw new Error(`kitchen migrate: unknown flag ${f}`);
       return (await import("./cli/migrate-command.ts")).migrate(repo, { dryRun: flags.has("--dry-run") }, out);
     case "dismiss":
-      if (!pos[1]) throw new Error('kitchen dismiss needs <job> <finding-id> [--reason "<why>"]');
       return cmd.dismiss(repo, need("<job>"), pos[1], reason, out);
     case "drive":
       if (viewArg !== undefined) {

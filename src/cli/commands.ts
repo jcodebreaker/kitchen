@@ -105,6 +105,12 @@ export function status(repo: string, out: Out, opts: { json?: boolean } = {}): n
   const jobs = scanJobs(repo);
   if (!jobs.length) out("no jobs");
   for (const e of jobs) out(e.job ? statusLine(e.job, jobDirOf(repo, e.id)) : `${e.id.padEnd(28)} corrupt(${e.corrupt})`);
+  if (jobs.length) {
+    const stages = jobs.map((e) => e.job?.stage);
+    const done = stages.filter((s) => s === "done").length;
+    const needs = stages.filter((s) => s === "needs-info" || s === "needs-human").length;
+    out(`${jobs.length} job${jobs.length === 1 ? "" : "s"}: ${done} done, ${needs} need${needs === 1 ? "s" : ""} you`);
+  }
   return 0;
 }
 
@@ -246,9 +252,16 @@ export async function drive(
  * again by the same lens on the same anchor is kept as a note (checks/findings.ts). An id that no review
  * of the job has is refused.
  */
-export function dismiss(repo: string, ref: string, finding: string, reason: string | undefined, out: Out): number {
+export function dismiss(repo: string, ref: string, finding: string | undefined, reason: string | undefined, out: Out): number {
   const job = findJob(repo, ref);
   const jobDir = jobDirOf(repo, job.id);
+  if (!finding) {
+    // No finding id: list the job's review findings (dogfood job 003).
+    const rows = findingsOf(jobDir).flatMap((r) => r.findings);
+    if (!rows.length) out(`${job.id}  has no review findings yet`);
+    for (const x of rows) out(`${x.id}  ${x.lens}  ${x.blocks ? "blocks" : "note"}  ${x.title}`);
+    return 0;
+  }
   const f = findingById(jobDir, finding);
   if (!f) {
     const all = findingsOf(jobDir).flatMap((r) => r.findings.flatMap((x) => [x.id, ...x.also]));
