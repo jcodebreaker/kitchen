@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { settleFailedDrive } from "../../toolkit/check.ts";
 import { ciVerdict } from "./ready.ts";
 import { smithPolicy, toleratedOnBase } from "./toolkit.ts";
 
@@ -14,6 +15,21 @@ describe("smith commit policy", () => {
     expect(t("settings.toggle-dark", ["login", "click"])).toBe(true);
     expect(t("db.peek", ["sql"])).toBe(false);
     expect(t("login", ["login"])).toBe(false);
+  });
+});
+
+describe("the base's own check: a failing drive runs once more before it is cached as known", () => {
+  it("passes when run again: a flake, not tolerated; fails again: known when tolerated, else failed", async () => {
+    let runs = 0;
+    const flake = async () => {
+      runs++;
+      return true;
+    };
+    expect(await settleFailedDrive({ retry: flake, tolerated: true })).toBe("flaky");
+    expect(runs).toBe(1);
+    expect(await settleFailedDrive({ retry: async () => false, tolerated: true })).toBe("known");
+    expect(await settleFailedDrive({ retry: async () => false, tolerated: false })).toBe("failed");
+    expect(await settleFailedDrive({ tolerated: true })).toBe("known"); // no retry: the smith's proof, as before
   });
 });
 

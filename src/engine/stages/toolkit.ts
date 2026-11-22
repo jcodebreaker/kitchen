@@ -59,13 +59,24 @@ function readRecord(file: string): CheckRecord | null {
 }
 
 /** The drives that fail on the base as it is (its own check passed everything else). */
-export type BaseCheck = { sha: string; ok: boolean; failing: string[]; failed?: string; at: string; secs: number };
+export type BaseCheck = {
+  sha: string;
+  ok: boolean;
+  failing: string[];
+  /** Drives that failed once, then passed when run again after a reset: flakes, not tolerated. */
+  flaky?: string[];
+  failed?: string;
+  at: string;
+  secs: number;
+};
 export const baseCheckFile = (repo: string, sha: string) => path.join(kitchenDir(repo), "toolkit-base-checks", `${sha}.json`);
 
 /**
  * The base's own check, once per base sha (cached in .kitchen/toolkit-base-checks/<sha>.json): its
- * drives, twice with a reset between, every failure tolerated so all are listed. No probe, no second
- * slot: only which drives fail on the app as it is matters here.
+ * drives, twice with a reset between, every failure tolerated so all are listed. A drive that fails is
+ * run once more after a reset first: one that passes then is a flake, recorded as `flaky` and not
+ * tolerated (a flake cached as "known" would excuse that drive for every job on this sha). No probe,
+ * no second slot: only which drives fail on the app as it is matters here.
  */
 export async function baseDriveFailures(ctx: Pick<StageContext, "repo" | "log">, sha: string): Promise<BaseCheck> {
   const file = baseCheckFile(ctx.repo, sha);
@@ -87,12 +98,15 @@ export async function baseDriveFailures(ctx: Pick<StageContext, "repo" | "log">,
       pathsRev: co.sha,
       tolerate: () => true,
       drivesOnly: true,
+      retryFailed: true,
       print: (l) => ctx.log(`  base: ${l}`),
     });
     // The base could not run its drives at all (up, doctor, prepare…): nothing can be told apart, and blaming the
     // smith would spend its attempt on the base's (or the machine's) trouble. Not cached: an engine error, retried.
     if (!r.ok) throw new Error(`the base's own check at ${sha.slice(0, 12)} failed at ${r.failed}: the smith's work can't be judged against it`);
-    const out: BaseCheck = { sha, ok: true, failing: r.tolerated, at: new Date().toISOString(), secs: r.secs };
+    const flaky = (r.flaky ?? []).filter((d) => !r.tolerated.includes(d));
+    if (flaky.length) ctx.log(`the base's own check: flaky (failed, then passed when run again; not tolerated): ${flaky.join(", ")}`);
+    const out: BaseCheck = { sha, ok: true, failing: r.tolerated, ...(flaky.length ? { flaky } : {}), at: new Date().toISOString(), secs: r.secs };
     writeAtomic(file, `${JSON.stringify(out, null, 2)}\n`);
     return out;
   } finally {

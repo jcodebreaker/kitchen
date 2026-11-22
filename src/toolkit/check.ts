@@ -49,7 +49,18 @@ export type CheckReport = {
   secs: number;
   /** Drives that failed but were tolerated (`CheckOpts.tolerate`), each named once. */
   tolerated: string[];
+  /** With `retryFailed`: drives that failed, then passed when run again after a reset (a flake, never tolerated). */
+  flaky?: string[];
 };
+
+/**
+ * What a failed drive comes to: `flaky` when it passes when run again (with `retry`), `known` when it
+ * still fails and is tolerated, else `failed`. Pure apart from the retry.
+ */
+export async function settleFailedDrive(o: { retry?: () => Promise<boolean>; tolerated: boolean }): Promise<"flaky" | "known" | "failed"> {
+  if (o.retry && (await o.retry())) return "flaky";
+  return o.tolerated ? "known" : "failed";
+}
 
 export type CheckOpts = {
   repo: string;
@@ -77,6 +88,12 @@ export type CheckOpts = {
   tolerate?: (drive: string, primitives: string[]) => boolean;
   /** Only describe, features, prepare, up, doctor and the drives (twice, reset between): no contract probe, no second slot. */
   drivesOnly?: boolean;
+  /**
+   * A drive that fails is run once more after a reset before it counts: passing then, it is a flake
+   * (`report.flaky`), neither failed nor tolerated. The base's own check uses it, so a flake is never
+   * cached as a known failure of the base.
+   */
+  retryFailed?: boolean;
 };
 
 /** prepare fails when it prints nothing for this long (a hung download), long before its 30-minute deadline. */
@@ -328,9 +345,20 @@ export async function runToolkitCheck(o: CheckOpts): Promise<CheckReport> {
     /** A failed drive is tolerated (marked known, the check goes on) or fails the check. */
     const driveOk = async (c: (typeof checks)[number], label: string) => {
       if (await drive(c, label)) return true;
-      if (!o.tolerate?.(c.drive, primsOf(c.drive))) return false;
-      const s = steps.at(-1);
-      if (s) s.known = true;
+      const failedStep = steps.at(-1);
+      const retry = o.retryFailed
+        ? async () =>
+            (await cmd("reset", [`--id=${a.id}`], `reset ${a.id} (before running ${c.drive} again)`, 120_000, okStatus)).ok &&
+            (await drive(c, `${label}, run again`))
+        : undefined;
+      const outcome = await settleFailedDrive({ retry, tolerated: !!o.tolerate?.(c.drive, primsOf(c.drive)) });
+      if (outcome === "flaky") {
+        report.flaky = [...new Set([...(report.flaky ?? []), c.drive])];
+        print(`toolkit check: ${label} failed, then passed when run again: a flake (not tolerated, not cached as known)`);
+        return true;
+      }
+      if (outcome === "failed") return false;
+      for (const s of [failedStep, steps.at(-1)]) if (s && !s.ok) s.known = true;
       if (!report.tolerated.includes(c.drive)) report.tolerated.push(c.drive);
       print(`toolkit check: ${label} failed: tolerated (known)`);
       return true;
