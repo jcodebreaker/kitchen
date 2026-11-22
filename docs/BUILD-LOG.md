@@ -200,4 +200,6 @@ One entry per wave: what was built, review rounds and scores, what is proven, an
 
 **Merge notes (review round):** W3b's `forge/github.ts`: `publishEvidence` gets `keep` (pass to `commitEvidence`); `reviewComments` must return each comment's `at` and `author_association` (Kitchen's own may be returned: the runner drops `KITCHEN_MARKER`).
 
+**Review round 2** (`spikes/w4/results.md` "Review round 2"): a requirement-only finding's evidence must be this lens's own view or a run of a criterion covering that requirement (else a note); every lens may write `VIEW:` (code and security too; the second pass gets every file of the view's runs); a dismissed finding is re-raised only by the same lens on the same line ±1 or the same requirement with a similar title; `doneAt` (stamped on the move to done) is the PR-comment cutoff; adapters report what ran (`ran`), so the cost table names the real adapter and model under a scripted wrapper (`reports/xss-planted.*` re-rendered from the saved job, no agent call). Proven: `scripted.ts` 38/38; `npm test` 343/343, typecheck and lint clean.
+
 **Open:** Codex (all of W4); `test` proofs have no app URL; `http` can't assert a 4xx.
