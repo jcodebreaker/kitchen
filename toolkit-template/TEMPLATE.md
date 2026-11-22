@@ -19,4 +19,6 @@
 A Toolkit may be written in any language as long as it keeps the contract; this
 template is Node because Kitchen already needs Node, and `app.mjs` can shell out
 to anything (`python3`, `docker compose`, `make`). Delete the optional modules a
-project doesn't use.
+project doesn't use. The browser module wants `"playwright": "1.65.0"` in
+`package.json` (the version Kitchen is tested with; another version downloads its
+own browser build in `prepare`, which takes minutes on a cold cache).

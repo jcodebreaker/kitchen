@@ -22,7 +22,7 @@ export default {
   /** External services the app calls, each replaced by a local mock or a sandbox: [{ name: "stripe", mode: "mock" }]. */
   externals: [],
 
-  /** Seed users drives sign in as (fake credentials from .env.kitchen). Read them from the seed, don't hand-keep them. */
+  /** Seed usernames drives sign in as: plain strings, e.g. ["alice", "bob-admin"] (passwords stay in .env.kitchen). Read them from the seed, don't hand-keep them. */
   async seedUsers(_ctx) {
     return [];
   },

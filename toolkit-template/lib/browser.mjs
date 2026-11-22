@@ -7,7 +7,8 @@
 //   reset:     await resetBrowser(ctx);
 //   primitives: { ...browserPrimitives({ passwordOf: (ctx, user) => ctx.env[`SEED_${user.toUpperCase()}_PASSWORD`] }), …your own }
 //
-// prepare must install it: add "playwright" to package.json and run
+// prepare must install it: add "playwright": "1.65.0" to package.json (the version Kitchen is tested with; a
+// newer or older one downloads its own browser build, minutes on a cold cache) and run
 // `node_modules/.bin/playwright install --only-shell chromium` (cached per version).
 import path from "node:path";
 import { TOOLKIT_DIR } from "./common.mjs";

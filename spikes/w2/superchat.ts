@@ -65,7 +65,7 @@ const files = fs.existsSync(path.join(wt, ".kitchen/toolkit"))
   : [];
 let diffstat = "";
 try {
-  diffstat = execFileSync("git", ["-C", dir, "diff", "--stat", "main...kitchen/setup"]).toString().trim();
+  diffstat = execFileSync("git", ["-C", dir, "diff", "--stat", `${head}..kitchen/setup`]).toString().trim();
 } catch {}
 check(
   "superchat-lite: a Toolkit was generated and committed on kitchen/setup",
