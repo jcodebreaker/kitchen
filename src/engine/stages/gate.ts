@@ -41,7 +41,7 @@ export const gate: StageHandler = async (ctx) => {
   const head = await headOf(job);
   let g = readGate(ctx.jobDir, job.round);
   if (!g || g.head !== head) {
-    const r = await runGate({ jobDir: ctx.jobDir, checks: ctx.config.checkList, headOf: () => headOf(job) });
+    const r = await runGate({ jobDir: ctx.jobDir, checks: ctx.config.checkList, network: ctx.config.checks_network, headOf: () => headOf(job) });
     writeAtomic(gateFileOf(ctx.jobDir, job.round), `${r.lines.join("\n")}\n`);
     g = { head: r.head, result: r.result };
     ctx.log(`gate ${g.result} on ${r.head.slice(0, 8)} (${ctx.config.checkList.length} checks)${r.why ? `: ${r.why}` : ""}`);

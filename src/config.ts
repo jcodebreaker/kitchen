@@ -84,6 +84,8 @@ export const ConfigSchema = z
       .strict()
       .prefault({}),
     checks: z.array(Check).default([]),
+    /** Checks run under the proof sandbox; true allows them outbound network (a package install). The filesystem rules stay. */
+    checks_network: z.boolean().default(false),
     /** How a `test <file>` proof runs, in the job worktree with the untrusted env. `{file}` is the test file, shell-quoted. */
     test_cmd: z.string().min(1).default("npm test -- {file}"),
     agent: z
