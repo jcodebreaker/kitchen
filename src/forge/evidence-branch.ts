@@ -9,6 +9,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { GitError, openGit, plainCheckout } from "../engine/git.ts";
+import { withFileLock } from "../lock.ts";
 
 export const EVIDENCE_BRANCH = "kitchen-evidence";
 const IDENTITY = { GIT_AUTHOR_NAME: "Kitchen", GIT_AUTHOR_EMAIL: "kitchen@localhost", GIT_COMMITTER_NAME: "Kitchen", GIT_COMMITTER_EMAIL: "kitchen@localhost" };
@@ -33,14 +34,15 @@ export function expired(published: Map<string, string>, now: Date, keepDays: num
  * the same bundle on top of the same branch makes no new commit. Returns the branch head
  * and the folders pruned.
  */
-export async function commitEvidence(o: {
-  repo: string;
-  job: string;
-  bundle: string;
-  keepDays: number;
-  now?: Date;
-  branch?: string;
-}): Promise<{ commit: string; pruned: string[]; files: number }> {
+type EvidenceOpts = { repo: string; job: string; bundle: string; keepDays: number; now?: Date; branch?: string };
+
+/** One evidence commit at a time per repo: two jobs reaching report together both moved the branch, and the second update-ref failed (W5). */
+export function commitEvidence(o: EvidenceOpts): Promise<{ commit: string; pruned: string[]; files: number }> {
+  fs.mkdirSync(path.join(o.repo, ".kitchen"), { recursive: true });
+  return withFileLock(path.join(o.repo, ".kitchen", "evidence.lock"), () => commitEvidenceNow(o));
+}
+
+async function commitEvidenceNow(o: EvidenceOpts): Promise<{ commit: string; pruned: string[]; files: number }> {
   const branch = o.branch ?? EVIDENCE_BRANCH;
   if (!/^[a-z0-9][a-z0-9._-]*$/.test(o.job)) throw new Error(`bad job id ${JSON.stringify(o.job)}`);
   const git = await openGit(plainCheckout(o.repo));

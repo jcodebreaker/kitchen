@@ -60,6 +60,7 @@ export const GITIGNORE = [
   ".kitchen-out/",
   ".kitchen/retro/",
   ".kitchen/local-forge.jsonl",
+  ".kitchen/evidence.lock",
   ".worktrees/",
 ];
 

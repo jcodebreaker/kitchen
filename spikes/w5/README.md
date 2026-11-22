@@ -18,4 +18,5 @@ node spikes/w5/newcomer-setup.ts <dir>     # the newcomer test's kit: README.md 
 | `ledger-copy.ts`, `w3b-ledger/` | the W3b full benchmark's 55 surviving per-run ledgers in one file (job ids prefixed by run), `proof` lines backfilled from each job's `proofs-m*.json`, the bench result lines |
 | `app-url.ts` | W3b open item: `up` records the URL per slot; a sandboxed cmd proof sees it; gone after `down` |
 | `dashboard.ts` | the board mid-run and after it (`screens/running-*.png`, `screens/done-*.png`, light and dark); done jobs carry verdict chips, review, report link; read-only, localhost-only, no path traversal |
+| `evidence-race.ts` | six evidence commits at once all land (the race the first dashboard run hit) |
 | `pack.ts` | the tarball holds only the allowlist; no secrets; `npx ./devkitchen-0.1.0.tgz --help` and an install into a temp prefix work from an empty dir |
