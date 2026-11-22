@@ -125,10 +125,11 @@ const SCENARIOS: Record<string, () => Promise<void>> = {
     check("inconclusive: feedback → verify (where it escalated from)", /needs-human → verify/.test(fb), fb.trim());
     stepUntil(r, id, STOP, { max: 20, log });
     const w = walk(r, id);
+    // INCONCLUSIVE never costs a round; `kitchen feedback` starts a fresh budget (a new round, ADR 0007).
     check(
       "inconclusive: path",
-      w.endsWith("drives → verify → verify → paused → verify → verify → needs-human → verify → review") && jobOf(r, id).round === 1,
-      w,
+      w.endsWith("drives → verify → verify → paused → verify → verify → needs-human → verify → review"),
+      `${w} (round ${jobOf(r, id).round})`,
     );
     clean(r, id, "inconclusive");
   },
