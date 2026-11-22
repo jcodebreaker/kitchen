@@ -296,7 +296,10 @@ check(
 editShim(shim, (s) => {
   s.issues.find((i) => i.number === 53)?.events?.push({ type: "labeled", label: "kitchen", at: "2026-11-20T12:00:00Z" });
 });
-check("source: labelled again after the edit → taken in", (await src.poll()).some((t) => t.ref.id === "53"));
+check(
+  "source: labelled again after the edit → taken in",
+  (await src.poll()).some((t) => t.ref.id === "53"),
+);
 
 // --- review fix (M4): a closed Toolkit PR reads closed; a closed job PR is never reused ---
 git(r.dir, "checkout", "-q", "-b", "kitchen/toolkit/001-x-2", "main");
@@ -304,7 +307,13 @@ fs.appendFileSync(path.join(r.dir, ".kitchen/toolkit/SKILL.md"), "\nhover primit
 git(r.dir, "commit", "-qam", "toolkit: hover");
 const th2 = git(r.dir, "rev-parse", "HEAD").trim();
 git(r.dir, "checkout", "-q", "main");
-const t3 = await forge.openToolkitPr({ key: "001-x/toolkit-pr/2", title: "Toolkit: add primitive hover", body: "proven", branch: "kitchen/toolkit/001-x-2", head: th2 });
+const t3 = await forge.openToolkitPr({
+  key: "001-x/toolkit-pr/2",
+  title: "Toolkit: add primitive hover",
+  body: "proven",
+  branch: "kitchen/toolkit/001-x-2",
+  head: th2,
+});
 check("state: an open Toolkit PR is open", (await forge.prState(t3)) === "open");
 editShim(shim, (s) => {
   const p = s.prs.find((x) => x.number === t3);
