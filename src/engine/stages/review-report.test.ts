@@ -4,6 +4,7 @@ import { parseConfig } from "../../config.ts";
 import { expired } from "../../forge/evidence-branch.ts";
 import { isTrusted } from "../../forge/forge.ts";
 import { stageCosts } from "../../ledger/report.ts";
+import { churnOf } from "../../toolkit/maintain.ts";
 import { viewProof } from "../views.ts";
 import { patchOf, verdictRows } from "./report.ts";
 import { lensesFor, screenshotsOf } from "./review.ts";
@@ -107,4 +108,10 @@ test("cost and time per stage from the ledger; evidence folders past keep days; 
   const head = (f: string) => `diff --git a/${f} b/${f}\n`;
   const patch = `${head("server.js")}+x\n${head("db/003.sql")}+y\n`;
   assert.equal(patchOf(patch, ["db/003.sql"]), `${head("db/003.sql")}+y\n`);
+});
+
+test("maintain churn: lines changed in feature-mapped paths only", () => {
+  const numstat = "120\t30\tserver.js\n200\t0\tdocs/notes.md\n5\t5\tdb/002_seed.sql\n-\t-\tlogo.png\n";
+  assert.deepEqual(churnOf(numstat, ["server.js", "db/**"]), { lines: 160, files: ["server.js", "db/002_seed.sql"] });
+  assert.deepEqual(churnOf(numstat, ["lib/**"]), { lines: 0, files: [] });
 });

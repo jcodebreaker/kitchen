@@ -168,11 +168,13 @@ export function modelFor(cfg: Config, role: string): string {
     ? (role as RoleName)
     : role.startsWith("review")
       ? "reviewer"
-      : role.startsWith("maintain")
-        ? "maintain"
-        : role === "repro"
-          ? "verifier"
-          : "builder";
+      : role === "maintain-fix"
+        ? "smith"
+        : role.startsWith("maintain")
+          ? "maintain"
+          : role === "repro"
+            ? "verifier"
+            : "builder";
   const want = cfg.models[key];
   const tiers = { ...DEFAULT_MODELS[cfg.agent.tool], ...cfg.agent.models };
   return (TIERS as readonly string[]).includes(want) ? tiers[want as ModelTier] : want;

@@ -22,6 +22,7 @@ import { procsDirOf, reapGroups } from "../procs.ts";
 import { PromptSource } from "../sources/prompt.ts";
 import type { TicketSource } from "../sources/source.ts";
 import { effectiveConcurrency, readProven } from "../toolkit/check.ts";
+import { maintain, maintainDue } from "../toolkit/maintain.ts";
 import { beforeNewWork } from "../toolkit/reproof.ts";
 import { acquireSlot, downSlot, listSlots, reclaimStaleSlots, releaseSlot } from "../toolkit/slots.ts";
 import { acquireRunLock } from "./lock.ts";
@@ -95,6 +96,16 @@ export async function runKitchen(o: RunOpts): Promise<{ steps: number; moves: nu
     await resumeAll(repo, me.pid, print, runKey);
     // Base moved since the Toolkit was proven: re-check it first; a failure pauses the queue (PLAN §2).
     if (!(await beforeNewWork({ repo, forge: deps.forge, print }))) return stats;
+    // The feature-mapped paths churned past maintain_churn_lines since the last maintain: run it first (once per base).
+    const due = await maintainDue(repo, config).catch(() => null);
+    if (due?.due) {
+      print(
+        `toolkit: ${due.lines} lines changed in feature-mapped paths since ${due.since?.slice(0, 12)} (> ${config.maintain_churn_lines}): kitchen toolkit maintain`,
+      );
+      await maintain({ repo, forge: deps.forge, print, agent: deps.agent, trigger: `churn ${due.lines} lines since ${due.since?.slice(0, 12)}` }).catch((e) =>
+        print(`toolkit: maintain failed: ${(e as Error).message}`),
+      );
+    }
     // A Toolkit proven parallel:false runs one job at a time, whatever kitchen.yaml says.
     const concurrency = effectiveConcurrency(config.concurrency, readProven(repo));
     if (concurrency < config.concurrency) print(`run: the Toolkit is proven parallel:false, so one job at a time (kitchen.yaml says ${config.concurrency})`);
