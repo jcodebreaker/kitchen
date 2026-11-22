@@ -35,7 +35,7 @@ Setup
 Work
   kitchen ticket "<what you want>"        a ticket from a prompt (or label a GitHub issue: source.kind github)
   kitchen run [--detach] [--once] [<job>] work the queue (--detach: in the background, log in .kitchen/run.log)
-  kitchen status                          one row per job
+  kitchen status [--json]                 one row per job (--json: one JSON array)
   kitchen dashboard [--port 7357]         the board in a browser, on 127.0.0.1, read-only
   kitchen feedback <id> ["<text>"] [--to <stage>]   answer a job that needs you, or send a done one back
   kitchen reject <id> · resume <id>
@@ -160,7 +160,7 @@ async function main(argv: string[]): Promise<number> {
       for (const f of flags) if (f !== "--once" && f !== "--detach") throw new Error(`kitchen run: unknown flag ${f}`);
       return cmd.run(repo, { once: flags.has("--once"), detach: flags.has("--detach"), job: pos[0], cli: import.meta.filename, argv }, out);
     case "status":
-      return cmd.status(repo, out);
+      return cmd.status(repo, out, { json: flags.has("--json") });
     case "resume":
       return cmd.resume(repo, need("<id|n>"), out);
     case "feedback":

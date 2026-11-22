@@ -68,7 +68,28 @@ export function statusLine(j: Job, jobDir: string): string {
   return `${j.id.padEnd(28)} ${j.title.slice(0, 34).padEnd(34)} ${stage.padEnd(16)} round ${roundsUsed(j)}/${j.roundLimit}  moved ${ago(j.updatedAt)}  ${j.pr ? `PR #${j.pr}` : "no PR"}${report}`;
 }
 
-export function status(repo: string, out: Out): number {
+export function status(repo: string, out: Out, opts: { json?: boolean } = {}): number {
+  if (opts.json) {
+    const rows = scanJobs(repo).flatMap((e) => {
+      if (!e.job) return [];
+      const j = e.job;
+      const rp = path.join(jobDirOf(repo, e.id), "report.html");
+      return [
+        {
+          id: j.id,
+          title: j.title,
+          stage: j.stage,
+          round: roundsUsed(j),
+          roundLimit: j.roundLimit,
+          pr: j.pr ?? null,
+          report: fs.existsSync(rp) ? rp : null,
+          updatedAt: j.updatedAt,
+        },
+      ];
+    });
+    out(JSON.stringify(rows, null, 2));
+    return 0;
+  }
   const l = readRunLock(repo);
   if (!l) out("runner: not running");
   else {
