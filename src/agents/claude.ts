@@ -1,0 +1,118 @@
+// Claude Code adapter: `claude -p`, one JSON result on stdout (ADR 0006).
+
+import { randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { execa } from 'execa';
+import {
+  type AgentAdapter, type AgentRequest, type AgentResult,
+  contractFooter, foundOut, isInside, lastLine, looksRateLimited, outDirOf, outPathOf,
+} from './adapter.js';
+
+/** Sandbox for every Bash call: writes only in the working dirs, no escape hatch. */
+const SETTINGS = {
+  sandbox: {
+    enabled: true,
+    failIfUnavailable: true,
+    autoAllowBashIfSandboxed: true,
+    allowUnsandboxedCommands: false,
+  },
+};
+
+export function claudeArgs(req: AgentRequest, sessionId: string): string[] {
+  const out = outDirOf(req);
+  const args = [
+    '-p',
+    '--output-format', 'json',
+    '--model', req.model,
+    '--max-turns', String(req.maxTurns),
+    '--settings', JSON.stringify(SETTINGS),
+    '--setting-sources', '',           // no user/project/local settings: only ours
+    '--strict-mcp-config',             // no MCP servers
+    '--disable-slash-commands',        // no user skills or commands
+    '--permission-prompts', 'none',    // anything that would ask is denied
+  ];
+  if (req.resumeSession) args.push('--resume', req.resumeSession);
+  else args.push('--session-id', sessionId);
+
+  if (req.tier === 'write') {
+    // edits inside the worktree auto-accepted; Bash auto-allowed because it is sandboxed
+    args.push('--permission-mode', 'acceptEdits', '--tools', 'Bash,Read,Edit,Write,Glob,Grep');
+  } else {
+    // read anything; the only write allowed is into the out folder
+    args.push(
+      '--permission-mode', 'dontAsk',
+      '--tools', 'Read,Glob,Grep,Write',
+      '--allowedTools', 'Read', 'Glob', 'Grep', `Edit(/${out}/**)`, `Write(/${out}/**)`,
+    );
+  }
+  if (!isInside(out, req.cwd)) args.push('--add-dir', out);
+  return args;
+}
+
+export function claudeTranscriptPath(cwd: string, sessionId: string, env: Record<string, string>): string | undefined {
+  const base = join(env.CLAUDE_CONFIG_DIR ?? join(env.HOME ?? homedir(), '.claude'), 'projects');
+  const guess = join(base, cwd.replace(/[^a-zA-Z0-9]/g, '-'), `${sessionId}.jsonl`);
+  if (existsSync(guess)) return guess;
+  if (!existsSync(base)) return undefined;
+  for (const d of readdirSync(base)) {
+    const p = join(base, d, `${sessionId}.jsonl`);
+    if (existsSync(p)) return p;
+  }
+  return undefined;
+}
+
+type ClaudeJson = {
+  type?: string; subtype?: string; is_error?: boolean; result?: string; session_id?: string;
+  total_cost_usd?: number; num_turns?: number;
+  usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number };
+};
+
+export class ClaudeAdapter implements AgentAdapter {
+  readonly name = 'claude' as const;
+  constructor(private bin = process.env.KITCHEN_CLAUDE_BIN ?? 'claude') {}
+
+  async run(req: AgentRequest): Promise<AgentResult> {
+    mkdirSync(outDirOf(req), { recursive: true });
+    rmSync(outPathOf(req), { force: true }); // a stale file must never pass as this run's
+    const sessionId = req.resumeSession ?? randomUUID();
+    const p = await execa(this.bin, claudeArgs(req, sessionId), {
+      cwd: req.cwd,
+      env: req.env,
+      extendEnv: false,
+      input: req.prompt + contractFooter(req),
+      timeout: req.timeoutSec * 1000,
+      forceKillAfterDelay: 5000,
+      reject: false,
+    });
+    const transcriptPath = claudeTranscriptPath(req.cwd, sessionId, req.env);
+    const base = { sessionId, transcriptPath, outPath: foundOut(req) };
+    if (p.timedOut) return { ...base, ok: false, line: '', timedOut: true, error: `timeout after ${req.timeoutSec}s` };
+
+    let j: ClaudeJson | undefined;
+    try { j = JSON.parse(String(p.stdout)) as ClaudeJson; } catch { /* not JSON */ }
+    if (!j) {
+      const err = lastLine(String(p.stderr)) || lastLine(String(p.stdout)) || `exit ${p.exitCode}`;
+      return { ...base, ok: false, line: '', rateLimited: looksRateLimited(err), error: err };
+    }
+    const u = j.usage ?? {};
+    const usage = {
+      usd: j.total_cost_usd,
+      inTok: (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0),
+      outTok: u.output_tokens,
+    };
+    const maxTurnsHit = j.subtype === 'error_max_turns';
+    const ok = !j.is_error && j.subtype === 'success';
+    return {
+      ...base,
+      sessionId: j.session_id ?? sessionId,
+      ok,
+      line: lastLine(j.result),
+      usage,
+      maxTurnsHit,
+      rateLimited: !ok && looksRateLimited(j.result),
+      error: ok ? undefined : (j.subtype ?? 'error') + (j.result ? `: ${lastLine(j.result)}` : ''),
+    };
+  }
+}
