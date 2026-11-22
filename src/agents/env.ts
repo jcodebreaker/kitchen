@@ -137,6 +137,17 @@ export function untrustedEnv(src: string, parent: NodeJS.ProcessEnv = process.en
 }
 
 /**
+ * The env for the engine's own git calls (src/engine/git.ts): the untrusted
+ * allowlist and scrub (no system config, the engine-written global config, no
+ * credentials), but NOT the worktree's `.env.kitchen`, which could otherwise
+ * choose PATH or GIT_* for git itself. The scrub files are rewritten on every
+ * call, so an edit to them doesn't stick.
+ */
+export function engineGitEnv(parent: NodeJS.ProcessEnv = process.env, home = kitchenHome()): Record<string, string> {
+  return untrustedEnvOf(parent, prepareScrubHome(path.join(ensureHome(home), "scrub")), {});
+}
+
+/**
  * The env for the Toolkit's bin/dev: untrusted, plus the Docker variables the
  * control plane needs, named in KITCHEN_CONTROL_ENV so bin/dev strips exactly
  * those before it starts the app.
