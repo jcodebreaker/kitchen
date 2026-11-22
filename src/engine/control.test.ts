@@ -130,6 +130,26 @@ test("stop kills the job's agent process group now and parks the job", async () 
   assert.ok(lines.some((l) => l.includes("killed agent builder")));
 });
 
+test("stop that races the runner's park: the killed agent's runner parks it first, and the stop still succeeds", async () => {
+  const j = await job();
+  const dir = jobDirOf(repo, j.id);
+  // Another process stands in for the agent and its runner: on SIGTERM its step ends and the runner parks
+  // the job (paused, by-you: stopped) before the stop's own move gets the job.
+  const park = `process.on("SIGTERM",()=>{const fs=require("fs"),f=${JSON.stringify(path.join(dir, "job.json"))};const j=JSON.parse(fs.readFileSync(f,"utf8"));Object.assign(j,{stage:"paused",pausedFrom:j.stage,pausedReason:"by-you: stopped",running:null});fs.writeFileSync(f,JSON.stringify(j,null,2));process.exit(0)});console.log("ready");setInterval(()=>{},1000)`;
+  const agent = spawn(process.execPath, ["-e", park], { detached: true, stdio: ["ignore", "pipe", "ignore"] });
+  await new Promise((r) => agent.stdout?.once("data", r));
+  const pgid = agent.pid as number;
+  fs.mkdirSync(procsDirOf(dir), { recursive: true });
+  fs.writeFileSync(
+    path.join(procsDirOf(dir), `${pgid}.json`),
+    JSON.stringify({ pgid, start: processStart(pgid), what: "agent builder", by: process.pid, at: new Date().toISOString() }),
+  );
+  assert.equal(await stop(repo, j.id, out), 0, lines.join("\n"));
+  const p = readJobAt(dir);
+  assert.deepEqual([p.stage, p.pausedReason], ["paused", "by-you: stopped"]);
+  assert.ok(lines.includes(`${j.id}  stopped`), lines.join("\n"));
+});
+
 function ctxOf(j: Awaited<ReturnType<typeof job>>, agent: FakeAdapter): StageContext {
   const jobDir = jobDirOf(repo, j.id);
   return {

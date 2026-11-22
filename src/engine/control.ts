@@ -12,7 +12,7 @@ import path from "node:path";
 import { appendLedger } from "../ledger/append.ts";
 import { ownerAlive, withFileLock } from "../lock.ts";
 import { procsDirOf, reapGroups } from "../procs.ts";
-import { isActive, type Job } from "./machine.ts";
+import { BY_YOU_STOPPED, isActive, type Job, pausedByYou } from "./machine.ts";
 import { addMessage, checkText, type Message } from "./messages.ts";
 import { moveJob } from "./runner.ts";
 import { findJob, jobDirOf, readJobAt, writeAtomic } from "./store.ts";
@@ -83,7 +83,13 @@ async function request(repo: string, job: Job, how: "pause" | "stop", out: Out):
   // Decided under the job lock (moveJob): a runner that took the job a moment ago keeps it, and parks it itself.
   const r = await honorControl(repo, job.id, out);
   if (r === "waits") out(how === "pause" ? `${job.id}  pausing after the current step (${job.stage})` : `${job.id}  stopping: the runner parks it`);
-  return r === "none" ? 1 : 0;
+  // The runner may have parked it first (a killed agent ends its step): already paused by you, as asked, is done.
+  if (r === "none") {
+    const now = readJobAt(jobDir);
+    if (!pausedByYou(now) || (now.pausedReason === BY_YOU_STOPPED) !== (how === "stop")) return 1;
+    out(`${job.id}  ${how === "stop" ? "stopped" : "paused"}`);
+  }
+  return 0;
 }
 
 function parkable(job: Job, how: string, out: Out): boolean {
