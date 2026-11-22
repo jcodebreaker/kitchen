@@ -215,7 +215,7 @@ One entry per wave: what was built, review rounds and scores, what is proven, an
 
 **Open:** Codex (all of W4); `test` proofs have no app URL; `http` can't assert a 4xx; the independent review round.
 
-## Wave 5: learning, dashboard, release prep (built, not yet reviewed: Claude only, Codex owed)
+## Wave 5: learning, dashboard, release prep (reviewed and fixed; v0.1 not done: see the exit below)
 
 **Built**
 - **`kitchen report`** (`src/ledger/measures.ts`): every §0 measure from the ledger alone: merge-ready rate over tickets taken in, first-pass verdict rate, rounds per job, escalation reasons, Toolkit gaps and primitive PRs per job, INCONCLUSIVE and flake per drive (and per Verify verdict), time and cost per job and per risk path, findings dismissed per lens; `--json`. Verify now writes one `proof` ledger line per proof run (criterion, drives, HEAD, result, gap); the bench records INCONCLUSIVE and flaky per run.
@@ -232,3 +232,22 @@ One entry per wave: what was built, review rounds and scores, what is proven, an
 **Merge notes:** `review.ts` gained one import and a 4-line map after `judge` (the mute); `runner.ts` gained the retro call before `finally` (not in the PR-comment path); `TicketSource` has a new required method `draft`. **For the W4 fixer:** `prCommentsBack` should skip a comment where `dismissedIn(body)` is non-empty, or a "not useful" reply also sends a done job back to build.
 
 **Open:** Codex (all of W5); the real GitHub run (draft issues, PR replies); publishing (the user's step); the retro's categories are a keyword list (a `category:` line in the findings format would be exact, W4's file); the INCONCLUSIVE/flake counts for the W3b benchmark are backfilled from job files, and a fresh `kitchen bench full` on the merged code would record them natively.
+
+**Review round** (`spikes/w5/results.md` "Review round", PLAN "Changes from the Wave 5 review"):
+- M1: the dashboard spike has its own scripted agent (`spikes/w5/dashboard-agent.ts`); W4's script had changed under it at the merge. Every W5 spike re-run on the fixed branch: retro 19/19, pack 21/21, app-url 3/3, evidence-race 2/2, dashboard 13/13 (screenshots regenerated on purpose: the cards changed).
+- M2: a `category:` line in the findings format (security, correctness, performance, naming, style, types, tests, docs, ux, ui), keywords only as the fallback, and a security veto in every lens: a finding about auth, tokens, sessions, permissions, ownership, injection, SQL, XSS, CSRF, leaks, secrets, passwords, credentials, deleting another's data or access is never muted.
+- M3: a PR reply dismisses only the ids in the sentence that says "not useful" (or starts with 👎); the rest of the comment is still feedback; a security finding needs an explicit reason, recorded.
+- Minors: GitHub drafts deduped by Kitchen's own issues (`--author @me`); migrate by the parsed YAML document (`---`, `%YAML`, flow maps, CRLF); retro checked every tick and reading only PRs of jobs done in `retro.lookback_days`; agent seconds beside wall clock in `kitchen report`; dashboard CSP and X-Frame-Options as headers, cards with the full id, last move and last step; RELEASE.md's first release; `NOTICE`; `kitchen <cmd> --help`.
+- `npm test` 359/359, typecheck and lint clean.
+
+**First dogfooding** (PLAN §0.5): Kitchen on a scratch clone of its own repo, Claude sonnet, local forge, prompt tickets. Setup 277 s, $1.05, Toolkit proven (surface `cli`, a seeded target repo, the dashboard on the slot port). Six tickets from open items: **4 done** (002 `migrate --dry-run` exits 1 when files would change, 003 `dismiss <job>` lists findings, 004 `status --json`, 005 a status summary line; 004 and 005 only after a person's hint), 1 correctly refused (001: the ticket's premise was false), 1 stuck (006 `kitchen version`). $3.67 in all. My review as the human: 004 mergeable as is (cherry-picked); 002, 003 and 005 had good cores but tests outside the repo's layout (a new `tests/`/`test/` dir and a vitest include change, a helper that would ship) and were merged by hand without that. What it found: spec-lint deadlocks on "X stays unchanged" CLI requirements (5 of 6 first intakes refused); a CLI bug whose base exits non-zero can never be reproduced (`step-failed`, 006 twice); test proofs ignore the repo's test layout; low risk has no review lens; gate can't typecheck a Node repo (no `node_modules` before `prepare`); slots are per `KITCHEN_HOME` while ports are machine-wide (my first run collided with the concurrent benchmark for ~5 minutes; its runs on slots 0, 2 and 3 in that window should be checked).
+
+**W5 exit, honestly.** W5's own build is done and proven. v0.1's §0 is not all met:
+- §0.1 setup: met on Claude (A–D in W2; Kitchen itself today). Codex: open until 2026-12-21.
+- §0.2 benchmark: 88% and 0 false FAILs on pre-W4 code; traps 3/3 on two and 2/3 on two (not met). Pending the orchestrator's final benchmark on merged main.
+- §0.3 Codex subset: open until 2026-12-21.
+- §0.4 kill and resume: met.
+- §0.5 dogfooding: not met (4 own tickets done, 2 with help; needs 5 to ready PRs). The superchat-lite ticket needs a bigger machine.
+- The ledger measures and the newcomer test: met.
+
+**Open:** dogfood findings 1–2 (spec-lint on unchanged-behaviour requirements; repro of non-zero-exit CLI bugs) before the next dogfood round; one machine-wide slot registry; Codex (all of W5); the real GitHub run (draft issues, PR replies); publishing (the user's step).
