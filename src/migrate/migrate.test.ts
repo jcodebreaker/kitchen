@@ -15,6 +15,19 @@ test("kitchen.yaml without a version is stamped, comments and order kept; a curr
   assert.deepEqual([again.steps, again.after], [[], r.after]);
 });
 
+test("the version goes where the parsed document says: after ---/%YAML, into flow maps, CRLF kept, version: 0 replaced", () => {
+  const at = (t: string) => migrateConfigText(t).after;
+  assert.equal(at("%YAML 1.2\n---\n# c\nconcurrency: 1\n"), "%YAML 1.2\n---\n# c\nversion: 1\nconcurrency: 1\n");
+  assert.equal(at("---\nconcurrency: 1\n"), "---\nversion: 1\nconcurrency: 1\n");
+  assert.equal(at("{concurrency: 1, agent: {tool: claude}}\n"), "{version: 1, concurrency: 1, agent: {tool: claude}}\n");
+  assert.equal(at("{}\n"), "{version: 1}\n");
+  assert.equal(at("# c\r\nconcurrency: 1   # one\r\n"), "# c\r\nversion: 1\r\nconcurrency: 1   # one\r\n");
+  assert.equal(at("version: 0  # old\nconcurrency: 1\n"), "version: 1  # old\nconcurrency: 1\n");
+  assert.equal(at(""), "version: 1\n");
+  assert.equal(at("# nothing yet"), "# nothing yet\nversion: 1\n");
+  assert.throws(() => migrateConfigText("- a\n- b\n"), /not a map/);
+});
+
 test("a newer kitchen.yaml, or one this Kitchen can't load after migrating, is refused", () => {
   assert.throws(() => migrateConfigText("version: 9\n"), /upgrade Kitchen/);
   assert.throws(() => migrateConfigText("bogus_key: 1\n"), /bogus_key|Unrecognized/);

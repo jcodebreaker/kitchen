@@ -6,7 +6,7 @@ import path from "node:path";
 import { readRunLock, staleReason } from "../engine/lock.ts";
 import { isActive, type Job, roundsUsed } from "../engine/machine.ts";
 import { jobDirOf, scanJobs } from "../engine/store.ts";
-import { readLedger } from "../ledger/append.ts";
+import { type LedgerLine, readLedger } from "../ledger/append.ts";
 import { measures } from "../ledger/measures.ts";
 import { readRetroState } from "../retro/state.ts";
 
@@ -42,6 +42,10 @@ export type JobCard = {
   secs: number;
   startedAt: string;
   updatedAt: string;
+  /** When the job last changed stage (its last `move` ledger line; job.json's updatedAt before any). */
+  movedAt: string;
+  /** What it is doing now: the stage a runner is running, and its last ledger line (a proof, an agent, a move). */
+  step: string | null;
   active: boolean;
   pr: number | null;
   report: string | null;
@@ -104,9 +108,27 @@ function latest(dir: string, re: RegExp): string | null {
   return null;
 }
 
+/** One ledger line, as a card's "now" line: `proof C2 PASS (login → settings.open)`, `builder ok`, `moved verify → review`. Pure. */
+export function stepOf(l: LedgerLine): string {
+  const d = l.detail ?? {};
+  if (l.event === "proof") {
+    const drives = Array.isArray(d.drives) ? (d.drives as string[]).join(" → ") : "";
+    return `proof ${String(d.criterion ?? "?")} ${String(l.result ?? "")}${drives ? ` (${drives})` : ""}`.trim();
+  }
+  if (l.event === "agent") return `${l.role ?? "agent"} ${String(l.result ?? "")}`.trim();
+  if (l.event === "move") return `moved ${l.stage} → ${String(l.result ?? "?")}`;
+  return `${l.event}${l.result ? ` ${String(l.result)}` : ""}`;
+}
+
 export function snapshot(repo: string, now = Date.now()): Snapshot {
   const lines = readLedger(repo);
   const m = measures(lines);
+  const lastLine = new Map<string, LedgerLine>();
+  const lastMove = new Map<string, string>();
+  for (const l of lines) {
+    lastLine.set(l.job, l);
+    if (l.event === "move") lastMove.set(l.job, l.t);
+  }
   const usdOf = new Map(m.jobs.map((j) => [j.job, j.usd]));
   const jobs: JobCard[] = [];
   const corrupt: string[] = [];
@@ -147,6 +169,10 @@ export function snapshot(repo: string, now = Date.now()): Snapshot {
       secs: Math.max(0, Math.round((end - Date.parse(j.startedAt)) / 1000)),
       startedAt: j.startedAt,
       updatedAt: j.updatedAt,
+      movedAt: lastMove.get(j.id) ?? j.updatedAt,
+      step:
+        [j.running ? `running ${j.running.stage}` : null, lastLine.has(j.id) ? stepOf(lastLine.get(j.id) as LedgerLine) : null].filter(Boolean).join(" · ") ||
+        null,
       active,
       pr: j.pr,
       report: fs.existsSync(path.join(dir, "report.html")) ? `jobs/${encodeURIComponent(j.id)}/report.html` : null,

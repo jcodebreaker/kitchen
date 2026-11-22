@@ -119,7 +119,10 @@ else if (a === "pr" && b === "checks") {
 } else if (a === "issue" && b === "list") {
   const label = flag("label");
   const st = flag("state") ?? "open";
-  const rows = s.issues.filter((i) => (!label || (i.labels ?? []).includes(label)) && (st === "all" || i.state === st.toUpperCase()));
+  const author = flag("author") === "@me" ? "kitchen-bot" : flag("author");
+  const rows = s.issues.filter(
+    (i) => (!label || (i.labels ?? []).includes(label)) && (st === "all" || i.state === st.toUpperCase()) && (!author || i.author === author),
+  );
   out(
     rows.map((i) =>
       pick(

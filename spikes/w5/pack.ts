@@ -1,7 +1,7 @@
 // W5 release check: the npm tarball is clean and works from nowhere near the repo.
 //   node spikes/w5/pack.ts [scratch]
 // - `npm pack --dry-run --json`: only dist/*.js, roles/, skills/, toolkit-template/,
-//   dashboard/dashboard.html, README.md, LICENSE, package.json; no fixtures, spikes, bench,
+//   dashboard/dashboard.html, README.md, LICENSE, NOTICE, package.json; no fixtures, spikes, bench,
 //   src, tests, source maps, .env files, node_modules; no secret-shaped string in any file.
 // - `npm pack` builds the tarball (prepack: a fresh tsc build into dist/).
 // - From an empty temp dir: `npx <tarball> --help`, `--version`; then the same package
@@ -22,7 +22,9 @@ const npm = (args: string[], cwd: string, env: NodeJS.ProcessEnv = process.env) 
 const dry = npm(["pack", "--dry-run", "--json"], ROOT);
 const files = (JSON.parse(dry.stdout) as { files: { path: string }[] }[])[0].files.map((f) => f.path);
 const allowed = (f: string) =>
-  /^dist\/.+\.js$/.test(f) || /^(roles|skills|toolkit-template)\//.test(f) || ["dashboard/dashboard.html", "README.md", "LICENSE", "package.json"].includes(f);
+  /^dist\/.+\.js$/.test(f) ||
+  /^(roles|skills|toolkit-template)\//.test(f) ||
+  ["dashboard/dashboard.html", "README.md", "LICENSE", "NOTICE", "package.json"].includes(f);
 const stray = files.filter((f) => !allowed(f));
 check(
   "npm pack --dry-run lists only the package's files",
@@ -41,6 +43,7 @@ for (const need of [
   "toolkit-template/bin/dev",
   "dashboard/dashboard.html",
   "LICENSE",
+  "NOTICE",
 ])
   check(`the package has ${need}`, files.includes(need));
 

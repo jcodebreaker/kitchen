@@ -1,7 +1,8 @@
 // `kitchen migrate [--dry-run]` (PLAN §4): bring a repo's Kitchen files up to this Kitchen.
 //
 // 1. kitchen.yaml: its schema version (`version:`, absent = 0) is raised one step at a time
-//    through MIGRATIONS, editing the YAML document so comments and order stay. The result must
+//    through MIGRATIONS, each editing the parsed YAML document (so comments, key order, `---`,
+//    `%YAML` directives and flow maps stay; CRLF line ends are kept). The result must
 //    parse with this Kitchen's schema, or nothing is written. A version newer than this Kitchen
 //    knows is refused (upgrade Kitchen instead).
 // 2. The Toolkit: the template's generic files (bin/dev, lib/*.mjs: TEMPLATE.md's "generic"
@@ -14,7 +15,7 @@
 // when the base moves (reproof.ts).
 import fs from "node:fs";
 import path from "node:path";
-import { parseDocument } from "yaml";
+import { type Document, isMap, isScalar, parseDocument } from "yaml";
 import { configFile, parseConfig } from "../config.ts";
 
 export const CONFIG_VERSION = 1;
@@ -23,45 +24,63 @@ export const TEMPLATE_DIR = path.resolve(import.meta.dirname, "..", "..", "toolk
 export const GENERIC = ["bin/dev", "lib/common.mjs", "lib/browser.mjs", "lib/browser-daemon.mjs", "lib/terminal.mjs"];
 
 /**
- * One step: from version `from` to `from + 1`, on the file's text, so comments, spacing and key order
- * stay exactly as the person wrote them. A step that needs structure parses the text itself.
+ * One step: from version `from` to `from + 1`. It edits the text (LF line ends) at places the parsed
+ * document points to, so everything else stays byte for byte: comments, spacing, `---`, `%YAML`, flow maps.
  */
-type Migration = { from: number; why: string; run: (text: string) => string };
+type Migration = { from: number; why: string; run: (text: string, doc: Document) => string };
 
-/** Insert `line` as the first key: after the leading comment lines. */
-function asFirstKey(text: string, line: string): string {
-  const lines = text.split("\n");
-  let i = 0;
-  while (i < lines.length && /^\s*#/.test(lines[i])) i++;
-  lines.splice(i, 0, line);
-  return lines.join("\n");
+/** Set `version: v`: the existing value replaced in place, or a new first key of the top-level map (block or flow). */
+export function setVersion(text: string, doc: Document, v: number): string {
+  const c = doc.contents;
+  if (isMap(c)) {
+    const at = c.items.find((p) => isScalar(p.key) && p.key.value === "version");
+    const val = at?.value;
+    if (isScalar(val) && val.range) return text.slice(0, val.range[0]) + String(v) + text.slice(val.range[1]);
+    const first = c.items[0]?.key;
+    if (c.flow) {
+      const pos = isScalar(first) && first.range ? first.range[0] : (c.range?.[0] ?? 0) + 1;
+      return `${text.slice(0, pos)}version: ${v}${c.items.length ? ", " : ""}${text.slice(pos)}`;
+    }
+    if (isScalar(first) && first.range) {
+      const pos = first.range[0];
+      const indent = text.slice(text.lastIndexOf("\n", pos - 1) + 1, pos);
+      return `${text.slice(0, pos)}version: ${v}\n${indent}${text.slice(pos)}`;
+    }
+  }
+  if (c === null || c === undefined) return `${text}${text && !text.endsWith("\n") ? "\n" : ""}version: ${v}\n`;
+  throw new Error("kitchen.yaml: the top level is not a map of settings");
 }
 
-export const MIGRATIONS: Migration[] = [
-  { from: 0, why: "stamp the schema version (kitchen.yaml before 0.1 had none)", run: (t) => asFirstKey(t, "version: 1") },
-];
+export const MIGRATIONS: Migration[] = [{ from: 0, why: "stamp the schema version (kitchen.yaml before 0.1 had none)", run: (t, d) => setVersion(t, d, 1) }];
 
 export type FileChange = { file: string; before: string | null; after: string; why: string };
 
-/** Pure: the kitchen.yaml text at CONFIG_VERSION, with the steps it took. Throws on a version this Kitchen doesn't know. */
-export function migrateConfigText(text: string): { after: string; steps: string[]; from: number } {
-  const doc = parseDocument(text || "{}\n");
+const parse = (lf: string) => {
+  const doc = parseDocument(lf);
   if (doc.errors.length) throw new Error(`kitchen.yaml: ${doc.errors[0].message.split("\n")[0]}`);
+  return doc;
+};
+
+/** Pure: the kitchen.yaml text at CONFIG_VERSION, with the steps it took. Throws on a version this Kitchen doesn't know. CRLF line ends are kept. */
+export function migrateConfigText(text: string): { after: string; steps: string[]; from: number } {
+  const crlf = text.includes("\r\n");
+  let lf = text.replace(/\r\n/g, "\n");
+  const doc = parse(lf);
   const raw = doc.get("version");
   const from = raw === undefined || raw === null ? 0 : Number(raw);
   if (!Number.isInteger(from) || from < 0) throw new Error(`kitchen.yaml: version ${String(raw)} is not a schema version`);
   if (from > CONFIG_VERSION)
     throw new Error(`kitchen.yaml is version ${from}; this Kitchen knows up to ${CONFIG_VERSION}: upgrade Kitchen, don't downgrade the file`);
   const steps: string[] = [];
-  let after = text;
   for (let v = from; v < CONFIG_VERSION; v++) {
     const m = MIGRATIONS.find((x) => x.from === v);
     if (!m) throw new Error(`no migration from kitchen.yaml version ${v}`);
-    after = m.run(after);
+    lf = m.run(lf, v === from ? doc : parse(lf));
     steps.push(`${v} → ${v + 1}: ${m.why}`);
   }
-  if (Number(parseDocument(after).get("version") ?? 0) !== CONFIG_VERSION)
-    throw new Error(`kitchen.yaml: the migrations did not reach version ${CONFIG_VERSION}`);
+  if (!steps.length) return { after: text, steps, from };
+  if (Number(parse(lf).get("version") ?? 0) !== CONFIG_VERSION) throw new Error(`kitchen.yaml: the migrations did not reach version ${CONFIG_VERSION}`);
+  const after = crlf ? lf.replace(/\n/g, "\r\n") : lf;
   parseConfig(after); // refuses anything this Kitchen can't load
   return { after, steps, from };
 }

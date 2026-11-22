@@ -203,4 +203,4 @@ Every key, with its default:
 
 ## License
 
-MIT. See `LICENSE`.
+MIT. See `LICENSE`; third-party notices are in `NOTICE`.

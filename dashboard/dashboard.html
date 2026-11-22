@@ -104,12 +104,15 @@ button.theme svg { width: 15px; height: 15px; }
 .card.active::before { content: ""; position: absolute; left: -1px; top: 10px; bottom: 10px; width: 3px; border-radius: 0 3px 3px 0; background: var(--accent); }
 .card.paused::before { content: ""; position: absolute; left: -1px; top: 10px; bottom: 10px; width: 3px; border-radius: 0 3px 3px 0; background: var(--warn); }
 .card .top { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--ink-3); }
-.card .id { font-family: var(--mono); }
+.card .id { font-family: var(--mono); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card .now { font-size: 11.5px; color: var(--ink-3); margin: -4px 0 8px; display: flex; gap: 6px; min-width: 0; }
+.card .now .step { font-family: var(--mono); color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.card .now .ago { flex: none; font-variant-numeric: tabular-nums; }
 .tag { font-size: 11px; font-weight: 600; padding: 0 6px; border-radius: 5px; line-height: 18px; border: 1px solid var(--line); color: var(--ink-2); background: var(--sunk); }
 .tag.high { color: var(--fail); background: var(--fail-soft); border-color: transparent; }
 .tag.medium { color: var(--warn); background: var(--warn-soft); border-color: transparent; }
 .tag.low { color: var(--pass); background: var(--pass-soft); border-color: transparent; }
-.stage { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--ink-2); }
+.stage { margin-left: auto; flex: none; font-family: var(--mono); font-size: 11px; color: var(--ink-2); }
 .card .title { margin: 6px 0 8px; font-weight: 560; font-size: 13.5px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
 .chip { font-family: var(--mono); font-size: 10.5px; font-weight: 600; line-height: 18px; padding: 0 6px; border-radius: 5px; background: var(--sunk); color: var(--ink-3); }
@@ -181,6 +184,7 @@ const ago = (iso) => {
 // theme: ?theme= wins, then the saved choice, then the system
 const params = new URLSearchParams(location.search);
 let saved = null;
+let snapAt = new Date().toISOString(); // the server time of the snapshot being drawn
 try { saved = localStorage.getItem("kitchen-theme"); } catch {}
 const forced = params.get("theme") || saved;
 if (forced === "light" || forced === "dark") document.documentElement.dataset.theme = forced;
@@ -221,7 +225,8 @@ function pips(round, limit) {
 
 function card(j) {
   const cls = ["card", j.paused ? "paused" : j.active ? "active" : ""].join(" ");
-  const n = esc(j.id.split("-")[0]);
+  // "last moved" from the server's clock (d.at), so a skewed browser clock can't misstate it.
+  const ago = Math.max(0, Math.round((Date.parse(snapAt) - Date.parse(j.movedAt)) / 1000));
   const chips = j.criteria.map((c) => `<span class="chip ${esc(c.result)}" title="${esc(c.id)}: ${esc(c.result)}">${esc(c.id)}</span>`).join("");
   const rev = j.review ? `<span class="chip rev ${j.review.result === "PASS" ? "PASS" : "FAIL"}" title="review: ${j.review.blocking} blocking, ${j.review.notes} notes">review ${j.review.result === "PASS" ? "ok" : `${j.review.blocking} blocking`}</span>` : "";
   const note = j.paused
@@ -230,8 +235,9 @@ function card(j) {
       ? `<div class="note${j.stage === "rejected" ? " neutral" : ""}">${esc(j.reason.length > 140 ? `${j.reason.slice(0, 140)}…` : j.reason)}</div>`
       : "";
   return `<article class="${cls}">
-    <div class="top"><span class="id">#${n}</span>${j.risk ? `<span class="tag ${esc(j.risk)}">${esc(j.risk)}</span>` : ""}${j.kind ? `<span class="tag">${esc(j.kind)}</span>` : ""}<span class="stage">${esc(j.stage)}</span></div>
+    <div class="top"><span class="id" title="${esc(j.id)}">${esc(j.id)}</span>${j.risk ? `<span class="tag ${esc(j.risk)}">${esc(j.risk)}</span>` : ""}${j.kind ? `<span class="tag">${esc(j.kind)}</span>` : ""}<span class="stage">${esc(j.stage)}</span></div>
     <div class="title" title="${esc(j.title)}">${esc(j.title)}</div>
+    <div class="now"><span class="ago" title="last moved ${esc(j.movedAt)}">last moved ${esc(dur(ago))} ago</span>${j.step ? `<span class="step" title="${esc(j.step)}">${esc(j.step)}</span>` : ""}</div>
     ${chips || rev ? `<div class="chips">${chips}${rev}</div>` : ""}
     ${note}
     <div class="meta"><span class="r">${pips(j.round, j.roundLimit)}</span><span>${money(j.usd)}</span><span>${dur(j.secs)}</span>${j.pr ? `<span class="pr">PR #${j.pr}</span>` : ""}${j.report ? `<a href="${esc(j.report)}" target="_blank" rel="noopener">Report →</a>` : ""}</div>
@@ -262,6 +268,7 @@ function renderAttention(d) {
 }
 
 function render(d) {
+  snapAt = d.at;
   $("repo").textContent = d.repo;
   document.title = `Kitchen · ${d.repo}`;
   $("dot").className = `dot${d.runner.running ? " live" : ""}`;

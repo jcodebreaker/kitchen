@@ -77,9 +77,13 @@ export class GithubSource implements TicketSource {
    * works on its own proposal until a person labels it. Found again by its hidden key marker.
    */
   async draft(o: { key: string; title: string; body: string }): Promise<string> {
-    const r = await gh(["issue", "list", ...this.R(), "--state", "all", "--search", `"kitchen:${o.key}" in:body`, "--limit", "20", "--json", "number,body"], {
-      json: true,
-    });
+    // Only issues Kitchen (this gh user) opened: anyone can paste the marker into an issue of their own.
+    const r = await gh(
+      ["issue", "list", ...this.R(), "--state", "all", "--author", "@me", "--search", `"kitchen:${o.key}" in:body`, "--limit", "20", "--json", "number,body"],
+      {
+        json: true,
+      },
+    );
     const had = ((r.data as { number: number; body: string }[]) ?? []).find((i) => i.body.includes(marker(o.key)));
     if (had) return `#${had.number}`;
     const c = await gh(["issue", "create", ...this.R(), "--title", o.title, "--body-file", "-"], { input: `${o.body}\n\n${marker(o.key)}\n` });

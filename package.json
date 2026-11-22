@@ -32,7 +32,8 @@
     "!toolkit-template/node_modules/",
     "dashboard/dashboard.html",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "NOTICE"
   ],
   "engines": {
     "node": ">=20.11"

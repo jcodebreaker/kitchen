@@ -18,9 +18,9 @@ const mv = (job: string, from: string, to: string, round = 1, note?: string) =>
 
 const history: LedgerLine[] = [
   // a: low, first-pass PASS, done
-  L("a", "agent", { role: "intake", usd: 0.1, detail: { line: "ACCEPT feature low: x" } }),
+  L("a", "agent", { role: "intake", usd: 0.1, secs: 5, detail: { line: "ACCEPT feature low: x" } }),
   mv("a", "intake", "build"),
-  L("a", "agent", { stage: "build", role: "builder", usd: 0.2 }),
+  L("a", "agent", { stage: "build", role: "builder", usd: 0.2, secs: 40 }),
   mv("a", "build", "gate"),
   mv("a", "gate", "drives"),
   mv("a", "drives", "verify"),
@@ -91,6 +91,10 @@ test("measures: every §0 number from a small history", () => {
     "primitive PRs per job",
   ])
     assert.ok(text.includes(h), h);
+  assert.equal(m.jobs.find((j) => j.job === "a")?.agentSecs, 45, "agent seconds beside the wall clock");
+  assert.match(text, /^Kitchen report: .* agent time, .* wall clock/);
+  assert.ok(!/needs-info +needs-info/.test(text), "no repeated needs-info");
+  assert.match(text, /^ +1 {2}needs-info\n/m);
 });
 
 test("drivesOf names toolkit segments, cmd and test", () => {

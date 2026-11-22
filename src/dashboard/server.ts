@@ -12,7 +12,19 @@ import { snapshot } from "./data.ts";
 
 export const DASHBOARD_HTML = path.resolve(import.meta.dirname, "..", "..", "dashboard", "dashboard.html");
 
-const HEADERS = { "cache-control": "no-store", "x-content-type-options": "nosniff", "referrer-policy": "no-referrer" };
+// Sent as HTTP headers (a <meta> CSP can't say frame-ancestors, and X-Frame-Options has no meta form).
+const HEADERS = {
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff",
+  "referrer-policy": "no-referrer",
+  "x-frame-options": "DENY",
+  "content-security-policy": "default-src 'none'; frame-ancestors 'none'",
+};
+/** The page's own: its inline script and styles, /data.json, data: images; nothing from elsewhere; never framed. */
+export const PAGE_CSP =
+  "default-src 'none'; connect-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+/** A Report: no script at all. */
+export const REPORT_CSP = "default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 export function dashboardServer(repo: string): http.Server {
   return http.createServer((req, res) => {
@@ -26,7 +38,8 @@ export function dashboardServer(repo: string): http.Server {
     if (!["127.0.0.1", "localhost", "[::1]"].includes(host)) return send(403, "text/plain", "localhost only\n");
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     try {
-      if (url.pathname === "/" || url.pathname === "/index.html") return send(200, "text/html; charset=utf-8", fs.readFileSync(DASHBOARD_HTML));
+      if (url.pathname === "/" || url.pathname === "/index.html")
+        return send(200, "text/html; charset=utf-8", fs.readFileSync(DASHBOARD_HTML), { "content-security-policy": PAGE_CSP });
       if (url.pathname === "/data.json") return send(200, "application/json", JSON.stringify(snapshot(repo)));
       const m = /^\/jobs\/([^/]+)\/report\.html$/.exec(url.pathname);
       if (m) {
@@ -35,9 +48,7 @@ export function dashboardServer(repo: string): http.Server {
         const f = path.join(jobDirOf(repo, id), "report.html");
         if (!fs.existsSync(f)) return send(404, "text/plain", "no report yet\n");
         // The Report carries its own CSP; this one keeps it from running anything either way.
-        return send(200, "text/html; charset=utf-8", fs.readFileSync(f), {
-          "content-security-policy": "default-src 'none'; img-src data:; style-src 'unsafe-inline'",
-        });
+        return send(200, "text/html; charset=utf-8", fs.readFileSync(f), { "content-security-policy": REPORT_CSP });
       }
       return send(404, "text/plain", "not found\n");
     } catch (e) {

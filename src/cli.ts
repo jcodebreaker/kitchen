@@ -50,7 +50,35 @@ Maintenance
   kitchen toolkit maintain | up | down --id <id>
   kitchen drive <job> <C> [--repro] [--arg k=v]…   run one criterion's proof by hand
 
-kitchen --version · docs: README.md in the package`;
+kitchen --version · kitchen <command> --help · docs: README.md in the package`;
+
+/** `kitchen <command> --help`: the command's usage, then what it does. */
+const COMMAND_HELP: Record<string, string> = {
+  ticket: 'kitchen ticket "<what you want>"\n\nFiles a ticket from a prompt; kitchen run takes it in. With source.kind github, label an issue instead.',
+  run: "kitchen run [--once] [--detach] [<job>]\n\nWorks the queue until nothing is left to do.\n  --once     one pass over the queue, then stop\n  --detach   in the background; the log is .kitchen/run.log\n  <job>      only this job",
+  status: "kitchen status\n\nOne row per job: id, stage, round, title.",
+  resume: "kitchen resume <id|n>\n\nWakes a paused job: it goes back to the stage it paused in. A job that needs you takes kitchen feedback instead.",
+  feedback:
+    'kitchen feedback <id> ["<text>"] [--to <stage>]\n\nAnswers a job that needs you, or sends a done job back to build with your text.\n  --to <stage>   for a needs-human job: where it goes, at or before the stage it stopped in (intake ... verify)',
+  reject: "kitchen reject <id>\n\nCloses a job without a PR.",
+  report:
+    "kitchen report [--bench] [--json]\n\nEvery measure from the ledger (merge-ready rate, rounds, escalations, time and cost...).\n  --bench   the benchmark runs instead\n  --json    machine-readable",
+  retro:
+    "kitchen retro [status | unmute <lens>/<category> | approve <n>]\n\nWith no argument, runs the retro now: mutes review categories people keep dismissing, proposes lesson tickets as drafts.\n  status                     the mutes and drafts\n  unmute <lens>/<category>   that category blocks again\n  approve <n>                turn draft n into a ticket",
+  migrate:
+    "kitchen migrate [--dry-run]\n\nBrings kitchen.yaml's schema and the Toolkit's template files up to this Kitchen; prints each change as a diff.\n  --dry-run   print, change nothing",
+  dashboard: "kitchen dashboard [--port 7357]\n\nThe board in a browser, on 127.0.0.1, read-only. Ctrl-C stops it.",
+  bench:
+    "kitchen bench smoke|full|tuned|heldout [--tool claude|codex] [--runs n] [--only a,b] [--concurrency n] [--max-usd x] [--out dir]\n\nThe benchmark (from a clone of Kitchen only).",
+  init: "kitchen init [--tool claude|codex] [--detach] | init --skill | init --answers <file> | init --status [--wait <s>]\n\nkitchen.yaml, the /kitchen skill and a proven Toolkit on the branch kitchen/setup.\n  --skill     only the /kitchen skill\n  --answers   resume setup with answers to its questions (.kitchen/setup-questions.json)\n  --detach    in the background; then init --status",
+  toolkit:
+    "kitchen toolkit check [--feature x] [--src dir] | up | down --id <id> | maintain [--force]\n\n  check      prove the Toolkit end to end (up, drives, reset, down)\n  up/down    start or stop an instance of the app\n  maintain   the maintain pass: re-prove the Toolkit on the base and fix what broke",
+  drive:
+    'kitchen drive <job> <C> [--repro] [--arg k=v]... [--role r] | drive <job> --view "<view>"\n\nRuns one criterion\'s proof by hand (or one extra view for a review lens) and stamps the evidence.',
+  dismiss:
+    'kitchen dismiss <job> <finding> [--reason "<why>"]\n\nA review finding was not useful: the builder ignores it and the lens won\'t block on it again. A security finding needs --reason.',
+  mcp: "kitchen mcp --job <id> --role <role> [--repo <dir>]\n\nThe engine bridge agents drive the app through (started by Kitchen, not by hand).",
+};
 
 async function main(argv: string[]): Promise<number> {
   const [name, ...rest] = argv;
@@ -60,6 +88,16 @@ async function main(argv: string[]): Promise<number> {
   }
   if (name === "--version" || name === "-v") {
     console.log((JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "..", "package.json"), "utf8")) as { version: string }).version);
+    return 0;
+  }
+  // `kitchen <cmd> --help` prints that command's usage and runs nothing.
+  if (rest.includes("--help") || rest.includes("-h")) {
+    const h = COMMAND_HELP[name];
+    if (!h) {
+      console.error(`kitchen: unknown command ${name}\n\nkitchen --help for the list`);
+      return 2;
+    }
+    console.log(`usage: ${h}`);
     return 0;
   }
   if (name === "toolkit" || name === "init" || name === "setup-mcp") return (await import("./cli/toolkit-commands.ts")).w2(name, rest);
