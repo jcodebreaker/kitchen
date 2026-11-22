@@ -125,8 +125,8 @@ A paused job **releases its slot**. The runner checks `waitFor` on every tick an
 | waitFor | clears when |
 |---|---|
 | `backoff` | the backoff time has passed |
-| `toolkit-pr` | the forge shows the Toolkit PR merged |
-| `ci` | `gh pr checks` has finished |
+| `toolkit-pr` | the forge shows the Toolkit PR merged, or closed without merging (Ready then sends the job to needs-human) |
+| `ci` | `gh pr checks` has finished; inside Ready's window (`until`: no checks yet after a push, or a cancelled run) only a pass or fail ends it early |
 | `toolkit-ticket` | that ticket is closed |
 
 ### Transition table (machine.ts)
@@ -157,11 +157,13 @@ A paused job **releases its slot**. The runner checks `waitFor` on every tick an
 | verify | verify | INCONCLUSIVE: one free retry on a fresh instance (`down`, `reset`, `up`). Does not cost a round |
 | verify | paused (toolkit-ticket) | INCONCLUSIVE twice. A Toolkit ticket is filed and the job waits (doesn't cost a round). If the ticket is closed and the job still comes back INCONCLUSIVE twice more, it goes to needs-human |
 | verify | toolkit | TOOLKIT-GAP with `doctor=ok` and the missing primitive named, smith.attempts < 2 |
-| toolkit | drives / spec | the smith's Toolkit PR passes `toolkit check` on main plus that PR. `toolkitRef` is set to that sha, and the job goes back to `returnTo`: a job that came from `spec` returns to `spec`, one from `repro` returns to `repro`, and one from `drives` or `verify` returns to `drives`, because the drive may need rewriting |
+| toolkit | drives / spec | the smith's Toolkit PR passes `toolkit check` on main plus that PR (the contract probe, every drive using the new primitive, and every drive that passes on the base; a drive that already fails on the base, from the base's own check cached per base sha, is tolerated as known). `toolkitRef` is set to that sha, and the job goes back to `returnTo`: a job that came from `spec` returns to `spec`, one from `repro` returns to `repro`, and one from `drives` or `verify` returns to `drives`, because the drive may need rewriting |
+| toolkit | toolkit | the engine's check of the smith's commit fails (or the smith gives up), smith.attempts < 2: the second try starts from the first try's commit and reads `toolkit-check-<n>.json`. After that, needs-human (smith limit) |
 | review | ready / build | all lenses PASS / a blocking finding the reviewer can show |
-| ready | report | synced with base, CI green (`gh pr checks`), Toolkit PR (if any) merged, gate PASS. Re-verify on the synced HEAD only if base moved since verify |
+| ready | report | synced with base, HEAD pushed (Ready publishes it: the drives stage commits after build's push), CI green on it (`gh pr checks`; no checks is green only when the repo has no workflow files or `ci_grace_sec` passed since the push; a cancelled run is read once more), Toolkit PR (if any) merged, gate PASS. Re-verify on the synced HEAD only if base moved since verify |
+| ready | needs-human | the Toolkit PR was closed without merging (the reason names it) |
 | ready | paused (ci / toolkit-pr) | CI still running, or the Toolkit PR not merged yet |
-| ready | build | sync conflict, red CI, or a re-check that fails |
+| ready | build | sync conflict, red CI, or a re-check that fails. In build, a resolution the layer rules would cut a base change from aborts the merge → needs-human |
 | ready | gate | gate is no longer PASS on this HEAD (commits since it touch more than `features/*.md`): Gate runs again |
 | paused | `pausedFrom` | the `waitFor` condition clears |
 | report | done | report.html rendered with every id resolved. Evidence branch pushed, PR comment posted |

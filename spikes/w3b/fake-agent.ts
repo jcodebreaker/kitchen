@@ -40,6 +40,21 @@ export function addSqlPrimitive(toolkitDir: string) {
   fs.writeFileSync(f, s);
 }
 
+const STUB_ROW = '  sql: { args: { query: "one read-only SELECT" }, does: "rows of a SELECT (stub)" },\n';
+const STUB_BRANCH = '  if (op === "sql") return out({ ok: false, out: "not implemented yet", files: [] });\n';
+const HTTP_LINE = '  if (op === "http" && typeof args.body === "string") args.body = JSON.parse(args.body);';
+/** A listed but unimplemented `sql`: describe lists it, the contract probe refuses it. */
+function addSqlStub(toolkitDir: string) {
+  const f = path.join(toolkitDir, "bin", "dev");
+  const s = fs.readFileSync(f, "utf8");
+  if (s.includes(STUB_ROW)) return;
+  fs.writeFileSync(f, s.replace("const PRIMITIVES = {\n", `const PRIMITIVES = {\n${STUB_ROW}`).replace(HTTP_LINE, `${STUB_BRANCH}${HTTP_LINE}`));
+}
+function dropSqlStub(toolkitDir: string) {
+  const f = path.join(toolkitDir, "bin", "dev");
+  fs.writeFileSync(f, fs.readFileSync(f, "utf8").replace(STUB_ROW, "").replace(STUB_BRANCH, ""));
+}
+
 /** scenario: primitive. The only proof of "last sign-in is recorded" is the database row: a missing `sql` primitive. */
 const PRIM_SPEC = `## Criteria
 - [C1] Signing in records the time on the user's row
@@ -86,7 +101,15 @@ export default async function script(req: AgentRequest): Promise<FakeStep> {
   if (req.role === "smith") {
     const gap = /Missing primitive: (\S+)/.exec(req.prompt)?.[1] ?? "?";
     if (gap !== "sql") return w3a(req);
-    addSqlPrimitive(path.join(req.cwd, ".kitchen", "toolkit"));
+    const dir = path.join(req.cwd, ".kitchen", "toolkit");
+    // scenario: primitive-retry — the first try leaves a stub the engine's check refuses; the second
+    // (its prompt carries the failed check, its branch starts from the stub) writes the real one.
+    if (/scenario: primitive-retry/.test(req.prompt) && !/check of your last commit FAILED/.test(req.prompt)) {
+      addSqlStub(dir);
+      return { file: "STATUS: READY\nPRIMITIVE: sql\nSUMMARY: sql (stub)\n", line: "READY sql (stub)" };
+    }
+    dropSqlStub(dir);
+    addSqlPrimitive(dir);
     return { file: "STATUS: READY\nPRIMITIVE: sql\nSUMMARY: sql --query <SELECT>: rows as JSON\n", line: "READY sql" };
   }
   if (req.role === "builder") {

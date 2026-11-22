@@ -48,6 +48,20 @@ check(
   j.stage === "paused" && j.waitFor === "ci" && j.pausedFrom === "ready" && j.slot === null,
   `${j.stage} ${j.waitFor}`,
 );
+// Review fix M1: the drives stage commits its feature drive after build published; with the base unmoved,
+// Ready itself publishes HEAD before reading CI, so CI (and later the report) is about the verified HEAD.
+const localHead = git(r.dir, "rev-parse", j.branch).trim();
+const lastFiles = git(r.dir, "show", "--name-only", "--format=", localHead).trim();
+check(
+  "M1: the job's HEAD is the drives stage's commit (a feature drive, after build's publish)",
+  lastFiles.split("\n").every((f) => f.startsWith(".kitchen/toolkit/features/")) && lastFiles.includes("settings-dark.md"),
+  lastFiles,
+);
+check(
+  "M1: plain path, base unmoved: Ready pushed that HEAD before reading CI (remote branch = local HEAD)",
+  git(bare, "rev-parse", `refs/heads/${j.branch}`).trim() === localHead && j.base === git(bare, "rev-parse", "refs/heads/main").trim(),
+  `${git(bare, "rev-parse", `refs/heads/${j.branch}`).trim().slice(0, 12)} vs ${localHead.slice(0, 12)}`,
+);
 
 // 2. CI goes red → back to ready → build (a round)
 editShim(shim, (s) => {
@@ -109,4 +123,35 @@ check(
 check("the PR is marked ready for review", p?.isDraft === false);
 check("the branch on the remote is the final head", git(bare, "rev-parse", `refs/heads/${j.branch}`).trim() === git(r.dir, "rev-parse", j.branch).trim());
 check("no container of this job left running", kitchenContainers(j.slotId).length === 0);
+
+// 5. Review fix M2: a sync whose resolution the layer rules would cut a base change from is aborted.
+// A second job; upstream adds its own `features/settings-dark.md`, which the job's drives stage also
+// wrote (add/add conflict). A builder may not commit a Toolkit file, so committing its resolution
+// would put the file back to this branch's version and drop the base's silently: needs-human instead.
+const id2 = ticket(r, "Dark mode doesn't stick (again): I turn it on in Settings, after a reload the app is light.\n\nscenario: honest");
+stepUntil(r, id2, ["review", "needs-human", "done"], { max: 40, log });
+const up = path.join(root, `m2-${Date.now()}`);
+git(root, "clone", "-q", bare, up);
+fs.writeFileSync(path.join(up, ".kitchen/toolkit/features/settings-dark.md"), "# Settings: dark mode (upstream's own notes)\n");
+git(up, "add", "-A");
+git(up, "commit", "-qm", "upstream: a settings-dark feature file");
+git(up, "push", "-q", "origin", "main");
+const theirs2 = git(up, "rev-parse", "HEAD").trim();
+fs.rmSync(up, { recursive: true, force: true });
+stepUntil(r, id2, ["needs-human", "done", "paused"], { max: 20, log });
+const j2 = jobOf(r, id2);
+check(
+  "M2: ready → build (sync conflict) → needs-human, the reason names the file the rules would have cut",
+  j2.stage === "needs-human" && /sync with the base .* aborted/.test(j2.pausedReason ?? "") && (j2.pausedReason ?? "").includes("settings-dark.md"),
+  `${stagesOf(r, id2).join(" → ")} [${j2.pausedReason}]`,
+);
+const wt2 = j2.worktree;
+check(
+  "M2: the merge was aborted (no MERGE_HEAD), nothing committed over the base's change",
+  !fs.existsSync(path.join(r.dir, ".git", "worktrees", id2, "MERGE_HEAD")) &&
+    !git(r.dir, "log", "--format=%P", j2.branch)
+      .split("\n")
+      .some((l) => l.includes(theirs2)),
+);
+check("M2: the worktree is clean (no markers left behind)", git(wt2, "status", "--porcelain").trim() === "", git(wt2, "status", "--porcelain"));
 finish("w3b ready");
