@@ -40,6 +40,15 @@ steps:
   - screenshot: { name: project-ready }
 ```
 
+## Kitchen
+
+Source paths this feature lives in (a change there re-proves the Toolkit) and the args `kitchen toolkit check` drives it with.
+
+```kitchen
+paths: [server.js, "db/**"]
+check: { drive: projects.create, args: { user: alice, slug: check-proj } }
+```
+
 ## Gotchas
 
 - Slugs are unique across all users: a second run with the same `slug` stops at

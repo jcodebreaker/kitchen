@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fixture-b-cli"
+version = "0.1.0"
+description = "A small task tracker CLI backed by SQLite"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+tasks = "tasks.cli:main"
+
+[tool.setuptools]
+packages = ["tasks"]
+
+[tool.setuptools.package-data]
+tasks = ["migrations/*.sql"]

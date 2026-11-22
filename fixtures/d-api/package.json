@@ -1,0 +1,10 @@
+{
+  "name": "fixture-d-api",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Small orders API: Stripe PaymentIntents, Stripe webhooks and email receipts",
+  "type": "module",
+  "engines": { "node": ">=22.5" },
+  "scripts": { "start": "node server.js", "test": "node --test" },
+  "dependencies": { "nodemailer": "10.6.1" }
+}

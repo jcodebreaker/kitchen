@@ -20,6 +20,7 @@ import { self } from "../lock.ts";
 import { procsDirOf, reapGroups } from "../procs.ts";
 import { PromptSource } from "../sources/prompt.ts";
 import type { TicketSource } from "../sources/source.ts";
+import { beforeNewWork } from "../toolkit/reproof.ts";
 import { acquireSlot, downSlot, listSlots, reclaimStaleSlots, releaseSlot } from "../toolkit/slots.ts";
 import { acquireRunLock } from "./lock.ts";
 import { type Facts, isActive, type Job, move, type Stage } from "./machine.ts";
@@ -90,6 +91,8 @@ export async function runKitchen(o: RunOpts): Promise<{ steps: number; moves: nu
       appendLedger(repo, { job: s.id, stage: "-", round: 0, event: "slot-reclaimed", key: `${runKey}/slot/${s.id}/${s.at}`, detail: { n: s.n, pid: s.pid } });
     }
     await resumeAll(repo, me.pid, print, runKey);
+    // Base moved since the Toolkit was proven: re-check it first; a failure pauses the queue (PLAN §2).
+    if (!(await beforeNewWork({ repo, forge: deps.forge, print }))) return stats;
 
     const inFlight = new Map<string, Promise<void>>();
     const wanted = (j: Job) => !o.job || j.id === o.job;

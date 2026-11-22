@@ -81,7 +81,7 @@ function realDir(p: string, what: string): string {
  * (`gitdir`, engine side), never against the worktree's own `.git` file.
  */
 export function linkedWorktree(mainRepo: string, id: string, workTree: string): GitRepo {
-  if (!/^[A-Za-z0-9._-]+$/.test(id) || id === "." || id === "..") throw new GitRepoError(`bad worktree id ${JSON.stringify(id)}`);
+  if (!/^[A-Za-z0-9._@-]+$/.test(id) || id === "." || id === "..") throw new GitRepoError(`bad worktree id ${JSON.stringify(id)}`);
   const common = realDir(path.join(mainRepo, ".git"), "main repo gitdir");
   const gitDir = realDir(path.join(common, "worktrees", id), "worktree gitdir");
   const wt = realDir(workTree, "worktree");

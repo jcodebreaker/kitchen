@@ -87,7 +87,7 @@ export function codexArgs(req: AgentRequest): string[] {
     'approval_policy="never"',
     ...codexProfile(req.denyRead ?? [kitchenHome()]),
     "-c",
-    'model_reasoning_effort="low"',
+    `model_reasoning_effort="${req.effort ?? "low"}"`,
     ...(req.bridge ? codexBridge(req.bridge) : []),
   ];
   // `exec resume` has no -C: the workspace root comes from the process cwd

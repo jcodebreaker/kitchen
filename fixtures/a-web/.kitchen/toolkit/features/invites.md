@@ -35,6 +35,15 @@ steps:
   - screenshot: { name: invite-accepted }
 ```
 
+## Kitchen
+
+Source paths this feature lives in (a change there re-proves the Toolkit) and the args `kitchen toolkit check` drives it with.
+
+```kitchen
+paths: [server.js, "db/**"]
+check: { drive: invites.generate-and-join, args: { admin: bob-admin } }
+```
+
 ## Gotchas
 
 - Seed admin is `bob-admin`; `alice` gets "Admins only".

@@ -1,0 +1,7 @@
+title,due,done,tags
+Write the project README,2030-01-15,0,docs
+Fix flaky login test,2030-01-20,0,bug;qa
+Book dentist,,0,personal
+Renew domain,2020-03-01,0,ops
+Ship v0.1.0,2029-12-01,1,release
+Set up CI,,1,ops

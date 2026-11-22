@@ -63,6 +63,7 @@ export function claudeArgs(req: AgentRequest, sessionId: string): string[] {
     "--permission-prompts",
     "none", // anything that would ask is denied
   ];
+  if (req.effort) args.push("--effort", req.effort);
   if (req.resumeSession) args.push("--resume", req.resumeSession);
   else args.push("--session-id", sessionId);
 
