@@ -572,7 +572,7 @@ Each wave is built by subagents in worktrees and reviewed by an independent revi
 
 3 of the tickets hide traps. Every ticket runs **3 times**.
 
-**Held-out set: 6 tickets,** replayed from real merged superchat-lite PRs, with their parent commit as the base. Role prompts are never tuned on it. A replay passes when:
+**Held-out set: 6 tickets** (until superchat-lite replays are affordable: fixture E, see "Changes from the final fixes"), replayed from real merged superchat-lite PRs, with their parent commit as the base. Role prompts are never tuned on it. A replay passes when:
 - the tests the original PR added or changed pass on Kitchen's branch, and
 - Kitchen's own Verdicts are PASS, and
 - a human spot-check finds the change does the same job as the original.
@@ -919,3 +919,18 @@ History: all of these are now part of §2 and §3, which are the current contrac
 | A regression guard misread the current code (`json .ok` on an http step's `{status, body}`; a drive whose last output is JSON) and failed a correct build | A guard (covers only `(unchanged)` requirements) must hold on the base: intake (low risk) and spec run the base check and refuse one that fails there, with the evidence |
 | A negative beside the very error the expect asserts was failed as "an error page" (three identical FAIL rounds) | An error page whose error a positive clause of the same expect names and shows is the expected outcome |
 | `--argv ["add","x"]` lost its quotes; the seed users never reached the roles (`seedUsers` vs describe's `seed_users`) | Lint refuses an `argv`/`body` that looks like JSON and doesn't parse; the Toolkit block lists `seed_users`; rule 9 refuses `--as`/`username = '…'` naming a user who isn't a seed user and no earlier step made |
+
+## Changes from the final fixes (review of the regression merge: W3b 8/10, W5 7.5/10)
+
+| Finding | Change |
+|---|---|
+| H1: rule 3(b) accepted any saved value (`read --save page` then `$page not contains "Bob plan"`, `$t != "Bob plan"`), even an error page | (b) backs only `!=` on a value saved after a making step (a drive, a writing `http`); everything else goes to the base check. assert.ts applies the error-page and failed-response rule to saved vars too |
+| H2: the spec could re-mark any negative `(unchanged)` and prove it with a positive check | A re-mark keeps the requirement negative (rule 7 still asks for an absence); it only lets that absence hold on the base, as a guard that must run and pass there. No re-mark on a job with a security surface (refused) |
+| H3: the base check returned null once HEAD had moved (after a build, `feedback --to spec`), and the negatives and guards it was to back passed | It runs on a checkout of the base (`.worktrees/<id>.base`, as after drives); without a Toolkit it runs the `cmd`/`test` criteria; a base check that could not run refuses what it was to back |
+| L1/L2: (a) matched any earlier arg (`--as bob` ⊃ "bob"); a phrase holding a made word counted, every `cli` a writer | (a) reads only making steps' args, minus who/where; a phrase holding a made word (a `cli`'s too) counts only with a positive clause of the same expect showing it |
+| Control false FAILs: `json .ok` on an http wrapper; a "200-character" literal typed 230 long | An http step's `json`/`rows`/`--save` read the body (a key the body lacks reads the response), `--save v` keeps `$v_status`; lint refuses a literal whose stated length ("N-character", "exactly N", "longer than N characters") it doesn't have |
+| Held-out contamination: the regression iterated on D, `_proofs.md` taught with d-discount | D is tuned; roles use generic examples; a new held-out set on a new fixture E (`e-library`), written and committed before any run, run once, never tuned on (bench/README.md) |
+| §0 was judged by hand; two flake definitions | `section02()` prints PASS/FAIL per §0.2 line (bench output, results page, `kitchen report [--bench]`), the control set named; the bench's drive tally reads Verify proof lines only, as `measures.ts`; an agent adapter's infrastructure error reruns the ticket once, counted apart |
+| `checks_prepare` cached: the builder could edit the installed node_modules | Gate and Verify forget the cache on entry, so `npm ci` reinstalls before anything is judged |
+| A feature drive's `--expect_status 4xx` escaped the repro pin rule | Refused like a primitive's |
+
