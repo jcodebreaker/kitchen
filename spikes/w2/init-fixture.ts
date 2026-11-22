@@ -24,7 +24,7 @@ const log = path.join(root, "init.log");
 console.log(`${fixture} on ${tool} (${model}, effort ${effort}) in ${r.dir}`);
 
 const t0 = Date.now();
-let x = await kitchenLive(r, ["init", "--model", model, "--effort", effort], { logFile: log });
+let x = await kitchenLive(r, ["init", "--toolkit", "--verbose", "--model", model, "--effort", effort], { logFile: log });
 let questions: unknown = null;
 if (x.code === 3) {
   const qf = path.join(r.dir, ".kitchen", "setup-questions.json");
@@ -32,7 +32,7 @@ if (x.code === 3) {
   console.log(`init asked: ${JSON.stringify(questions)}; answering with the defaults`);
   const af = path.join(root, "answers.json");
   fs.writeFileSync(af, JSON.stringify({ answers: {} }));
-  x = await kitchenLive(r, ["init", "--answers", af, "--model", model, "--effort", effort], { logFile: log });
+  x = await kitchenLive(r, ["toolkit", "build", "--verbose", "--answers", af, "--model", model, "--effort", effort], { logFile: log });
 }
 const initSecs = (Date.now() - t0) / 1000;
 check(`${fixture}/${tool}: kitchen init passes`, x.code === 0, `exit ${x.code} after ${Math.round(initSecs)}s`);

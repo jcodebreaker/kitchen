@@ -1,8 +1,9 @@
 // W2 exit checks that need no model (scripted setup role, real Toolkit, real Docker):
-//  1. `kitchen init` without a TTY: survey asks a question → setup-questions.json, exit 3;
-//     `init --answers` resumes (survey not re-run, the answer reaches the build prompt),
+//  1. `kitchen toolkit build` without a TTY: survey asks a question → setup-questions.json, exit 3;
+//     `toolkit build --answers` resumes (survey not re-run, the answer reaches the build prompt),
 //     commits on kitchen/setup, `toolkit check` passes, toolkit.proven written; a third
-//     `init` does nothing new.
+//     build does nothing new. (ADR 0010: this was `kitchen init`; the details it asserts
+//     on are --verbose now, and always in .kitchen/init/init.log.)
 //  2. Base-change re-proof on the next `kitchen run`: no change → nothing; a README change →
 //     doctor + smoke drive; a Toolkit-mapped path → full check; a broken Toolkit → queue
 //     paused + one Toolkit ticket, the queued job untouched, stays paused on the next run;
@@ -31,33 +32,37 @@ const calls = () =>
     : [];
 const k = path.join(r.dir, ".kitchen");
 
-// ---------- 1. questions without a TTY, init detached (the /kitchen skill's way) ----------
+// ---------- 1. questions without a TTY, the build detached (the /kitchen skill's way) ----------
 const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
-/** `kitchen init --status` until it isn't running; returns its last answer. */
+/** `kitchen toolkit build --status` until it isn't running; returns its last answer. */
 const pollStatus = async (maxSecs = 600) => {
   const end = Date.now() + maxSecs * 1000;
-  let s = kitchen(r, ["init", "--status"]);
+  let s = kitchen(r, ["toolkit", "build", "--status"]);
   let polls = 1;
-  while (/^init: running/.test(s.out) && Date.now() < end) {
+  while (/^toolkit build: running/.test(s.out) && Date.now() < end) {
     await sleep(1000);
-    s = kitchen(r, ["init", "--status"]);
+    s = kitchen(r, ["toolkit", "build", "--status"]);
     polls++;
   }
   return { ...s, polls };
 };
 const initLog = path.join(r.dir, ".kitchen", "init", "init.log");
 const logText = () => (fs.existsSync(initLog) ? fs.readFileSync(initLog, "utf8") : "");
-let x = kitchen(r, ["init", "--detach"]);
-check("init --detach returns at once with the pid and the log", x.code === 0 && /init detached: pid \d+/.test(x.out), x.out.trim().split("\n")[0]);
-const again = kitchen(r, ["init", "--detach"]);
-check("a second init while one runs is refused", again.code === 1 && /already running/.test(again.out), again.out.trim());
+let x = kitchen(r, ["toolkit", "build", "--detach"]);
+check(
+  "toolkit build --detach returns at once with the pid and the log",
+  x.code === 0 && /toolkit build detached: pid \d+/.test(x.out),
+  x.out.trim().split("\n")[0],
+);
+const again = kitchen(r, ["toolkit", "build", "--detach"]);
+check("a second build while one runs is refused", again.code === 1 && /already running/.test(again.out), again.out.trim());
 let st = await pollStatus();
 check(
-  "init --status: questions (exit 3), the question in the status",
-  st.code === 0 && /^init: questions: 1 question/.test(st.out),
+  "toolkit build --status: questions (exit 3), the question in the status",
+  st.code === 0 && /^toolkit build: questions: 1 question/.test(st.out),
   st.out.trim().split("\n")[0],
 );
-check("the detached init exited 3 on the questions (log)", /question\(s\) for you/.test(logText()));
+check("the detached build exited 3 on the questions (log)", /question\(s\) for you/.test(logText()));
 const qf = path.join(k, "setup-questions.json");
 const q = fs.existsSync(qf) ? readJson<{ questions: { id: string; question: string }[] }>(qf) : null;
 check("setup-questions.json holds the question", q?.questions.length === 1 && q.questions[0].id === "q1", JSON.stringify(q?.questions));
@@ -69,12 +74,12 @@ check("only the survey ran", calls().length === 1 && calls()[0].file === "survey
 
 const answers = path.join(root, "answers.json");
 fs.writeFileSync(answers, JSON.stringify({ answers: { q1: "bob-admin" } }));
-x = kitchen(r, ["init", "--answers", answers, "--detach"]);
+x = kitchen(r, ["toolkit", "build", "--answers", answers, "--detach"]);
 st = await pollStatus();
-x = { out: logText(), code: /^init: done/.test(st.out) ? 0 : 1 };
+x = { out: logText(), code: /^toolkit build: done/.test(st.out) ? 0 : 1 };
 check(
-  "init --answers --detach resumes; --status says done (exit 0)",
-  st.code === 0 && /^init: done/.test(st.out),
+  "toolkit build --answers --detach resumes; --status says done (exit 0)",
+  st.code === 0 && /^toolkit build: done/.test(st.out),
   st.out.trim().split("\n").slice(0, 3).join(" | "),
 );
 const c = calls();
@@ -95,8 +100,8 @@ check(
   `${proven.sha.slice(0, 12)} ${proven.branch}`,
 );
 check("check output lists prepare, two slots, evidence", /prepare ok/.test(x.out) && /second slot\) ok/.test(x.out) && /evidence ok/.test(x.out));
-x = kitchen(r, ["init"]);
-check("a third init does nothing new", x.code === 0 && calls().length === 2 && !/toolkit check on/.test(x.out), x.out.trim().split("\n")[0]);
+x = kitchen(r, ["toolkit", "build", "--verbose"]);
+check("a third build does nothing new", x.code === 0 && calls().length === 2 && !/toolkit check on/.test(x.out), x.out.trim().split("\n")[0]);
 
 // A re-run after a failed check never says done without a passing check (W2 review).
 const stateFile = path.join(k, "init", "state.json");
@@ -106,14 +111,17 @@ const failState = (patch: Record<string, unknown>) => {
   fs.writeFileSync(stateFile, JSON.stringify(s));
 };
 failState({ ok: false, failed: "up" });
-x = kitchen(r, ["init"]);
+x = kitchen(r, ["toolkit", "build", "--verbose"]);
 check(
   "re-run after a failed check: checks again (and passes)",
-  x.code === 0 && /the last check failed at up: checking again/.test(x.out) && /toolkit check: PASS/.test(x.out) && /done: Toolkit proven/.test(x.out),
-  (x.out.match(/init: .*/g) ?? []).slice(-3).join(" | "),
+  x.code === 0 &&
+    /the last check failed at up: checking again/.test(x.out) &&
+    /toolkit check: PASS/.test(x.out) &&
+    /Done in .* · on branch kitchen\/setup/.test(x.out),
+  (x.out.match(/toolkit build: .*/g) ?? []).slice(-3).join(" | "),
 );
 failState({ static: true });
-x = kitchen(r, ["init"]);
+x = kitchen(r, ["toolkit", "build", "--verbose"]);
 check("re-run after a --generate-only check: runs the full check", x.code === 0 && /was static only/.test(x.out) && /second slot\) ok/.test(x.out));
 check("calls: no agent ran for either re-run", calls().length === 2);
 
@@ -128,9 +136,9 @@ check("calls: no agent ran for either re-run", calls().length === 2);
   s.env.W2_FAKE_SECRET = "1";
   const af = path.join(root, "answers-secret.json");
   fs.writeFileSync(af, JSON.stringify({ answers: {} }));
-  const y = kitchen(s, ["init", "--answers", af]);
+  const y = kitchen(s, ["toolkit", "build", "--answers", af]);
   check(
-    "secret scan: init refuses the setup commit and names each key",
+    "secret scan: the build refuses the setup commit and names each key",
     y.code === 1 &&
       /refusing to commit the setup branch/.test(y.out) &&
       /\.env\.kitchen:\d+ STRIPE_SECRET_KEY: a live Stripe secret key/.test(y.out) &&
@@ -141,7 +149,7 @@ check("calls: no agent ran for either re-run", calls().length === 2);
     "nothing committed on kitchen/setup",
     git(s.dir, "rev-list", "--count", "main..kitchen/setup") === "0" || /Toolkit/.test(git(s.dir, "log", "--format=%s", "main..kitchen/setup")) === false,
   );
-  check("--status says failed, with the reason", /^init: failed \(exit 1\): secret scan/.test(kitchen(s, ["init", "--status"]).out));
+  check("--status says failed, with the reason", /^toolkit build: failed \(exit 1\): secret scan/.test(kitchen(s, ["toolkit", "build", "--status"]).out));
 }
 
 // ---------- 2. base-change re-proof ----------

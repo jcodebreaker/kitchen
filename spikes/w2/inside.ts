@@ -1,22 +1,23 @@
 // W2 exit gap: `/kitchen` setup from INSIDE the agent tools, end to end, with
 // the skill installed the way a user has it. The outer agent (the user's
-// session) follows skills/kitchen/SKILL.md: `kitchen init --detach` outside its
-// sandbox, short `kitchen init --status` polls, questions relayed to the user,
-// answers written, init resumed. Kitchen's own setup agent runs underneath.
+// session) follows skills/kitchen/SKILL.md: `kitchen init` (quick), then
+// `kitchen toolkit build --detach` outside its sandbox, short
+// `kitchen toolkit build --status` polls, questions relayed to the user, answers
+// written, the build resumed (ADR 0010). Kitchen's own setup agent runs underneath.
 //
 //   node spikes/w2/inside.ts claude e [scratch]   fixture E (D + a catalog the repo can't choose):
-//        turn 1 must end with the setup question to the user (init said
-//        questions, exit 3); turn 2 (`--resume`) gives the answer; init resumes
+//        turn 1 must end with the setup question to the user (the build said
+//        questions, exit 3); turn 2 (`--resume`) gives the answer; the build resumes
 //        and finishes; the answer reaches the setup build.
 //   node spikes/w2/inside.ts codex b [scratch]    fixture B (no questions): one `codex exec` turn.
 //
 // What each tool needs the user to approve is exactly what this script grants
 // (printed at the start, recorded in runs/inside-<tool>.json):
-//   Claude Code (`claude -p`): --allowedTools "Bash(kitchen init:*)" "Bash(sleep:*)" Read Write
-//     (Bash is unsandboxed by default in Claude Code, so `kitchen init` runs outside any sandbox).
+//   Claude Code (`claude -p`): --allowedTools "Bash(kitchen init:*)" "Bash(kitchen toolkit build:*)" Read Write
+//     (Bash is unsandboxed by default in Claude Code, so `kitchen toolkit build` runs outside any sandbox).
 //   Codex (`codex exec`, workspace-write sandbox, approval never): one execpolicy rule
-//     prefix_rule(pattern=["kitchen", "init"], decision="allow"), which is what Codex's
-//     "always allow `kitchen init`" approval writes; this script puts it in
+//     prefix_rule(pattern=["kitchen", "toolkit", "build"], decision="allow") (and the same for
+//     `kitchen init`), which is what Codex's "always allow" approval writes; this script puts it in
 //     ~/.codex/rules/kitchen-w2-spike.rules for the run and removes it after.
 // Env: W2_MODEL (outer + setup model; default sonnet / gpt-5.6-terra), W2_CODEX_CMD.
 import { spawn, spawnSync } from "node:child_process";
@@ -63,7 +64,7 @@ const bin = path.join(root, "bin");
 fs.mkdirSync(bin, { recursive: true });
 fs.writeFileSync(path.join(bin, "kitchen"), `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(CLI)} "$@"\n`, { mode: 0o755 });
 const env = { ...r.env, PATH: `${bin}:${process.env.PATH}` };
-const status = () => spawnSync(process.execPath, [CLI, "init", "--status", "--repo", r.dir], { env, encoding: "utf8" });
+const status = () => spawnSync(process.execPath, [CLI, "toolkit", "build", "--status", "--repo", r.dir], { env, encoding: "utf8" });
 const log = path.join(root, "outer.log");
 
 type Turn = { code: number; secs: number; result: string; sessionId?: string; usd?: number; inTok?: number; outTok?: number; commands: string[] };
@@ -84,7 +85,7 @@ function run(argv: string[], cwd: string, prompt: string | null): Promise<{ code
   });
 }
 
-const CLAUDE_TOOLS = ["Bash(kitchen init:*)", "Read", "Write"];
+const CLAUDE_TOOLS = ["Bash(kitchen init:*)", "Bash(kitchen toolkit build:*)", "Read", "Write"];
 async function claudeTurn(prompt: string, resume?: string): Promise<Turn> {
   const argv = [
     "claude",
@@ -145,7 +146,7 @@ async function codexTurn(prompt: string): Promise<Turn> {
   fs.mkdirSync(path.dirname(RULES), { recursive: true });
   fs.writeFileSync(
     RULES,
-    '# Written by kitchen spikes/w2/inside.ts for one run; removed after it.\nprefix_rule(pattern=["kitchen", "init"], decision="allow")\n',
+    '# Written by kitchen spikes/w2/inside.ts for one run; removed after it.\nprefix_rule(pattern=["kitchen", "init"], decision="allow")\nprefix_rule(pattern=["kitchen", "toolkit", "build"], decision="allow")\n',
   );
   const last = path.join(root, "codex-last.txt");
   try {
@@ -206,7 +207,7 @@ console.log(`${tool} (${model}) inside ${r.dir}; outer log ${log}`);
 console.log(
   tool === "claude"
     ? `approvals granted: --allowedTools ${CLAUDE_TOOLS.map((t) => JSON.stringify(t)).join(" ")} (claude -p, project settings only)`
-    : `approvals granted: codex exec -s workspace-write, approval_policy=never, rule prefix_rule(["kitchen","init"], allow)`,
+    : `approvals granted: codex exec -s workspace-write, approval_policy=never, rules prefix_rule(["kitchen","init"]) and (["kitchen","toolkit","build"]), allow`,
 );
 
 const turns: Turn[] = [];
@@ -216,7 +217,11 @@ console.log(`turn 1: exit ${t1.code} in ${Math.round(t1.secs)}s; commands: ${t1.
 if (reuse) console.log("(reused the repo of an earlier run: its init was already under way)");
 let s = status();
 if (fx === "e") {
-  check("the real setup survey asked a question: init stopped with questions (init exit 3)", /^init: questions/.test(s.stdout), s.stdout.split("\n")[0]);
+  check(
+    "the real setup survey asked a question: init stopped with questions (init exit 3)",
+    /^toolkit build: questions/.test(s.stdout),
+    s.stdout.split("\n")[0],
+  );
   const qs = fs.existsSync(path.join(r.dir, ".kitchen", "setup-questions.json"))
     ? readJson<{ questions: { question: string }[] }>(path.join(r.dir, ".kitchen", "setup-questions.json")).questions
     : [];
@@ -229,7 +234,7 @@ if (fx === "e") {
     "the outer agent relayed it to the user and stopped (no answer of its own)",
     /catalog/i.test(t1.result) && !fs.existsSync(path.join(r.dir, ".kitchen", "setup-answers.json")),
   );
-  if (!/^init: questions/.test(s.stdout) || t1.code !== 0) {
+  if (!/^toolkit build: questions/.test(s.stdout) || t1.code !== 0) {
     finish(`w2 inside ${tool} ${fx} (stopped after turn 1: no question to answer; not looping)`);
     process.exit(1);
   }
@@ -237,8 +242,8 @@ if (fx === "e") {
   turns.push(t2);
   console.log(`turn 2: exit ${t2.code} in ${Math.round(t2.secs)}s; commands: ${t2.commands.join(" ⏎ ")}\n  says: ${t2.result.slice(0, 600)}`);
   check(
-    "turn 2: the agent resumed init with --answers, detached",
-    t2.commands.some((c) => /kitchen init .*--answers.*--detach|kitchen init --detach.*--answers/.test(c)),
+    "turn 2: the agent resumed the build with --answers, detached",
+    t2.commands.some((c) => /kitchen toolkit build .*--answers.*--detach|kitchen toolkit build --detach.*--answers/.test(c)),
   );
   s = status();
   const state = readJson<{ steps: { answers?: Record<string, string> } }>(path.join(r.dir, ".kitchen", "init", "state.json"));
@@ -258,19 +263,19 @@ if (fx === "e") {
   );
 }
 check(
-  `${tool}: init done (status says done), the Toolkit proven`,
-  /^init: done/.test(s.stdout) && fs.existsSync(path.join(r.dir, ".kitchen", "toolkit.proven")),
+  `${tool}: the build is done (status says done), the Toolkit proven`,
+  /^toolkit build: done/.test(s.stdout) && fs.existsSync(path.join(r.dir, ".kitchen", "toolkit.proven")),
   s.stdout.split("\n")[0],
 );
 const all = turns.flatMap((t) => t.commands);
 check(
-  `${tool}: the agent started init detached`,
-  all.some((c) => /kitchen init (?:.*)?--detach/.test(c)),
+  `${tool}: the agent ran quick init, then started the build detached`,
+  all.some((c) => /kitchen init\b/.test(c)) && all.some((c) => /kitchen toolkit build (?:.*)?--detach/.test(c)),
   all.filter((c) => /--detach/.test(c)).join(" | "),
 );
-const polls = all.filter((c) => /kitchen init --status/.test(c));
+const polls = all.filter((c) => /kitchen toolkit build --status/.test(c));
 check(
-  `${tool}: it polled with kitchen init --status --wait (each call at most 110 s)`,
+  `${tool}: it polled with kitchen toolkit build --status --wait (each call at most 110 s)`,
   polls.some((c) => /--wait/.test(c)),
   `${polls.length} polls`,
 );
@@ -294,7 +299,11 @@ const record = {
   approvals:
     tool === "claude"
       ? { allowedTools: CLAUDE_TOOLS, settingSources: "project" }
-      : { sandbox: "workspace-write", approval_policy: "never", rule: 'prefix_rule(pattern=["kitchen", "init"], decision="allow")' },
+      : {
+          sandbox: "workspace-write",
+          approval_policy: "never",
+          rule: 'prefix_rule(pattern=["kitchen", "init"] and ["kitchen", "toolkit", "build"], decision="allow")',
+        },
   outer: turns.map((t) => ({
     code: t.code,
     secs: t.secs,

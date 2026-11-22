@@ -5,16 +5,17 @@ Asserting scripts that drive the real `kitchen` CLI (`node src/cli.ts … --repo
 Every script copies a fixture into a throwaway git repo under the scratch dir you give it (default `spikes/w2/.work/`, ignored) with its own `KITCHEN_HOME`. Nothing touches your real repos or `~/.kitchen`. Docker: at most 2 app stacks at a time (the check's two slots); every container is removed at the end and the scripts check for leftovers by Kitchen's name prefix.
 
 ```sh
-node spikes/w2/flow.ts [scratch]                          # free: scripted setup role + real Toolkit/Docker. Detached init: no-TTY questions (status questions → --answers --detach → done), re-run honesty, secret scan, parallel:false, the setup commit, toolkit check, base-change re-proof (smoke, full, broken → queue paused + ticket, fixed)
-node spikes/w2/init-fixture.ts <fixture> claude [scratch] # ONE real setup: kitchen init on a fresh fixture copy (sonnet, effort medium), merge kitchen/setup, toolkit check on the base
+node spikes/w2/two-speed.ts [scratch]                     # free, no Docker (ADR 0010): quick init on E and B; an app ticket pauses no-toolkit; toolkit build's quiet output; the merge wakes the job; resume without a Toolkit goes on checks-only
+node spikes/w2/flow.ts [scratch]                          # free: scripted setup role + real Toolkit/Docker. Detached toolkit build: no-TTY questions (status questions → --answers --detach → done), re-run honesty, secret scan, parallel:false, the setup commit, toolkit check, base-change re-proof (smoke, full, broken → queue paused + ticket, fixed)
+node spikes/w2/init-fixture.ts <fixture> claude [scratch] # ONE real setup: kitchen init --toolkit on a fresh fixture copy (sonnet, effort medium), merge kitchen/setup, toolkit check on the base
 node spikes/w2/init-fixture.ts <fixture> codex [scratch]  # the same on Codex (gpt-6-luna, effort medium, npx @openai/codex@0.171.0)
-node spikes/w2/superchat.ts [scratch]                     # the superchat-lite measurement (not a gate): clone, init on Claude, 60-minute cap
+node spikes/w2/superchat.ts [scratch]                     # the superchat-lite measurement (not a gate): clone, toolkit build --generate-only on Claude, 60-minute cap
 
 # W2 review fixes
 node spikes/w2/timeout.ts [scratch]   # free: bin/dev timeout/stall kills the group although a child holds stdout
 node spikes/w2/probe.ts [scratch]     # free: the reviewer's broken fake Toolkit and each fault alone fail toolkit check, named; a correct one passes; toolkit up|down
 node spikes/w2/gc.ts [scratch]        # free: Toolkit-checkout GC skips leased checkouts and ones a live slot runs
-node spikes/w2/sandbox.ts [scratch]   # macOS + Docker: the setup bridge's bin/dev, and init's check of the unmerged kitchen/setup, can't read ~/.ssh, gh, agent auth, the engine key; fixture A still passes
+node spikes/w2/sandbox.ts [scratch]   # macOS + Docker: the setup bridge's bin/dev, and the build's check of the unmerged kitchen/setup, can't read ~/.ssh, gh, agent auth, the engine key; fixture A still passes
 node spikes/w2/inside.ts claude e [scratch]   # REAL: /kitchen setup inside `claude -p`, fixture E (a question only the team can answer), two turns
 node spikes/w2/inside.ts codex b [scratch]    # REAL: /kitchen setup inside `codex exec`, fixture B
 ```
@@ -24,7 +25,7 @@ Fixtures: `a-web` (its hand-made Toolkit is deleted from the copy first, so it i
 ## Files
 
 - `lib.ts`: fixture repo builder, CLI runner (buffered and live), PASS/FAIL tally, container check.
-- `fake-setup.ts`: the scripted setup role for `flow.ts` (survey asks one question; build copies fixture A's hand-made Toolkit; `W2_FAKE_SECRET` plants a live-looking key for the secret-scan case).
+- `fake-setup.ts`: the scripted setup role for `flow.ts` and `two-speed.ts` (survey asks one question, or none with `W2_NO_QUESTIONS`; build copies fixture A's hand-made Toolkit, or `W2_TOOLKIT_DIR`'s; `W2_FAKE_SECRET` plants a live-looking key for the secret-scan case; `W2_INTAKE_APP` accepts a ticket whose criterion drives fixture E).
 - `fake-toolkit.mjs`: a Toolkit with no app, broken on purpose per variant (`probe.ts`, `gc.ts`).
 - Fixture E (`inside.ts`): fixture D whose catalog is `CATALOG=eu|us` with no default, and whose README says the team decides which one dev uses.
 - `flow.ts`, `init-fixture.ts`, `superchat.ts`: the exit checks.
