@@ -16,6 +16,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { AgentAdapter } from "../agents/adapter.ts";
 import { buildAgentEnv } from "../agents/env.ts";
+import { checksPrepareOf } from "../checks/run-checks.ts";
 import { type Config, loadConfig, tierModel } from "../config.ts";
 import { toolkitAt } from "../engine/base.ts";
 import { openGit, plainCheckout } from "../engine/git.ts";
@@ -43,10 +44,11 @@ export type QuickRecord = {
   from: string[];
   /**
    * How the checks were found: from the repo's files, by an agent (accepted), already in kitchen.yaml; `proposed`:
-   * an agent proposed some the person hasn't accepted (commented out in kitchen.yaml); `none`: nothing. A re-run
-   * with `proposed` or `none` does not ask the agent again.
+   * an agent proposed some the person hasn't accepted (commented out in kitchen.yaml); `none`: nothing;
+   * `agent-failed`: the agent call failed (`agent.error`). A re-run with `proposed` or `none` does not ask the agent
+   * again; one after `agent-failed` does.
    */
-  found: "files" | "agent" | "config" | "proposed" | "none";
+  found: "files" | "agent" | "config" | "proposed" | "none" | "agent-failed";
   agent?: { model: string; secs: number; usd?: number; error?: string };
   prepare?: CheckRun;
   /** Why the checks did not run (no commit, dependencies that can't be installed). */
@@ -97,10 +99,17 @@ export async function quickInit(o: QuickOpts, out: (l: string) => void): Promise
   let proposed = false;
   let agentRun: QuickRecord["agent"];
   const notes: string[] = [];
-  if (!hasOwnChecks(repo)) detected = detectChecks(repo);
-  if (hasOwnChecks(repo)) found = "config";
-  else if (detected) found = "files";
-  else if (prior?.found === "proposed" || prior?.found === "none") {
+  const own = hasOwnChecks(repo);
+  // Detection runs even with the person's own checks: a lockfile committed since adds just the install (review R3).
+  const det = detectChecks(repo);
+  if (!own) for (const x of det?.skipped ?? []) out(`  skipped ${x.name} (\`${x.body}\` ${x.why})`);
+  if (own) {
+    found = "config";
+    detected = det?.install ? { checks: [], install: det.install, from: det.from } : null;
+  } else if (det?.checks.length) {
+    detected = det;
+    found = "files";
+  } else if (prior?.found === "proposed" || prior?.found === "none") {
     found = prior.found;
     notes.push(
       prior.found === "proposed"
@@ -111,13 +120,16 @@ export async function quickInit(o: QuickOpts, out: (l: string) => void): Promise
     const base = loadConfig(repo);
     const a = await proposeChecks(repo, { ...base, agent: { ...base.agent, tool: tool as Config["agent"]["tool"] } }, o.agent);
     agentRun = a.run;
-    if (a.run.error) notes.push(`The agent call to find the checks failed: ${a.run.error}`);
+    if (a.run.error) {
+      found = "agent-failed";
+      notes.push(`The agent call to find the checks failed: ${a.run.error}. kitchen init asks it again next time.`);
+    }
     if (a.detected) {
-      detected = a.detected;
+      detected = { ...a.detected, ...(det?.install ? { install: det.install } : {}) };
       out("An agent read the repo and proposes these checks (it found none in the usual files):");
       for (const c of a.detected.checks) out(`    ${c.name}: ${c.run}`);
-      if (a.detected.prepare) out(`    install first: ${a.detected.prepare}`);
-      const yes = o.confirm ? await o.confirm("Use these checks? [Y/n] ") : false;
+      // No means no: the default is not to use them (review R8).
+      const yes = o.confirm ? await o.confirm("Use these checks? [y/N] ") : false;
       proposed = !yes;
       found = yes ? "agent" : "proposed";
       if (!yes)
@@ -145,7 +157,7 @@ export async function quickInit(o: QuickOpts, out: (l: string) => void): Promise
     phaseLine(
       !agentRun?.error,
       cfgW.written ? "Wrote kitchen.yaml" : "Kept kitchen.yaml",
-      `agent ${cfg.agent.tool} · ${n ? `${n} check${n === 1 ? "" : "s"} ${from}` : found === "proposed" ? "proposed checks commented out" : "no checks found"}${cfgW.checksAdded && !cfgW.written ? " (added)" : ""}`,
+      `agent ${cfg.agent.tool} · ${n ? `${n} check${n === 1 ? "" : "s"} ${from}` : found === "proposed" ? "proposed checks commented out" : "no checks found"}${cfgW.checksAdded && !cfgW.written ? " (added)" : ""}${cfgW.installAdded ? ` · checks_install: ${cfg.checks_install} added` : ""}`,
       agentRun?.secs,
       agentRun?.usd,
     ),
@@ -163,14 +175,21 @@ export async function quickInit(o: QuickOpts, out: (l: string) => void): Promise
     const tail = r.all.trimEnd().split("\n").slice(-40).join("\n");
     return { name, run: cmd, ok: r.exit === 0, exit: r.timedOut ? null : r.exit, secs: r.secs, tail, sandboxed: r.sandboxed };
   };
+  // The same steps a job worktree gets (run-checks.ts): the frozen download online with no scripts, the rest offline.
+  const prepare = checksPrepareOf(cfg);
   if (n && !sha) record.skipped = "no commit yet";
-  else if (n && depsMissing(repo) && !cfg.checks_prepare) record.skipped = "dependencies not installed, and no lockfile to install them from";
+  else if (n && depsMissing(repo) && !prepare) record.skipped = "dependencies not installed, and no lockfile to install them from";
   else if (n) {
     const c0 = Date.now();
-    if (cfg.checks_prepare && depsMissing(repo)) {
-      out(`  … Installing dependencies (${cfg.checks_prepare})…`);
-      record.prepare = await run("prepare", cfg.checks_prepare, 600, true);
-      if (!record.prepare.ok) failed = record.prepare;
+    if (prepare && depsMissing(repo)) {
+      out(`  … Installing dependencies (${prepare.steps.map((s) => `${s.cmd}${s.network ? "" : ", offline"}`).join(", then ")})…`);
+      for (const s of prepare.steps) {
+        record.prepare = await run(s.name, s.cmd, 600, s.network);
+        if (!record.prepare.ok) {
+          failed = record.prepare;
+          break;
+        }
+      }
     }
     for (const c of failed ? [] : cfg.checkList) {
       out(`  … Running ${c.name} (${c.run})…`);
@@ -232,7 +251,6 @@ don't run anything and don't change any file.
 
 Write checks.md with these lines and nothing else:
 CHECK: <name> | <shell command, run from the repo root>      (one line per check, at most 4)
-PREPARE: <command that installs dependencies in a fresh clone, or none>
 TEST_CMD: <command that runs one test file, with {file} for its path, or none>
 
 Name only commands the repo itself shows. When it shows none, write no CHECK line.`;
@@ -245,9 +263,9 @@ export function parseProposal(text: string): Detected | null {
   };
   const checks = [...text.matchAll(/^CHECK:\s*([\w.-]+)\s*\|\s*(.+)$/gm)].slice(0, 4).map((m) => ({ name: m[1], run: m[2].trim() }));
   if (!checks.length) return null;
-  const prepare = val("PREPARE");
+  // No install command from an agent: Kitchen installs only frozen, from a lockfile it finds itself.
   const testCmd = val("TEST_CMD");
-  return { checks, ...(prepare ? { prepare } : {}), ...(testCmd?.includes("{file}") ? { testCmd } : {}), from: ["an agent's read of the repo"] };
+  return { checks, ...(testCmd?.includes("{file}") ? { testCmd } : {}), from: ["an agent's read of the repo"] };
 }
 
 /** One short read-only agent call on the cheap tier, no bridge: the checks it proposes, or null. */

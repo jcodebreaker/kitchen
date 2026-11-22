@@ -115,7 +115,7 @@ test("nothing obvious, no terminal: one short read-only agent call; its checks g
   assert.equal(req.bridge, undefined);
   assert.ok(req.timeoutSec <= 180 && req.maxTurns <= 15, "short");
   assert.deepEqual(loadConfig(dir).checkList, [], "not used");
-  assert.match(fs.readFileSync(path.join(dir, "kitchen.yaml"), "utf8"), /^# {3}- \{ name: ci, run: sh ci.sh \}$/m);
+  assert.match(fs.readFileSync(path.join(dir, "kitchen.yaml"), "utf8"), /^# {3}- \{ name: "ci", run: "sh ci.sh" \}$/m);
   assert.equal(fs.existsSync(path.join(dir, "ran-ci")), false, "never run");
   assert.equal(readQuickRecord(dir)?.found, "proposed");
   const text = lines.join("\n");
@@ -145,7 +145,7 @@ test("nothing obvious, in a terminal: shown and asked; yes runs them, under the 
     (l) => lines.push(l),
   );
   assert.equal(code, 0, lines.join("\n"));
-  assert.deepEqual(asked, ["Use these checks? [Y/n] "]);
+  assert.deepEqual(asked, ["Use these checks? [y/N] "], "the default is no (review R8)");
   assert.deepEqual(
     loadConfig(yes).checkList.map((c) => c.run),
     ["sh ci.sh"],
@@ -160,17 +160,71 @@ test("nothing obvious, in a terminal: shown and asked; yes runs them, under the 
   assert.equal(fs.existsSync(path.join(no, "ran-ci")), false);
 });
 
-test("a failed agent call says why (review M6) and is recorded, so a re-run doesn't call it again", async () => {
+test("a failed agent call says why (review M6), is recorded as agent-failed, and the next run asks again (review R4)", async () => {
   const dir = repo("odd-fail", ODD);
   const lines: string[] = [];
   const broken = new FakeAdapter(() => ({ ok: false, line: "claude: not logged in" }));
   assert.equal(await quickInit({ repo: dir, agent: async () => broken }, (l) => lines.push(l)), 0);
   assert.match(lines.join("\n"), /The agent call to find the checks failed: claude: not logged in/);
   assert.match(lines.join("\n"), /✗ Kept kitchen.yaml|✗ Wrote kitchen.yaml/);
-  assert.equal(readQuickRecord(dir)?.found, "none");
+  assert.equal(readQuickRecord(dir)?.found, "agent-failed");
+  assert.equal(readQuickRecord(dir)?.agent?.error, "claude: not logged in");
   const again = proposal();
   await quickInit({ repo: dir, agent: async () => again }, () => {});
-  assert.equal(again.calls.length, 0);
+  assert.equal(again.calls.length, 1, "asked again");
+  assert.equal(readQuickRecord(dir)?.found, "proposed");
+});
+
+test("Enter (or anything but y) at the question keeps proposed checks unused (review R8)", async () => {
+  for (const answer of ["", "n", "sure"]) {
+    const dir = repo(`odd-enter-${answer || "empty"}`, ODD);
+    const { terminalAnswer } = await import("../cli/toolkit-commands.ts");
+    const yes = terminalAnswer(answer);
+    await quickInit({ repo: dir, agent: async () => proposal(), confirm: async () => yes }, () => {});
+    assert.deepEqual(loadConfig(dir).checkList, [], JSON.stringify(answer));
+  }
+  const { terminalAnswer } = await import("../cli/toolkit-commands.ts");
+  assert.equal(terminalAnswer("y"), true);
+  assert.equal(terminalAnswer(" YES "), true);
+});
+
+test("unsafe scripts are named when they are left out (review R6)", async () => {
+  const dir = repo("fixy", { "package.json": JSON.stringify({ scripts: { lint: "eslint . --fix", test: "node --test" } }) });
+  const lines: string[] = [];
+  await quickInit({ repo: dir, agent: noAgent }, (l) => lines.push(l));
+  assert.match(lines.join("\n"), /skipped lint \(`eslint \. --fix` changes files\)/);
+  assert.deepEqual(
+    loadConfig(dir).checkList.map((c) => c.run),
+    ["npm test"],
+  );
+});
+
+test("after a lockfile is committed, a re-run adds just checks_install and doesn't repeat the stale 'no lockfile' (review R3)", async () => {
+  const dir = repo("later-lock", { "package.json": JSON.stringify({ scripts: { test: "test -d node_modules" }, dependencies: { leftpad: "1" } }) });
+  const first: string[] = [];
+  await quickInit({ repo: dir, agent: noAgent }, (l) => first.push(l));
+  assert.match(first.join("\n"), /no lockfile to install them from/);
+  // The person edits kitchen.yaml's checks, then commits a lockfile.
+  const yaml = fs.readFileSync(path.join(dir, "kitchen.yaml"), "utf8");
+  fs.writeFileSync(path.join(dir, "kitchen.yaml"), yaml.replace('run: "npm test"', 'run: "npm test --silent"'));
+  fs.writeFileSync(path.join(dir, "package-lock.json"), "{}");
+  git(dir, "add", "-A");
+  git(dir, "commit", "-q", "-m", "lockfile");
+  const again: string[] = [];
+  await quickInit({ repo: dir, agent: noAgent }, (l) => again.push(l));
+  const cfg = loadConfig(dir);
+  assert.equal(cfg.checks_install, "npm");
+  assert.deepEqual(
+    cfg.checkList.map((c) => c.run),
+    ["npm test --silent"],
+    "the person's checks kept",
+  );
+  assert.match(again.join("\n"), /checks_install: npm added/);
+  assert.doesNotMatch(again.join("\n"), /no lockfile/);
+  // A third run adds nothing more.
+  const before = fs.readFileSync(path.join(dir, "kitchen.yaml"), "utf8");
+  await quickInit({ repo: dir, agent: noAgent }, () => {});
+  assert.equal(fs.readFileSync(path.join(dir, "kitchen.yaml"), "utf8"), before);
 });
 
 test("checks run under Gate's sandbox, with CI=1: they can't write outside the checkout", async (t) => {

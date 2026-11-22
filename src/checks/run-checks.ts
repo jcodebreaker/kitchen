@@ -20,14 +20,41 @@ import { readJob } from "../proof/job.ts";
 import { type StampedCmd, stampCommand } from "../proof/stamp-cmd.ts";
 
 export type ChecksResult = { ok: boolean; sha: string | null; results: StampedCmd[] };
-export type ChecksPrepare = { cmd: string; network: boolean };
+export type PrepareStep = { name: string; cmd: string; network: boolean };
+/** What readies a worktree, in order. `cmd`: all of it as one line, the cache key. */
+export type ChecksPrepare = { cmd: string; steps: PrepareStep[] };
+export type PackageManager = "npm" | "pnpm" | "yarn" | "bun";
 
 /**
- * The prepare step always has the network (it downloads the dependencies, ADR 0010); the checks and proofs
- * after it get it only with `checks_network: true`, so builder code never reaches the network by default.
+ * Pure: kitchen.yaml `checks_install` as steps (ADR 0010, review R2). The frozen download is the only step with the
+ * network, and it runs no package's scripts (`--ignore-scripts`; Yarn: `--mode=skip-build`), so a `postinstall` the
+ * builder adds, or a git dependency's, never runs online. The lifecycle scripts run after, in a rebuild that has the
+ * network only with `checks_network: true`. Bun has no rebuild: its dependencies' scripts don't run.
  */
-export const checksPrepareOf = (cfg: Pick<Config, "checks_prepare">): ChecksPrepare | undefined =>
-  cfg.checks_prepare ? { cmd: cfg.checks_prepare, network: true } : undefined;
+export function installSteps(pm: PackageManager, checksNetwork: boolean): PrepareStep[] {
+  const download: Record<PackageManager, string> = {
+    npm: "npm ci --ignore-scripts",
+    pnpm: "pnpm install --frozen-lockfile --ignore-scripts",
+    yarn: "yarn install --immutable --mode=skip-build",
+    bun: "bun install --frozen-lockfile --ignore-scripts",
+  };
+  return [
+    { name: "install", cmd: download[pm], network: true },
+    ...(pm === "bun" ? [] : [{ name: "install-scripts", cmd: `${pm} rebuild`, network: checksNetwork }]),
+  ];
+}
+
+/**
+ * What readies a job worktree: the frozen install (`checks_install`), then the person's own `checks_prepare`, which
+ * has the network only with `checks_network: true`, as it always had.
+ */
+export function checksPrepareOf(cfg: Pick<Config, "checks_install" | "checks_prepare" | "checks_network">): ChecksPrepare | undefined {
+  const steps = [
+    ...(cfg.checks_install ? installSteps(cfg.checks_install, cfg.checks_network) : []),
+    ...(cfg.checks_prepare ? [{ name: "checks_prepare", cmd: cfg.checks_prepare, network: cfg.checks_network }] : []),
+  ];
+  return steps.length ? { cmd: steps.map((s) => s.cmd).join(" && "), steps } : undefined;
+}
 
 /** Dependency manifests and lockfiles at the worktree root: a change to one runs `checks_prepare` again. */
 export const DEPENDENCY_FILES = [
@@ -97,17 +124,23 @@ export async function ensureChecksPrepared(o: {
   const worktree = o.source?.worktree ?? readJob(o.jobDir).worktree;
   const key = prepareKey(o.prepare.cmd, worktree);
   if (readMarker(o.jobDir)[worktree] === key) return null;
-  const r = await stampCommand({
-    jobDir: o.jobDir,
-    name: "checks_prepare",
-    cmd: o.prepare.cmd,
-    role: o.role,
-    criterion: o.criterion,
-    timeoutSec: 1800,
-    sandbox: true,
-    network: o.prepare.network,
-    ...(o.source ? { source: o.source } : {}),
-  });
+  let r: StampedCmd | null = null;
+  // Step by step, each with its own network rule; the first that fails stops it.
+  for (const s of o.prepare.steps) {
+    r = await stampCommand({
+      jobDir: o.jobDir,
+      name: s.name,
+      cmd: s.cmd,
+      role: o.role,
+      criterion: o.criterion,
+      timeoutSec: 1800,
+      sandbox: true,
+      network: s.network,
+      ...(o.source ? { source: o.source } : {}),
+    });
+    if (!r.ok) return r;
+  }
+  if (!r) return null;
   if (r.ok) {
     const m = readMarker(o.jobDir);
     m[worktree] = key;

@@ -3,7 +3,6 @@
 // Codex) and Kitchen's .gitignore entries. Each step is idempotent.
 import fs from "node:fs";
 import path from "node:path";
-import { stringify } from "yaml";
 import { loadConfig } from "../config.ts";
 import type { Detected } from "./detect-checks.ts";
 
@@ -67,17 +66,24 @@ round_limit: 3
 # models: { builder: strong, verifier: medium, setup: medium }   # tiers map to models per tool
 `;
 
+/** A YAML scalar on one line, whatever its length (JSON is YAML; `stringify` folds long strings, review R1). */
+const scalar = (v: string) => JSON.stringify(v);
+
+const INSTALL_LINES = (pm: string) => [
+  "# A frozen install from the lockfile: downloads with the network but runs no package scripts; they run after, offline",
+  `checks_install: ${pm}`,
+];
+
 /**
  * Pure: the YAML lines for the detected checks (Gate runs them in every job). `proposed`: checks an agent
  * proposed that the person hasn't accepted: written commented out, so nothing runs them until they do.
  */
 export function checksYaml(d: Detected, o: { proposed?: boolean } = {}): string {
-  const q = (s: string) => stringify(s).trimEnd();
   const lines = [
     "checks:",
-    ...d.checks.map((c) => `  - { name: ${c.name}, run: ${q(c.run)} }`),
-    ...(d.prepare ? ["# Readies a fresh job worktree before the checks (a frozen install; it alone gets the network)", `checks_prepare: ${q(d.prepare)}`] : []),
-    ...(d.testCmd ? ["# How a `test <file>` proof runs", `test_cmd: ${q(d.testCmd)}`] : []),
+    ...d.checks.map((c) => `  - { name: ${scalar(c.name)}, run: ${scalar(c.run)} }`),
+    ...(d.install ? INSTALL_LINES(d.install) : []),
+    ...(d.testCmd ? ["# How a `test <file>` proof runs", `test_cmd: ${scalar(d.testCmd)}`] : []),
   ];
   return [
     o.proposed
@@ -95,25 +101,39 @@ export const hasOwnChecks = (repo: string): boolean => {
 };
 
 /**
- * kitchen.yaml: written when missing; an existing one is kept, and only gets the
- * detected checks when it names none (no `checks:` key yet). The one rule for quick init and the build.
+ * kitchen.yaml: written when missing; an existing one is kept, and only gets the detected checks when it names
+ * none (no `checks:` key yet). One that names checks but has no install gets just `checks_install` when the repo now
+ * has a lockfile to install from (review R3). The one rule for quick init and the build.
  */
-export function writeConfig(repo: string, tool: string, d: Detected | null, o: { proposed?: boolean } = {}): { written: boolean; checksAdded: boolean } {
+export function writeConfig(
+  repo: string,
+  tool: string,
+  d: Detected | null,
+  o: { proposed?: boolean } = {},
+): { written: boolean; checksAdded: boolean; installAdded: boolean } {
   const f = path.join(repo, "kitchen.yaml");
+  const checks = !!d?.checks.length;
   if (!fs.existsSync(f)) {
-    fs.writeFileSync(f, `${KITCHEN_YAML(tool)}${d?.checks.length ? checksYaml(d, o) : ""}`);
-    return { written: true, checksAdded: !!d?.checks.length && !o.proposed };
+    fs.writeFileSync(f, `${KITCHEN_YAML(tool)}${d && checks ? checksYaml(d, o) : ""}`);
+    return { written: true, checksAdded: checks && !o.proposed, installAdded: false };
   }
   const have = fs.readFileSync(f, "utf8");
-  if (!d?.checks.length || hasOwnChecks(repo)) return { written: false, checksAdded: false };
-  const extra = checksYaml(
-    {
-      ...d,
-      prepare: /^checks_prepare\s*:/m.test(have) ? undefined : d.prepare,
-      testCmd: /^test_cmd\s*:/m.test(have) ? undefined : d.testCmd,
-    },
-    o,
+  const append = (text: string) => fs.writeFileSync(f, `${have}${have.endsWith("\n") ? "" : "\n"}${text}`);
+  if (hasOwnChecks(repo)) {
+    if (!d?.install || /^checks_(install|prepare)\s*:/m.test(have)) return { written: false, checksAdded: false, installAdded: false };
+    append(`${INSTALL_LINES(d.install).join("\n")}\n`);
+    return { written: false, checksAdded: false, installAdded: true };
+  }
+  if (!d || !checks) return { written: false, checksAdded: false, installAdded: false };
+  append(
+    checksYaml(
+      {
+        ...d,
+        install: /^checks_(install|prepare)\s*:/m.test(have) ? undefined : d.install,
+        testCmd: /^test_cmd\s*:/m.test(have) ? undefined : d.testCmd,
+      },
+      o,
+    ),
   );
-  fs.writeFileSync(f, `${have}${have.endsWith("\n") ? "" : "\n"}${extra}`);
-  return { written: false, checksAdded: !o.proposed };
+  return { written: false, checksAdded: !o.proposed, installAdded: false };
 }

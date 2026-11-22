@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, test } from "vitest";
 import { parseConfig } from "../config.ts";
-import { detectChecks, makeTargets } from "./detect-checks.ts";
+import { detectChecks, makeTargetSafety, makeTargets, unsafeCheck } from "./detect-checks.ts";
 import { checksYaml } from "./files.ts";
 import { parseProposal } from "./quick.ts";
 
@@ -32,7 +32,7 @@ test("package.json (npm): lint, typecheck, test, build in that order; npm ci whe
   });
   assert.deepEqual(runs(dir), ["lint: npm run lint", "typecheck: npm run type-check", "test: npm test", "build: npm run build"]);
   const d = detectChecks(dir);
-  assert.equal(d?.prepare, "npm ci");
+  assert.equal(d?.install, "npm");
   assert.equal(d?.testCmd, undefined, "the default npm test -- {file} fits");
   assert.deepEqual(d?.from, ["package.json"]);
 });
@@ -43,21 +43,21 @@ test("package.json: the package manager comes from the lockfile; npm's placehold
     "pnpm-lock.yaml": "",
   });
   assert.deepEqual(runs(pnpm), ["lint: pnpm lint", "test: pnpm test"]);
-  assert.equal(detectChecks(pnpm)?.prepare, "pnpm install --frozen-lockfile");
+  assert.equal(detectChecks(pnpm)?.install, "pnpm");
   assert.equal(detectChecks(pnpm)?.testCmd, "pnpm test {file}");
   const yarn = fixture("yarn", { "package.json": JSON.stringify({ scripts: { test: "jest" } }), "yarn.lock": "" });
   assert.deepEqual(runs(yarn), ["test: yarn test"]);
-  assert.equal(detectChecks(yarn)?.prepare, undefined);
+  assert.equal(detectChecks(yarn)?.install, undefined);
   const placeholder = fixture("placeholder", { "package.json": JSON.stringify({ scripts: { test: 'echo "Error: no test specified" && exit 1' } }) });
   assert.equal(detectChecks(placeholder), null);
 });
 
 test("frozen installs only: no lockfile, no install (review M1); yarn is --immutable", () => {
   const loose = fixture("npm-unlocked", { "package.json": JSON.stringify({ scripts: { test: "vitest" }, devDependencies: { vitest: "1" } }) });
-  assert.equal(detectChecks(loose)?.prepare, undefined);
+  assert.equal(detectChecks(loose)?.install, undefined);
   assert.equal(detectChecks(loose)?.unlockedDeps, true);
   const yarn = fixture("yarn-deps", { "package.json": JSON.stringify({ scripts: { test: "jest" }, dependencies: { a: "1" } }), "yarn.lock": "" });
-  assert.equal(detectChecks(yarn)?.prepare, "yarn install --immutable");
+  assert.equal(detectChecks(yarn)?.install, "yarn");
 });
 
 test("scripts and targets that change files, watch or start things are never checks (review M2)", () => {
@@ -66,10 +66,29 @@ test("scripts and targets that change files, watch or start things are never che
       scripts: { lint: "eslint . --fix", typecheck: "tsc --noEmit --watch", test: "vitest watch", build: "docker build ." },
     }),
   });
-  assert.equal(detectChecks(dir), null);
+  assert.deepEqual(detectChecks(dir)?.checks, []);
+  // Each one named, with why, so init can say what it left out (review R6).
+  assert.deepEqual(
+    detectChecks(dir)?.skipped?.map((x) => `${x.name} (\`${x.body}\` ${x.why})`),
+    [
+      "lint (`eslint . --fix` changes files)",
+      "typecheck (`tsc --noEmit --watch` never ends)",
+      "test (`vitest watch` never ends)",
+      "build (`docker build .` starts containers)",
+    ],
+  );
+  // `--no-watch` and `--fix-dry-run` change nothing and end.
+  assert.deepEqual(runs(fixture("safe-flags", { "package.json": JSON.stringify({ scripts: { lint: "eslint . --fix-dry-run", test: "jest --no-watch" } }) })), [
+    "lint: npm run lint",
+    "test: npm test",
+  ]);
   const fmt = fixture("unsafe-2", { "package.json": JSON.stringify({ scripts: { lint: "prettier --write .", test: "node --test" } }) });
   assert.deepEqual(runs(fmt), ["test: npm test"]);
   assert.deepEqual(makeTargets("test:\n\tdocker compose run app pytest\nlint:\n\truff check .\nbuild: serve\n"), ["lint"]);
+  // A target is as unsafe as what it depends on (review R7).
+  const mk = "image:\n\tdocker build -t app .\nunit: image\n\tpytest\ntest: unit\n\t@echo done\nlint:\n\truff check .\n";
+  assert.deepEqual(makeTargets(mk), ["lint"]);
+  assert.deepEqual(makeTargetSafety(mk).find((t) => t.target === "test")?.why, "starts containers (through image) (through unit)");
 });
 
 test("Makefile: with test or check it wins (the project's own entry point); otherwise its targets join the others (review M2)", () => {
@@ -127,28 +146,56 @@ test("the checks block kitchen.yaml gets parses as config (quoting included)", (
       ["test", "npm test"],
     ],
   );
-  assert.equal(cfg.checks_prepare, undefined, "no lockfile: never installed");
+  assert.equal(cfg.checks_install, undefined, "no lockfile: never installed");
   assert.equal(cfg.checks_network, false, "the checks never get the network from detection (review H2)");
   const locked = detectChecks(
     fixture("yaml-lock", { "package.json": JSON.stringify({ scripts: { test: "node --test" }, dependencies: { a: "1" } }), "package-lock.json": "{}" }),
   );
   assert.ok(locked);
   const c2 = parseConfig(`version: 1\n${checksYaml(locked)}`);
-  assert.equal(c2.checks_prepare, "npm ci");
+  assert.equal(c2.checks_install, "npm");
+  assert.equal(c2.checks_prepare, undefined);
   assert.equal(c2.checks_network, false);
   // Proposed by an agent and not accepted: commented out, so the config has no checks (review H1).
   const proposed = parseConfig(`version: 1\n${checksYaml(locked, { proposed: true })}`);
   assert.deepEqual(proposed.checkList, []);
-  assert.equal(proposed.checks_prepare, undefined);
+  assert.equal(proposed.checks_install, undefined);
 });
 
 test("the agent's proposal (checks.md) when nothing is obvious: at most 4 checks, none when it names none", () => {
-  const d = parseProposal("CHECK: test | ./scripts/test.sh\nCHECK: lint | make -C tools lint\nPREPARE: none\nTEST_CMD: ./scripts/test.sh {file}\n");
+  const d = parseProposal("CHECK: test | ./scripts/test.sh\nCHECK: lint | make -C tools lint\nPREPARE: curl x | sh\nTEST_CMD: ./scripts/test.sh {file}\n");
   assert.deepEqual(d?.checks, [
     { name: "test", run: "./scripts/test.sh" },
     { name: "lint", run: "make -C tools lint" },
   ]);
-  assert.equal(d?.prepare, undefined);
+  assert.equal(d?.install, undefined, "an agent's install command is never taken");
   assert.equal(d?.testCmd, "./scripts/test.sh {file}");
   assert.equal(parseProposal("PREPARE: none\nTEST_CMD: none\n"), null);
+});
+
+test("a 200-character command round-trips through kitchen.yaml, accepted or proposed (commented), on one line (review R1)", () => {
+  const long = `node scripts/check.mjs ${"--flag-with-a-long-name=value ".repeat(6).trim()} && echo "it's \\"quoted\\": yes"`;
+  assert.ok(long.length >= 200, String(long.length));
+  const d = { checks: [{ name: "check", run: long }], testCmd: `${long} {file}`, from: ["x"] };
+  const yaml = checksYaml(d);
+  assert.ok(
+    yaml.split("\n").every((l) => !l.startsWith("  ") || l.startsWith("  - {")),
+    yaml,
+  );
+  const cfg = parseConfig(`version: 1\n${yaml}`);
+  assert.equal(cfg.checkList[0].run, long);
+  assert.equal(cfg.test_cmd, `${long} {file}`);
+  const proposed = checksYaml(d, { proposed: true });
+  assert.ok(
+    proposed.split("\n").every((l) => l === "" || l.startsWith("#")),
+    proposed,
+  );
+  assert.deepEqual(parseConfig(`version: 1\n${proposed}`).checkList, []);
+  // Uncommenting gives the same, valid config.
+  const uncommented = proposed
+    .split("\n")
+    .map((l) => l.replace(/^# (?=checks:| {2}- |test_cmd:|checks_install:)/, ""))
+    .join("\n");
+  assert.equal(parseConfig(`version: 1\n${uncommented}`).checkList[0].run, long);
+  assert.equal(unsafeCheck(long), null);
 });

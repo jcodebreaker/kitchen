@@ -103,10 +103,16 @@ export const ConfigSchema = z
     checks_network: z.boolean().default(false),
     /**
      * Readies a worktree for the checks and `test` proofs (`npm ci`, `pip install -r requirements.txt`): a fresh
-     * job worktree has no node_modules. Run in the worktree under the same sandbox as the checks (always with the network, to download; ADR 0010
-     * review H2), before the first check or test proof, and again only when it or a lockfile changes.
+     * job worktree has no node_modules. Run in the worktree under the same sandbox as the checks (network only with
+     * `checks_network`), before the first check or test proof, and again only when it or a lockfile changes.
      */
     checks_prepare: z.string().min(1).optional(),
+    /**
+     * A frozen install from the lockfile, written by `kitchen init` (ADR 0010): the package manager. The download
+     * runs with the network and no package scripts; the scripts run after in a rebuild, offline unless
+     * `checks_network` (run-checks.ts installSteps). Runs before `checks_prepare`.
+     */
+    checks_install: z.enum(["npm", "pnpm", "yarn", "bun"]).optional(),
     /** How a `test <file>` proof runs, in the job worktree with the untrusted env. `{file}` is the test file, shell-quoted. */
     test_cmd: z.string().min(1).default("npm test -- {file}"),
     agent: z

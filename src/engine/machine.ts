@@ -745,7 +745,11 @@ export const TABLE: readonly Row[] = [
       verdictIs("NO-TOOLKIT"),
       check((_j, f) => !!f.noToolkit, "no noToolkit facts"),
     ),
-    apply: pauseNoToolkit,
+    apply: (j, f) => {
+      pauseNoToolkit(j, f);
+      // Woken with a Toolkit, the job writes its feature drives first: they were never written without one (review R5).
+      j.pausedFrom = "drives";
+    },
   },
   {
     id: "verify>needs-human",

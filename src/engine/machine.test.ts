@@ -680,7 +680,7 @@ const cases: Case[] = [
     facts: f({ verify: verify("NO-TOOLKIT"), noToolkit: { needsApp: ["C1"], highRisk: false, unprovable: "no criterion was proven" } }),
     expect: (j) => {
       assert.equal(j.waitFor, "no-toolkit");
-      assert.equal(j.pausedFrom, "verify");
+      assert.equal(j.pausedFrom, "drives", "woken, it writes the feature drives first (review R5)");
     },
   },
   {

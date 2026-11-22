@@ -54,13 +54,16 @@ const BUILD_ONLY = ["answers", "model", "effort", "max-fix", "generate-only", "d
 const BUILD_FLAGS = ["repo", "tool", "verbose", "status", "wait", ...BUILD_ONLY];
 const INIT_FLAGS = [...BUILD_FLAGS, "skill", "toolkit"];
 
-/** A yes/no question in a terminal (Enter = yes); none without one: proposed checks are then written commented out. */
+/** Pure: only an explicit yes is yes; Enter is no (review R8). */
+export const terminalAnswer = (a: string): boolean => /^(y|yes)$/i.test(a.trim());
+
+/** A yes/no question in a terminal (Enter = no); none without one: proposed checks are then written commented out. */
 function terminalConfirm(): ((q: string) => Promise<boolean>) | undefined {
   if (!process.stdin.isTTY || !process.stdout.isTTY) return undefined;
   return async (q) => {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
     try {
-      return /^(y|yes)?$/i.test((await rl.question(q)).trim());
+      return terminalAnswer(await rl.question(q));
     } catch {
       return false; // Ctrl-D: no answer is not a yes
     } finally {
