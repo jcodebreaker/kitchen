@@ -111,7 +111,7 @@ check(`${kind}: report.html rendered, every evidence id resolved`, !!html && !/\
 const src = read("report.src.html");
 const head = execFileSync("git", ["-C", r.dir, "rev-parse", j.branch], { encoding: "utf8" }).trim();
 const entries = manifest(r, id);
-check(`${kind}: the report role's own source renders for the final HEAD`, !!src && renderRefusal(src, entries, head, kind === "auth" ? true : false) === null);
+check(`${kind}: the report role's own source renders for the final HEAD`, !!src && renderRefusal(src, entries, head, j.risk === "high" || j.riskFloor === "high") === null);
 check(
   `${kind}: a planted made-up id in report.src.html is refused`,
   /unknown evidence id e999999/.test(renderRefusal(`${src}<p>{{e999999}}</p>`, entries, head, false) ?? ""),
