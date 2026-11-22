@@ -142,6 +142,10 @@ export function ledger(r: Repo): LedgerLine[] {
 
 export const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
 
-/** Kitchen containers still running (the fixture's Toolkit labels them). */
-export const kitchenContainers = () =>
-  execFileSync("docker", ["ps", "-q", "--filter", "label=kitchen.toolkit=a-web"], { encoding: "utf8" }).split("\n").filter(Boolean);
+/** Kitchen containers still running (the fixture's Toolkit labels them), all or one slot id's. */
+export const kitchenContainers = (slotId?: string) =>
+  execFileSync("docker", ["ps", "-q", "--filter", "label=kitchen.toolkit=a-web", ...(slotId ? ["--filter", `label=kitchen.id=${slotId}`] : [])], {
+    encoding: "utf8",
+  })
+    .split("\n")
+    .filter(Boolean);

@@ -84,4 +84,9 @@ test("proof lines: toolkit segments, cmd, test", () => {
     'toolkit read --t "x',
   ])
     assert.throws(() => parseProof(bad), ProofLineError, bad);
+  assert.deepEqual(
+    parseProof("toolkit login --as alice ; open --path /home").map((s) => (s.kind === "toolkit" ? s.name : s.kind)),
+    ["login", "open"],
+    "later segments may leave out the word toolkit",
+  );
 });

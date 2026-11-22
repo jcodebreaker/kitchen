@@ -10,12 +10,14 @@
 //    the mechanical expect is false.
 import fs from "node:fs";
 import path from "node:path";
+import { changedExistingDrive } from "../../checks/feature-lint.ts";
 import { prove } from "../../proof/prove.ts";
 import { contractOf, namedDrives, reproCriterion, reproPolicy, testFilesOf } from "../contract.ts";
 import { freshUp } from "../instance.ts";
 import { updateJob, writeAtomic } from "../store.ts";
 import { changedFiles, commitWith, ensureWorktree, headOf } from "../worktree.ts";
 import { contractBlock, toolkitBlock } from "./context.ts";
+import { featureFilesAtHead } from "./drives.ts";
 import { prompt } from "./prompts.ts";
 import { headers, runRole } from "./role.ts";
 import { featureDrives, hasToolkit } from "./toolkit-info.ts";
@@ -66,9 +68,25 @@ export const repro: StageHandler = async (ctx) => {
     gap = headers(r.text).GAP || undefined;
   }
   job = ctx.refresh();
-  const c = await commitWith(job, `kitchen(${job.id}): regression test (repro)`, reproPolicy(ctx.config.protected));
+  const before = await featureFilesAtHead(job);
+  const policy = reproPolicy(ctx.config.protected);
+  const wt = job.worktree;
+  const c = await commitWith(job, `kitchen(${job.id}): regression test (repro)`, (f, status) => {
+    const layer = policy(f, status);
+    if (layer || status !== "M" || !before.has(f)) return layer;
+    return changedExistingDrive(before.get(f) ?? "", fs.readFileSync(path.join(wt, f), "utf8"));
+  });
   for (const x of c.refused) ctx.log(`kept off the job branch: ${x}`);
-  const reproFiles = [...new Set([...(job.reproFiles ?? []), ...c.files])];
+  // What the builder may not edit: what this stage added, plus the drives and test files the repro proof runs.
+  const used = featureDrives(job.worktree).files;
+  const reproFiles = [
+    ...new Set([
+      ...(job.reproFiles ?? []),
+      ...c.files,
+      ...[...namedDrives([crit]).keys()].flatMap((d) => (used[d] ? [used[d]] : [])),
+      ...testFilesOf(crit).filter((f) => fs.existsSync(path.join(job.worktree, f))),
+    ]),
+  ];
   job = await updateJob(ctx.repo, job.id, (j) => {
     j.reproFiles = reproFiles;
     return j;
@@ -91,14 +109,15 @@ export const repro: StageHandler = async (ctx) => {
       tag: { phase: "repro" },
       log: (m) => ctx.log(`[drive] ${m}`),
     });
-    failedAsExpected = p.status === "assert-fail";
+    // Failed as expected: every step ran and the expect is false, or a `wait` for the state the
+    // criterion expects timed out after every earlier step ran (the state never showed up).
+    failedAsExpected = p.status === "assert-fail" || (p.status === "step-failed" && !!p.waitTimedOut);
     why =
-      p.status === "pass"
-        ? "the expect holds on the base: nothing reproduced"
-        : p.status === "assert-fail"
-          ? `failed as expected: ${p.why}`
-          : `${p.status}: ${p.why}`;
-    writeAtomic(record, `${JSON.stringify({ criterion: crit.id, head, status: p.status, why, evidence: p.evidence, assert: p.assert }, null, 2)}\n`);
+      p.status === "pass" ? "the expect holds on the base: nothing reproduced" : failedAsExpected ? `failed as expected: ${p.why}` : `${p.status}: ${p.why}`;
+    writeAtomic(
+      record,
+      `${JSON.stringify({ criterion: crit.id, head, status: p.status, failedAsExpected, why, evidence: p.evidence, assert: p.assert }, null, 2)}\n`,
+    );
   } else why = !onBase ? `the branch differs from the base by more than the repro files: ${diff.join(", ")}` : `not committed: ${missing().join(", ")}`;
   ctx.log(`repro ${crit.id}: ${why}`);
   const to = failedAsExpected ? "build" : job.attempts.repro + 1 < 2 ? "repro" : "needs-info";

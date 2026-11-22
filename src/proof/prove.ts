@@ -25,6 +25,8 @@ export type ProveResult = {
   /** pass: ran and the expect holds (judged: ran, the agent decides). assert-fail: ran, the expect does not hold.
    *  step-failed: a step or command failed before the expect could be applied. gap: a primitive is missing. error: the proof could not run. */
   status: ProveStatus;
+  /** step-failed at a `wait` (its text never showed up) after every earlier step ran: the expected state is absent. */
+  waitTimedOut?: boolean;
   why?: string;
   gap?: string;
   outcome: Outcome;
@@ -88,7 +90,10 @@ export async function prove(o: ProveOpts): Promise<ProveResult> {
         if (r.gap) return res("gap", { gap: r.gap, why: `the Toolkit has no primitive ${r.gap}` });
         if (!r.ok) {
           outcome.output = text(r.failedAt?.out);
-          return res("step-failed", { why: `${s.name}: step "${r.failedAt?.step}" failed${r.failedAt?.why ? ` (${r.failedAt.why})` : ""}` });
+          return res("step-failed", {
+            why: `${s.name}: step "${r.failedAt?.step}" failed${r.failedAt?.why ? ` (${r.failedAt.why})` : ""}`,
+            waitTimedOut: !!r.failedAt?.step.startsWith("wait ") && !r.failedAt.why,
+          });
         }
       }
       outcome.ok = true;

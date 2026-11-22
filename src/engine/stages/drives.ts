@@ -7,7 +7,7 @@
 // since gate.md touch nothing but features/*.md.
 import fs from "node:fs";
 import path from "node:path";
-import { lintFeatureFile } from "../../checks/feature-lint.ts";
+import { changedExistingDrive, lintFeatureFile } from "../../checks/feature-lint.ts";
 import { evidenceDir, readJob, sealOf } from "../../proof/job.ts";
 import { verifyManifest } from "../../proof/manifest.ts";
 import { checkFeatureDrive, type FeatureCheck } from "../../toolkit/feature-check.ts";
@@ -15,7 +15,7 @@ import { contractOf, drivesPolicy, namedDrives } from "../contract.ts";
 import { freshUp } from "../instance.ts";
 import type { Job } from "../machine.ts";
 import { roundDir, writeAtomic } from "../store.ts";
-import { changedFiles, commitWith } from "../worktree.ts";
+import { changedFiles, commitWith, fileAtHead } from "../worktree.ts";
 import { contractBlock, toolkitBlock } from "./context.ts";
 import { gateStillValid } from "./gate.ts";
 import { prompt } from "./prompts.ts";
@@ -96,11 +96,15 @@ export const drives: StageHandler = async (ctx) => {
     job = ctx.refresh();
     // Only feature drive files, and only ones that hold no code: a refused file never reaches the branch.
     const wt = job.worktree;
+    const before = await featureFilesAtHead(job);
     const c = await commitWith(job, `kitchen(${job.id}): feature drives`, (f, status) => {
       const layer = drivesPolicy(f, status);
       if (layer) return layer;
-      const l = lintFeatureFile(fs.readFileSync(path.join(wt, f), "utf8"), prims);
-      return l.ok ? null : `refused: ${l.reason}`;
+      const text = fs.readFileSync(path.join(wt, f), "utf8");
+      const l = lintFeatureFile(text, prims);
+      if (!l.ok) return `refused: ${l.reason}`;
+      const changed = status === "M" ? changedExistingDrive(before.get(f) ?? "", text) : null;
+      return changed ? `refused: ${changed}` : null;
     });
     for (const x of c.refused) ctx.log(`kept off the job branch: ${x}`);
     lintRefused = c.refused.filter((x) => x.includes(": refused: "));
@@ -162,4 +166,17 @@ function unreachableCited(jobDir: string, text: string, round: number): boolean 
     const e = entries.find((x) => x.id === id);
     return !!e && e.role === "verifier" && e.round === round && e.ok === false;
   });
+}
+
+/** Every features/*.md at HEAD that the worktree still has, by repo-relative path. */
+export async function featureFilesAtHead(job: Job): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const dir = path.join(job.worktree, FEATURES_DIR);
+  if (!fs.existsSync(dir)) return out;
+  for (const f of fs.readdirSync(dir).filter((x) => x.endsWith(".md"))) {
+    const rel = `${FEATURES_DIR}/${f}`;
+    const t = await fileAtHead(job, rel);
+    if (t !== null) out.set(rel, t);
+  }
+  return out;
 }

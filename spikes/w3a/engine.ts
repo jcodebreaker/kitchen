@@ -12,7 +12,6 @@ import {
   HERE,
   jobDir,
   jobOf,
-  kitchen,
   kitchenContainers,
   makeFixtureRepo,
   manifest,

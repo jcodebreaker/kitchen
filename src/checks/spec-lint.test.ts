@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
-import { lintFeatureFile } from "./feature-lint.ts";
+import { changedExistingDrive, lintFeatureFile } from "./feature-lint.ts";
 import { gateOutcome } from "./gate.ts";
 import { riskFloor } from "./risk-floor.ts";
 import { lintSpec, newDrivesOf } from "./spec-lint.ts";
@@ -122,4 +122,12 @@ test("gate is pinned to HEAD", () => {
   assert.match(gateOutcome(H, H, [{ ...c, sha: "c".repeat(40) }]).why ?? "", /not HEAD/);
   assert.match(gateOutcome(H, H, [{ ...c, dirty: true }]).why ?? "", /uncommitted/);
   assert.equal(gateOutcome(H, H, []).result, "PASS", "no checks configured");
+});
+
+test("a job may add drives to a feature file but not change an existing one", () => {
+  const a = "```drive\ndrive: f.a\nsteps:\n  - read: { target: body }\n```\n";
+  const b = "```drive\ndrive: f.b\nsteps:\n  - reload: {}\n```\n";
+  assert.equal(changedExistingDrive(a, `${a}\n${b}`), null, "added a drive");
+  assert.match(changedExistingDrive(a, a.replace("body", "main")) ?? "", /f.a already exists/);
+  assert.match(changedExistingDrive(a, b) ?? "", /f.a already exists/, "removed");
 });

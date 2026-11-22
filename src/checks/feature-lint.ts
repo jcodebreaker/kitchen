@@ -43,3 +43,30 @@ export function lintFeatureFile(md: string, primitives: string[]): FeatureLint {
   }
   return { ok: true, drives, gaps: [...new Set(gaps)] };
 }
+
+/**
+ * Drives a job may add to a feature file but not change: every drive block in the
+ * file as it was (`before`) must still be there, byte for byte. A changed shared
+ * drive would change what other criteria and jobs prove. Returns the reason, or null.
+ */
+export function changedExistingDrive(before: string, after: string): string | null {
+  let old: { body: string; line: number }[];
+  try {
+    old = extractDriveBlocks(before);
+  } catch {
+    return null;
+  }
+  let now: string[] = [];
+  try {
+    now = extractDriveBlocks(after).map((b) => b.body);
+  } catch {}
+  for (const b of old) {
+    if (now.includes(b.body)) continue;
+    let name = "a drive";
+    try {
+      name = parseDrive(b.body, b.line).name;
+    } catch {}
+    return `${name} already exists and may not be changed here; add a new drive instead`;
+  }
+  return null;
+}

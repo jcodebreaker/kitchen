@@ -67,9 +67,11 @@ export function parseProof(proof: string): Segment[] {
     return [{ kind: "test", file: w[0] }];
   }
   if (!/^toolkit\s/.test(p)) throw new ProofLineError("a proof is `toolkit …`, `cmd …` or `test <file>`");
-  return splitSegments(p).map((seg): ToolkitSegment => {
-    const w = words(seg);
-    if (w[0] !== "toolkit") throw new ProofLineError(`segment ${JSON.stringify(seg)}: chain only toolkit segments with ;`);
+  return splitSegments(p).map((seg, n): ToolkitSegment => {
+    // After the first segment the `toolkit` word may be left out (`toolkit login --as a ; open --path /x`).
+    const w0 = words(seg);
+    const w = n > 0 && w0[0] !== "toolkit" ? ["toolkit", ...w0] : w0;
+    if (w[1] === "cmd" || w[1] === "test" || w[0] !== "toolkit") throw new ProofLineError(`segment ${JSON.stringify(seg)}: chain only toolkit segments with ;`);
     const name = w[1];
     if (!name || !NAME.test(name)) throw new ProofLineError(`segment ${JSON.stringify(seg)}: no drive or primitive name`);
     const args: Record<string, string> = {};

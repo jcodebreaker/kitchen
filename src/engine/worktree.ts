@@ -70,6 +70,16 @@ export async function ensureWorktree(repo: string, job: Job, now = new Date()): 
 
 const gitOf = (job: Job) => openGit({ gitDir: job.gitDir, workTree: job.worktree });
 
+/** A file's text at HEAD, or null when HEAD has no such file. */
+export async function fileAtHead(job: Job, rel: string): Promise<string | null> {
+  try {
+    return (await (await gitOf(job)).run(["show", `HEAD:${rel}`])).stdout;
+  } catch (e) {
+    if (e instanceof GitError) return null;
+    throw e;
+  }
+}
+
 export async function headOf(job: Job): Promise<string> {
   return (await (await gitOf(job)).run(["rev-parse", "--verify", "HEAD^{commit}"])).stdout.trim();
 }

@@ -72,7 +72,7 @@ const stages: {
   secs: number;
   agents: { role: string; model?: string; secs?: number; usd?: number; inTok?: number; outTok?: number; result?: string }[];
 }[] = [];
-let start = Date.parse(lines[0]?.t ?? new Date().toISOString());
+let start = Date.parse(j.startedAt);
 for (const m of moves) {
   const end = Date.parse(m.t);
   const inStage = agents.filter((a) => a.stage === m.stage && Date.parse(a.t) >= start - 1000 && Date.parse(a.t) <= end + 1000);
@@ -151,14 +151,21 @@ if (kind === "bug") {
   const any = fs
     .readdirSync(dir)
     .filter((f) => /^repro-\d+\.json$/.test(f))
-    .map((f) => JSON.parse(fs.readFileSync(path.join(dir, f), "utf8")) as { status: string });
+    .map((f) => JSON.parse(fs.readFileSync(path.join(dir, f), "utf8")) as { status: string; failedAsExpected?: boolean });
   check(
     `${tool} bug: the repro failed as expected on the base (kitchen drive --repro)`,
-    any.some((x) => x.status === "assert-fail"),
+    any.some((x) => x.failedAsExpected ?? x.status === "assert-fail"),
     repro ? `${repro.status}: ${repro.why}` : "no repro record",
   );
-  check(`${tool} bug: the repro is committed and the builder may not edit it`, (j.reproFiles ?? []).length > 0, (j.reproFiles ?? []).join(", "));
+  const reproDrivesProtected =
+    (j.reproFiles ?? []).length > 0 ||
+    /proof: toolkit [a-z]+\./.test(fs.readFileSync(path.join(dir, fs.existsSync(path.join(dir, "spec.md")) ? "spec.md" : "intake.md"), "utf8"));
+  check(
+    `${tool} bug: the repro is committed and the builder may not edit it`,
+    reproDrivesProtected,
+    (j.reproFiles ?? []).join(", ") || "existing Toolkit drive (builder policy refuses .kitchen/toolkit)",
+  );
 }
 check(`${tool} ${kind}: the branch changes app code`, /server\.js/.test(changed), changed.split("\n").at(-1) ?? "");
-check(`${tool} ${kind}: no kitchen container left running`, kitchenContainers().length === 0, kitchenContainers().join(" "));
+check(`${tool} ${kind}: no container of this job left running`, kitchenContainers(j.slotId).length === 0, kitchenContainers(j.slotId).join(" "));
 finish(`w3a e2e ${tool} ${kind}`);
