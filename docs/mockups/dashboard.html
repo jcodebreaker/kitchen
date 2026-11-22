@@ -1,0 +1,428 @@
+<title>Kitchen Board</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: sticky top bar, a "now running" strip, then the board (stage columns) or Setup; a right drawer opens any job. Tokens are the shipped dashboard's, so this reads as the same app. */
+:root {
+  --bg: #f6f5f2; --panel: #ffffff; --sunk: #efede8; --line: #e3e0d9; --line-strong: #d3cfc6;
+  --ink: #1d1b18; --ink-2: #57534c; --ink-3: #8a857b;
+  --accent: #c2410c; --accent-soft: #fbe7dc;
+  --pass: #15803d; --pass-soft: #dcf2e3; --fail: #b91c1c; --fail-soft: #fbe1e1;
+  --warn: #a16207; --warn-soft: #f8ecc9; --gap: #6d28d9; --gap-soft: #ece4fb; --idle: #a8a296;
+  --scrim: rgba(29, 27, 24, .35);
+  --shadow: 0 1px 0 rgba(29,27,24,.04), 0 1px 3px rgba(29,27,24,.06);
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #131211; --panel: #1c1a18; --sunk: #171514; --line: #2b2825; --line-strong: #3a3632;
+  --ink: #eeebe5; --ink-2: #b4aea4; --ink-3: #7f796f; --accent: #fb8a4c; --accent-soft: #3a2216;
+  --pass: #4ade80; --pass-soft: #12301d; --fail: #f87171; --fail-soft: #3a1717; --warn: #fbbf24; --warn-soft: #33280f;
+  --gap: #b794f6; --gap-soft: #2a1f42; --idle: #5f5a52; --scrim: rgba(0,0,0,.55); --shadow: 0 1px 0 rgba(0,0,0,.3); color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #131211; --panel: #1c1a18; --sunk: #171514; --line: #2b2825; --line-strong: #3a3632;
+  --ink: #eeebe5; --ink-2: #b4aea4; --ink-3: #7f796f; --accent: #fb8a4c; --accent-soft: #3a2216;
+  --pass: #4ade80; --pass-soft: #12301d; --fail: #f87171; --fail-soft: #3a1717; --warn: #fbbf24; --warn-soft: #33280f;
+  --gap: #b794f6; --gap-soft: #2a1f42; --idle: #5f5a52; --scrim: rgba(0,0,0,.55); --shadow: 0 1px 0 rgba(0,0,0,.3); color-scheme: dark; }
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font: 14px/1.45 var(--sans); -webkit-font-smoothing: antialiased; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg); }
+.wrap { max-width: 1680px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mono { font-family: var(--mono); font-size: 12px; }
+.num { font-variant-numeric: tabular-nums; }
+
+/* top bar */
+header { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: color-mix(in srgb, var(--bg) 90%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+.bar { display: flex; align-items: center; gap: 14px; min-height: 56px; flex-wrap: wrap; padding-block: 8px; }
+.brand { display: flex; align-items: center; gap: 9px; font-weight: 650; font-size: 15px; }
+.mark { width: 20px; height: 20px; border-radius: 6px; background: var(--accent); display: grid; place-items: center; color: var(--panel); font-size: 12px; font-weight: 700; }
+.repo { color: var(--ink-2); font-family: var(--mono); font-size: 12px; }
+.tabs { display: flex; gap: 2px; background: var(--sunk); border: 1px solid var(--line); border-radius: 8px; padding: 2px; }
+.tabs a { text-decoration: none; padding: 4px 12px; border-radius: 6px; color: var(--ink-2); font-size: 13px; display: flex; gap: 6px; align-items: center; }
+.tabs a[aria-current="page"] { background: var(--panel); color: var(--ink); box-shadow: var(--shadow); }
+.tabs .badge { background: var(--accent); color: var(--panel); border-radius: 9px; font-size: 11px; padding: 0 6px; font-weight: 600; }
+.spacer { flex: 1; }
+.runner { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-2); }
+.totals { display: flex; gap: 14px; font-size: 12px; color: var(--ink-2); }
+.totals b { color: var(--ink); font-weight: 600; }
+.mock { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--gap); background: var(--gap-soft); padding: 2px 8px; border-radius: 5px; }
+
+.pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); display: inline-block; animation: pulse 1.6s ease-in-out infinite; flex: none; }
+.pulse.ok { background: var(--pass); }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .3; } }
+@media (prefers-reduced-motion: reduce) { .pulse, .feed .new { animation: none !important; } }
+
+/* now running strip */
+.now { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 10px; padding-block: 14px 4px; }
+.agent { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: grid; gap: 6px; cursor: pointer; text-align: left; box-shadow: var(--shadow); min-width: 0; }
+.agent:hover { border-color: var(--line-strong); }
+.agent .top { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-2); }
+.agent .role { font-weight: 600; color: var(--ink); font-size: 13px; }
+.agent .model { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
+.agent .job { font-size: 12px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.agent .act { font-family: var(--mono); font-size: 12px; color: var(--ink); background: var(--sunk); border-radius: 6px; padding: 5px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.agent .act .tool { color: var(--accent); font-weight: 600; margin-right: 6px; }
+.sect { display: flex; align-items: baseline; gap: 10px; padding-block: 16px 8px; }
+.sect h2 { margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: .07em; color: var(--ink-3); font-weight: 600; }
+.sect .hint { font-size: 12px; color: var(--ink-3); }
+
+/* board */
+.board { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(250px, 1fr); gap: 12px; overflow-x: auto; padding-bottom: 24px; }
+.col { min-width: 0; display: grid; align-content: start; gap: 8px; }
+.col-head { display: grid; gap: 1px; padding: 0 2px 4px; border-bottom: 2px solid var(--line); }
+.col-head .t { display: flex; justify-content: space-between; font-weight: 600; font-size: 13px; }
+.col-head .count { color: var(--ink-3); font-weight: 500; }
+.col-head .who { font-size: 11px; color: var(--ink-3); font-family: var(--mono); }
+.col.human .col-head { border-color: var(--accent); }
+.empty { font-size: 12px; color: var(--ink-3); padding: 10px 4px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 11px; display: grid; gap: 7px; cursor: pointer; text-align: left; box-shadow: var(--shadow); width: 100%; }
+.card:hover { border-color: var(--line-strong); transform: translateY(-1px); }
+.card.live { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.card.ask { border-color: var(--accent); background: color-mix(in srgb, var(--accent-soft) 45%, var(--panel)); }
+.card .row1 { display: flex; gap: 6px; align-items: center; }
+.card .title { font-weight: 600; font-size: 13px; line-height: 1.3; flex: 1; min-width: 0; }
+.card .id { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
+.card .act { font-family: var(--mono); font-size: 11.5px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card .act .tool { color: var(--accent); font-weight: 600; margin-right: 5px; }
+.card .meta { display: flex; gap: 10px; font-size: 11.5px; color: var(--ink-3); flex-wrap: wrap; }
+.chip { font-size: 10.5px; font-weight: 600; padding: 1px 6px; border-radius: 4px; letter-spacing: .02em; white-space: nowrap; }
+.chip.low { background: var(--sunk); color: var(--ink-2); } .chip.medium { background: var(--warn-soft); color: var(--warn); } .chip.high { background: var(--fail-soft); color: var(--fail); }
+.chip.bug { background: var(--gap-soft); color: var(--gap); } .chip.feature { background: var(--sunk); color: var(--ink-2); }
+/* stage track: one dot per stage on this job's path */
+.track { display: flex; gap: 3px; }
+.track i { height: 4px; flex: 1; border-radius: 2px; background: var(--line); }
+.track i.done { background: var(--pass); } .track i.cur { background: var(--accent); } .track i.bad { background: var(--fail); }
+/* round row: one cell per check */
+.rounds { display: grid; gap: 3px; }
+.round { display: flex; gap: 3px; align-items: center; font-size: 10.5px; }
+.round .r { width: 20px; color: var(--ink-3); font-family: var(--mono); }
+.cell { padding: 0 5px; border-radius: 3px; font-weight: 600; background: var(--sunk); color: var(--ink-3); }
+.cell.pass { background: var(--pass-soft); color: var(--pass); } .cell.fail { background: var(--fail-soft); color: var(--fail); } .cell.run { background: var(--accent-soft); color: var(--accent); }
+.q { font-size: 12.5px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px; display: grid; gap: 6px; }
+.q .opts { display: flex; gap: 6px; flex-wrap: wrap; }
+.btn { border: 1px solid var(--line-strong); background: var(--panel); border-radius: 7px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
+.btn:hover { border-color: var(--ink-3); }
+.btn.primary { background: var(--accent); color: var(--panel); border-color: var(--accent); }
+.btn.on { background: var(--ink); color: var(--panel); border-color: var(--ink); }
+
+/* drawer */
+.scrim { position: fixed; inset: 0; background: var(--scrim); z-index: 20; }
+.drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(760px, 100%); background: var(--panel); border-left: 1px solid var(--line); z-index: 21; display: grid; grid-template-rows: auto auto 1fr; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); padding-right: env(safe-area-inset-right, 0px); }
+.d-head { padding: 14px 18px 10px; display: grid; gap: 6px; border-bottom: 1px solid var(--line); }
+.d-head .l1 { display: flex; gap: 10px; align-items: start; }
+.d-head h3 { margin: 0; font-size: 17px; flex: 1; text-wrap: balance; }
+.d-head .sub { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--ink-2); }
+.close { border: 1px solid var(--line); background: none; border-radius: 7px; width: 30px; height: 30px; cursor: pointer; flex: none; }
+.d-tabs { display: flex; gap: 4px; padding: 8px 18px; border-bottom: 1px solid var(--line); overflow-x: auto; }
+.d-tabs button { border: 0; background: none; padding: 5px 10px; border-radius: 6px; cursor: pointer; color: var(--ink-2); font-size: 13px; white-space: nowrap; }
+.d-tabs button[aria-selected="true"] { background: var(--sunk); color: var(--ink); font-weight: 600; }
+.d-body { overflow-y: auto; padding: 16px 18px 40px; min-height: 0; }
+
+/* timeline */
+.tl { display: grid; gap: 0; }
+.st { display: grid; grid-template-columns: 22px 1fr auto; gap: 10px; padding-bottom: 14px; position: relative; }
+.st::before { content: ""; position: absolute; left: 10px; top: 20px; bottom: 0; width: 2px; background: var(--line); }
+.st:last-child::before { display: none; }
+.st .dot { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 700; border: 2px solid var(--line-strong); background: var(--panel); color: var(--ink-3); z-index: 1; }
+.st.done .dot { border-color: var(--pass); color: var(--pass); }
+.st.cur .dot { border-color: var(--accent); color: var(--accent); }
+.st.bad .dot { border-color: var(--fail); color: var(--fail); }
+.st.wait .dot { border-style: dashed; }
+.st .name { font-weight: 600; font-size: 13px; }
+.st .who { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
+.st .what { font-size: 12.5px; color: var(--ink-2); margin-top: 2px; }
+.st .right { text-align: right; font-size: 11.5px; color: var(--ink-3); white-space: nowrap; }
+.st.wait .name, .st.wait .what { color: var(--ink-3); }
+
+/* live feed */
+.feed { font-family: var(--mono); font-size: 12px; display: grid; gap: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.ev { display: grid; grid-template-columns: 56px 64px 1fr; gap: 8px; padding: 5px 10px; border-top: 1px solid var(--line); align-items: baseline; }
+.ev:first-child { border-top: 0; }
+.ev .t { color: var(--ink-3); }
+.ev .k { font-weight: 600; color: var(--accent); }
+.ev .k.say { color: var(--ink-2); } .ev .k.ok { color: var(--pass); } .ev .k.bad { color: var(--fail); }
+.ev .x { min-width: 0; overflow-wrap: anywhere; color: var(--ink); }
+.ev .x small { color: var(--ink-3); }
+.feed .new { animation: flash 1.2s ease-out; }
+@keyframes flash { from { background: var(--accent-soft); } to { background: transparent; } }
+.feedhead { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 12px; color: var(--ink-2); gap: 8px; flex-wrap: wrap; }
+
+/* criteria */
+.crit { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: grid; gap: 6px; margin-bottom: 10px; }
+.crit .h { display: flex; gap: 8px; align-items: center; }
+.crit .h b { font-size: 13px; }
+.crit .by { font-size: 11.5px; color: var(--ink-3); }
+.crit pre { margin: 0; font-family: var(--mono); font-size: 11.5px; background: var(--sunk); border-radius: 6px; padding: 7px 9px; overflow-x: auto; color: var(--ink-2); }
+.shots { display: flex; gap: 8px; flex-wrap: wrap; }
+.shot { width: 150px; max-width: 100%; aspect-ratio: 16/10; border-radius: 6px; border: 1px solid var(--line); background: linear-gradient(var(--sunk) 0 18%, var(--panel) 18%); position: relative; overflow: hidden; }
+.shot::after { content: attr(data-l); position: absolute; left: 6px; bottom: 4px; font-size: 10px; color: var(--ink-3); font-family: var(--mono); }
+.shot i { position: absolute; left: 10%; right: 30%; height: 6%; background: var(--line-strong); border-radius: 2px; }
+.finding { border-left: 3px solid var(--line-strong); padding: 6px 10px; margin-bottom: 8px; font-size: 13px; background: var(--sunk); border-radius: 0 6px 6px 0; }
+.finding.block { border-color: var(--fail); } .finding .w { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
+.doc { font-size: 13.5px; max-width: 68ch; }
+.doc h4 { margin: 14px 0 4px; font-size: 13px; } .doc p, .doc li { color: var(--ink-2); }
+.doc code { font-family: var(--mono); font-size: 12px; background: var(--sunk); padding: 1px 4px; border-radius: 4px; }
+.cost { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.cost td, .cost th { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--line); }
+.cost td:last-child, .cost th:last-child { text-align: right; }
+.cost th { color: var(--ink-3); font-weight: 500; font-size: 11.5px; }
+
+/* setup */
+.setup { display: grid; grid-template-columns: minmax(0, 380px) minmax(0, 1fr); gap: 20px; padding-block: 16px 40px; }
+@media (max-width: 860px) { .setup { grid-template-columns: 1fr; } }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; min-width: 0; }
+.panel h3 { margin: 0 0 12px; font-size: 14px; }
+.ask-box { border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent-soft) 40%, var(--panel)); border-radius: 10px; padding: 14px 16px; display: grid; gap: 14px; margin-bottom: 16px; }
+.ask-box h3 { margin: 0; font-size: 14px; display: flex; gap: 8px; align-items: center; }
+.qq { display: grid; gap: 6px; }
+.qq .qt { font-weight: 600; font-size: 13.5px; }
+.qq .why { font-size: 12.5px; color: var(--ink-2); }
+.qq .opts { display: flex; gap: 6px; flex-wrap: wrap; }
+.qq textarea { width: 100%; min-height: 54px; font: inherit; font-size: 13px; border: 1px solid var(--line-strong); background: var(--panel); color: var(--ink); border-radius: 7px; padding: 6px 8px; resize: vertical; }
+.toast { position: fixed; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--panel); padding: 8px 14px; border-radius: 8px; font-size: 13px; z-index: 30; }
+.feat { display: grid; gap: 6px; }
+.feat div { display: flex; justify-content: space-between; font-size: 12.5px; border-bottom: 1px dashed var(--line); padding-bottom: 5px; gap: 8px; }
+.feat span:last-child { color: var(--ink-3); font-family: var(--mono); font-size: 11.5px; }
+@media (max-width: 600px) { .totals { display: none; } .ev { grid-template-columns: 48px 1fr; } .ev .k { display: none; } }
+</style>
+
+<header>
+  <div class="wrap bar">
+    <div class="brand"><span class="mark">K</span>Kitchen</div>
+    <span class="repo">superchat-lite-kitchen · durable-conversation</span>
+    <nav class="tabs" aria-label="Views">
+      <a href="#board" id="tab-board">Board</a>
+      <a href="#setup" id="tab-setup">Setup <span class="badge">2</span></a>
+    </nav>
+    <div class="spacer"></div>
+    <div class="totals"><span>Today <b class="num" id="t-cost">$4.18</b></span><span>Jobs <b>5</b></span><span>Ready <b>1</b></span></div>
+    <div class="runner"><span class="pulse ok"></span>runner pid 94345</div>
+    <span class="mock" title="Example data to show the design">Mock-up</span>
+  </div>
+</header>
+
+<main class="wrap">
+  <section id="view-board">
+    <div class="sect"><h2>Running now</h2><span class="hint">Each agent's live step, from its session transcript. Click to open the job.</span></div>
+    <div class="now" id="now"></div>
+    <div class="sect"><h2>Board</h2><span class="hint">Each column names the agent and model doing that stage.</span></div>
+    <div class="board" id="board"></div>
+  </section>
+
+  <section id="view-setup" hidden>
+    <div class="setup">
+      <div>
+        <div class="panel">
+          <h3>Setting up Kitchen</h3>
+          <div class="tl" id="setup-tl"></div>
+        </div>
+      </div>
+      <div style="min-width:0">
+        <div class="ask-box" id="ask-box">
+          <h3><span class="pulse"></span>Setup is waiting for 2 answers</h3>
+          <div class="qq" data-q="q1">
+            <div class="qt">Build the full host image so tests can run real conversations?</div>
+            <div class="why">Every conversation runs in a host container (Ubuntu, Chromium, the claude CLI, over 10 GB). Without it, tests cover Settings, Memory, Automations and the conversation list.</div>
+            <div class="opts"><button class="btn" data-a="Engine only">Engine only</button><button class="btn" data-a="Build host image">Build host image</button></div>
+            <textarea id="q1-note" placeholder="Or write your own answer"></textarea>
+          </div>
+          <div class="qq" data-q="q2">
+            <div class="qt">Use a local mock model server for tests?</div>
+            <div class="why">The app needs a model for every conversation. A mock gives canned answers: tests check that an answer arrives, not its quality.</div>
+            <div class="opts"><button class="btn" data-a="Mock model">Mock model</button><button class="btn" data-a="Real key">I'll provide a key</button></div>
+            <textarea id="q2-note" placeholder="Or write your own answer"></textarea>
+          </div>
+          <div><button class="btn primary" id="send">Send answers and continue setup</button></div>
+        </div>
+        <div class="panel" style="margin-bottom:16px">
+          <div class="feedhead"><b>Survey agent · claude opus</b><span>finished in 85 s · $0.81</span></div>
+          <div class="feed" id="setup-feed"></div>
+        </div>
+        <div class="panel">
+          <h3>What the survey found</h3>
+          <div class="doc">
+            <p>Superchat is a web app with an engine image, a per-person host container and Postgres, run by Docker Compose (<code>deployment/compose.yaml</code>). Plan: adopt that stack on Kitchen's own ports, with a mock model server.</p>
+          </div>
+          <div class="feat">
+            <div><span>Sign in and conversation list</span><span>browser</span></div>
+            <div><span>Settings</span><span>browser</span></div>
+            <div><span>Memory</span><span>browser + http</span></div>
+            <div><span>Automations</span><span>browser + http</span></div>
+            <div><span>A conversation round</span><span>needs host image</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div class="scrim" id="scrim" hidden></div>
+<aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="d-title" hidden>
+  <div class="d-head">
+    <div class="l1"><h3 id="d-title"></h3><button class="close" id="d-close" aria-label="Close">✕</button></div>
+    <div class="sub" id="d-sub"></div>
+    <div class="track" id="d-track"></div>
+  </div>
+  <div class="d-tabs" role="tablist" id="d-tabs"></div>
+  <div class="d-body" id="d-body"></div>
+</aside>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+// Example data only: shows what the real dashboard would read from .kitchen/ (job.json,
+// the ledger, verdicts, reviews) and each agent's session transcript.
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const PATH = ["intake", "spec", "build", "gate", "drives", "verify", "review", "ready", "report", "done"];
+const COLS = [
+  { id: "intake", t: "Intake", who: "intake · sonnet", st: ["intake"] },
+  { id: "spec", t: "Spec", who: "spec, repro · sonnet", st: ["spec", "repro"] },
+  { id: "build", t: "Build", who: "builder · sonnet · gate", st: ["build", "gate"] },
+  { id: "verify", t: "Verify", who: "drives · verifier · opus", st: ["drives", "verify", "toolkit"] },
+  { id: "review", t: "Review", who: "code · security · ux lenses", st: ["review"] },
+  { id: "ready", t: "Ready", who: "report · sonnet · you merge", st: ["ready", "report", "done"] },
+  { id: "human", t: "Needs you", who: "you", st: ["needs-human", "needs-info"], cls: "human" },
+];
+const now = Date.now();
+const JOBS = [
+  { id: "003-show-an-automation-s-next-run-time", title: "Show an automation's next run time", kind: "feature", risk: "low", stage: "build", round: 1,
+    started: now - 252e3, cost: 0.41, agent: { role: "builder", model: "sonnet" }, done: ["intake", "spec"],
+    rounds: [{ gate: "run" }],
+    feed: [["say", "Reading the spec: R1 the automation row shows \"Next run\" with a local time; R2 paused automations show \"Paused\"."],
+      ["Read", "web/src/automations/AutomationRow.tsx"], ["Grep", "nextRunAt <small>in engine/omnigent/automations/</small>"],
+      ["Read", "engine/omnigent/automations/schedule.py"], ["Edit", "web/src/automations/AutomationRow.tsx <small>+18 −2</small>"]],
+    live: [["Bash", "pnpm --filter @superchat/web check"], ["ok", "typecheck clean"], ["checks", "drive automations.next-run (builder self-check)"], ["ok", "drive passed · 4 steps · 6.1 s"], ["Edit", "web/src/automations/AutomationRow.test.tsx <small>+31</small>"], ["Bash", "pnpm vitest run web/src/automations"], ["ok", "12 passed"], ["say", "STATUS: DONE. Next run shows local time; paused rows show Paused."]] },
+  { id: "002-pin-a-memory-to-the-top", title: "Pin a memory to the top of Memory", kind: "feature", risk: "medium", stage: "verify", round: 2,
+    started: now - 1310e3, cost: 1.92, agent: { role: "verifier", model: "opus" }, done: ["intake", "spec", "build", "gate", "drives"],
+    rounds: [{ gate: "pass", drives: "pass", verify: "fail" }, { gate: "pass", drives: "pass", verify: "run" }],
+    feed: [["say", "Round 2. C1 passed in round 1; re-checking C2 after the builder's fix."], ["drive", "memory.pin --as alice --memory \"Prefers short answers\""], ["ok", "step 1/5 open /settings/memory · 200"], ["ok", "step 3/5 click Pin · screenshot e7"]],
+    live: [["ok", "step 5/5 reload · pinned row first · screenshot e8"], ["say", "C2 PASS: after reload the pinned memory is first (e8) and others keep their order (e9)."], ["drive", "memory.pin --as bob (other person)"], ["ok", "bob's list unchanged · e10"], ["say", "C3 PASS: pinning is per person."], ["say", "VERDICT PASS 3/3 criteria"]] },
+  { id: "004-conversation-list-shows-deleted", title: "Conversation list still shows deleted conversations", kind: "bug", risk: "medium", stage: "repro", round: 1,
+    started: now - 96e3, cost: 0.22, agent: { role: "repro", model: "sonnet" }, done: ["intake"],
+    rounds: [],
+    feed: [["say", "Reproducing on the base before any change."], ["drive", "conversations.delete --as alice --title \"Trip ideas\""]],
+    live: [["ok", "deleted · 204"], ["drive", "open /chat --as alice"], ["bad", "\"Trip ideas\" still listed · screenshot e2 (bug reproduced)"], ["say", "REPRODUCED on base 3f1c2ab: list reads a cache not cleared on delete."]] },
+  { id: "001-rename-settings-tab", title: "Rename the \"Connections\" settings tab to \"Accounts\"", kind: "feature", risk: "low", stage: "ready", round: 1,
+    started: now - 2950e3, cost: 0.61, agent: null, done: ["intake", "build", "gate", "drives", "verify", "review", "ready", "report"],
+    rounds: [{ gate: "pass", drives: "pass", verify: "pass", code: "pass" }], feed: [["ok", "Report written · 4 criteria · 6 pieces of evidence"], ["say", "Branch kitchen/001-rename-settings-tab is ready for you to merge."]], live: [] },
+  { id: "005-export-all-my-data", title: "Export all my data", kind: "feature", risk: "high", stage: "needs-info", round: 0,
+    started: now - 610e3, cost: 0.05, agent: null, done: [],
+    question: "Which data should the export include: conversations only, or also memories, automations and uploaded files? And which format: JSON or a zip of Markdown files?",
+    rounds: [], feed: [["say", "NEEDS INFO: the ticket doesn't say what \"all my data\" covers or the format."]], live: [] },
+];
+
+function colOf(j) { return COLS.find((c) => c.st.includes(j.stage)) || COLS[0]; }
+function el(s) { const m = Math.floor(s / 60), r = Math.floor(s % 60); return m ? `${m}m ${String(r).padStart(2, "0")}s` : `${r}s`; }
+function elapsed(j) { return el((Date.now() - j.started) / 1000); }
+function last(j) { return j.feed[j.feed.length - 1]; }
+function actHtml(e) { const [k, x] = e; const tool = k === "say" ? "" : `<span class="tool">${esc(k)}</span>`; return tool + x.replace(/<small>.*<\/small>/, ""); }
+function track(j) {
+  return PATH.map((s) => { const c = j.done.includes(s) ? "done" : s === j.stage || (j.stage === "repro" && s === "spec") ? "cur" : ""; return `<i class="${c}" title="${s}"></i>`; }).join("");
+}
+function roundRows(j) {
+  return j.rounds.map((r, i) => `<div class="round"><span class="r">R${i + 1}</span>${Object.entries(r).map(([k, v]) => `<span class="cell ${v}">${k}${v === "pass" ? " ✓" : v === "fail" ? " ✕" : " …"}</span>`).join("")}</div>`).join("");
+}
+function card(j) {
+  const live = !!j.agent, ask = j.stage.startsWith("needs");
+  const L = last(j);
+  return `<button class="card ${live ? "live" : ""} ${ask ? "ask" : ""}" data-job="${j.id}">
+    <div class="row1">${live ? '<span class="pulse"></span>' : ""}<span class="title">${esc(j.title)}</span></div>
+    <div class="id">${j.id.slice(0, 3)} · ${j.stage}${j.round ? ` · round ${j.round}` : ""}</div>
+    <div class="track">${track(j)}</div>
+    ${ask ? `<div class="q">${esc(j.question)}<div class="opts"><span class="btn primary">Answer</span></div></div>` : `<div class="act">${actHtml(L)}</div>`}
+    ${j.rounds.length ? `<div class="rounds">${roundRows(j)}</div>` : ""}
+    <div class="meta"><span class="chip ${j.kind}">${j.kind}</span><span class="chip ${j.risk}">${j.risk} risk</span><span class="num" data-el="${j.id}">${elapsed(j)}</span><span class="num">$${j.cost.toFixed(2)}</span></div>
+  </button>`;
+}
+function render() {
+  $("board").innerHTML = COLS.map((c) => {
+    const js = JOBS.filter((j) => colOf(j) === c);
+    return `<div class="col ${c.cls || ""}"><div class="col-head"><div class="t">${c.t}<span class="count">${js.length}</span></div><div class="who">${c.who}</div></div>${js.map(card).join("") || '<div class="empty">Nothing here</div>'}</div>`;
+  }).join("");
+  $("now").innerHTML = JOBS.filter((j) => j.agent).map((j) => `<button class="agent" data-job="${j.id}">
+    <div class="top"><span class="pulse"></span><span class="role">${j.agent.role}</span><span class="model">${j.agent.model}</span><span class="spacer"></span><span class="num" data-el="${j.id}">${elapsed(j)}</span><span class="num">$${j.cost.toFixed(2)}</span></div>
+    <div class="job">${esc(j.title)} · ${j.stage}${j.round ? ` · round ${j.round}` : ""}</div>
+    <div class="act">${actHtml(last(j))}</div></button>`).join("");
+}
+
+// Live: each running agent emits its next transcript event every few seconds.
+setInterval(() => {
+  const running = JOBS.filter((j) => j.agent && j.live.length);
+  if (!running.length) return;
+  const j = running[Math.floor(Math.random() * running.length)];
+  const ev = j.live.shift(); ev.at = Date.now(); j.feed.push(ev); j.cost += 0.01 + Math.random() * 0.03;
+  render();
+  if (openId === j.id && tab === "live") drawBody(true);
+}, 2600);
+setInterval(() => { document.querySelectorAll("[data-el]").forEach((n) => { const j = JOBS.find((x) => x.id === n.dataset.el); if (j) n.textContent = elapsed(j); }); }, 1000);
+
+// Drawer
+let openId = null, tab = "live";
+const TABS = [["live", "Live"], ["timeline", "Timeline"], ["proof", "Criteria & evidence"], ["review", "Review"], ["files", "Spec & notes"], ["cost", "Cost"]];
+function openJob(id) {
+  openId = id; const j = JOBS.find((x) => x.id === id);
+  tab = j.agent ? "live" : j.stage.startsWith("needs") ? "timeline" : "proof";
+  $("d-title").textContent = j.title;
+  $("d-sub").innerHTML = `<span class="mono">${j.id}</span><span>${j.stage}${j.round ? ` · round ${j.round}` : ""}</span><span class="chip ${j.risk}">${j.risk} risk</span><span class="num" data-el="${j.id}">${elapsed(j)}</span><span class="num">$${j.cost.toFixed(2)}</span>`;
+  $("d-track").innerHTML = track(j);
+  $("drawer").hidden = $("scrim").hidden = false; drawTabs(); drawBody(); $("d-close").focus();
+}
+function closeJob() { openId = null; $("drawer").hidden = $("scrim").hidden = true; }
+function drawTabs() { $("d-tabs").innerHTML = TABS.map(([k, t]) => `<button role="tab" aria-selected="${k === tab}" data-tab="${k}">${t}</button>`).join(""); }
+const fmtT = (e, i, j) => { const t = e.at || j.started + (i + 1) * 17e3; return new Date(t).toTimeString().slice(0, 8); };
+function feedHtml(j, flashLast) {
+  return j.feed.map((e, i) => { const [k, x] = e; const cls = k === "say" ? "say" : k === "ok" ? "ok" : k === "bad" ? "bad" : "";
+    return `<div class="ev ${flashLast && i === j.feed.length - 1 ? "new" : ""}"><span class="t">${fmtT(e, i, j)}</span><span class="k ${cls}">${k === "say" ? "agent" : k}</span><span class="x">${k === "say" ? esc(x) : x}</span></div>`; }).join("");
+}
+function timeline(j) {
+  const steps = j.stage.startsWith("needs") ? [["intake", "needs-info", "intake · sonnet", "Asked you a question: the ticket is too open.", "6 s · $0.05", "bad"], ["you", "", "you", j.question, "waiting", "cur"]]
+    : PATH.filter((s) => !(j.kind === "feature" && j.risk === "low" && s === "spec") || j.done.includes("spec")).map((s) => {
+      const st = j.done.includes(s) ? "done" : s === j.stage || (j.stage === "repro" && s === "spec") ? "cur" : "wait";
+      const who = { intake: "intake · sonnet", spec: j.kind === "bug" ? "repro · sonnet" : "spec · sonnet", build: "builder · sonnet", gate: "engine: typecheck, lint, tests", drives: "engine: feature drives", verify: "verifier · opus", review: "code lens · sonnet", ready: "engine: sync with base, CI", report: "report · sonnet", done: "you merge" }[s];
+      const what = { intake: "Wrote 3 requirements, risk " + j.risk + ".", spec: j.kind === "bug" ? "Reproducing the bug on the base." : "Wrote 3 criteria, each with a drive.", build: st === "cur" ? "Editing code now." : "Changed 3 files, +49 −2.", gate: "Typecheck, lint and 212 tests passed.", drives: "4 feature drives passed.", verify: st === "cur" ? "Checking each criterion with evidence." : "3/3 criteria PASS.", review: "No blocking findings.", ready: "Up to date with the base.", report: "Report with 6 pieces of evidence.", done: "" }[s];
+      const right = st === "done" ? ({ intake: "9 s · $0.06", spec: "48 s · $0.21", build: "3m 10s · $0.64", gate: "41 s", drives: "28 s", verify: "1m 50s · $0.48", review: "52 s · $0.19", ready: "6 s", report: "40 s · $0.12" }[s] || "") : st === "cur" ? `<span class="num" data-el="${j.id}">${elapsed(j)}</span>` : "";
+      return [s, "", who, what, right, st];
+    });
+  return `<div class="tl">${steps.map(([n, , who, what, right, st]) => `<div class="st ${st}"><div class="dot">${st === "done" ? "✓" : st === "bad" ? "!" : st === "cur" ? "•" : ""}</div><div><div class="name">${n}</div><div class="who">${who}</div>${what ? `<div class="what">${esc(what)}</div>` : ""}</div><div class="right">${right}</div></div>`).join("")}</div>`;
+}
+function drawBody(flash) {
+  const j = JOBS.find((x) => x.id === openId); if (!j) return; const b = $("d-body");
+  if (tab === "live") b.innerHTML = `<div class="feedhead"><span>${j.agent ? `<span class="pulse"></span> <b>${j.agent.role}</b> · ${j.agent.model} · ${j.stage}` : "No agent running on this job"}</span><span>Tool calls and messages from the agent's session</span></div><div class="feed">${feedHtml(j, flash)}</div>`;
+  else if (tab === "timeline") b.innerHTML = timeline(j) + (j.question ? `<div class="q" style="margin-top:6px"><b>Intake asks</b>${esc(j.question)}<textarea id="ans" style="width:100%;min-height:60px;font:inherit;border:1px solid var(--line-strong);border-radius:7px;padding:6px;background:var(--panel);color:var(--ink)" placeholder="Your answer goes back to intake"></textarea><div class="opts"><button class="btn primary" data-toast="Answer sent. Intake runs again.">Send answer</button></div></div>` : "");
+  else if (tab === "proof") b.innerHTML = [
+    ["C1", "R1", "pass", "engine", "open /settings/memory --as alice\nclick \"Pin\" on \"Prefers short answers\"\nexpect: text \"Pinned\" visible", ["after pin", "pinned badge"]],
+    ["C2", "R1", j.round > 1 ? "pass" : "fail", "verifier · opus", "reload /settings/memory --as alice\nexpect (judged): the pinned memory is first; the others keep their order", ["round 1: order lost", "round 2: first after reload"]],
+    ["C3", "R2 (negative)", "pass", "engine", "open /settings/memory --as bob\nexpect: text \"Prefers short answers\" not visible", ["bob's list"]],
+  ].map(([c, r, v, by, pre, shots]) => `<div class="crit"><div class="h"><span class="cell ${v}">${v.toUpperCase()}</span><b>${c}</b><span class="by">covers ${r} · decided by ${by}</span></div><pre>${esc(pre)}</pre><div class="shots">${shots.map((s, i) => `<div class="shot" data-l="e${i + 7} · ${s}"><i style="top:30%"></i><i style="top:45%;right:45%"></i><i style="top:60%;right:20%"></i></div>`).join("")}</div></div>`).join("");
+  else if (tab === "review") b.innerHTML = `<div class="finding block"><b>Blocking · round 1 · code lens</b><div>Pin order is kept in component state only; it is lost on reload.</div><div class="w">web/src/memory/MemoryList.tsx:44 · fixed in round 2</div></div><div class="finding"><b>Note · ux lens</b><div>The pin icon has no label for screen readers.</div><div class="w">web/src/memory/MemoryRow.tsx:19 · <button class="btn" data-toast="Dismissed. The retro learns from it.">Dismiss</button></div></div>`;
+  else if (tab === "files") b.innerHTML = `<div class="doc"><h4>Requirements (intake)</h4><ul><li><b>R1</b> A person can pin a memory; pinned memories show first, also after reload.</li><li><b>R2 (negative)</b> Pinning never shows in another person's list.</li></ul><h4>Build notes (round 2)</h4><p>Stored <code>pinned_at</code> on the memory row (migration <code>0142_memory_pin.sql</code>); the list sorts by it. Fixes round 1's blocking finding.</p><h4>Changed files</h4><ul><li><code>engine/omnigent/memory/store.py</code> +22 −3</li><li><code>web/src/memory/MemoryList.tsx</code> +14 −6</li><li><code>engine/migrations/0142_memory_pin.sql</code> +4</li></ul></div>`;
+  else if (tab === "cost") b.innerHTML = `<table class="cost"><thead><tr><th>Agent run</th><th>Model</th><th>Time</th><th>Cost</th></tr></thead><tbody><tr><td>intake</td><td>sonnet</td><td class="num">9 s</td><td class="num">$0.06</td></tr><tr><td>spec</td><td>sonnet</td><td class="num">48 s</td><td class="num">$0.21</td></tr><tr><td>builder · round 1</td><td>sonnet</td><td class="num">3m 10s</td><td class="num">$0.64</td></tr><tr><td>verifier · round 1</td><td>opus</td><td class="num">1m 50s</td><td class="num">$0.48</td></tr><tr><td>builder · round 2</td><td>sonnet</td><td class="num">1m 22s</td><td class="num">$0.31</td></tr><tr><td>verifier · round 2</td><td>opus</td><td class="num">running</td><td class="num">$${(j.cost - 1.7).toFixed(2)}</td></tr></tbody></table>`;
+}
+
+// Setup view
+const SETUP = [["Config and skill", "kitchen.yaml, the /kitchen skill, .gitignore", "1 s", "done"], ["Setup worktree", "kitchen/setup from e91173a", "2 s", "done"], ["Toolkit template", "copied into .kitchen/toolkit", "1 s", "done"],
+  ["Survey", "claude opus read the repo: compose stack, 5 features", "85 s · $0.81", "done"], ["Your answers", "2 questions: host image, mock model", "waiting", "cur"],
+  ["Build the Toolkit", "prepare, up, doctor, reset, down, primitives, feature drives", "", "wait"], ["Toolkit check", "every primitive and drive, twice, from a clean start", "", "wait"], ["Ready", "you merge kitchen/setup; then file tickets", "", "wait"]];
+$("setup-tl").innerHTML = SETUP.map(([n, w, r, s]) => `<div class="st ${s}"><div class="dot">${s === "done" ? "✓" : s === "cur" ? "?" : ""}</div><div><div class="name">${n}</div><div class="what">${esc(w)}</div></div><div class="right">${r}</div></div>`).join("");
+const SF = [["Read", "README.md"], ["Read", "docs/setup.md"], ["Read", "deployment/compose.yaml"], ["Grep", "LITELLM|MODEL_BASE_URL <small>in engine/</small>"], ["Read", "engine/omnigent/runner/host.py"], ["say", "Rounds need a host container started over the Docker socket; no fake model outside unit tests."], ["Bash", "docker system df"], ["say", "Plan: adopt the compose stack on Kitchen ports, mock LiteLLM, 5 features. 2 questions for the person."], ["ok", "wrote survey.md and 2 questions"]];
+$("setup-feed").innerHTML = SF.map((e, i) => { const [k, x] = e; return `<div class="ev"><span class="t">09:5${Math.floor(i / 4)}:${String((i * 9) % 60).padStart(2, "0")}</span><span class="k ${k === "say" ? "say" : k === "ok" ? "ok" : ""}">${k === "say" ? "agent" : k}</span><span class="x">${k === "say" ? esc(x) : x}</span></div>`; }).join("");
+
+// Events
+function toast(t) { const n = $("toast"); n.textContent = t; n.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => (n.hidden = true), 2400); }
+document.addEventListener("click", (e) => {
+  const t = e.target.closest("[data-toast]"); if (t) { toast(t.dataset.toast); return; }
+  const tb = e.target.closest("[data-tab]"); if (tb) { tab = tb.dataset.tab; drawTabs(); drawBody(); return; }
+  const a = e.target.closest(".qq .btn"); if (a) { a.parentElement.querySelectorAll(".btn").forEach((b) => b.classList.toggle("on", b === a)); return; }
+  const jb = e.target.closest("[data-job]"); if (jb) openJob(jb.dataset.job);
+});
+$("send").addEventListener("click", () => { $("ask-box").hidden = true; SETUP[4][3] = "done"; SETUP[4][2] = "answered"; SETUP[5][3] = "cur";
+  $("setup-tl").innerHTML = SETUP.map(([n, w, r, s]) => `<div class="st ${s}"><div class="dot">${s === "done" ? "✓" : s === "cur" ? "•" : ""}</div><div><div class="name">${n}</div><div class="what">${esc(w)}</div></div><div class="right">${r}</div></div>`).join("");
+  document.querySelector("#tab-setup .badge").hidden = true; toast("Answers sent. Setup continues: building the Toolkit."); });
+$("d-close").addEventListener("click", closeJob); $("scrim").addEventListener("click", closeJob);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeJob(); });
+function route() { const v = location.hash === "#setup" ? "setup" : "board"; $("view-board").hidden = v !== "board"; $("view-setup").hidden = v !== "setup";
+  $("tab-board").setAttribute("aria-current", v === "board" ? "page" : "false"); $("tab-setup").setAttribute("aria-current", v === "setup" ? "page" : "false"); }
+window.addEventListener("hashchange", route); route(); render();
+</script>
