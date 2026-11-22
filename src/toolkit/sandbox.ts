@@ -137,7 +137,15 @@ const onPath = (name: string): string | null => {
 const SELF = fileURLToPath(import.meta.url);
 const PROXY = path.join(path.dirname(SELF), `docker-proxy${path.extname(SELF)}`);
 
-export type DockerGuard = { node: string; proxy: string; upstream: string; docker: string | null; roots: string[] };
+export type DockerGuard = {
+  node: string;
+  proxy: string;
+  upstream: string;
+  docker: string | null;
+  roots: string[];
+  /** Where the proxy records the containers it created, for the repo (in $KITCHEN_HOME/sandbox/, denied to the sandbox). */
+  owned?: string;
+};
 
 /**
  * Pure: the wrapper script. Outside the sandbox it starts the Docker guard's
@@ -158,6 +166,7 @@ export function wrapperText(real: string, profile: string, guard: DockerGuard | 
     "--upstream",
     sh(guard.upstream),
     ...(guard.docker ? ["--docker", sh(guard.docker)] : []),
+    ...(guard.owned ? ["--owned", sh(guard.owned)] : []),
     ...guard.roots.flatMap((r) => ["--root", sh(r)]),
   ].join(" ");
   return [
@@ -201,7 +210,9 @@ export function sandboxedBin(bin: string, o: { home?: string; kHome?: string } =
     real = fs.realpathSync(bin);
   } catch {}
   const upstream = dockerSocket();
-  const guard = upstream ? { node: process.execPath, proxy: PROXY, upstream, docker: onPath("docker"), roots: guardRoots(repoOfBin(real)) } : null;
+  const repo = repoOfBin(real);
+  const owned = path.join(path.dirname(profile), `docker-owned-${createHash("sha256").update(repo).digest("hex").slice(0, 12)}.jsonl`);
+  const guard = upstream ? { node: process.execPath, proxy: PROXY, upstream, docker: onPath("docker"), roots: guardRoots(repo), owned } : null;
   const wrapper = path.join(path.dirname(profile), `dev-${createHash("sha256").update(real).digest("hex").slice(0, 12)}`);
   fs.writeFileSync(wrapper, wrapperText(real, profile, guard), { mode: 0o700 });
   fs.chmodSync(wrapper, 0o700);

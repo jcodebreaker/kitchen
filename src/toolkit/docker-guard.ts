@@ -8,6 +8,12 @@
 // and temp. Privileged containers, the host's pid/ipc/user/network namespaces,
 // dangerous capabilities and `--volumes-from` are refused; named volumes are
 // fine unless they are local bind volumes pointing outside the roots.
+// Every request on an existing container (exec, archive, attach, logs, kill,
+// stop, rm, update, export, commit, inspect…) and connecting one to a network
+// is allowed only for a container created through the guard (the proxy records
+// the ids its creates return, per repo, outside the sandbox): another project's
+// container (`supabase_db_offstage`) can't be exec'd into, copied from or
+// stopped. A build on the host's network and a container prune are refused.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -151,9 +157,42 @@ const EXEC = new RegExp(`^${V}/containers/[^/]+/exec$`);
 const VOLUME = new RegExp(`^${V}/volumes/create$`);
 const SWARM = new RegExp(`^${V}/(?:services|swarm|plugins)(?:/|$)`);
 const UPGRADABLE = new RegExp(`^${V}/(?:exec/[^/]+/start|containers/[^/]+/attach|session|grpc)$`);
+/** A request on one existing container: `/containers/<id>` and `/containers/<id>/<op>` (not the list, create or prune). */
+const ON_CONTAINER = new RegExp(`^${V}/containers/([^/]+)(?:/[^/]+)?$`);
+const NOT_A_CONTAINER = new Set(["json", "create", "prune"]);
+const COMMIT = new RegExp(`^${V}/commit$`);
+const NET_CONNECT = new RegExp(`^${V}/networks/[^/]+/(?:connect|disconnect)$`);
+const PRUNE = new RegExp(`^${V}/containers/prune$`);
+const BUILD = new RegExp(`^${V}/build$`);
 
 /** Whether the proxy must read and check this request's JSON body before forwarding it. */
-export const bodyChecked = (method: string, p: string) => method === "POST" && (CREATE.test(p) || EXEC.test(p) || VOLUME.test(p));
+export const bodyChecked = (method: string, p: string) => method === "POST" && (CREATE.test(p) || EXEC.test(p) || VOLUME.test(p) || NET_CONNECT.test(p));
+
+const query = (url: string): URLSearchParams => new URLSearchParams(url.includes("?") ? url.slice(url.indexOf("?") + 1) : "");
+
+/**
+ * The existing containers a request acts on, as the request names them (id, id prefix or name): the
+ * container in the path, a commit's `container=`, a network connect's `Container`. Pure.
+ */
+export function containerTargets(method: string, url: string, body?: unknown): string[] {
+  const p = apiPath(url);
+  if (p === null) return [];
+  const m = ON_CONTAINER.exec(p);
+  if (m && !NOT_A_CONTAINER.has(m[1])) return [m[1]];
+  if (COMMIT.test(p)) return [query(url).get("container") ?? ""];
+  if (method === "POST" && NET_CONNECT.test(p)) return fields(body, "Container").map((c) => (typeof c === "string" ? c : ""));
+  return [];
+}
+
+/** The id a container create answered with (`{"Id": "…", "Warnings": []}`), or null. Pure. */
+export function createdId(responseBody: string): string | null {
+  try {
+    const id = (JSON.parse(responseBody) as { Id?: unknown }).Id;
+    return typeof id === "string" && /^[0-9a-f]{12,64}$/.test(id) ? id : null;
+  } catch {
+    return null;
+  }
+}
 
 /** Requests that switch the connection to a raw stream (exec/attach streams, BuildKit sessions); every other upgrade is refused. */
 export const upgradeAllowed = (p: string | null) => p !== null && UPGRADABLE.test(p);
@@ -163,12 +202,32 @@ export const upgradeAllowed = (p: string | null) => p !== null && UPGRADABLE.tes
  * daemon. `body` is the parsed JSON body when `bodyChecked` (undefined when it
  * did not parse: refused).
  */
-export function apiRefusal(method: string, url: string, body: unknown, roots: string[]): string | null {
+export function apiRefusal(
+  method: string,
+  url: string,
+  body: unknown,
+  roots: string[],
+  /** Was this container (as the request names it) created through the guard? Default: none was. */
+  owned: (container: string) => boolean = () => false,
+): string | null {
   const p = apiPath(url);
   if (p === null) return `the request path ${JSON.stringify(url.split("?")[0])} is not canonical and ${REFUSED}`;
   if (method !== "GET" && method !== "HEAD" && SWARM.test(p)) return `swarm services and plugins ${REFUSED}`;
+  if (method === "POST" && PRUNE.test(p)) return `a container prune (it removes other projects' stopped containers) ${REFUSED}`;
+  if (method === "POST" && BUILD.test(p)) {
+    const q = query(url);
+    if ((q.get("networkmode") ?? "").toLowerCase() === "host") return `a build on the host's network (networkmode=host) ${REFUSED}`;
+    if (/\bsecurity\.insecure\b|\bnetwork\.host\b/.test(q.get("entitlements") ?? "")) return `a build entitlement (${q.get("entitlements")}) ${REFUSED}`;
+  }
+  const bodyOk = !!body && typeof body === "object" && !Array.isArray(body);
+  // A network connect's container is in its body: an unreadable body names no container we could check.
+  if (bodyChecked(method, p) && NET_CONNECT.test(p) && !bodyOk) return `a request body that is not a JSON object ${REFUSED}`;
+  for (const c of containerTargets(method, url, body))
+    if (!c || !owned(c))
+      return `${method} ${p.replace(/^\/v[0-9.]+/, "")} on container ${c || "(none named)"}, which was not created through Kitchen's guard, ${REFUSED}`;
   if (!bodyChecked(method, p)) return null;
-  if (!body || typeof body !== "object" || Array.isArray(body)) return `a request body that is not a JSON object ${REFUSED}`;
+  if (!bodyOk) return `a request body that is not a JSON object ${REFUSED}`;
+  if (NET_CONNECT.test(p)) return null;
   if (EXEC.test(p)) return fields(body, "Privileged").some(truthy) ? `a privileged exec ${REFUSED}` : null;
   if (VOLUME.test(p)) {
     for (const opts of fields(body, "DriverOpts")) {

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { apiPath, apiRefusal, argvRefusal, guardRoots, repoOfBin, upgradeAllowed } from "./docker-guard.ts";
+import { apiPath, apiRefusal, argvRefusal, containerTargets, createdId, guardRoots, repoOfBin, upgradeAllowed } from "./docker-guard.ts";
 import { profileText, wrappedBin, wrapperText } from "./sandbox.ts";
 
 const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "kdg-test-")));
@@ -14,6 +14,8 @@ const roots = guardRoots(repo);
 const o = { roots, cwd: repo, home };
 const run = (...a: string[]) => argvRefusal(a, o);
 const create = (body: unknown) => apiRefusal("POST", "/v1.47/containers/create?name=x", body, roots);
+/** The containers this repo's Toolkit created through the guard (the proxy resolves names to ids first). */
+const mine = (c: string) => c === "abc" || c === "kitchen-a-web-001";
 
 describe("argvRefusal (the shim)", () => {
   it("refuses a bind of $HOME, ~ and a relative path that climbs out", () => {
@@ -104,8 +106,8 @@ describe("apiRefusal (the proxy)", () => {
     expect(create({ HostConfig: { VolumesFrom: ["other"] } })).toMatch(/volumes-from/);
   });
   it("refuses a privileged exec, a bind volume and a body that is not JSON; lets other requests through", () => {
-    expect(apiRefusal("POST", "/v1.47/containers/abc/exec", { Cmd: ["sh"], Privileged: true }, roots)).toMatch(/privileged exec/);
-    expect(apiRefusal("POST", "/containers/abc/exec", { Cmd: ["cat"], AttachStdin: true }, roots)).toBeNull();
+    expect(apiRefusal("POST", "/v1.47/containers/abc/exec", { Cmd: ["sh"], Privileged: true }, roots, mine)).toMatch(/privileged exec/);
+    expect(apiRefusal("POST", "/containers/abc/exec", { Cmd: ["cat"], AttachStdin: true }, roots, mine)).toBeNull();
     expect(apiRefusal("POST", "/v1.47/volumes/create", { Name: "v", DriverOpts: { type: "none", o: "bind", device: "/Users/someone" } }, roots)).toMatch(
       /volume binding/,
     );
@@ -113,6 +115,59 @@ describe("apiRefusal (the proxy)", () => {
     expect(create(undefined)).toMatch(/not a JSON object/);
     expect(apiRefusal("GET", "/v1.47/containers/json", undefined, roots)).toBeNull();
     expect(apiRefusal("POST", "/v1.47/services/create", undefined, roots)).toMatch(/swarm/);
+  });
+  it("acts only on containers created through the guard: another project's can't be exec'd into, copied from, killed or removed", () => {
+    const api = (method: string, url: string, body?: unknown) => apiRefusal(method, url, body, roots, mine);
+    // W3b round 2: the bench's offstage Supabase containers ran beside an unmerged Toolkit.
+    expect(api("POST", "/containers/supabase_db_offstage/exec", { Cmd: ["psql", "-c", "select * from auth.users"] })).toMatch(
+      /on container supabase_db_offstage, which was not created through Kitchen's guard/,
+    );
+    expect(api("PUT", "/v1.47/containers/other/archive?path=/etc")).toMatch(/not created through Kitchen's guard/);
+    expect(api("GET", "/v1.47/containers/other/archive?path=/var/lib/postgresql")).toMatch(/refused/);
+    expect(api("HEAD", "/v1.47/containers/other/archive?path=/")).toMatch(/refused/);
+    expect(api("POST", "/v1.47/containers/other-project-web/kill?signal=KILL")).toMatch(/on container other-project-web/);
+    for (const [m, u] of [
+      ["POST", "/v1.47/containers/other/stop"],
+      ["POST", "/v1.47/containers/other/restart"],
+      ["POST", "/v1.47/containers/other/start"],
+      ["DELETE", "/v1.47/containers/other?force=1&v=1"],
+      ["POST", "/v1.47/containers/other/update"],
+      ["GET", "/v1.47/containers/other/logs?stdout=1"],
+      ["GET", "/v1.47/containers/other/export"],
+      ["GET", "/v1.47/containers/other/json"],
+      ["POST", "/v1.47/containers/other/attach?stream=1"],
+      ["POST", "/v1.47/commit?container=other&repo=x"],
+      ["POST", "/v1.47/commit?repo=x"],
+    ])
+      expect(api(m, u), `${m} ${u}`).toMatch(/refused/);
+    expect(api("POST", "/v1.47/networks/supabase_network_offstage/connect", { Container: "other" })).toMatch(/on container other/);
+    expect(api("POST", "/v1.47/networks/n/connect", "x")).toMatch(/not a JSON object/);
+    // What the Toolkit created itself: everything still works.
+    expect(api("POST", "/v1.47/containers/kitchen-a-web-001/exec", { Cmd: ["psql"], AttachStdin: true })).toBeNull();
+    expect(api("PUT", "/v1.47/containers/abc/archive?path=/tmp")).toBeNull();
+    expect(api("POST", "/v1.47/containers/abc/kill")).toBeNull();
+    expect(api("DELETE", "/v1.47/containers/kitchen-a-web-001?force=1")).toBeNull();
+    expect(api("GET", "/v1.47/containers/abc/logs")).toBeNull();
+    expect(api("POST", "/v1.47/commit?container=abc")).toBeNull();
+    expect(api("POST", "/v1.47/networks/n/connect", { Container: "abc" })).toBeNull();
+    // Lists and creates name no existing container.
+    expect(api("GET", "/v1.47/containers/json?all=1&filters=%7B%7D")).toBeNull();
+    expect(api("POST", "/v1.47/containers/create?name=new", { Image: "postgres" })).toBeNull();
+  });
+  it("refuses a container prune and a build on the host's network", () => {
+    expect(apiRefusal("POST", "/v1.47/containers/prune", undefined, roots)).toMatch(/prune/);
+    expect(apiRefusal("POST", "/v1.47/build?t=app&networkmode=host", undefined, roots)).toMatch(/networkmode=host/);
+    expect(apiRefusal("POST", "/v1.47/build?t=app&networkmode=HOST", undefined, roots)).toMatch(/networkmode=host/);
+    expect(apiRefusal("POST", "/v1.47/build?t=app&entitlements=security.insecure", undefined, roots)).toMatch(/entitlement/);
+    expect(apiRefusal("POST", "/v1.47/build?t=app&networkmode=default", undefined, roots)).toBeNull();
+    expect(apiRefusal("POST", "/v1.47/build?t=app", undefined, roots)).toBeNull();
+  });
+  it("reads the targets and a create's answer", () => {
+    expect(containerTargets("POST", "/v1.47/containers/x/exec")).toEqual(["x"]);
+    expect(containerTargets("GET", "/v1.47/containers/json")).toEqual([]);
+    expect(containerTargets("POST", "/v1.47/networks/n/disconnect", { container: "y" })).toEqual(["y"]);
+    expect(createdId('{"Id":"4f1c2b3a5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708","Warnings":[]}')).toMatch(/^4f1c/);
+    expect(createdId('{"message":"conflict"}')).toBeNull();
   });
   it("refuses paths that are not canonical, and upgrades other than exec/attach/BuildKit", () => {
     expect(apiPath("/v1.47/containers/../containers/create")).toBeNull();
