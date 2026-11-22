@@ -5,8 +5,14 @@
 // What it proves (PASS/FAIL lines, exit 1 on any miss):
 // - review routes code + ux + ui (medium, surfaces ui); a demonstrable blocking finding
 //   sends the job back to build; a "blocking" finding with no anchor, one past the end
-//   of the file and a low-confidence one don't block (notes, with the reason);
-// - the builder's next round gets only what blocked;
+//   of the file, a low-confidence one, one on a file the change didn't touch (README)
+//   and one naming only a requirement whose criteria discriminate don't block (notes,
+//   with the reason); an at: that isn't file:line gets one re-ask, then blocks;
+// - two distinct findings on one requirement both reach the builder; a merged one
+//   carries every member's title; only what blocked reaches the builder;
+// - kitchen dismiss takes effect: the builder is told to ignore it, the next review's
+//   lens not to re-raise it, and when it does (same lens, same anchor) it is a note;
+// - VERDICT: BLOCKING with no readable finding is refused once, then needs-human;
 // - the UX lens's VIEW line runs through the engine (stamped evidence, role reviewer-ux)
 //   and the lens is re-run once with it; ux and ui findings on the same requirement merge;
 // - per-lens stats in the ledger; `kitchen dismiss` records a dismissal per lens;
@@ -14,8 +20,9 @@
 //   report.html is self-contained (data: URIs, no script, no remote URL); the evidence is
 //   committed to the kitchen-evidence branch and the PR comment carries the per-criterion
 //   table and the link (fake forge);
-// - done → build: an untrusted PR comment is ignored, a trusted one moves the job and
-//   reaches the builder as feedback;
+// - done → build: an untrusted PR comment, one written before the job was done and
+//   Kitchen's own report comment (OWNER, trusted here) are ignored; a trusted one moves
+//   the job and reaches the builder as feedback;
 // - `kitchen drive <job> --view` runs one view by hand; no container is left running.
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -32,9 +39,13 @@ agent: { tool: fake, script: ${JSON.stringify(path.join(HERE, "fake-agent.ts"))}
 checks:
   - { name: syntax, run: "node --check server.js" }
 forge: { kind: fake }
-feedback: { trusted: [maintainer-alice], trust_associations: [] }
+feedback: { trusted: [maintainer-alice], trust_associations: [OWNER] }
 `;
 const r = makeFixtureRepo(root, "w4-scripted", { yaml, bug: true });
+// A README the change never touches (a finding anchored there must not block).
+fs.writeFileSync(path.join(r.dir, "README.md"), "# Fixture A\n\nnpm start\n");
+execFileSync("git", ["-C", r.dir, "add", "README.md"]);
+execFileSync("git", ["-C", r.dir, "commit", "-qm", "README"]);
 const log = path.join(root, "w4-scripted.log");
 fs.writeFileSync(log, "");
 const id = ticket(r, "Dark mode doesn't persist. I switch it on in Settings and it says Saved, but when I reload the page the app is light again.");
@@ -45,6 +56,15 @@ const state = () =>
 const forgeFile = path.join(r.dir, ".kitchen", "fake-forge.json");
 const t0 = Date.now();
 
+// Round 1 up to its review's move back to build; a person dismisses F6 before round 2 runs.
+for (let i = 0; i < 60; i++) {
+  const j = jobOf(r, id);
+  if (["done", "needs-human", "needs-info", "rejected", "paused"].includes(j.stage) || (j.stage === "build" && j.round >= 2)) break;
+  fs.appendFileSync(log, kitchen(r, ["run", "--once", id]).out);
+}
+const r1early = JSON.parse(read("rounds/1/review.json") || "{}") as { findings?: { id: string; title: string }[] };
+const f6 = r1early.findings?.find((x) => /never read back/.test(x.title))?.id ?? "?";
+const d1 = kitchen(r, ["dismiss", id, f6, "--reason", "the handler answers with what it stored; fine here"]);
 stepUntil(r, id, ["done", "needs-human", "needs-info", "rejected", "paused"], { max: 60, log });
 const walk = stagesOf(r, id).join(" → ");
 console.log(`    path: ${walk}`);
@@ -58,7 +78,18 @@ check(
 // Review round 1: routing, what blocked, what didn't.
 const r1 = JSON.parse(read("rounds/1/review.json") || "{}") as {
   lenses: string[];
-  findings: { id: string; blocks: boolean; downgraded?: string; lenses: string[]; also: string[]; requirement?: string; evidence: string[] }[];
+  findings: {
+    id: string;
+    title: string;
+    blocks: boolean;
+    downgraded?: string;
+    lenses: string[];
+    also: string[];
+    members?: { id: string; title: string }[];
+    requirement?: string;
+    at?: { file: string; line: number };
+    evidence: string[];
+  }[];
 };
 check("lenses: code, ux, ui (medium risk, surface ui)", JSON.stringify(r1.lenses) === '["code","ux","ui"]', JSON.stringify(r1.lenses));
 const f = (fid: string) => r1.findings?.find((x) => x.id === fid || x.also.includes(fid));
@@ -69,16 +100,61 @@ check(
   f("code-1-2")?.downgraded,
 );
 check(
-  "round 1: low confidence never blocks (merged into F1: same line)",
-  f("code-1-3")?.id === "code-1-1" && f("code-1-1")?.also.includes("code-1-3") === true,
+  "round 1: low confidence never blocks (merged into F1: same line, its title kept as a member)",
+  f("code-1-3")?.id === "code-1-1" && f("code-1-1")?.members?.some((m) => m.id === "code-1-3" && /race on double click/.test(m.title)) === true,
   JSON.stringify(f("code-1-3")),
+);
+const byTitle = (re: RegExp) => r1.findings?.find((x) => re.test(x.title));
+check(
+  "round 1: a blocking finding on README.md (a file the change doesn't touch) is a note",
+  byTitle(/README/)?.blocks === false && /README\.md:1 is not in this change/.test(byTitle(/README/)?.downgraded ?? ""),
+  byTitle(/README/)?.downgraded,
+);
+check(
+  "round 1: a blocking finding naming only R1 (criteria discriminate, no evidence) is a note",
+  byTitle(/not really persisted/)?.blocks === false && /R1 alone/.test(byTitle(/not really persisted/)?.downgraded ?? ""),
+  byTitle(/not really persisted/)?.downgraded,
+);
+const fixPrompt = String(state()[`${id}/code-fix-prompt-r1`] ?? "");
+check(
+  "round 1: an at: that isn't file:line → the lens is asked once to fix the anchor; the fixed one blocks",
+  /the theme handler` is not file:line/.test(fixPrompt) &&
+    byTitle(/takes any user id/)?.blocks === true &&
+    fs.existsSync(path.join(dir, "rounds/1/review-code-fix.md")),
+  `${fixPrompt.split("\n").slice(1, 3).join(" | ")} → ${JSON.stringify(byTitle(/takes any user id/)?.at)}`,
+);
+check(
+  "round 1: two distinct findings on R1 (F1 at L, F6 at L+3) stay two blocking findings",
+  r1.findings?.filter((x) => x.requirement === "R1" && x.blocks).length === 2 && byTitle(/never read back/)?.also.length === 0,
+  r1.findings
+    ?.filter((x) => x.requirement === "R1")
+    .map((x) => `${x.id}:${x.blocks}`)
+    .join(" "),
 );
 const fb2 = String(state()[`${id}/builder-review-r2`] ?? "");
 check(
-  "round 2's builder gets the blocking finding, not the notes",
-  /code-1-1/.test(fb2) && !/code-1-2|this feels fragile/.test(fb2),
-  fb2.split("\n").slice(-2).join(" | "),
+  "round 2's builder gets every blocking finding (both on R1, the merged member's title too), not the notes",
+  /doesn't check the value/.test(fb2) &&
+    /never read back/.test(fb2) &&
+    /takes any user id/.test(fb2) &&
+    /race on double click/.test(fb2) &&
+    !/code-1-2|this feels fragile|README/.test(fb2),
+  fb2.split("\n").slice(-3).join(" | "),
 );
+const dl = ledger(r).find((l) => l.event === "finding-dismissed" && l.job === id);
+check(
+  "kitchen dismiss (after round 1) records who, why, the lens and the anchor (ledger + dismissed.jsonl)",
+  d1.code === 0 &&
+    dl?.detail?.lens === "code" &&
+    !!dl?.detail?.by &&
+    /server\.js/.test(JSON.stringify(dl?.detail?.at)) &&
+    /"by":/.test(read("dismissed.jsonl")),
+  d1.out.trim(),
+);
+const bd2 = String(state()[`${id}/builder-dismissed-r2`] ?? "");
+check("round 2's builder is told to ignore the dismissed finding", new RegExp(`ignore: ${f6} .*dismissed by .*handler answers`).test(bd2), bd2.split("\n")[1]);
+const cd2 = String(state()[`${id}/code-dismissed-r2`] ?? "");
+check("round 2's code lens is told not to re-raise it", new RegExp(`do not re-raise: ${f6}`).test(cd2), cd2.split("\n")[1]);
 
 // Round 2 review: not demonstrable → PASS.
 const r2 = JSON.parse(read("rounds/2/review.json") || "{}") as typeof r1;
@@ -87,6 +163,12 @@ check(
   "round 2: a blocking finding past the end of server.js does not block",
   past?.blocks === false && /past the end of the file/.test(past?.downgraded ?? ""),
   past?.downgraded,
+);
+const again = r2.findings?.find((x) => /still never read back/.test(x.title));
+check(
+  "round 2: the dismissed finding raised again (same lens, same anchor) is a note",
+  again?.blocks === false && new RegExp(`^dismissed by .*\\(${f6}\\)`).test(again?.downgraded ?? ""),
+  again?.downgraded,
 );
 check("round 2: review PASS → ready", /^REVIEW: PASS/.test(read("rounds/2/review.md")), read("rounds/2/review.md").split("\n")[0]);
 
@@ -122,20 +204,24 @@ check(
   uxIds.join(" "),
 );
 const r2req = r2.findings?.find((x) => x.requirement === "R2");
-check("ux and ui findings on R2 are merged into one", JSON.stringify(r2req?.lenses) === '["ux","ui"]', JSON.stringify(r2req));
+check(
+  "ux and ui notes on R2 (no line) stay two findings",
+  r2.findings?.filter((x) => x.requirement === "R2" && !x.at).length === 2 && JSON.stringify(r2req?.lenses) === '["ux"]',
+  JSON.stringify(r2.findings?.filter((x) => x.requirement === "R2").map((x) => x.id)),
+);
 const stats = ledger(r).filter((l) => l.job === id && l.event === "review-lens");
 check(
-  "per-lens stats in the ledger (round 1 code: 3 findings, 3 claimed blocking, 1 blocks, 1 low confidence, 1 not demonstrable)",
+  "per-lens stats in the ledger (round 1 code: 7 findings, 7 claimed blocking, 3 block, 1 low confidence, 3 not demonstrable; round 2: 1 dismissed before)",
   stats.some(
     (s) =>
       s.round === 1 &&
       s.detail?.lens === "code" &&
-      s.detail.findings === 3 &&
-      s.detail.claimedBlocking === 3 &&
-      s.detail.blocks === 1 &&
+      s.detail.findings === 7 &&
+      s.detail.claimedBlocking === 7 &&
+      s.detail.blocks === 3 &&
       s.detail.lowConfidence === 1 &&
-      s.detail.notDemonstrable === 1,
-  ),
+      s.detail.notDemonstrable === 3,
+  ) && stats.some((s) => s.round === 2 && s.detail?.lens === "code" && s.detail.redismissed === 1),
   JSON.stringify(stats.filter((s) => s.round === 1).map((s) => s.detail)),
 );
 
@@ -147,8 +233,8 @@ check(
   !!html && !/\{\{/.test(html) && /<img src="data:image\/png;base64,/.test(html),
 );
 check(
-  "report.html: the agent's <script> and onclick are stripped, nothing remote is loaded (URLs only inside escaped evidence text)",
-  !/<script|onclick=|(src|href)="https?:/i.test(html) && /default-src 'none'/.test(html),
+  "report.html: the agent's <script>, onclick, <a/href=…>, <img/src=…>, <div/style=…> are gone, nothing remote is loaded",
+  !/<script|onclick=|(src|href)="https?:|evil\.example|style=background|base64,AAAA/i.test(html) && /default-src 'none'/.test(html),
 );
 check(
   "report.html: the engine's sections (requirements → criteria → evidence, review, cost and time)",
@@ -172,19 +258,22 @@ check(
 );
 check("medium risk: no kitchen:review-required label", !ff.labels.some((l) => l.key.startsWith(id)));
 
-// kitchen dismiss
-const d1 = kitchen(r, ["dismiss", id, "code-2-2", "--reason", "comments are not our style"]);
+// kitchen dismiss: an unknown id is refused.
 const d2 = kitchen(r, ["dismiss", id, "code-9-9"]);
-const dl = ledger(r).find((l) => l.event === "finding-dismissed" && l.job === id);
-check(
-  "kitchen dismiss records the finding with its lens (ledger + dismissed.jsonl); an unknown id is refused",
-  d1.code === 0 && dl?.detail?.lens === "code" && d2.code !== 0 && /has no review finding code-9-9/.test(d2.out),
-  `${d1.out.trim()} / ${d2.out.trim().split("\n").pop()}`,
-);
+check("kitchen dismiss refuses an id no review has", d2.code !== 0 && /has no review finding code-9-9/.test(d2.out), d2.out.trim().split("\n").pop());
 
 // done → build from PR comments.
 const pr = jobOf(r, id).pr as number;
 const s = readFakeForge(forgeFile);
+// A trusted person's comment written while the job was still in review: not feedback on this report.
+s.reviewComments.push({
+  id: "c0",
+  pr,
+  author: "maintainer-alice",
+  association: "NONE",
+  body: "Old remark from round 1.",
+  at: jobOf(r, id).startedAt,
+});
 s.reviewComments.push({
   id: "c1",
   pr,
@@ -197,9 +286,17 @@ fs.writeFileSync(forgeFile, JSON.stringify(s, null, 2));
 const o1 = kitchen(r, ["run", "--once", id]);
 fs.appendFileSync(log, o1.out);
 check(
-  "an untrusted commenter is ignored: the job stays done",
-  jobOf(r, id).stage === "done" && /c1 by drive-by \(CONTRIBUTOR\) ignored/.test(o1.out) && ledger(r).some((l) => l.event === "pr-comment-ignored"),
-  o1.out.split("\n").find((l) => l.includes("c1")),
+  "an untrusted commenter, a comment from before done and Kitchen's own report comment (OWNER) are ignored: the job stays done",
+  jobOf(r, id).stage === "done" &&
+    /c1 by drive-by \(CONTRIBUTOR\) ignored/.test(o1.out) &&
+    /c0 by maintainer-alice ignored: written .*before the job was done/.test(o1.out) &&
+    !/PR comment kitchen-/.test(o1.out) &&
+    readFakeForge(forgeFile).comments.some((c) => c.body.startsWith("<!-- kitchen:report -->")) &&
+    ledger(r).some((l) => l.event === "pr-comment-ignored"),
+  o1.out
+    .split("\n")
+    .filter((l) => /PR comment/.test(l))
+    .join(" | "),
 );
 const s2 = readFakeForge(forgeFile);
 s2.reviewComments.push({
@@ -221,8 +318,20 @@ check(
 );
 check(
   "the builder got the comment as quoted feedback (and not the ignored one)",
-  /maintainer-alice/.test(fb) && /> Also show 'Saved'/.test(fb) && !/delete the admin/.test(fb),
+  /maintainer-alice/.test(fb) && /> Also show 'Saved'/.test(fb) && !/delete the admin|Old remark/.test(fb) && jobOf(r, id).filed.includes("pr-comment/c2"),
   fb.replace(/\n/g, " | "),
+);
+
+// Round 3: the code lens writes VERDICT: BLOCKING without a finding, twice → needs-human, never a silent PASS.
+stepUntil(r, id, ["done", "needs-human", "needs-info", "rejected", "paused"], { max: 60, log });
+check(
+  "round 3: VERDICT: BLOCKING with no readable finding is refused once, then the job goes to needs-human (review-unparseable)",
+  jobOf(r, id).stage === "needs-human" &&
+    /^review-unparseable: code/.test(jobOf(r, id).pausedReason ?? "") &&
+    !!state()[`${id}/code-r3-review-code-fix.md`] &&
+    ledger(r).some((l) => l.event === "review-refused" && l.round === 3) &&
+    !fs.existsSync(path.join(dir, "rounds/3/review.json")),
+  `${jobOf(r, id).stage}: ${jobOf(r, id).pausedReason}`,
 );
 
 // kitchen drive --view by hand.
