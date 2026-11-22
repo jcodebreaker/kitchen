@@ -22,10 +22,10 @@ function filesUnder(dir: string): string[] {
     .sort();
 }
 
-/** Folders older than `keepDays` by their published.json (a folder without one is kept). Pure. */
-export function expired(published: Map<string, string>, now: Date, keepDays: number): string[] {
+/** Folders older than `keepDays` by their published.json (a folder without one is kept), except those in `keep` (jobs not finished yet). Pure. */
+export function expired(published: Map<string, string>, now: Date, keepDays: number, keep: readonly string[] = []): string[] {
   const cutoff = now.getTime() - keepDays * 86_400_000;
-  return [...published].filter(([, at]) => Number.isFinite(Date.parse(at)) && Date.parse(at) < cutoff).map(([dir]) => dir);
+  return [...published].filter(([dir, at]) => !keep.includes(dir) && Number.isFinite(Date.parse(at)) && Date.parse(at) < cutoff).map(([dir]) => dir);
 }
 
 /**
@@ -38,6 +38,8 @@ export async function commitEvidence(o: {
   job: string;
   bundle: string;
   keepDays: number;
+  /** Job folders never pruned: jobs that aren't done (one sent back to build by a PR comment still links its report). */
+  keep?: readonly string[];
   now?: Date;
   branch?: string;
 }): Promise<{ commit: string; pruned: string[]; files: number }> {
@@ -65,7 +67,7 @@ export async function commitEvidence(o: {
         if (p.at) published.set(d, p.at);
       } catch {}
     }
-    const pruned = expired(published, o.now ?? new Date(), o.keepDays).filter((d) => d !== o.job);
+    const pruned = expired(published, o.now ?? new Date(), o.keepDays, o.keep).filter((d) => d !== o.job);
     for (const d of [o.job, ...pruned]) await git.run(["rm", "--cached", "-r", "-q", "--ignore-unmatch", "--", `:(top)${d}`], { env }); // from the top: cwd is the gitdir, inside the work tree
     const files = filesUnder(o.bundle);
     for (const f of files) {

@@ -4,7 +4,10 @@
 //   test <file>
 // A dotted name (`settings.toggle-dark`) is a feature drive, anything else a
 // primitive. Toolkit segments chain in one browser session; `cmd` and `test`
-// stand alone. Values may be quoted ("…" or '…'). A primitive segment may end
+// stand alone. Values may be quoted ("…" or '…'), as in a shell: inside "…" a
+// backslash escapes `"` and `\` (as in the drive format: `--target "a[href=\"/x\"]"`),
+// outside quotes it escapes any character, inside '…' it is literal (and `\"` there
+// is refused: it would reach the selector as a backslash). A primitive segment may end
 // with `--save <var>`: its output is kept as `$var` for later segments and the
 // expect, as a drive's `save:` would (the engine's, never passed to bin/dev).
 
@@ -13,16 +16,30 @@ export type Segment = ToolkitSegment | { kind: "cmd"; cmd: string } | { kind: "t
 
 export class ProofLineError extends Error {}
 
-/** Shell-like words: spaces split, quotes group, no expansion. */
-export function words(s: string): string[] {
+/** What a spec writes when it means a quote inside a value. */
+const QUOTING =
+  'inside \'…\' a backslash is kept as is, so \\" reaches the Toolkit with its backslash: write the value in "…" with \\" for an inner quote (--target "a[href=\\"/x\\"]"), or in \'…\' with plain " inside (--target \'a[href="/x"]\')';
+
+/**
+ * Shell-like words: spaces split, quotes group, no expansion. Backslash: inside "…" it escapes `"` and `\`,
+ * outside quotes any character, inside '…' nothing. `strict`: refuse `\"` inside '…' (a proof value meant a quote).
+ */
+export function words(s: string, strict = false): string[] {
   const out: string[] = [];
   let cur = "";
   let q: string | null = null;
   let has = false;
-  for (const c of s) {
-    if (q) {
+  const cs = [...s];
+  for (let i = 0; i < cs.length; i++) {
+    const c = cs[i];
+    if (q === '"' && c === "\\" && (cs[i + 1] === '"' || cs[i + 1] === "\\")) cur += cs[++i];
+    else if (q === "'" && strict && c === "\\" && cs[i + 1] === '"') throw new ProofLineError(`${JSON.stringify(s)}: ${QUOTING}`);
+    else if (q) {
       if (c === q) q = null;
       else cur += c;
+    } else if (c === "\\" && i + 1 < cs.length) {
+      cur += cs[++i];
+      has = true;
     } else if (c === '"' || c === "'") {
       q = c;
       has = true;
@@ -37,12 +54,18 @@ export function words(s: string): string[] {
   return out;
 }
 
-/** Split on `;` outside quotes. */
+/** Split on `;` outside quotes (an escaped quote or `;` doesn't count; the escape stays for words()). */
 function splitSegments(s: string): string[] {
   const out: string[] = [];
   let cur = "";
   let q: string | null = null;
-  for (const c of s) {
+  const cs = [...s];
+  for (let i = 0; i < cs.length; i++) {
+    const c = cs[i];
+    if (c === "\\" && q !== "'" && i + 1 < cs.length) {
+      cur += c + cs[++i];
+      continue;
+    }
     if (q) {
       if (c === q) q = null;
     } else if (c === '"' || c === "'") q = c;
@@ -71,7 +94,7 @@ export function parseProof(proof: string): Segment[] {
   if (!/^toolkit\s/.test(p)) throw new ProofLineError("a proof is `toolkit …`, `cmd …` or `test <file>`");
   return splitSegments(p).map((seg, n): ToolkitSegment => {
     // After the first segment the `toolkit` word may be left out (`toolkit login --as a ; open --path /x`).
-    const w0 = words(seg);
+    const w0 = words(seg, true);
     const w = n > 0 && w0[0] !== "toolkit" ? ["toolkit", ...w0] : w0;
     if (w[1] === "cmd" || w[1] === "test" || w[0] !== "toolkit") throw new ProofLineError(`segment ${JSON.stringify(seg)}: chain only toolkit segments with ;`);
     const name = w[1];

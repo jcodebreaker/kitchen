@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
-import { prComment, type ReportEntry, type ReportFacts, renderRefusal, renderReport, sanitize, shortCmd } from "./report-render.ts";
+import { KITCHEN_MARKER, mdText, prComment, type ReportEntry, type ReportFacts, renderRefusal, renderReport, sanitize, shortCmd } from "./report-render.ts";
 
 const HEAD = "a".repeat(40);
 const OLD = "b".repeat(40);
@@ -86,6 +86,94 @@ test("sanitize: no scripts, handlers, frames, remote loads or javascript: links"
   const s = sanitize(dirty);
   for (const bad of ["onclick", "script", "steal", "https://evil", "onerror", "javascript:", "iframe", "<style"]) assert.ok(!s.includes(bad), `${bad} in ${s}`);
   assert.match(s, /<a href="#ev-e2">ok<\/a>/);
+});
+
+test("sanitize: an allow-list, read the way a browser tokenizes (the review's bypasses)", () => {
+  const cases: [string, RegExp[], RegExp?][] = [
+    ['<a/href="https://evil">x</a>', [/evil/, /href/], /<a>x<\/a>/],
+    ['<img/src="data:image/png;base64,AAAA">', [/<img/, /data:/]],
+    ["<img/onerror=alert(1)/src=x>", [/<img/, /onerror/, /alert/]],
+    ["<div/style=background:url(https://evil/x)>t</div>", [/style/, /url\(/, /evil/], /<div>t<\/div>/],
+    ['<video poster="https://evil/p.png"><source src="x"></video>ok', [/video/, /poster/, /evil/, /source/], /^ok$/],
+    ['<table background="https://evil/b.png"><tr><td>c</td></tr></table>', [/background/, /evil/], /<table><tr><td>c<\/td><\/tr><\/table>/],
+    ['<a href="&#106;avascript:alert(1)">j</a>', [/javascript/i, /&#106;/, /href/]],
+    ['<a href="#ev-e2" onclick="x()">ok</a>', [/onclick/], /<a href="#ev-e2">ok<\/a>/],
+    ["<svg><a href=x><script>alert(1)</script></a></svg>after", [/svg/, /script/, /alert/], /^after$/],
+    [
+      '<p>1 < 2 and <3</p><link rel=stylesheet href="https://evil/c.css"><meta http-equiv=refresh content="0;url=https://evil">',
+      [/<link/, /<meta/, /evil/],
+      /<p>1 &lt; 2 and &lt;3<\/p>/,
+    ],
+    ['<section id="summary" class="lead" style="x" data-x="1">s</section>', [/style/, /data-x/], /<section id="summary" class="lead">s<\/section>/],
+    ["<p>unclosed <strong>bold", [], /<p>unclosed <strong>bold<\/strong><\/p>$/],
+    ["</section></main><p>x</p>", [/<\/section>/, /<\/main>/], /^<p>x<\/p>$/],
+    ['<img src="x" alt="never closed', [/<img/]],
+  ];
+  for (const [src, gone, keep] of cases) {
+    const s = sanitize(src);
+    for (const g of gone) assert.doesNotMatch(s, g, `${src} → ${s}`);
+    if (keep) assert.match(s, keep, `${src} → ${s}`);
+  }
+});
+
+test("a human-check section hidden in a comment doesn't count; refusal runs on what the page shows", () => {
+  const hidden = `${SRC}<!-- <section id="human-check"><p>look at auth</p></section> -->`;
+  assert.match(renderRefusal(hidden, entries, HEAD, true) ?? "", /human-check/);
+  assert.match(renderRefusal(`<!-- ${SRC} -->`, entries, HEAD, false) ?? "", /no <section id="summary">/);
+  assert.equal(renderRefusal(`${SRC}<!-- {{e99}} -->`, entries, HEAD, false), null, "an id the page won't show is not cited");
+});
+
+test("the review section lists what blocked earlier rounds", () => {
+  const earlier = [
+    {
+      round: 1,
+      id: "security-1-1",
+      lenses: ["security"],
+      blocks: true,
+      confidence: "high",
+      where: "server.js:264",
+      title: "description rendered raw",
+      why: "XSS",
+    },
+  ];
+  const r = renderReport({ src: SRC, facts: facts({ review: { ...facts().review, earlier } }), entries, file });
+  assert.ok("html" in r);
+  assert.match(
+    r.html,
+    /What blocked earlier rounds.*round 1 · <code>security-1-1<\/code> security · <code>server\.js:264<\/code> · <b>description rendered raw<\/b>: XSS/,
+  );
+});
+
+test("a cited id outside the verdict's and views' ids renders with a warning", () => {
+  const src = `${SRC.replace("{{ e3 }}", "")}<section id="notes"><p>{{e3}}</p></section>`;
+  const r = renderReport({ src, facts: facts(), entries, file, citable: ["e2"] });
+  assert.ok("html" in r);
+  assert.deepEqual(r.warnings, ["e3 (engine, C2) is cited but no verdict row or view cites it: context, not proof"]);
+  assert.match(r.html, /id="citation-warnings"/);
+  const ok = renderReport({ src: SRC, facts: facts(), entries, file, citable: ["e2", "e3"] });
+  assert.ok("html" in ok && ok.warnings.length === 0 && !/citation-warnings/.test(ok.html));
+});
+
+test("the PR comment carries Kitchen's marker and escapes agent text (no images, links or table breaks)", () => {
+  const evil = facts({
+    job: { ...facts().job, title: "Fix ![x](https://evil/t.png)" },
+    criteria: [
+      {
+        id: "C1",
+        text: "shows ![p](https://evil/p.png) [click](https://evil) | x",
+        covers: ["R1"],
+        decidedBy: "engine",
+        result: "PASS",
+        evidence: [],
+        nonDiscriminating: false,
+      },
+    ],
+  });
+  const c = prComment(evil, { url: "https://x/", entries });
+  assert.ok(c.startsWith(KITCHEN_MARKER));
+  assert.doesNotMatch(c, /!\[|\]\(https|https:\/\/evil/);
+  assert.match(c, /\| C1 shows \\!\\\[p\\\]\\\(https&#58;\/\/evil\/p\.png\\\) .* \\\| x \| R1 \|/);
+  assert.equal(mdText("a\nb"), "a b");
 });
 
 test("the PR comment: one row per criterion, screenshot links into the published folder, the report link", () => {

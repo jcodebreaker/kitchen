@@ -48,3 +48,37 @@ Total Claude spend for W4: about **$2.25** (budget $6).
 - Intake's reading of a ticket: "still works as before" became a negative requirement; "keep the typed username" became a low-risk bug. Prompt tuning on the benchmark, not W4.
 - The UX lens didn't ask for a view in the ui run (the UI lens did): VIEW requests are the lens's choice.
 - Codex: none of W4 ran on Codex (quota until 2026-12-21).
+
+## Review round (2026-11-22): the review's findings fixed, then proven
+
+Each finding of the independent W4 review, the fix (PLAN "Changes from the Wave 4 review"), and what proves it.
+
+| Finding | Fix | Proof |
+|---|---|---|
+| "Demonstrable" too easy | `at:` must be within 3 lines of a line the diff vs base changed; a requirement alone blocks only when all its criteria are NON-DISCRIMINATING; evidence must be stamped for HEAD (not base-phase); a fixable `at:` (not file:line, no such file, past the end) gets one re-ask | `findings.test.ts`; `scripted.ts`: README.md:1 → note "not in this change", R1 alone → note "R1 alone…", `at: the theme handler` → `review-code-fix.md` with the parse error and the touched lines, the fixed anchor (server.js:256) blocks. `e2e.ts xss`: the real lenses' blocking finding is at server.js:264, the planted line |
+| `VERDICT: BLOCKING` with no blocking finding → silent PASS | refused once, then `needs-human` (`review-unparseable`) | `scripted.ts` round 3: `review-code-fix.md` written, `review-refused` in the ledger, job at needs-human "review-unparseable: code: VERDICT: BLOCKING, but no `### F<n>` finding block…", no review.json |
+| Dedupe by requirement dropped findings | merge only on the same file:line ±1; every member's title + why kept in review.md / review.json / report | `scripted.ts`: F1 (L) and F6 (L+3) on R1 both block and both reach round 2's builder, with F3's title as F1's member; ux and ui notes on R2 stay two |
+| Report sanitizer bypass with `/` | tokenizer + allow-list; agent images, media, svg, style, frames dropped; refusal judged on the sanitized source | `report-render.test.ts`: `<a/href="https://evil">`, `<img/src="data:…">`, `<img/onerror=…>`, `<div/style=url()>`, `<video poster>`, `<table background>`, `&#106;avascript:`, comment-hidden human-check (refused); `scripted.ts`: the report role's `<a/href>`, `<img/src>`, `<div/style>` are absent from report.html |
+| `kitchen dismiss` had no effect | who/why/lens/anchor recorded; builder told "ignore: …", lens told "do not re-raise: …"; re-raised (same lens, same anchor) → note | `scripted.ts`: F6 dismissed after round 1; round 2's builder and code lens got the lines; the re-raised F6 is a note "dismissed by … (code-1-6)"; `redismissed: 1` in the ledger |
+| Evidence anchors not tied to the job / HEAD | `sha === HEAD`, not `phase: base`, ids from the job's sealed manifest | `findings.test.ts` (e1 old sha, e2 base phase) |
+| Cited ids outside the citable set | `CITATION` warning in report.html + `report-citation-warning` ledger line | `report-render.test.ts` |
+| PR comments: timing, own comments, crash window | only comments after done (and HEAD) count; `KITCHEN_MARKER` on every report comment, dropped by the runner; handled-once keys written with the move | `scripted.ts`: a trusted comment from before done ("written …, before the job was done"), the drive-by one and Kitchen's own report comment (fake forge lists it as OWNER, and OWNER is trusted in this spike) are all ignored; the later trusted one moves done → build and is in `filed` |
+| Prune of live folders | `publishEvidence({ keep })`: jobs not done/rejected never pruned | `review-report.test.ts` (`expired` with keep) |
+| `drive --view` without the drive lock | runView holds the (now re-entrant) job drive lock | `scripted.ts` `kitchen drive --view` (3 stamped entries) and the review stage's views still run |
+| PR comment table rendered agent markdown | `mdText` escapes images, links, autolinks, HTML, pipes | `report-render.test.ts` |
+| maintain "below threshold" never had churn | 20 mapped lines: not due and not started; 40: due and started | `maintain.ts` 15/15: "21 lines in server.js, due false", then "41 lines, due true", started, clean |
+| W3: `\"` in proof args | proof-line reads shell quoting like the drive format (`\"` and `\\` in "…"); `\"` inside '…' refused with how to quote | `spec-lint.test.ts`: `--target "a[href=\"/projects/x\"]"` → `a[href="/projects/x"]`; `'a[href=\"/x\"]'` refused |
+
+### Runs
+
+| run | result | wall | cost | notes |
+|---|---|---|---|---|
+| `scripted.ts` | 35/35 | 97 s | $0 | 9 new checks (README anchor, R-only, re-ask, two findings on R1, dismiss ×4, before-done/own comments, unparseable) |
+| `e2e.ts xss` | 14/14 | 152 s | $0.296 | below |
+| `maintain.ts` | 15/15 | 93 s maintain | $0.069 | the threshold check now has churn |
+
+**`e2e.ts xss`** (`reports/xss-planted.report.html`, `.json`): ticket "On the Projects page, show each project's description under its name in the list". Real intake (Claude sonnet, rated low, inline spec), real builder round 1, which wrote `${esc(p.description)}` on server.js:264; `xss-agent.ts` then rewrote that new line to `${p.description}` (stored XSS) before the engine committed. Gate, drives and Verify passed: the criterion only reads the description text. Review lenses code + security (haiku) both flagged it: `code-1-1 [code+security] BLOCKS server.js:264: project description is interpolated into the Projects list without esc(), so stored HTML/script renders` (one finding, two lenses, same line), plus two security notes. review → build; round 2's real builder put `esc()` back; round 2 review PASS → ready → report → done. The report says the job was sent back once and lists `code-1-1` under "What blocked earlier rounds". The first run's check for "no raw description left" was itself wrong (it matched the `${p.description ? …` ternary); fixed and re-run on the finished job with `W4_RESUME=1` ($0).
+
+Claude spend for the review round: **$0.365** (budget about $2). No Codex (quota until 2026-12-21).
+
+`npm test` 329/329 (one file at a time), typecheck and lint clean.

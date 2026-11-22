@@ -1,0 +1,258 @@
+{
+  "kind": "xss",
+  "job": "001-on-the-projects-page-show-each-project-s",
+  "stage": "done",
+  "path": [
+    "intake",
+    "build",
+    "gate",
+    "drives",
+    "verify",
+    "review",
+    "build",
+    "gate",
+    "drives",
+    "verify",
+    "review",
+    "ready",
+    "report",
+    "done"
+  ],
+  "risk": "low",
+  "riskFloor": "low",
+  "surfaces": [
+    "ui"
+  ],
+  "rounds": 2,
+  "wallSecs": 0,
+  "usd": 0.2956,
+  "costs": [
+    {
+      "stage": "intake",
+      "round": 1,
+      "secs": 29,
+      "usd": 0.1485,
+      "roles": "intake (fake)"
+    },
+    {
+      "stage": "build",
+      "round": 1,
+      "secs": 47,
+      "usd": 0.0689,
+      "roles": "builder (fake)"
+    },
+    {
+      "stage": "gate",
+      "round": 1,
+      "secs": 1,
+      "usd": 0,
+      "roles": ""
+    },
+    {
+      "stage": "drives",
+      "round": 1,
+      "secs": 2,
+      "usd": 0,
+      "roles": ""
+    },
+    {
+      "stage": "verify",
+      "round": 1,
+      "secs": 10,
+      "usd": 0,
+      "roles": ""
+    },
+    {
+      "stage": "review",
+      "round": 1,
+      "secs": 12,
+      "usd": 0.0067,
+      "roles": "reviewer-code (fake), reviewer-security (fake)"
+    },
+    {
+      "stage": "build",
+      "round": 2,
+      "secs": 15,
+      "usd": 0.063,
+      "roles": "builder (fake)"
+    },
+    {
+      "stage": "gate",
+      "round": 2,
+      "secs": 1,
+      "usd": 0,
+      "roles": ""
+    },
+    {
+      "stage": "drives",
+      "round": 2,
+      "secs": 2,
+      "usd": 0,
+      "roles": ""
+    },
+    {
+      "stage": "verify",
+      "round": 2,
+      "secs": 10,
+      "usd": 0,
+      "roles": ""
+    },
+    {
+      "stage": "review",
+      "round": 2,
+      "secs": 9,
+      "usd": 0.005,
+      "roles": "reviewer-security (fake), reviewer-code (fake)"
+    },
+    {
+      "stage": "ready",
+      "round": 2,
+      "secs": 0,
+      "usd": 0,
+      "roles": ""
+    },
+    {
+      "stage": "report",
+      "round": 2,
+      "secs": 15,
+      "usd": 0.0036,
+      "roles": "report (fake)"
+    }
+  ],
+  "agents": [
+    {
+      "role": "intake",
+      "model": "fake",
+      "stage": "intake",
+      "round": 1,
+      "secs": 16,
+      "usd": 0.09543479999999999,
+      "result": "ok"
+    },
+    {
+      "role": "intake",
+      "model": "fake",
+      "stage": "intake",
+      "round": 1,
+      "secs": 12,
+      "usd": 0.053025899999999994,
+      "result": "ok"
+    },
+    {
+      "role": "builder",
+      "model": "fake",
+      "stage": "build",
+      "round": 1,
+      "secs": 35,
+      "usd": 0.0689226,
+      "result": "ok"
+    },
+    {
+      "role": "reviewer-code",
+      "model": "fake",
+      "stage": "review",
+      "round": 1,
+      "secs": 8,
+      "usd": 0.00313397,
+      "result": "ok"
+    },
+    {
+      "role": "reviewer-security",
+      "model": "fake",
+      "stage": "review",
+      "round": 1,
+      "secs": 11,
+      "usd": 0.00353537,
+      "result": "ok"
+    },
+    {
+      "role": "builder",
+      "model": "fake",
+      "stage": "build",
+      "round": 2,
+      "secs": 13,
+      "usd": 0.0630091,
+      "result": "ok"
+    },
+    {
+      "role": "reviewer-security",
+      "model": "fake",
+      "stage": "review",
+      "round": 2,
+      "secs": 6,
+      "usd": 0.0022822100000000002,
+      "result": "ok"
+    },
+    {
+      "role": "reviewer-code",
+      "model": "fake",
+      "stage": "review",
+      "round": 2,
+      "secs": 8,
+      "usd": 0.00268663,
+      "result": "ok"
+    },
+    {
+      "role": "report",
+      "model": "fake",
+      "stage": "report",
+      "round": 2,
+      "secs": 11,
+      "usd": 0.00360739,
+      "result": "ok"
+    }
+  ],
+  "review": {
+    "head": "7052db5348f02e61182a904d8e9f86e56e838262",
+    "round": 2,
+    "lenses": [
+      "code",
+      "security"
+    ],
+    "findings": [],
+    "stats": [
+      {
+        "lens": "code",
+        "verdict": "PASS",
+        "findings": 0,
+        "claimedBlocking": 0,
+        "blocks": 0,
+        "lowConfidence": 0,
+        "notDemonstrable": 0,
+        "redismissed": 0,
+        "duplicates": 0
+      },
+      {
+        "lens": "security",
+        "verdict": "PASS",
+        "findings": 0,
+        "claimedBlocking": 0,
+        "blocks": 0,
+        "lowConfidence": 0,
+        "notDemonstrable": 0,
+        "redismissed": 0,
+        "duplicates": 0
+      }
+    ]
+  },
+  "views": [],
+  "forge": {
+    "labels": [],
+    "comments": [
+      {
+        "key": "001-on-the-projects-page-show-each-project-s/report-comment/7052db5348f02e61182a904d8e9f86e56e838262",
+        "calls": 1,
+        "body": "<!-- kitchen:report -->\n### Kitchen report: On the Projects page, show each project's description under its name in…\n\n**Verdict PASS** · feature · risk low · round 2 · HEAD `7052db5348`\n\n| criterion | covers | decided by | result | evidence |\n|---|---|---|---|---|\n| C1 After creating a project with a description, the Projects list shows that description. | R1 | engine | PASS | [e138](fake://kitchen-evidence/001-on-the-projects-page-show-each-project-s/evidence/e138/project-ready.png) +16 more |\n| C2 In the Projects list the description sits on the line right under the project name. | R2 | engine | PASS | [e155](fake://kitchen-evidence/001-on-the-projects-page-show-each-project-s/evidence/e155/project-ready.png) +16 more |\n\nReview (code, security): 0 blocking, 0 note(s).\n\nFull report: fake://kitchen-evidence/001-on-the-projects-page-show-each-project-s/report.html"
+      }
+    ],
+    "evidence": [
+      {
+        "key": "001-on-the-projects-page-show-each-project-s/evidence/7052db5348f02e61182a904d8e9f86e56e838262",
+        "job": "001-on-the-projects-page-show-each-project-s",
+        "commit": "48c27c341cb370948455b8fd14ada94c3b633f4c",
+        "calls": 1
+      }
+    ]
+  },
+  "reportRefusals": []
+}

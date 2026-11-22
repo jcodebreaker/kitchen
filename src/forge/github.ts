@@ -182,7 +182,7 @@ export class GithubForge implements Forge {
    * pushed to the explicit URL, never forced (a concurrent publish that won makes this one fail
    * and the stage retries).
    */
-  async publishEvidence(o: { key: string; job: string; bundle: string; keepDays: number }): Promise<Published> {
+  async publishEvidence(o: { key: string; job: string; bundle: string; keepDays: number; keep?: readonly string[] }): Promise<Published> {
     const git = await openGit(plainCheckout(this.repo));
     const url = remoteUrl(this.cfg);
     const helper = ghHelper(this.cfg);
@@ -191,7 +191,7 @@ export class GithubForge implements Forge {
     } catch (e) {
       if (!(e instanceof GitError) || !/couldn't find remote ref|no such ref|not our ref/i.test(e.stderr)) throw e;
     }
-    const r = await commitEvidence({ repo: this.repo, job: o.job, bundle: o.bundle, keepDays: o.keepDays });
+    const r = await commitEvidence({ repo: this.repo, job: o.job, bundle: o.bundle, keepDays: o.keepDays, keep: o.keep });
     await pushTo(git, { url, refspecs: [`${r.commit}:refs/heads/${EVIDENCE_BRANCH}`], helper });
     return { commit: r.commit, url: `https://github.com/${this.repoSlug}/blob/${EVIDENCE_BRANCH}/${o.job}/`, pruned: r.pruned };
   }

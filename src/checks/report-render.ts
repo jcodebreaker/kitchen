@@ -7,8 +7,10 @@
 // - refuses a source without `<section id="summary">`, and, on a path where a human
 //   must look (`human: always`), one without `<section id="human-check">`, which
 //   then opens the report;
-// - strips what a published page must not run or load (scripts, frames, forms,
-//   event handlers, javascript: and remote URLs);
+// - keeps only an allow-list of tags and attributes (sanitize: a small tokenizer,
+//   not regex stripping): no scripts, styles, media, frames, handlers or links out;
+//   images come only from the engine's own {{e<N>}} citations;
+// - warns (in the page) when the text cites an id that no verdict row or view cites;
 // - inlines every cited entry (screenshots as data: URIs, text output as <pre>),
 //   so report.html is one self-contained file;
 // - adds the engine's own sections from facts it was handed (never from what the
@@ -49,6 +51,8 @@ export type FindingRow = {
   why: string;
   downgraded?: string;
   dismissed?: string;
+  /** Findings of other lenses (or the same) on the same line, merged into this one. */
+  members?: { id: string; lens: string; title: string; why: string }[];
 };
 export type StageCost = { stage: string; round: number; secs: number; usd: number; roles: string };
 
@@ -60,7 +64,8 @@ export type ReportFacts = {
   humanMustCheck: boolean;
   requirements: RequirementRow[];
   criteria: CriterionRow[];
-  review: { lenses: string[]; findings: FindingRow[]; blockingRounds: number };
+  /** `earlier`: what blocked in earlier rounds (the findings that sent the job back to build), oldest first. */
+  review: { lenses: string[]; findings: FindingRow[]; blockingRounds: number; earlier?: (FindingRow & { round: number })[] };
   /** seed-diff.md and the patch of those files, or null. */
   seeds: { files: string[]; patch: string } | null;
   costs: StageCost[];
@@ -74,7 +79,19 @@ export type RenderInput = {
   entries: ReportEntry[];
   /** An evidence file's bytes (relative to evidence/), or null. */
   file: (rel: string) => Buffer | null;
+  /** Ids the report may cite as proof (the verdict's and the views'); a cited id outside them is rendered with a warning. */
+  citable?: readonly string[];
 };
+
+/** Cited ids that are stamped for HEAD but that no verdict row or view cites (a builder's self-check, a drives-stage run): context, not proof. Pure. */
+export function citationWarnings(src: string, entries: Pick<ReportEntry, "id" | "role" | "criterion">[], citable: readonly string[]): string[] {
+  return citedIds(sanitize(src))
+    .filter((id) => !citable.includes(id))
+    .map((id) => {
+      const e = entries.find((x) => x.id === id);
+      return `${id}${e ? ` (${String(e.role ?? "?")}, ${e.criterion})` : ""} is cited but no verdict row or view cites it: context, not proof`;
+    });
+}
 
 const ID = /\{\{\s*(e\d+)\s*\}\}/g;
 const ANY = /\{\{([\s\S]*?)\}\}/g;
@@ -94,8 +111,9 @@ export function citedIds(src: string): string[] {
   return [...new Set([...src.matchAll(ID)].map((m) => m[1]))];
 }
 
-/** Why the source can't be rendered for `head`, or null. */
-export function renderRefusal(src: string, entries: Pick<ReportEntry, "id" | "sha">[], head: string, humanMustCheck: boolean): string | null {
+/** Why the source can't be rendered for `head`, or null. Judged on the sanitized source: what the page will show (a section hidden in a comment doesn't count). */
+export function renderRefusal(raw: string, entries: Pick<ReportEntry, "id" | "sha">[], head: string, humanMustCheck: boolean): string | null {
+  const src = sanitize(raw);
   const other = [...src.matchAll(ANY)].map((m) => m[1].trim()).filter((x) => !/^e\d+$/.test(x));
   if (other.length) return `unknown placeholder {{${other[0]}}}: cite evidence only as {{e<N>}}`;
   const ids = citedIds(src);
@@ -115,18 +133,174 @@ export function sectionOf(src: string, id: string): string | null {
   return m ? m[1] : null;
 }
 
-/** Strip what a published page must not run or load. Not a general HTML sanitizer: the input is one agent's fragment, and the page is static. */
+/** Tags an agent's fragment may keep. Everything else is dropped; images come only from the engine ({{e<N>}}). */
+const ALLOWED = new Set([
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "p",
+  "br",
+  "ul",
+  "ol",
+  "li",
+  "table",
+  "thead",
+  "tbody",
+  "tr",
+  "th",
+  "td",
+  "strong",
+  "em",
+  "b",
+  "i",
+  "code",
+  "pre",
+  "blockquote",
+  "a",
+  "section",
+  "div",
+  "span",
+]);
+const VOID = new Set(["br"]);
+/** Dropped with everything inside them (what they hold is code, media or a document of its own). */
+const DROP_CONTENT = new Set([
+  "script",
+  "style",
+  "svg",
+  "math",
+  "iframe",
+  "frame",
+  "frameset",
+  "object",
+  "embed",
+  "applet",
+  "template",
+  "noscript",
+  "noembed",
+  "noframes",
+  "video",
+  "audio",
+  "picture",
+  "canvas",
+  "title",
+  "textarea",
+  "select",
+  "head",
+  "xmp",
+  "plaintext",
+]);
+const CLASS = /^[\w -]{1,80}$/;
+/** The attributes an allowed tag may keep, and the values each may have. */
+function keepAttr(tag: string, name: string, value: string): boolean {
+  if (tag === "a" && name === "href") return /^#[\w-]+$/.test(value); // in-page anchors only
+  if (tag === "section" && name === "id") return /^[\w-]+$/.test(value);
+  if ((tag === "section" || tag === "div" || tag === "span") && name === "class") return CLASS.test(value);
+  if ((tag === "td" || tag === "th") && (name === "colspan" || name === "rowspan")) return /^\d{1,2}$/.test(value);
+  return false;
+}
+
+/** Character references in an attribute value, decoded (so `&#35;x` is checked as `#x`). */
+function decodeRefs(v: string): string {
+  const named: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", colon: ":", sol: "/", num: "#" };
+  return v.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);?/gi, (m, r: string) => {
+    if (r[0] === "#") {
+      const c = r[1] === "x" || r[1] === "X" ? Number.parseInt(r.slice(2), 16) : Number(r.slice(1));
+      return Number.isFinite(c) && c > 0 && c < 0x110000 ? String.fromCodePoint(c) : "";
+    }
+    return named[r.toLowerCase()] ?? m;
+  });
+}
+
+/**
+ * The agent's fragment through an allow-list, by a small HTML tokenizer (the way a browser reads tags:
+ * `/` separates attributes like a space, a value may be quoted or bare, comments and `<!…>` vanish).
+ * Kept: the tags in ALLOWED with only the attributes keepAttr allows; dropped: every other tag (its text
+ * stays), and DROP_CONTENT tags with what they hold. Text keeps its entities; a stray `<` becomes `&lt;`.
+ * Open tags are closed at the end and a close tag that closes nothing is dropped, so the fragment can't
+ * swallow the engine's sections. The page is static and its CSP loads nothing; this is what an agent can put in it.
+ */
 export function sanitize(html: string): string {
-  return html
-    .replace(/<!--[\s\S]*?-->/g, "")
-    .replace(/<(script|style|iframe|object|embed|template|noscript|svg|math)\b[\s\S]*?<\/\1\s*>/gi, "")
-    .replace(/<\/?(script|style|iframe|object|embed|link|meta|base|form|input|button|textarea|select|frame|frameset|template|noscript|svg|math)\b[^>]*>/gi, "")
-    .replace(/\s+on[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "")
-    .replace(/\s+(src|srcset|href|action|formaction|xlink:href|style)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, (m, attr: string, v: string) => {
-      const val = v.replace(/^["']|["']$/g, "").trim();
-      // In-page anchors only: a published report loads nothing and runs nothing.
-      return attr.toLowerCase() === "href" && /^#[\w-]+$/.test(val) ? m : "";
-    });
+  const out: string[] = [];
+  const open: string[] = [];
+  const n = html.length;
+  const text = (t: string) => t.replace(/>/g, "&gt;");
+  let i = 0;
+  while (i < n) {
+    const lt = html.indexOf("<", i);
+    if (lt < 0) {
+      out.push(text(html.slice(i)));
+      break;
+    }
+    out.push(text(html.slice(i, lt)));
+    i = lt;
+    if (html.startsWith("<!--", i)) {
+      const e = html.indexOf("-->", i + 4);
+      i = e < 0 ? n : e + 3;
+      continue;
+    }
+    if (html[i + 1] === "!" || html[i + 1] === "?") {
+      const e = html.indexOf(">", i);
+      i = e < 0 ? n : e + 1;
+      continue;
+    }
+    const m = /^<(\/?)([a-zA-Z][^\s/>]*)/.exec(html.slice(i, i + 80));
+    if (!m) {
+      out.push("&lt;");
+      i++;
+      continue;
+    }
+    const closing = m[1] === "/";
+    const tag = m[2].toLowerCase();
+    // Attributes, as a browser splits them.
+    let j = i + m[0].length;
+    const attrs: [string, string][] = [];
+    for (;;) {
+      while (j < n && /[\s/]/.test(html[j])) j++;
+      if (j >= n || html[j] === ">") break;
+      let name = html[j] === "=" ? "=" : "";
+      if (name) j++;
+      while (j < n && !/[\s/>=]/.test(html[j])) name += html[j++];
+      let k = j;
+      while (k < n && /\s/.test(html[k])) k++;
+      let value = "";
+      if (html[k] === "=") {
+        k++;
+        while (k < n && /\s/.test(html[k])) k++;
+        const q = html[k];
+        if (q === '"' || q === "'") {
+          const e = html.indexOf(q, k + 1);
+          value = html.slice(k + 1, e < 0 ? n : e);
+          k = e < 0 ? n : e + 1;
+        } else while (k < n && !/[\s>]/.test(html[k])) value += html[k++];
+        j = k;
+      }
+      attrs.push([name.toLowerCase(), decodeRefs(value).trim()]);
+    }
+    if (j >= n) break; // a tag never closed: a browser drops it with the rest
+    i = j + 1;
+    if (closing) {
+      const at = open.lastIndexOf(tag);
+      if (at >= 0) while (open.length > at) out.push(`</${open.pop()}>`);
+      continue;
+    }
+    if (DROP_CONTENT.has(tag)) {
+      const end = new RegExp(`</${tag}[\\s/>]`, "i").exec(html.slice(i));
+      if (!end) {
+        i = n;
+        continue;
+      }
+      const gt = html.indexOf(">", i + end.index);
+      i = gt < 0 ? n : gt + 1;
+      continue;
+    }
+    if (!ALLOWED.has(tag)) continue;
+    const kept = attrs.filter(([k, v], x) => keepAttr(tag, k, v) && attrs.findIndex(([k2]) => k2 === k) === x);
+    out.push(`<${tag}${kept.map(([k, v]) => ` ${k}="${esc(v)}"`).join("")}>`);
+    if (!VOID.has(tag)) open.push(tag);
+  }
+  while (open.length) out.push(`</${open.pop()}>`);
+  return out.join("");
 }
 
 const MIME: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp" };
@@ -203,13 +377,22 @@ function reviewSection(f: ReportFacts): string {
   const blocking = r.findings.filter((x) => x.blocks);
   const rows = r.findings.map(
     (x) =>
-      `<tr><td>${esc(x.id)}</td><td>${esc(x.lenses.join(", "))}</td><td>${x.blocks ? badge("BLOCKED") : "note"}</td><td>${esc(x.confidence)}</td><td><code>${esc(x.where)}</code></td><td><b>${esc(x.title)}</b>${x.why ? `<br>${esc(x.why)}` : ""}${x.downgraded ? `<br><span class="muted">kept as a note: ${esc(x.downgraded)}</span>` : ""}${x.dismissed ? `<br><span class="muted">dismissed: ${esc(x.dismissed)}</span>` : ""}</td></tr>`,
+      `<tr><td>${esc(x.id)}</td><td>${esc(x.lenses.join(", "))}</td><td>${x.blocks ? badge("BLOCKED") : "note"}</td><td>${esc(x.confidence)}</td><td><code>${esc(x.where)}</code></td><td><b>${esc(x.title)}</b>${x.why ? `<br>${esc(x.why)}` : ""}${(x.members ?? []).map((m) => `<br><span class="muted">+ ${esc(m.id)} (${esc(m.lens)}):</span> ${esc(m.title)}${m.why ? `: ${esc(m.why)}` : ""}`).join("")}${x.downgraded ? `<br><span class="muted">kept as a note: ${esc(x.downgraded)}</span>` : ""}${x.dismissed ? `<br><span class="muted">dismissed: ${esc(x.dismissed)}</span>` : ""}</td></tr>`,
   );
   return `<section id="review"><h2>Review</h2><p>Lenses: ${esc(r.lenses.join(", ") || "none on this path")}. ${
     r.blockingRounds ? `Review sent the job back to build ${r.blockingRounds} time(s); the findings below are from the last round. ` : ""
   }${blocking.length ? `<b>${blocking.length} blocking</b>, ` : ""}${r.findings.length - blocking.length} note(s). A finding blocks only when it is demonstrable (a line at HEAD, a requirement, stamped evidence) and not low confidence.</p>${
     rows.length
       ? `<table><thead><tr><th>id</th><th>lens</th><th></th><th>confidence</th><th>where</th><th>finding</th></tr></thead><tbody>${rows.join("")}</tbody></table>`
+      : ""
+  }${
+    r.earlier?.length
+      ? `<p class="muted">What blocked earlier rounds (the builder fixed these, then review ran again):</p><ul>${r.earlier
+          .map(
+            (x) =>
+              `<li>round ${x.round} · <code>${esc(x.id)}</code> ${esc(x.lenses.join("+"))} · <code>${esc(x.where)}</code> · <b>${esc(x.title)}</b>${x.why ? `: ${esc(x.why)}` : ""}${x.dismissed ? ` <span class="muted">(dismissed: ${esc(x.dismissed)})</span>` : ""}</li>`,
+          )
+          .join("")}</ul>`
       : ""
   }</section>`;
 }
@@ -245,12 +428,13 @@ details{background:var(--card);border:1px solid var(--line);border-radius:8px;pa
 `;
 
 /** report.html, or why not. */
-export function renderReport(i: RenderInput): { html: string; cited: string[] } | { refusal: string } {
+export function renderReport(i: RenderInput): { html: string; cited: string[]; warnings: string[] } | { refusal: string } {
   const f = i.facts;
   const why = renderRefusal(i.src, i.entries, f.head, f.humanMustCheck);
   if (why) return { refusal: why };
   const byId = new Map(i.entries.map((e) => [e.id, e]));
   const clean = sanitize(i.src);
+  const warnings = i.citable ? citationWarnings(i.src, i.entries, i.citable) : [];
   const inline = (html: string) => html.replace(ID, (_m, id: string) => cite(byId.get(id) as ReportEntry, i.file));
   const part = (id: string, title: string, cls = "") => {
     const s = sectionOf(clean, id);
@@ -261,7 +445,7 @@ export function renderReport(i: RenderInput): { html: string; cited: string[] } 
     .replace(/<section\b[^>]*\bid\s*=\s*["']?([\w-]+)["']?[^>]*>[\s\S]*?<\/section>/gi, (m, id: string) => (known.includes(id) ? "" : m))
     .trim();
   const engineCited = f.criteria.flatMap((c) => c.evidence).filter((id) => byId.has(id));
-  const cited = [...new Set([...citedIds(i.src), ...engineCited])].sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));
+  const cited = [...new Set([...citedIds(clean), ...engineCited])].sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));
   const j = f.job;
   const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -270,6 +454,7 @@ export function renderReport(i: RenderInput): { html: string; cited: string[] } 
 <body><main>
 <header><p class="meta">Kitchen report · <code>${esc(j.id)}</code> · ${esc(j.kind)} · risk ${esc(j.risk)} · round ${j.round} · HEAD <code>${f.head.slice(0, 10)}</code>${j.pr !== null ? ` · PR #${j.pr}` : ""} · branch <code>${esc(j.branch)}</code></p>
 <h1>${esc(j.title)}</h1><p>Verdict ${badge(f.verdict)} ${f.review.findings.some((x) => x.blocks) ? badge("REVIEW BLOCKING") : badge("REVIEW PASS")}${f.humanMustCheck ? ` ${badge("HUMAN REVIEW REQUIRED")}` : ""}</p></header>
+${warnings.length ? `<section id="citation-warnings" class="lead"><p><span class="badge warn">CITATION</span> The engine checked the text's citations: ${warnings.map(esc).join("; ")}.</p></section>` : ""}
 ${f.humanMustCheck ? part("human-check", "What a human must check", "lead") : ""}
 ${part("summary", "Summary", f.humanMustCheck ? "" : "lead")}
 ${part("changes", "What changed")}
@@ -285,14 +470,26 @@ ${costSection(f)}
     .join("\n")}</section>
 </main></body></html>
 `;
-  return { html, cited };
+  return { html, cited, warnings };
+}
+
+/** Marks every comment Kitchen posts, so reading PR comments back never takes Kitchen's own for a person's. */
+export const KITCHEN_MARKER = "<!-- kitchen:report -->";
+
+/** Agent or ticket text inside markdown: no images, links, autolinks, HTML or table breaks. Pure. */
+export function mdText(s: string): string {
+  return s
+    .replace(/[\\`*_[\]()!<>|#~]/g, (c) => `\\${c}`)
+    .replace(/(https?|ftp|mailto):/gi, "$1&#58;")
+    .replace(/\bwww\./gi, "www&#46;")
+    .replace(/\s*\n\s*/g, " ");
 }
 
 /** The PR comment: the per-criterion table and a link to the published report. Markdown. */
 export function prComment(f: ReportFacts, o: { url: string; entries: ReportEntry[] }): string {
   const byId = new Map(o.entries.map((e) => [e.id, e]));
   const shot = (id: string) => byId.get(id)?.files.find((x) => isImage(x.path))?.path;
-  const cell = (s: string) => s.replace(/\|/g, "\\|").replace(/\n/g, " ");
+  const cell = mdText;
   const blocking = f.review.findings.filter((x) => x.blocks).length;
   /** Screenshots first (linked into the published folder, up to 3), then a count of the other entries. */
   const evidenceCell = (ids: string[]) => {
@@ -304,7 +501,8 @@ export function prComment(f: ReportFacts, o: { url: string; entries: ReportEntry
     return [...linked, ...plain, ...(more > 0 ? [`+${more} more`] : [])].join(" ");
   };
   return [
-    `### Kitchen report: ${f.job.title}`,
+    KITCHEN_MARKER,
+    `### Kitchen report: ${mdText(f.job.title)}`,
     "",
     `**Verdict ${f.verdict}** · ${f.job.kind} · risk ${f.job.risk} · round ${f.job.round} · HEAD \`${f.head.slice(0, 10)}\``,
     ...(f.humanMustCheck ? ["", "**Human review required** (`kitchen:review-required`): the report opens with what a human must check."] : []),

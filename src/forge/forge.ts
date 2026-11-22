@@ -43,10 +43,14 @@ export interface Forge {
   label(o: { key: string; pr: number | null; label: string }): Promise<void>;
   /**
    * The job's published folder: `bundle` (report.html, evidence/, published.json, already redacted) becomes
-   * `<job>/` on the `kitchen-evidence` branch, folders older than `keepDays` pruned (evidence-branch.ts).
+   * `<job>/` on the `kitchen-evidence` branch, folders older than `keepDays` pruned (evidence-branch.ts)
+   * except the folders in `keep` (jobs that aren't done).
    */
-  publishEvidence(o: { key: string; job: string; bundle: string; keepDays: number }): Promise<Published>;
-  /** Review comments on a PR, oldest first (Kitchen's own comments excluded). */
+  publishEvidence(o: { key: string; job: string; bundle: string; keepDays: number; keep?: readonly string[] }): Promise<Published>;
+  /**
+   * Comments on a PR, oldest first, each with its creation time (`at`, ISO) and the author's association.
+   * A forge may leave Kitchen's own in: the runner drops every comment carrying KITCHEN_MARKER.
+   */
   reviewComments(pr: number | null): Promise<PrComment[]>;
   /** A PR for a branch the engine made (maintain's Toolkit PR), found by key. */
   openPr(o: { key: string; branch: string; head: string; title: string; body: string }): Promise<number>;
@@ -126,8 +130,8 @@ export class LocalForge implements Forge {
     localRecord(this.repo, { kind: "label", ...o });
   }
   /** The branch stays in this repo (nothing is pushed); the url is `<branch>:<job>/`. */
-  async publishEvidence(o: { key: string; job: string; bundle: string; keepDays: number }): Promise<Published> {
-    const r = await commitEvidence({ repo: this.repo, job: o.job, bundle: o.bundle, keepDays: o.keepDays });
+  async publishEvidence(o: { key: string; job: string; bundle: string; keepDays: number; keep?: readonly string[] }): Promise<Published> {
+    const r = await commitEvidence({ repo: this.repo, job: o.job, bundle: o.bundle, keepDays: o.keepDays, keep: o.keep });
     localRecord(this.repo, { kind: "evidence", key: `${o.key}/${r.commit}`, job: o.job, commit: r.commit });
     return { commit: r.commit, url: `${EVIDENCE_BRANCH}:${o.job}/`, pruned: r.pruned };
   }
@@ -152,7 +156,7 @@ export type FakeForgeState = {
   /** PRs marked ready for review. */
   ready?: number[];
   tickets: { ref: string; key: string; title: string; closed: boolean; calls: number }[];
-  comments: { key: string; pr: number | null; body: string; calls: number }[];
+  comments: { key: string; pr: number | null; body: string; calls: number; at?: string }[];
   evidence: { key: string; job: string; commit: string; calls: number }[];
   labels: { key: string; pr: number | null; label: string; calls: number }[];
   /** Review comments people left on PRs (the spikes add them). */
@@ -256,7 +260,7 @@ export class FakeForge implements Forge {
     await this.edit((s) => {
       let c = s.comments.find((x) => x.key === o.key);
       if (!c) {
-        c = { key: o.key, pr: o.pr, body: o.body, calls: 0 };
+        c = { key: o.key, pr: o.pr, body: o.body, calls: 0, at: new Date().toISOString() };
         s.comments.push(c);
       }
       c.calls++;
@@ -272,9 +276,9 @@ export class FakeForge implements Forge {
       l.calls++;
     });
   }
-  async publishEvidence(o: { key: string; job: string; bundle: string; keepDays: number }): Promise<Published> {
+  async publishEvidence(o: { key: string; job: string; bundle: string; keepDays: number; keep?: readonly string[] }): Promise<Published> {
     if (!this.repo) throw new Error("the fake forge has no repo to keep the evidence branch in");
-    const r = await commitEvidence({ repo: this.repo, job: o.job, bundle: o.bundle, keepDays: o.keepDays });
+    const r = await commitEvidence({ repo: this.repo, job: o.job, bundle: o.bundle, keepDays: o.keepDays, keep: o.keep });
     await this.edit((s) => {
       let e = s.evidence.find((x) => x.key === o.key);
       if (!e) {
@@ -286,11 +290,14 @@ export class FakeForge implements Forge {
     });
     return { commit: r.commit, url: `fake://${EVIDENCE_BRANCH}/${o.job}/`, pruned: r.pruned };
   }
+  /** People's comments and, as GitHub would list them, Kitchen's own (posted by the repo owner's token, so OWNER). */
   async reviewComments(pr: number | null): Promise<PrComment[]> {
     if (pr === null) return [];
-    return readFakeForge(this.file)
-      .reviewComments.filter((c) => c.pr === pr)
-      .sort((a, b) => a.at.localeCompare(b.at));
+    const s = readFakeForge(this.file);
+    const own = s.comments
+      .filter((c) => c.pr === pr)
+      .map((c): PrComment => ({ id: `kitchen-${c.key}`, pr, author: "kitchen-bot", association: "OWNER", body: c.body, at: c.at ?? "" }));
+    return [...s.reviewComments.filter((c) => c.pr === pr), ...own].sort((a, b) => a.at.localeCompare(b.at));
   }
   openPr(o: { key: string; branch: string; head: string; title: string; body: string }) {
     return this.edit((s) => {

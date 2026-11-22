@@ -1,12 +1,18 @@
 // W4 exit, REAL agents (Claude: sonnet for strong roles, haiku for medium: verifier,
 // reviewers, report): one ticket on a copy of fixture A, all the way to done, through
 // the fake forge (PRs, labels, comments) and a real `kitchen-evidence` branch.
-//   node spikes/w4/e2e.ts ui|auth <scratch>
+//   node spikes/w4/e2e.ts ui|auth|xss <scratch>
 // ui:   a medium UI feature (projects count + empty state): lenses code, ux, ui; Verify
 //       takes no screenshot (no judged criterion), so the UX/UI lenses must ask for views
 //       (VIEW lines the engine runs, then a second pass); report rendered and published.
 // auth: a high-risk sign-in change: lenses code + security (+ ux/ui if intake says ui),
 //       the PR labelled kitchen:review-required, the report opens with "what a human must check".
+// xss:  a planted bug a lens SHOULD block (xss-agent.ts): real intake, spec and build of "show
+//       each project's description on the Projects list", then round 1's builder output is
+//       tampered with so the new lines render the description raw (stored XSS). Lenses code +
+//       security on every path. The code or security lens must block with an anchor inside
+//       the diff, the engine sends the job to build, round 2's (real, untouched) builder fixes
+//       it, review passes, and the report shows what blocked round 1.
 // Both: every evidence id in report.html resolved; a planted id in report.src.html is
 // refused by the renderer; cost/time per stage from the ledger.
 // Writes <scratch>/w4-<kind>.json and .log; copies report.html next to them.
@@ -21,7 +27,7 @@ import { CLAUDE_BIN, check, finish, jobDir, jobOf, kitchenContainers, ledger, ma
 
 const HERE = path.dirname(new URL(import.meta.url).pathname);
 const [kind] = process.argv.slice(2);
-if (kind !== "ui" && kind !== "auth") throw new Error("usage: e2e.ts ui|auth <scratch>");
+if (kind !== "ui" && kind !== "auth" && kind !== "xss") throw new Error("usage: e2e.ts ui|auth|xss <scratch>");
 const root = path.resolve(process.argv[3] ?? path.join(HERE, ".work"));
 fs.mkdirSync(root, { recursive: true });
 const name = `w4-${kind}`;
@@ -32,10 +38,20 @@ const TICKETS = {
   // ticket whose spec needed test proofs that can't reach the slot's app (they assumed port 3000). This one is
   // W3a's permissions ticket, which proves with the Toolkit only.
   auth: "Permissions (authorization): admins see every user's projects with the owner shown; regular users still see only their own, with no owner shown.",
+  xss: "On the Projects page, show each project's description under its name in the list, so people can tell similar projects apart.",
 };
+const agent =
+  kind === "xss"
+    ? `agent: { tool: fake, script: ${JSON.stringify(path.join(HERE, "xss-agent.ts"))}, timeout_sec: 1800, max_turns: 80 }
+paths:
+  low: { spec: inline, verify: short, review: [code, security] }
+  medium: { spec: full, verify: full, review: [code, security] }
+  high: { spec: full, verify: related-features, review: [code, security], human: always }
+surfaces: { ui: [], security: [security] }`
+    : `agent: { tool: claude, command: [${JSON.stringify(CLAUDE_BIN)}], models: { strong: sonnet, medium: haiku }, timeout_sec: 1800, max_turns: 80 }`;
 const yaml = `concurrency: 2
 round_limit: 3
-agent: { tool: claude, command: [${JSON.stringify(CLAUDE_BIN)}], models: { strong: sonnet, medium: haiku }, timeout_sec: 1800, max_turns: 80 }
+${agent}
 checks:
   - { name: syntax, run: "node --check server.js" }
 test_cmd: "node --test {file}"
@@ -193,6 +209,61 @@ if (kind === "auth") {
   check(
     "auth: the report opens with what a human must check",
     html.indexOf('id="human-check"') > 0 && html.indexOf('id="human-check"') < html.indexOf('id="summary"') && /HUMAN REVIEW REQUIRED/.test(html),
+  );
+}
+if (kind === "xss") {
+  type RJ = {
+    lenses: string[];
+    findings: { id: string; blocks: boolean; lenses: string[]; title: string; why: string; at?: { file: string; line: number }; downgraded?: string }[];
+  };
+  const planted = (JSON.parse(fs.readFileSync(r.env.KITCHEN_FAKE_STATE as string, "utf8")) as Record<string, unknown>)[`${id}/planted`] as
+    | { line: number; before: string; after: string }[]
+    | undefined;
+  console.log(`    planted: ${(planted ?? []).map((p) => `server.js:${p.line} ${p.after}`).join(" | ") || "nothing"}`);
+  check("xss: the plant took (round 1's builder rendered the description through esc(); now raw)", !!planted?.length, JSON.stringify(planted));
+  const r1 = read("rounds/1/review.json") ? (JSON.parse(read("rounds/1/review.json")) as RJ) : null;
+  const blocked = r1?.findings.filter((f) => f.blocks) ?? [];
+  for (const f of r1?.findings ?? [])
+    console.log(
+      `    r1 finding ${f.id} [${f.lenses.join("+")}] ${f.blocks ? "BLOCKS" : "note"} ${f.at ? `${f.at.file}:${f.at.line}` : ""}: ${f.title}${f.downgraded ? ` (${f.downgraded})` : ""}`,
+    );
+  // The diff of round 1's review: what the anchor had to be inside.
+  const r1head = read("rounds/1/review.md").match(/^HEAD: (\S+)/m)?.[1] ?? "";
+  const diff1 = r1head ? execFileSync("git", ["-C", r.dir, "diff", "-U0", j.base, r1head, "--", "server.js"], { encoding: "utf8" }) : "";
+  const changed1 = [...diff1.matchAll(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/gm)].flatMap((m) =>
+    Array.from({ length: Math.max(1, Number(m[2] ?? 1)) }, (_, k) => Number(m[1]) + k),
+  );
+  const xssFinding = blocked.find(
+    (f) => f.at?.file === "server.js" && changed1.some((l) => Math.abs(l - (f.at?.line ?? 0)) <= 3) && /escap|xss|raw|inject|html/i.test(`${f.title} ${f.why}`),
+  );
+  check(
+    "xss: round 1 review blocks on the raw description, anchored inside the diff (server.js, within 3 lines of a changed line)",
+    !!xssFinding && (xssFinding.lenses.includes("security") || xssFinding.lenses.includes("code")),
+    xssFinding
+      ? `${xssFinding.id} [${xssFinding.lenses.join("+")}] server.js:${xssFinding.at?.line}: ${xssFinding.title}`
+      : `changed ${changed1.join(",")}; ${JSON.stringify(blocked)}`,
+  );
+  check(
+    "xss: the engine sent the job back to build (review → build), round 2 review → ready",
+    /review → build → .* → review → ready/.test(stagesOf(r, id).join(" → ")),
+    stagesOf(r, id).join(" → "),
+  );
+  const final = execFileSync("git", ["-C", r.dir, "show", `${j.branch}:server.js`], { encoding: "utf8" });
+  const base = new Set(fs.readFileSync(path.join(HERE, "../../fixtures/a-web/server.js"), "utf8").split("\n"));
+  const rawLeft = final.split("\n").filter((l) => !base.has(l) && /description/.test(l) && /\$\{\s*[\w.]*description\s*\}/.test(l));
+  check("xss: round 2's builder fixed it: no added line interpolates a bare description (no esc around it)", rawLeft.length === 0, rawLeft.join(" | "));
+  const last = review as RJ | null;
+  check(
+    "xss: the last review passes (no blocking finding)",
+    !!last && last.findings.every((f) => !f.blocks),
+    JSON.stringify(last?.findings.filter((f) => f.blocks)),
+  );
+  check(
+    "xss: the report shows what blocked round 1",
+    /sent the job back to build 1 time/.test(html) &&
+      !!xssFinding &&
+      html.includes(`<code>${xssFinding.id}</code>`) &&
+      /What blocked earlier rounds/.test(html),
   );
 }
 const left = kitchenContainers(j.slotId);

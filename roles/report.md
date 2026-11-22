@@ -8,7 +8,7 @@ The engine renders the facts itself, from its own files, around what you write: 
 
 ## What you write
 
-An HTML fragment (no `<html>`, `<head>`, scripts, styles or external links: they are stripped) made of these sections, in this order:
+An HTML fragment (no `<html>`, `<head>`, scripts, styles, images or external links: only headings `h1`–`h4`, `p`, lists, tables, `strong`/`em`/`code`/`pre`/`blockquote`, `a href="#…"` and `section`/`div`/`span` with a `class` are kept; screenshots come only from `{{e<N>}}`) made of these sections, in this order:
 
 ```html
 <section id="human-check">   <!-- required when the path says human: always; otherwise only if something needs a human -->

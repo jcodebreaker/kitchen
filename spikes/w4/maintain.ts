@@ -6,11 +6,14 @@
 //   engine's full check passes on the fix commit, and one PR is opened (local forge).
 // Part 2, scripted agent (no model): the churn trigger. After the PR is merged, a commit
 //   that changes feature-mapped paths by more than `maintain_churn_lines` makes
-//   `kitchen run` start maintain by itself (outcome clean); below the threshold it doesn't.
+//   `kitchen run` start maintain by itself (outcome clean); 20 lines of churn (under the
+//   threshold of 30, counted by maintainDue) don't, 20 more (40, over it) do.
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { loadConfig } from "../../src/config.ts";
 import { readLocalForge } from "../../src/forge/forge.ts";
+import { maintainDue } from "../../src/toolkit/maintain.ts";
 import { CLAUDE_BIN, check, finish, kitchen, kitchenContainers, ledger, makeFixtureRepo } from "../w3a/lib.ts";
 
 const HERE = path.dirname(new URL(import.meta.url).pathname);
@@ -98,16 +101,21 @@ git("merge", "-q", "--ff-only", st.branch as string);
 const SCRIPT = path.join(HERE, "maintain-fake.ts");
 fs.writeFileSync(path.join(r.dir, "kitchen.yaml"), yaml(`{ tool: fake, script: ${JSON.stringify(SCRIPT)} }`, 30));
 git("commit", "-qam", "kitchen.yaml: scripted agent, churn 30");
-// baseline: maintain.json says the last maintain ran on `base`; the merge + yaml add little churn in mapped paths.
+// Below the threshold, with churn that counts: 20 lines in server.js (mapped by every feature) since the last maintain.
+const churn = (from: number, n: number) => Array.from({ length: n }, (_, i) => `// churn ${from + i}`).join("\n");
+fs.appendFileSync(server, `\n${churn(0, 20)}\n`);
+git("commit", "-qam", "app: 20 lines of churn in server.js");
+const under = await maintainDue(r.dir, loadConfig(r.dir));
 const due0 = kitchen(r, ["run", "--once"]);
 check(
-  "below the churn threshold: kitchen run does not start maintain",
-  !/kitchen toolkit maintain/.test(due0.out),
-  due0.out.split("\n").find((l) => l.startsWith("toolkit:")),
+  "20 lines of mapped churn (≤ 30): maintainDue counts them and says not due; kitchen run does not start maintain",
+  under.lines >= 20 && under.lines <= 30 && !under.due && under.files.includes("server.js") && !/kitchen toolkit maintain/.test(due0.out),
+  `${under.lines} lines in ${under.files.join(", ")}, due ${under.due}`,
 );
-const extra = Array.from({ length: 40 }, (_, i) => `// churn ${i}`).join("\n");
-fs.appendFileSync(server, `\n${extra}\n`);
-git("commit", "-qam", "app: 40 lines of churn in server.js (mapped by every feature)");
+fs.appendFileSync(server, `${churn(20, 20)}\n`);
+git("commit", "-qam", "app: 20 more lines of churn in server.js (40 in all)");
+const over = await maintainDue(r.dir, loadConfig(r.dir));
+check("40 lines (> 30): maintainDue says due", over.due && over.lines > 30, `${over.lines} lines, due ${over.due}`);
 const due1 = kitchen(r, ["run", "--once"], 30 * 60_000);
 fs.appendFileSync(log, due1.out);
 const st2 = JSON.parse(fs.readFileSync(path.join(r.dir, ".kitchen", "maintain.json"), "utf8")) as { sha: string; outcome: string; trigger: string };

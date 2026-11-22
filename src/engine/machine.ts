@@ -123,7 +123,8 @@ export type Job = {
 
 export type Lint = { ok: boolean; reason?: string; missingPrimitive?: string };
 export type Verdict = "PASS" | "FAIL" | "INCONCLUSIVE" | "TOOLKIT-GAP";
-export type Escalation = "round-limit" | "smith-limit" | "adapter-error" | "engine-error" | "refused";
+/** review-unparseable: a lens said VERDICT: BLOCKING twice without a finding the engine could read (never a silent PASS). */
+export type Escalation = "round-limit" | "smith-limit" | "adapter-error" | "engine-error" | "refused" | "review-unparseable";
 
 /** What guards read. Gathered by the caller (stage handlers, runner, CLI) from files, git and the forge. */
 export type Facts = {
@@ -851,7 +852,7 @@ export const TABLE: readonly Row[] = [
     id: "*>needs-human",
     from: "*",
     to: "needs-human",
-    when: "round limit, smith limit, an adapter error that repeats (not a rate limit), or a stage whose result was refused twice",
+    when: "round limit, smith limit, an adapter error that repeats (not a rate limit), a stage whose result was refused twice, or a review lens that said BLOCKING twice without a readable finding",
     guard: all(
       check(
         (j) => isActive(j.stage),
@@ -868,6 +869,8 @@ export const TABLE: readonly Row[] = [
             return j.attempts.errors + 1 >= 2 ? null : `first ${f.escalate} is retried`;
           case "refused":
             return j.attempts.refused + 1 >= 2 ? null : "first refused move is retried";
+          case "review-unparseable":
+            return j.stage === "review" ? null : "review-unparseable comes from review";
           default:
             return "no escalation reason";
         }

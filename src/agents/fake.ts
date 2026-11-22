@@ -3,8 +3,8 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { type AgentAdapter, type AgentRequest, type AgentResult, outDirOf, outPathOf } from "./adapter.ts";
 
-/** What a scripted role does: the file it writes (omit for none) and its one line. */
-export type FakeStep = { file?: string; line: string; ok?: boolean; rateLimited?: boolean };
+/** What a scripted role does: the file it writes (omit for none) and its one line. `result`: a real adapter's run, returned as it is (a spike script that delegates some roles). */
+export type FakeStep = { file?: string; line: string; ok?: boolean; rateLimited?: boolean; result?: AgentResult };
 export type FakeScript = (req: AgentRequest, call: number) => FakeStep | Promise<FakeStep>;
 
 export class FakeAdapter implements AgentAdapter {
@@ -18,6 +18,7 @@ export class FakeAdapter implements AgentAdapter {
   async run(req: AgentRequest): Promise<AgentResult> {
     this.calls.push(req);
     const step = await this.script(req, this.calls.length);
+    if (step.result) return step.result;
     let outPath: string | undefined;
     if (step.file !== undefined) {
       mkdirSync(outDirOf(req), { recursive: true });

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
+import { parseProof } from "../proof/proof-line.ts";
 import { changedExistingDrive, lintFeatureFile } from "./feature-lint.ts";
 import { gateOutcome } from "./gate.ts";
 import { riskFloor, seedTouched } from "./risk-floor.ts";
@@ -82,6 +83,21 @@ test("rule 1: every criterion has a proof of kind toolkit, cmd or test", () => {
   assert.match(lint(spec(C("C1", "x", "curl http://x", "ok"))).reason ?? "", /toolkit/);
   assert.match(lint(spec(C("C1", "x", "toolkit read --target body"))).reason ?? "", /needs an expect/);
   assert.match(lint("no criteria here").reason ?? "", /no criteria/);
+});
+
+test('quotes inside a proof value: \\" in "…" is a quote (as in the drive format); in \'…\' it is refused with how to quote', () => {
+  const seg = (p: string) => parseProof(p)[0] as { args: Record<string, string> };
+  assert.equal(seg('toolkit read --target "a[href=\\"/projects/x\\"]"').args.target, 'a[href="/projects/x"]');
+  assert.equal(seg("toolkit read --target 'a[href=\"/projects/x\"]'").args.target, 'a[href="/projects/x"]');
+  assert.equal(seg('toolkit read --target "a\\\\b"').args.target, "a\\b");
+  assert.equal(
+    seg('toolkit read --target "x;y" ; toolkit read --target "a\\";b"').args.target,
+    "x;y",
+    "an escaped quote doesn't end the value or split the chain",
+  );
+  assert.equal((parseProof('toolkit read --target "x" ; toolkit read --target "a\\";b"')[1] as { args: Record<string, string> }).args.target, 'a";b');
+  const r = lint(spec(C("C1", "x", "toolkit read --target 'a[href=\\\"/x\\\"]'", "ok")));
+  assert.match(r.reason ?? "", /C1: .*inside '…' a backslash is kept as is.*--target "a\[href=\\"\/x\\"\]"/);
 });
 
 test("rule 2: primitives from describe; drives exist with their args, or are declared new", () => {

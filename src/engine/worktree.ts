@@ -90,6 +90,11 @@ export async function headOf(job: Job): Promise<string> {
   return (await (await gitOf(job)).run(["rev-parse", "--verify", "HEAD^{commit}"])).stdout.trim();
 }
 
+/** When the job branch's HEAD was committed (ISO). */
+export async function headTime(job: Job): Promise<string> {
+  return (await (await gitOf(job)).run(["log", "-1", "--format=%cI", "HEAD"])).stdout.trim();
+}
+
 const TOOLKIT = ".kitchen/toolkit";
 /** Toolkit files a job branch may change: feature drives only. Primitives belong on a Toolkit PR. */
 const TOOLKIT_PRIMITIVES = [TOOLKIT, `:(exclude)${TOOLKIT}/features`];

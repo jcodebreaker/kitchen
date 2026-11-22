@@ -1,6 +1,7 @@
 // The `kitchen` commands of PLAN §4 that W1 brings. One line of output per action.
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { loadConfig } from "../config.ts";
 import { takeTicket } from "../engine/base.ts";
@@ -10,7 +11,7 @@ import { ensureJobToolkit } from "../engine/job-toolkit.ts";
 import { readRunLock, staleReason } from "../engine/lock.ts";
 import { feedbackTarget, type Job, roundsUsed, STAGES, type Stage } from "../engine/machine.ts";
 import { moveJob, runKitchen } from "../engine/runner.ts";
-import { findingsOf } from "../engine/stages/review.ts";
+import { findingById, findingsOf } from "../engine/stages/context.ts";
 import { findJob, jobDirOf, kitchenDir, scanJobs, writeAtomic } from "../engine/store.ts";
 import { runView } from "../engine/views.ts";
 import { changedFiles, headOf } from "../engine/worktree.ts";
@@ -207,17 +208,20 @@ export async function drive(
 
 /**
  * `kitchen dismiss <job> <finding-id> [--reason "<why>"]`: a person says a review finding was not
- * useful. Recorded in the job folder (dismissed.jsonl, shown in the Report) and in the ledger with
- * its lens, so the dismissals per lens can be counted (W5 retro). An id that no review of the job
- * has is refused.
+ * useful. Recorded in the job folder (dismissed.jsonl: who, why, the finding's lens and anchor) and in the
+ * ledger with its lens, so the dismissals per lens can be counted (W5 retro). It takes effect: the builder's
+ * next round is told to ignore it, the next review's lenses are told not to re-raise it, and one raised
+ * again by the same lens on the same anchor is kept as a note (checks/findings.ts). An id that no review
+ * of the job has is refused.
  */
 export function dismiss(repo: string, ref: string, finding: string, reason: string | undefined, out: Out): number {
   const job = findJob(repo, ref);
   const jobDir = jobDirOf(repo, job.id);
-  const all = findingsOf(jobDir).flatMap((r) => r.findings.map((f) => ({ ...f, round: r.round })));
-  const f = all.find((x) => x.id === finding || x.also?.includes(finding));
-  if (!f) throw new Error(`${job.id} has no review finding ${finding}${all.length ? ` (it has ${all.map((x) => x.id).join(", ")})` : ""}`);
-  const lens = finding === f.id ? f.lens : (finding.split("-")[0] ?? f.lens);
+  const f = findingById(jobDir, finding);
+  if (!f) {
+    const all = findingsOf(jobDir).flatMap((r) => r.findings.flatMap((x) => [x.id, ...x.also]));
+    throw new Error(`${job.id} has no review finding ${finding}${all.length ? ` (it has ${all.join(", ")})` : ""}`);
+  }
   const file = path.join(jobDir, "dismissed.jsonl");
   const had =
     fs.existsSync(file) &&
@@ -229,19 +233,36 @@ export function dismiss(repo: string, ref: string, finding: string, reason: stri
     out(`${job.id}  ${finding} was already dismissed`);
     return 0;
   }
-  const at = new Date().toISOString();
-  fs.appendFileSync(file, `${JSON.stringify({ finding, lens, round: f.round, blocked: f.blocks, reason: reason ?? null, at })}\n`);
+  const by = whoAmI(repo);
+  const anchor = { ...(f.at ? { at: f.at } : {}), ...(f.requirement ? { requirement: f.requirement } : {}) };
+  fs.appendFileSync(
+    file,
+    `${JSON.stringify({ finding, lens: f.lens, round: f.round, blocked: f.blocks, by, reason: reason ?? null, title: f.title, ...anchor, when: new Date().toISOString() })}\n`,
+  );
   appendLedger(repo, {
     job: job.id,
     stage: job.stage,
     round: f.round,
     event: "finding-dismissed",
     key: `${job.id}/dismiss/${finding}`,
-    role: `reviewer-${lens}`,
-    detail: { finding, lens, blocked: f.blocks, reason: reason ?? null, title: f.title },
+    role: `reviewer-${f.lens}`,
+    detail: { finding, lens: f.lens, blocked: f.blocks, by, reason: reason ?? null, title: f.title, ...anchor },
   });
-  out(`${job.id}  dismissed ${finding} (${lens}${f.blocks ? ", it had blocked" : ""})${reason ? `: ${reason}` : ""}`);
+  out(`${job.id}  dismissed ${finding} (${f.lens}${f.blocks ? ", it had blocked" : ""}) by ${by}${reason ? `: ${reason}` : ""}`);
   return 0;
+}
+
+/** Who runs the command, for the record: git's user.name in the repo, else the OS user. */
+function whoAmI(repo: string): string {
+  try {
+    const n = execFileSync("git", ["-C", repo, "config", "user.name"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    if (n) return n;
+  } catch {}
+  try {
+    return os.userInfo().username;
+  } catch {
+    return "a person";
+  }
 }
 
 /**
