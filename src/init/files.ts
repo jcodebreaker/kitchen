@@ -70,7 +70,7 @@ round_limit: 3
 const scalar = (v: string) => JSON.stringify(v);
 
 const INSTALL_LINES = (pm: string) => [
-  "# A frozen install from the lockfile: downloads with the network but runs no package scripts; they run after, offline",
+  "# A frozen install from the lockfile: downloads with the network, runs no package scripts; they run after (online only while the dependency files are the base's)",
   `checks_install: ${pm}`,
 ];
 

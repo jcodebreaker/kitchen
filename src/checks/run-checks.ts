@@ -16,33 +16,63 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { CheckSpec, Config } from "../config.ts";
+import { openGit } from "../engine/git.ts";
+import { readJobAt } from "../engine/store.ts";
 import { readJob } from "../proof/job.ts";
 import { type StampedCmd, stampCommand } from "../proof/stamp-cmd.ts";
 
 export type ChecksResult = { ok: boolean; sha: string | null; results: StampedCmd[] };
-export type PrepareStep = { name: string; cmd: string; network: boolean };
+/**
+ * `network`: "base-deps" is the network only while the worktree's dependency files are the base's, byte for byte
+ * (review N1: the base's dependencies are as trusted as the base; a builder's change to them runs offline).
+ */
+export type PrepareStep = { name: string; cmd: string; network: boolean | "base-deps" };
 /** What readies a worktree, in order. `cmd`: all of it as one line, the cache key. */
 export type ChecksPrepare = { cmd: string; steps: PrepareStep[] };
-export type PackageManager = "npm" | "pnpm" | "yarn" | "bun";
+/** `yarn`: Yarn Berry (2+); `yarn-classic`: Yarn 1, whose install takes other flags and has no rebuild (review Y1). */
+export type PackageManager = "npm" | "pnpm" | "yarn" | "yarn-classic" | "bun";
 
 /**
  * Pure: kitchen.yaml `checks_install` as steps (ADR 0010, review R2). The frozen download is the only step with the
- * network, and it runs no package's scripts (`--ignore-scripts`; Yarn: `--mode=skip-build`), so a `postinstall` the
- * builder adds, or a git dependency's, never runs online. The lifecycle scripts run after, in a rebuild that has the
- * network only with `checks_network: true`. Bun has no rebuild: its dependencies' scripts don't run.
+ * network for sure, and it runs no package's scripts (`--ignore-scripts`; Yarn Berry: `--mode=skip-build`), so a
+ * `postinstall` the builder adds, or a git dependency's, never runs while it downloads. The lifecycle scripts run
+ * after, in a rebuild (Yarn 1 has none: `npm rebuild` walks its node_modules). The rebuild has the network with
+ * `checks_network: true`, or while the dependency files are the base's (a native module's prebuilt download); else
+ * it runs offline. Bun has no rebuild: its dependencies' scripts don't run.
  */
 export function installSteps(pm: PackageManager, checksNetwork: boolean): PrepareStep[] {
   const download: Record<PackageManager, string> = {
     npm: "npm ci --ignore-scripts",
     pnpm: "pnpm install --frozen-lockfile --ignore-scripts",
     yarn: "yarn install --immutable --mode=skip-build",
+    // Yarn 1 opens ~/.npmrc and ~/.yarnrc and fails on the sandbox's EPERM (npm takes it): its home is the run's own temp.
+    "yarn-classic": 'test -z "$TMPDIR" || export HOME="$TMPDIR"; yarn install --frozen-lockfile --ignore-scripts',
     bun: "bun install --frozen-lockfile --ignore-scripts",
   };
+  const rebuild = pm === "yarn-classic" ? "npm rebuild" : `${pm} rebuild`;
   return [
     { name: "install", cmd: download[pm], network: true },
-    ...(pm === "bun" ? [] : [{ name: "install-scripts", cmd: `${pm} rebuild`, network: checksNetwork }]),
+    ...(pm === "bun" ? [] : [{ name: "install-scripts", cmd: rebuild, network: checksNetwork ? true : ("base-deps" as const) }]),
   ];
 }
+
+/** Pure: a dependency manifest or lockfile, at any depth (a workspace's package.json too). */
+export const isDependencyFile = (p: string) => DEPENDENCY_FILES.includes(path.basename(p));
+
+/** Whether the worktree's dependency files are the base's, byte for byte: none changed, added or removed since `base`. */
+export async function sameDepsAsBase(repo: { gitDir: string; workTree: string }, base: string): Promise<boolean> {
+  const git = await openGit(repo);
+  const changed = (await git.run(["diff", "--name-only", "--no-renames", base, "--"])).stdout.split("\n").filter(Boolean);
+  // Porcelain paths are from the worktree root whatever the cwd (the engine's git runs in the git dir).
+  const added = (await git.run(["status", "--porcelain=v1", "--untracked-files=all"])).stdout
+    .split("\n")
+    .filter((l) => l.startsWith("?? "))
+    .map((l) => l.slice(3));
+  return ![...changed, ...added].some(isDependencyFile);
+}
+
+export const OFFLINE_REBUILD_NOTE =
+  "The install scripts ran offline because this job changed its dependency files (a builder's change never gets the network). A package that downloads while it installs (node-pre-gyp, prebuild-install, puppeteer, prisma) fails then. checks_network: true gives the rebuild, the checks and the proofs the network: the builder's code could then reach it too.";
 
 /**
  * What readies a job worktree: the frozen install (`checks_install`), then the person's own `checks_prepare`, which
@@ -121,12 +151,18 @@ export async function ensureChecksPrepared(o: {
   criterion: string;
   source?: { worktree: string; gitDir: string };
 }): Promise<StampedCmd | null> {
-  const worktree = o.source?.worktree ?? readJob(o.jobDir).worktree;
+  const job = readJob(o.jobDir);
+  const worktree = o.source?.worktree ?? job.worktree;
   const key = prepareKey(o.prepare.cmd, worktree);
   if (readMarker(o.jobDir)[worktree] === key) return null;
   let r: StampedCmd | null = null;
   // Step by step, each with its own network rule; the first that fails stops it.
   for (const s of o.prepare.steps) {
+    // A checkout of the base (`source`) has the base's dependencies by definition.
+    const network =
+      s.network !== "base-deps"
+        ? s.network
+        : !!o.source || (await sameDepsAsBase({ gitDir: job.gitDir, workTree: worktree }, readJobAt(o.jobDir).base).catch(() => false));
     r = await stampCommand({
       jobDir: o.jobDir,
       name: s.name,
@@ -135,10 +171,10 @@ export async function ensureChecksPrepared(o: {
       criterion: o.criterion,
       timeoutSec: 1800,
       sandbox: true,
-      network: s.network,
+      network,
       ...(o.source ? { source: o.source } : {}),
     });
-    if (!r.ok) return r;
+    if (!r.ok) return s.network === "base-deps" && !network ? { ...r, tail: `${OFFLINE_REBUILD_NOTE}\n${r.tail}` } : r;
   }
   if (!r) return null;
   if (r.ok) {

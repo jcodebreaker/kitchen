@@ -388,6 +388,7 @@ button.a{font-weight:600}button.a:hover{text-decoration:underline;text-underline
 .rbar code{font:12px var(--mono);background:var(--raise);border:1px solid var(--line2);border-radius:6px;padding:1px 8px;color:var(--fg)}
 .meta .age{color:var(--faint)}
 .tka{display:inline-flex;gap:6px;flex:none;align-items:center}
+.sub.q code,.ev.ask p code,.card .cq code,.card .evl code{font:11.5px var(--mono);background:var(--raise);border:1px solid var(--line2);border-radius:4px;padding:0 4px}
 @container main (max-width:680px){ .rbar{padding:9px 12px 9px 16px} }
 </style>
 </head>
@@ -556,7 +557,7 @@ function evHTML(e,uid,anim){
   if(e.c==="tool"){const live=liveOpen(e);return `<div class="ev tool${live?" live":""}${a}"><span class="vb">${esc(e.vb||e.t)}</span><span class="tg${live?" shim":""}">${esc(e.tg||"")}</span>${e.df?dfHTML(...e.df):""}<span class="du num" ${live&&e.at?`data-at="${esc(e.at)}"`:""}>${live?(e.at?elapsed(e.at).toFixed(1):"0.0")+"s":(e.dur||0).toFixed(1)+"s"}</span></div>`}
   if(e.c==="res"||e.c==="bad") return `<div class="ev ${e.c}${a}">${e.c==="res"?I.chk:I.xx}<span>${esc(e.t)}</span></div>`;
   if(e.c==="you") return `<div class="ev you${a}"><div class="bub">${esc(e.t)}</div><div class="ms">${esc(e.status)}${e.at?" · "+hhmm(e.at):""}</div></div>`;
-  if(e.c==="ask") return `<div class="ev ask${a}"><span class="whoo">${e.who==="Kitchen"?"Kitchen needs you":esc(e.who||"Agent")+" asks"}</span><p>${esc(e.t)}</p></div>`;
+  if(e.c==="ask") return `<div class="ev ask${a}"><span class="whoo">${e.who==="Kitchen"?"Kitchen needs you":esc(e.who||"Agent")+" asks"}</span><p>${md(e.t)}</p></div>`;
   return `<div class="ev sys${a}">${esc(e.t)}${e.at?` · <span class="mono">${hhmm(e.at)}</span>`:""}</div>`;
 }
 function liveHTML(j){
@@ -591,12 +592,14 @@ function chgHTML(j,bump){const A=j.files.reduce((a,f)=>a+f.a,0),D=j.files.reduce
   return `<span class="chg${bump?" bump":""}" id="chg-${esc(j.id)}">${j.files.length&&group(j)==="run"?`${j.files.length} file${j.files.length>1?"s":""}${dfHTML(A,D)}`:""}</span>`}
 function finLabel(j){if(j.kind==="setup"&&j.setup.state==="quick")return "Toolkit not built — kitchen toolkit build";return j.state==="done"?(j.kind==="setup"?"Proven":"Ready to merge"):j.kind==="setup"?"Failed":"Rejected"}
 /* A job paused no-toolkit (ADR 0010): build the Toolkit in a terminal, or resume (the resume rules decide whether it may go on without one). */
+/* Kitchen's own messages name commands in backticks: shown as code. */
+const md=t=>esc(t).replace(/`([^`]+)`/g,"<code>$1</code>");
 function tkActs(j){return `<button type="button" class="btn act sm" data-act="copy-build" title="Then merge kitchen/setup; the job wakes by itself">Copy kitchen toolkit build</button><button type="button" class="btn ghost sm" data-act="resume" data-id="${esc(j.id)}" title="Go on with checks and tests only, if it can">${I.play}Resume</button>`}
 function icon(j){if(j.kind==="setup"&&j.setup.state==="quick")return S.wait;return S[j.state==="done"?"ok":j.state==="rejected"?"skip":j.state==="run"&&!j.runnerOn?"paused":j.state]}
 function rowHTML(j){
   const g=group(j),ex=expanded===j.id;
   let sub="",mid="",tm="",acts="";
-  if(g==="you"){sub=`<div class="sub q">${esc(j.q)}</div>`;mid=j.needsToolkit?`<span class="tka">${tkActs(j)}</span>`:`<button class="btn act sm rep" data-act="message" data-id="${esc(j.id)}">${ex?"Close":"Reply"}</button>`;tm=`<span class="tm mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`}
+  if(g==="you"){sub=`<div class="sub q">${md(j.q)}</div>`;mid=j.needsToolkit?`<span class="tka">${tkActs(j)}</span>`:`<button class="btn act sm rep" data-act="message" data-id="${esc(j.id)}">${ex?"Close":"Reply"}</button>`;tm=`<span class="tm mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`}
   else if(g==="run"){sub=`<div class="sub" id="lv-${esc(j.id)}">${liveHTML(j)}</div>`;mid=chgHTML(j)+trackHTML(j);tm=`<span class="tm mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`;
     acts=`<span class="acts"><button class="ib" title="Message ${esc(agent(j))} (R)" aria-label="Message agent" data-act="message" data-id="${esc(j.id)}">${I.msg}</button></span>`}
   else{mid=`<span class="fin ${fresh.has(j.id)?"new":""}">${fresh.has(j.id)?"Just finished · ":""}${finLabel(j)}</span>`;tm=`<span class="tm mono num">$${j.cost.toFixed(2)}</span>`;
@@ -649,7 +652,7 @@ function cardHTML(j){
   const l=j.lane,end=ended(j)||l==="done",idt=j.kind==="setup"?"setup":"#"+j.num;
   const cls=`${l==="you"?"ny":""} ${end?"end":""} ${j.state==="done"&&j.kind!=="setup"?"rdy":""} ${j.state==="rejected"||j.pausedBy==="stop"?"gone":""} ${open===j.id?"open":""} ${sel===j.id?"sel":""} ${just.has(j.id)?"flash":""}`;
   const bot=l==="you"
-    ?`<div class="cq">${esc(j.q)}</div>${j.needsToolkit?`<span class="tka">${tkActs(j)}</span>`:`<button class="btn act sm" data-act="message" data-id="${esc(j.id)}">Reply</button>`}`
+    ?`<div class="cq">${md(j.q)}</div>${j.needsToolkit?`<span class="tka">${tkActs(j)}<button type="button" class="btn ghost sm" data-act="reject" data-id="${esc(j.id)}">Reject</button></span>`:`<button class="btn act sm" data-act="message" data-id="${esc(j.id)}">Reply</button>`}`
     :`<div class="cbot"><div class="evl" id="lv-${esc(j.id)}">${evLine(j)}</div>${j.kind==="setup"||j.state==="rejected"?"":`<button class="ib" title="${j.state==="done"?"Follow up":"Message "+esc(agent(j))} (R)" aria-label="${j.state==="done"?"Follow up":"Message agent"}" data-act="message" data-id="${esc(j.id)}">${I.msg}</button>`}</div>`;
   return `<div class="rw card ${cls}" id="rw-${esc(j.id)}" style="view-transition-name:r-${esc(j.id)}" tabindex="0" role="button" data-row="${esc(j.id)}">
     <div class="ctop"><span class="id">${esc(idt)}</span>${j.round>1?`<span class="rnd">round ${j.round}</span>`:""}<span class="sp"></span>${j.state==="run"&&j.runnerOn?'<i class="pulse" title="Working now"></i>':""}${end?"":`<span class="mt num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`}</div>
@@ -710,7 +713,9 @@ function composerHTML(j,where="row"){
   const qs=j.kind==="setup"&&g==="you"?j.setup.questions:[];
   const ch=qs.map(q=>`<div class="choice qa"><b>${esc(q.id)}</b><span class="qq">${esc(q.question)}${q.why?`<i>${esc(q.why)}</i>`:""}</span><div class="box qbox"><input data-draft="setup-${esc(q.id)}" data-where="${where}" data-q="${esc(q.id)}" placeholder="${esc(q.default?"Default: "+q.default:"Your answer")}" value="${esc(answersDraft[q.id]||"")}" aria-label="${esc(q.question)}"></div></div>`).join("");
   const ctl=g==="run"&&where==="panel"?"":g==="run"?`<button type="button" class="btn ghost sm" data-act="${j.state==="paused"?"resume":"pause"}" data-id="${esc(j.id)}">${j.state==="paused"?I.play+"Resume":I.pause+"Pause"}</button>${j.state==="paused"?"":`<button type="button" class="btn ghost sm" data-act="stop" data-id="${esc(j.id)}">${I.stop}Stop</button>`}`
-    :g==="you"&&j.kind!=="setup"?`${j.needsToolkit?tkActs(j):""}<button type="button" class="btn ghost sm" data-act="reject" data-id="${esc(j.id)}">Reject</button>`:"";
+    :g==="you"&&j.kind!=="setup"?`<button type="button" class="btn ghost sm" data-act="reject" data-id="${esc(j.id)}">Reject</button>`:"";
+  /* A no-toolkit wait takes no message: nothing would read it. Its two ways on are the actions. */
+  if(j.needsToolkit)return `<div class="cmp you"><div class="box"><div class="cbar"><span class="hint">Build the Toolkit, then it goes on by itself; or Resume to go on with checks and tests only.</span><span class="sp"></span>${tkActs(j)}<button type="button" class="btn ghost sm" data-act="reject" data-id="${esc(j.id)}">Reject</button></div></div></div>`;
   return `<form class="cmp ${g==="you"?"you":""} ${qs.length?"ready":""}" data-cmp="${esc(j.id)}">${ch}
     ${chips.length?`<div class="chips">${chips.map(c=>`<button type="button" class="chip" data-act="chip" data-id="${esc(j.id)}">${esc(c)}</button>`).join("")}</div>`:""}
     <div class="box"><textarea rows="1" data-draft="${esc(j.id)}" data-where="${where}" placeholder="${esc(ph)}" aria-label="${esc(ph)}" maxlength="4000">${esc(drafts[j.id]||"")}</textarea>

@@ -20,6 +20,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { serveBridge } from "./bridge/mcp.ts";
 import * as cmd from "./cli/commands.ts";
+import { quietOnEpipe } from "./cli/epipe.ts";
 
 const USAGE =
   'usage: kitchen ticket "<text>" | run [--once] [--detach] [<job>] | status | resume <id|n> | feedback <id> [--to <stage>] ["<text>"] | reject <id> | steer <id> "<text>" | pause <id> | stop <id> | report [--bench] [--json] | retro [status | unmute <lens>/<category> | approve <n>] | migrate [--dry-run] | dashboard [--port n] | bench smoke|full|tuned|heldout […] | init [--tool claude|codex] [--toolkit] | toolkit build [--answers <file>] [--detach] [--verbose] | toolkit build --status [--wait <s>] | toolkit check [--feature x] [--src dir] | toolkit up | toolkit down --id <id> | drive <job> <C> [--repro] [--arg k=v]… | drive <job> --view "<view>" | dismiss <job> <finding> [--reason "<why>"] | toolkit maintain [--force] | mcp …';
@@ -242,6 +243,7 @@ async function bench(rest: string[]): Promise<number> {
   return r.results.every((x) => x.correct) ? 0 : 1;
 }
 
+quietOnEpipe(process.stdout);
 main(process.argv.slice(2)).then(
   (code) => {
     process.exitCode = code;
