@@ -72,6 +72,8 @@ export type ReportFacts = {
   seeds: { files: string[]; patch: string } | null;
   costs: StageCost[];
   argsDeltas: string[];
+  /** Role skills (ADR 0014), per role in run order: each skill quoted into its prompt (sha256 pinned), the optional ones it went without. */
+  skills?: { role: string; used: { name: string; sha256: string }[]; skipped: string[]; degraded: boolean }[];
 };
 
 export type RenderInput = {
@@ -411,6 +413,18 @@ function seedsSection(f: ReportFacts): string {
   return `<section id="seeds"><h2>Seed data and migrations</h2><p>This change touches what every proof's app is built from: ${f.seeds.files.map((x) => `<code>${esc(x)}</code>`).join(", ")}. Check nothing here seeds an answer a proof reads.</p><pre class="diff">${esc(f.seeds.patch)}</pre></section>`;
 }
 
+/** "Skills used", one line per role that ran: the skills quoted into its prompt, pinned by sha256. Pure. */
+export function skillsSection(f: Pick<ReportFacts, "skills">): string {
+  if (!f.skills?.length) return "";
+  const rows = f.skills.map(
+    (s) =>
+      `<tr><td>${esc(s.role)}</td><td>${s.used.length ? s.used.map((u) => `<code>${esc(u.name)}</code> <span class="muted">${esc(u.sha256.slice(0, 12))}</span>`).join(", ") : '<span class="muted">none</span>'}${
+        s.skipped.length ? `<br><span class="muted">not installed, skipped: ${s.skipped.map(esc).join(", ")}</span>` : ""
+      }${s.degraded ? ` ${badge("DEGRADED")}` : ""}</td></tr>`,
+  );
+  return `<section id="skills"><h2>Skills used</h2><p class="muted">Skills are guidance quoted into a role's prompt (sha256 of the SKILL.md as used); they never decide a verdict.</p><table><thead><tr><th>role</th><th>skills</th></tr></thead><tbody>${rows.join("")}</tbody></table></section>`;
+}
+
 export function costSection(f: Pick<ReportFacts, "costs">): string {
   const t = f.costs.reduce((a, c) => ({ secs: a.secs + c.secs, usd: a.usd + c.usd }), { secs: 0, usd: 0 });
   const mm = (s: number) => (s >= 90 ? `${Math.round(s / 60)} min` : `${Math.round(s)} s`);
@@ -474,6 +488,7 @@ ${reviewSection(f)}
 ${seedsSection(f)}
 ${part("notes", "Notes")}
 ${rest ? `<section id="more">${inline(rest)}</section>` : ""}
+${skillsSection(f)}
 ${costSection(f)}
 <section id="evidence"><h2>Evidence</h2><p class="muted">Every entry cited above, as stamped in the job's hash-chained manifest (sha, round, criterion, who ran it). The full folder is on the <code>kitchen-evidence</code> branch.</p>${cited
     .map((id) => appendix(byId.get(id) as ReportEntry, i.file))

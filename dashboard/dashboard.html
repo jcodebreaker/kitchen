@@ -242,6 +242,8 @@ kbd{font:500 11px var(--sans);color:var(--mute);border:1px solid var(--line2);bo
 .sg .du{color:var(--faint);font-size:11.5px}
 .sgsum{margin:-5px 0 6px 26px;color:var(--mute);font-size:12.5px}
 .sgsum.bad{color:var(--fail)}
+.sgsk{margin:-5px 0 6px 26px;display:flex;flex-wrap:wrap;gap:4px}
+.sgsk span{font-size:10.5px;line-height:16px;padding:0 6px;border-radius:999px;border:1px solid var(--line2);color:var(--faint)}
 .evs{margin:0 0 6px 7.5px;padding:2px 0 2px 18px;border-left:1px solid var(--line2);display:flex;flex-direction:column;gap:7px}
 .ev{font-size:13px;min-width:0}
 .ev.in{animation:evin .28s var(--ease)}
@@ -706,6 +708,7 @@ function segHTML(j,s,i,n){
   const dur=s.end?fmtL((Date.parse(s.end)-Date.parse(s.start))/1000):"";
   const liveT=last&&s.st==="run";
   return `<button class="sg ${can?"exp":""}" ${can?`onclick="togSeg(${i})"`:"tabindex=-1"}>${S[state]||S.wait}<b>${esc(s.nm)}</b><span class="who">${esc(who)}</span><span class="du mono num" ${liveT?`id="segt" data-start="${esc(s.start)}"`:""}>${liveT?clock(elapsed(s.start)):dur}</span></button>
+    ${s.sk&&s.sk.length?`<div class="sgsk" title="Skills quoted into this step's prompt">${s.sk.map(n=>`<span class="mono" title="${esc(n)}">${esc(n.split(":").pop())}</span>`).join("")}</div>`:""}
     ${s.sum?`<div class="sgsum ${s.st==="bad"?"bad":""}">${esc(s.sum)}</div>`:""}
     ${isOpen&&(s.evs.length||last)?`<div class="evs" ${last?'id="evs"':""}>${s.evs.map(e=>evHTML(e)).join("")}</div>`:""}`;
 }
