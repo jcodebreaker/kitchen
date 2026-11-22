@@ -215,19 +215,16 @@ tickets:
     fixture: c-adopt
     set: tuned
     kind: feature
-    trap: "accepted invites are not unused (one of the two seeded invites is accepted)"
+    trap: "accepted invites are not unused (the oracle makes two invites and accepts one)"
     text: >-
       On /admin, show how many invite codes are still unused, like "3 unused invites"
       ("1 unused invite" for one).
-    plant:
-      - file: db/002_seed.sql
-        append: "\nINSERT INTO invites (code, created_by) SELECT 'INV-AAAA0001', id FROM users WHERE username = 'bob-admin';\nINSERT INTO invites (code, created_by, accepted_at) SELECT 'INV-AAAA0002', id, now() FROM users WHERE username = 'bob-admin';\n"
     expect: { outcome: [done] }
     oracle:
       criteria: |
-        - [C1] one unused invite of two
-          proof: toolkit login --as bob-admin ; toolkit open --path /admin ; toolkit read --target body --save page
-          expect: $page contains "1 unused invite" and $page not contains "2 unused"
+        - [C1] two invites made, one accepted: one unused
+          proof: toolkit login --as bob-admin ; toolkit open --path /admin ; toolkit press --target "[data-testid=generate-invite]" ; toolkit read --target "[data-testid=invite-code]" --save code ; toolkit login --as alice ; toolkit open --path /join ; toolkit type --target "[data-testid=invite-input]" --text $code ; toolkit press --target "[data-testid=invite-submit]" ; toolkit read --target "[data-testid=invite-result]" --save joined ; toolkit login --as bob-admin ; toolkit open --path /admin ; toolkit press --target "[data-testid=generate-invite]" ; toolkit read --target body --save page
+          expect: $joined contains "Invite accepted" and $page contains "1 unused invite" and $page not contains "2 unused"
 
   # ---------------- held-out: fixture D (orders API, Stripe mock, SMTP catcher) ----------------
   - id: d-status-filter
