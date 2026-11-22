@@ -22,20 +22,23 @@ import {
 /**
  * Sandbox for every Bash call: writes only in the working dirs, no escape hatch,
  * and engine-owned folders unreadable both to Bash (sandbox denyRead) and to the
- * Read/Grep/Glob tools (permission deny rules).
+ * Read/Grep/Glob tools (permission deny rules). `denyWrite` paths (the
+ * worktree's `.git`, file or folder) are closed to Bash (sandbox denyWrite) and
+ * to Edit/Write (permission deny rules), so an agent can't redirect the worktree
+ * to another gitdir.
  */
-export function claudeSettings(denyRead: string[]) {
+export function claudeSettings(denyRead: string[], denyWrite: string[] = []) {
   return {
     sandbox: {
       enabled: true,
       failIfUnavailable: true,
       autoAllowBashIfSandboxed: true,
       allowUnsandboxedCommands: false,
-      filesystem: { denyRead },
+      filesystem: { denyRead, denyWrite },
     },
     permissions: {
-      // Read(...) rules also cover Grep and Glob
-      deny: denyRead.map((d) => `Read(/${d}/**)`),
+      // Read(...) rules also cover Grep and Glob; Edit(...) rules also cover Write. `//` = absolute path
+      deny: [...denyRead.map((d) => `Read(/${d}/**)`), ...denyWrite.flatMap((d) => [`Edit(/${d})`, `Edit(/${d}/**)`])],
     },
   };
 }
@@ -51,7 +54,7 @@ export function claudeArgs(req: AgentRequest, sessionId: string): string[] {
     "--max-turns",
     String(req.maxTurns),
     "--settings",
-    JSON.stringify(claudeSettings(req.denyRead ?? [kitchenHome()])),
+    JSON.stringify(claudeSettings(req.denyRead ?? [kitchenHome()], [join(req.cwd, ".git")])),
     "--setting-sources",
     "", // no user/project/local settings: only ours
     "--strict-mcp-config", // only the MCP servers given here (none, or the bridge)

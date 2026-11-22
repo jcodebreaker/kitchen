@@ -1,32 +1,32 @@
 // What source a proof ran against: HEAD of the tested worktree, plus whether the
 // working tree differs from HEAD and the git tree hash of what is actually on
-// disk (tracked + untracked, minus ignored). Never "unknown": no git, no proof.
+// disk (tracked + untracked, minus ignored), at the moment of the drive.
+// Never "unknown": no git, no proof. Every git call goes through the engine
+// helper (src/engine/git.ts): explicit gitdir, nothing in the worktree runs.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execa } from "execa";
+import { type GitRepo, openGit } from "../engine/git.ts";
 
 export type SourceStamp = { sha: string; dirty: boolean; tree: string };
 
 export class NoSourceStamp extends Error {}
 
-async function git(src: string, args: string[], env: Record<string, string> = {}): Promise<string> {
-  const r = await execa("git", ["-C", src, ...args], { reject: false, env: { ...env, GIT_OPTIONAL_LOCKS: "0" } });
-  if (r.exitCode !== 0) throw new NoSourceStamp(`git ${args[0]} in ${src} failed: ${String(r.stderr).trim().split("\n").pop()}`);
-  return String(r.stdout).trim();
-}
-
-export async function sourceStamp(src: string): Promise<SourceStamp> {
-  const sha = await git(src, ["rev-parse", "--verify", "HEAD^{commit}"]);
-  const headTree = await git(src, ["rev-parse", "HEAD^{tree}"]);
-  // Hash the working tree with a throwaway index, so the repo's own index is untouched.
+export async function sourceStamp(repo: GitRepo): Promise<SourceStamp> {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "kitchen-stamp-"));
   try {
+    const git = await openGit(repo);
+    const out = async (args: string[], env?: Record<string, string>) => (await git.run(args, { env })).stdout.trim();
+    const sha = await out(["rev-parse", "--verify", "HEAD^{commit}"]);
+    const headTree = await out(["rev-parse", "HEAD^{tree}"]);
+    // Hash the working tree with a throwaway index, so the repo's own index is untouched.
     const env = { GIT_INDEX_FILE: path.join(tmp, "index") };
-    await git(src, ["read-tree", "HEAD"], env);
-    await git(src, ["add", "-A", "."], env);
-    const tree = await git(src, ["write-tree"], env);
+    await out(["read-tree", "HEAD"], env);
+    await out(["add", "-A", "."], env);
+    const tree = await out(["write-tree"], env);
     return { sha, dirty: tree !== headTree, tree };
+  } catch (e) {
+    throw new NoSourceStamp(`no source stamp for ${repo.workTree}: ${(e as Error).message}`);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

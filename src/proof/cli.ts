@@ -2,7 +2,8 @@
 // Spike entry for W0 (the real `kitchen` CLI lands in W1). A job dir stands in
 // for .kitchen/jobs/<id>/: job.json (with the manifest head) + evidence/.
 //   node src/proof/cli.ts toolkit <bin> <src> <command> [args…]   (runs bin/dev as the engine does)
-//   node src/proof/cli.ts job create <jobDir> --worktree dir --toolkit bin --slot-id id [--round n]
+//   node src/proof/cli.ts job create <jobDir> --worktree dir [--repo main --worktree-id id] --toolkit bin --slot-id id [--round n]
+//     (--repo/--worktree-id for a linked worktree; without them --worktree must be a plain checkout)
 //   node src/proof/cli.ts drive <jobDir> (--feature name [--file f.md] | --primitive p [--pargs json]) [--arg k=v]… [--criterion C] [--role r]
 //   node src/proof/cli.ts verify <jobDir>
 //   node src/proof/cli.ts slot acquire --id x --toolkit bin --src dir [--pid n] | slot release --id x | slot list
@@ -56,13 +57,17 @@ async function main() {
   }
   if (cmd === "job" && sub === "create") {
     const { flags, pos } = parse(rest);
-    const job = createJob(path.resolve(pos[0]), {
-      id: path.basename(path.resolve(pos[0])),
-      worktree: path.resolve(need(flags, "worktree")),
-      toolkitBin: path.resolve(need(flags, "toolkit")),
-      slotId: need(flags, "slot-id"),
-      round: Number(flags.round ?? 1),
-    });
+    const job = createJob(
+      path.resolve(pos[0]),
+      {
+        id: path.basename(path.resolve(pos[0])),
+        worktree: path.resolve(need(flags, "worktree")),
+        toolkitBin: path.resolve(need(flags, "toolkit")),
+        slotId: need(flags, "slot-id"),
+        round: Number(flags.round ?? 1),
+      },
+      flags.repo ? { mainRepo: path.resolve(flags.repo), id: need(flags, "worktree-id") } : undefined,
+    );
     return print({ ok: true, job });
   }
   if (cmd === "drive") {

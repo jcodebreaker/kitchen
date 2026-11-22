@@ -186,6 +186,9 @@ try {
     shots.map((e) => e.files.map((f) => f.path).join(",")),
   );
 
+  const snapR1 = path.join(work, "snap-s1-r1"); // job.json + manifest after round 1, for the rollback tamper below
+  fs.cpSync(jobDir("s1"), snapR1, { recursive: true });
+
   const rs = await tk("reset s1", src, "reset", "--id=s1");
   expect("reset", rs.json?.status === "ok", rs.json);
   const r2 = await three(2);
@@ -283,9 +286,64 @@ try {
   fs.rmSync(path.join(src, "UNCOMMITTED.txt"));
   const nogit = path.join(work, "nogit");
   fs.mkdirSync(nogit);
-  await kc("job create nogit", "job", "create", jobDir("nogit"), "--worktree", nogit, "--toolkit", dev, "--slot-id", "s1");
-  const ng = await drive("drive against a non-git source (expect refused)", "nogit", "--primitive", "read", "--pargs", JSON.stringify({ target: "body" }));
-  expect('no git → no stamp → refused (never sha "unknown")', ng.exit === 1 && /git rev-parse/.test(ng.json?.why), ng.json?.why);
+  const ng = await kc("job create nogit (expect refused)", "job", "create", jobDir("nogit"), "--worktree", nogit, "--toolkit", dev, "--slot-id", "s1");
+  expect(
+    'no git → no job, so no proof (never sha "unknown")',
+    ng.exit === 1 && /not a git checkout/.test(ng.json?.why) && !fs.existsSync(jobDir("nogit")),
+    ng.json?.why,
+  );
+
+  // ---------- engine git: a linked worktree, gitdir resolved from the main repo ----------
+  const linked = path.join(work, "src-linked");
+  git(src, "worktree", "add", "-q", "--detach", linked, "HEAD");
+  const lf = await kc(
+    "job create linked, no --repo (expect refused)",
+    "job",
+    "create",
+    jobDir("linked-x"),
+    "--worktree",
+    linked,
+    "--toolkit",
+    dev,
+    "--slot-id",
+    "s1",
+  );
+  expect("a linked worktree without its main repo is refused (its .git file is never read)", lf.exit === 1 && /is a file/.test(lf.json?.why), lf.json?.why);
+  const lj = await kc(
+    "job create linked",
+    "job",
+    "create",
+    jobDir("linked"),
+    "--worktree",
+    linked,
+    "--repo",
+    src,
+    "--worktree-id",
+    "src-linked",
+    "--toolkit",
+    dev,
+    "--slot-id",
+    "s1",
+  );
+  expect(
+    "a linked worktree's gitdir is <main>/.git/worktrees/<id>",
+    lj.json?.job?.gitDir === fs.realpathSync(path.join(src, ".git/worktrees/src-linked")),
+    lj.json?.job?.gitDir,
+  );
+  fs.writeFileSync(path.join(linked, ".git"), `gitdir: ${path.join(work, "nowhere")}\n`); // the worktree redirects itself
+  const ld = await drive(
+    "drive on the linked worktree after its .git was redirected",
+    "linked",
+    "--primitive",
+    "read",
+    "--pargs",
+    JSON.stringify({ target: "body" }),
+  );
+  const le = manifest("linked").at(-1);
+  expect("stamped through the recorded gitdir: the real HEAD, the redirect ignored", ld.json?.ok === true && le.sha === srcHead && le.dirty === false, {
+    sha: le?.sha,
+    dirty: le?.dirty,
+  });
 
   const dn = await downSlot("s1");
   expect("down s1", dn.json?.status === "ok", dn.json);
@@ -331,6 +389,16 @@ try {
       fs.writeFileSync(path.join(d, "job.json"), JSON.stringify(j));
     },
     /no expected manifest head/,
+  );
+
+  await tamper(
+    "rolled back to round 1 (older job.json + its manifest, both validly signed)",
+    (d) => {
+      fs.rmSync(path.join(d, "evidence"), { recursive: true });
+      fs.cpSync(path.join(snapR1, "evidence"), path.join(d, "evidence"), { recursive: true });
+      fs.copyFileSync(path.join(snapR1, "job.json"), path.join(d, "job.json"));
+    },
+    /rolled back/,
   );
 
   // ---------- two slots at once ----------

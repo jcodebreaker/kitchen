@@ -6,7 +6,7 @@ import { test } from "vitest";
 import { appendEntry, emptyHead, MANIFEST, type ManifestHead, ManifestTampered, verifyManifest } from "./manifest.ts";
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "kitchen-manifest-"));
-const seal = { scope: "job-uid-1", key: Buffer.alloc(32, 7) };
+const seal = { scope: "job-uid-1", key: Buffer.alloc(32, 7), floor: 0 };
 const stamp = { sha: "abc123", round: 1, criterion: "C1", cmd: "bin/dev read --id=a", exit: 0 };
 
 /** Two entries, the first citing a file. */
@@ -94,4 +94,15 @@ test("a manifest swapped for another consistent chain is refused by the head has
 test("an evidence path outside the evidence dir is refused", () => {
   const dir = tmp();
   assert.throws(() => appendEntry(dir, emptyHead(seal), { ...stamp, files: ["../escape.png"] }, seal), /outside/);
+});
+
+test("a head older than the engine's counter is a rollback, refused even with its own manifest", () => {
+  const dir = tmp();
+  const one = appendEntry(dir, emptyHead(seal), stamp, seal);
+  const old = fs.readFileSync(path.join(dir, MANIFEST));
+  const two = appendEntry(dir, one.head, stamp, seal);
+  assert.equal(verifyManifest(dir, two.head, { ...seal, floor: 2 }).length, 2);
+  fs.writeFileSync(path.join(dir, MANIFEST), old); // the older pair: validly signed and consistent
+  assert.equal(verifyManifest(dir, one.head, seal).length, 1);
+  assert.throws(() => verifyManifest(dir, one.head, { ...seal, floor: 2 }), /rolled back/);
 });

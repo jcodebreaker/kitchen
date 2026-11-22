@@ -40,7 +40,7 @@ kitchen/                       npm: devkitchen, bin: kitchen
 │   │   ├── store.ts           job files, atomic writes, per-job lock
 │   │   ├── runner.ts          run loop, slots, dispatch, --detach
 │   │   ├── lock.ts            run lock + heartbeat
-│   │   ├── git.ts             worktrees, commits, push (engine-only)
+│   │   ├── git.ts             the one way the engine runs git: explicit gitdir, neutral config; worktrees, commits, push
 │   │   └── stages/            one handler per stage
 │   ├── agents/                adapter.ts, claude.ts, codex.ts, fake.ts, env.ts (agentEnv, untrustedEnv)
 │   ├── bridge/                mcp.ts: `kitchen mcp`, the job-scoped MCP server agents drive the app through
@@ -112,9 +112,12 @@ type Stage = 'intake'|'needs-info'|'spec'|'repro'|'build'|'gate'|'drives'|'verif
            |'review'|'ready'|'report'|'done'|'needs-human'|'paused'|'rejected';
 // paused carries: pausedFrom: Stage; waitFor: 'backoff'|'toolkit-pr'|'ci'|'toolkit-ticket'; until?: string
 // uid: string            // random per job; scopes the manifest head's HMAC
+// gitDir: string         // the worktree's gitdir, resolved by the engine at job creation (<main>/.git/worktrees/<id>);
+//                        // every engine git call passes it explicitly and never reads the worktree's .git
 // manifestHead: { n: number; hash: string; mac: string }
 //                        // entry count, sha256 of the last entry line, HMAC(engine key) over both.
-//                        // Written after every engine append; required by every verify (see Proofs)
+//                        // Written after every engine append; required by every verify (see Proofs).
+//                        // $KITCHEN_HOME/heads/<uid> keeps the highest n ever written: a lower head is a rollback
 ```
 
 A paused job **releases its slot**. The runner checks `waitFor` on every tick and moves the job back to `pausedFrom` when the condition clears:
@@ -291,6 +294,8 @@ On a pass it writes `.kitchen/toolkit.proven` with the base sha. **When the base
 3. Writes each call's files into its own entry folder `evidence/e<N>/`, plus `e<N>/call.json` (argv, exit, result, stdout/stderr tails).
 4. Adds one manifest entry per call, stamped `{id, prev, sha, dirty, tree, round, criterion, role, cmd, exit, files: [{path, sha256}], at}`:
    - `sha` is HEAD of the **tested worktree** (never "unknown": no git, no proof), `dirty` whether the working tree differs from it, `tree` the git tree hash of what was on disk.
+   - The stamp records the worktree's tree **at drive time**, not what the running app was started from. The app in the slot may have been started from an earlier tree (the builder keeps editing while its app runs). For Verify that gap is closed by the engine's fresh `up` right before Verify (see "Isolation" below): the app is started from the worktree as it is then, so the stamps of the Verify drives record the tree the running app was started from. If anything changed the worktree after that `up`, the Verify entries carry a different `tree`, which the engine can see.
+   - The stamp's git calls go through `engine/git.ts` (explicit gitdir from `job.json`, nothing in the worktree runs; ADR 0006 "Engine git").
    - `role` says who asked (engine, builder, verifier…), so a builder's self-check is never taken for Verify evidence.
    - A `wait` is one entry with its poll count (`wait: {text, polls, hit}`); every poll is in its `call.json`.
    - A TOOLKIT-GAP is an entry too (`gap: <primitive>`), so a Verdict citing it has something to cite.
@@ -313,11 +318,12 @@ The verifier has a shell, so the manifest's integrity is enforced by mechanism, 
 - The manifest is a hash chain: each entry carries `prev` (sha256 of the line before) and the sha256 of every file it cites.
 - After each append the engine writes `manifestHead {n, hash, mac}` to `job.json`; `mac` is an HMAC over the head with the engine key in `$KITCHEN_HOME/engine.key` (mode 600), scoped by the job's `uid`.
 - `verifyManifest` **requires** that head (there is no default): an edited, dropped, reordered or appended line, a changed evidence file, a deleted manifest while the head says `n > 0`, or a head not signed by the engine key is refused. Ids come from the head, so they never restart.
+- The engine also keeps a per-job counter, `$KITCHEN_HOME/heads/<uid>`, written with every head. A head older than it (an earlier `job.json` and manifest put back together, both validly signed) is refused as a rollback.
 - What this protects and what it doesn't is in ADR 0006 ("Manifest integrity"): agents can't write job state or read the key; unsandboxed app code still could.
 - Every mechanical proof runs before any verifier agent starts.
 - Changes made through `--args` are logged against the spec and listed in the Report.
 
-**Isolation.** The builder self-checks in its slot. Before Verify, the engine runs `down` and then a fresh `up` (snapshot restore), so the builder's leftover state never reaches the proof.
+**Isolation.** The builder self-checks in its slot. Before Verify, the engine runs `down` and then a fresh `up` (snapshot restore) from the worktree as it is then, so the builder's leftover state never reaches the proof and the running app matches the tree the Verify stamps record.
 
 `verdict.ts` accepts a judged PASS only when every cited id has matching sha, round and criterion. A stale or wrong-criterion citation counts as FAIL.
 
@@ -367,7 +373,8 @@ interface AgentAdapter {
 - **Worktree code gets the same scrub (`untrustedEnv`).** Every process that runs code from a worktree (the app, tests, cmd proofs, Toolkit primitives) is started with the same allowlist and git/gh scrub, **without** the agent tool's own auth, plus the worktree's `.env.kitchen`. The Toolkit's control plane additionally gets `DOCKER_HOST`/`DOCKER_CONTEXT`, which `bin/dev` strips before starting the app. This hands app code no credentials; it does not confine it (it runs as the user, unsandboxed). An OS sandbox for app processes is a later hardening item (ADR 0006).
 - **Agents can't write job state, or read the engine key.** An agent's writable root is its worktree only. It writes its one file at `.kitchen-out/<file>` inside the worktree (read-tier roles that run before a worktree exists, such as intake, get a scratch folder the engine creates for that run), and the engine copies it into `.kitchen/jobs/<id>/`, then deletes it. `.kitchen/jobs/` (with `job.json` and the manifest) is outside every agent's writable root. `$KITCHEN_HOME` is denied for reading too (Claude: `sandbox.filesystem.denyRead` + `Read(...)` deny rules; Codex: a permission profile with the folder set to `deny`). The signed manifest head is a second check behind that.
 - **Project config in the worktree is ignored.** A worktree may carry `.mcp.json`, `.claude/settings.json` or `.codex/config.toml` (from the user's repo, or written by an earlier agent). Claude runs with `--setting-sources ""` and `--strict-mcp-config`; Codex with `--ignore-user-config`, which also drops project trust, so the project layer stays disabled. Proven with canaries that would run if loaded (ADR 0006, "Bridge").
-- The engine commits what the builder leaves, pushes, and opens or updates the PR, using its own credentials.
+- **The worktree's `.git` is never trusted.** In a linked worktree `.git` is a file the worktree controls; pointed at a hostile gitdir, a plain `git -C <worktree>` would run its `core.fsmonitor`, hooks or filters as the engine. So every engine git call goes through `engine/git.ts`: the gitdir is resolved once, engine side, at job creation (`<main>/.git/worktrees/<id>`, checked against git's own back-pointer) and passed with `--git-dir`/`--work-tree`, with command-scope config that turns off every program the engine's git commands could run (fsmonitor, hooks, filter drivers, ssh/askpass/credential helpers, `ext::`, editors, signing, submodule recursion). Read-only git (the source stamp) runs with the scrubbed env minus `.env.kitchen`; credentials are accepted only for `push`. Agents can't write `.git` either (Claude `denyWrite` + `Edit()` deny rules; Codex built in). ADR 0006, "Engine git".
+- The engine commits what the builder leaves, pushes, and opens or updates the PR, using its own credentials, through the same `engine/git.ts`.
 - A wall-clock limit and a turn limit per role are structure, not a cost cap.
 
 **The engine bridge.** Neither tool's sandbox can reach Docker or the network (ADR 0006), so agents drive the app through `kitchen mcp --job <id> --role <role>`, an MCP server the agent tool starts (`AgentRequest.bridge`; built by `bridgeServer()` with an explicit env: Docker vars and `KITCHEN_HOME`). It runs as the engine, outside the Bash sandbox, and exposes only job-scoped tools:
@@ -700,3 +707,7 @@ History: all of these are now part of §2 and §3, which are the current contrac
 | Slots didn't record their Toolkit; pid reuse; lock stolen by age | Slots store `toolkitBin`, `src`, `pidStart`; reclaim runs that `down`; owner-based lock |
 | Stamped sha could be "unknown" or the kitchen repo's | HEAD of the tested worktree + `dirty` + `tree`; no git, no proof |
 | Codex agents could read `$KITCHEN_HOME` (the engine key) | Codex runs under a permission profile with `$KITCHEN_HOME` denied; Claude gets `sandbox.filesystem.denyRead` + `Read()` deny rules |
+| Engine git trusted the worktree: a redirected `.git` file + `core.fsmonitor` leaked `GH_TOKEN` through the source stamp | `engine/git.ts`: gitdir resolved engine side at job creation, explicit `--git-dir`/`--work-tree`, neutral config (fsmonitor, hooks, filters, helpers…), scrubbed env without `.env.kitchen`, credentials for `push` only; agents can't write `.git` (Claude `denyWrite`). `spikes/w0/git-redirect.ts` |
+| An older `job.json` + manifest pair (both signed) could be restored | Per-job counter `$KITCHEN_HOME/heads/<uid>`; a lower head is refused as a rollback |
+| Network denial was only seen through push failures | The integrity probe checks `curl` and a direct `nc` to an IP on both tools |
+| A stamp's tree vs the running app | A stamp records the worktree tree at drive time; the fresh `up` before Verify makes the running app match it |
