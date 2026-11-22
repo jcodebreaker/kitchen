@@ -5,7 +5,7 @@
 // counts only if every check ran on that HEAD with a clean tree and HEAD did
 // not move while they ran; otherwise it is a FAIL that says why.
 import type { CheckSpec } from "../config.ts";
-import { runChecks } from "./run-checks.ts";
+import { type ChecksPrepare, runChecks } from "./run-checks.ts";
 
 export type GateResult = { head: string; result: "PASS" | "FAIL"; lines: string[]; why?: string };
 
@@ -26,9 +26,15 @@ export function gateOutcome(
   return { head: before, result: failed.length ? "FAIL" : "PASS", ...(failed.length ? { why: `failed: ${failed.join(", ")}` } : {}), checks };
 }
 
-export async function runGate(o: { jobDir: string; checks: CheckSpec[]; network: boolean; headOf: () => Promise<string> }): Promise<GateResult> {
+export async function runGate(o: {
+  jobDir: string;
+  checks: CheckSpec[];
+  network: boolean;
+  headOf: () => Promise<string>;
+  prepare?: ChecksPrepare;
+}): Promise<GateResult> {
   const before = await o.headOf();
-  const r = await runChecks({ jobDir: o.jobDir, checks: o.checks, role: "engine", criterion: "gate", network: o.network });
+  const r = await runChecks({ jobDir: o.jobDir, checks: o.checks, role: "engine", criterion: "gate", network: o.network, prepare: o.prepare });
   const after = await o.headOf();
   const g = gateOutcome(before, after, r.results);
   const lines = [

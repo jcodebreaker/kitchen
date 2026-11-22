@@ -17,7 +17,7 @@ import path from "node:path";
 import readline from "node:readline";
 import type { BridgeServer } from "../agents/adapter.ts";
 import { CONTROL_PLANE } from "../agents/env.ts";
-import { runChecks } from "../checks/run-checks.ts";
+import { checksPrepareOf, runChecks } from "../checks/run-checks.ts";
 import { loadConfig } from "../config.ts";
 import { contractOf, specArgsOf } from "../engine/contract.ts";
 import { freshUp, type InstanceJob } from "../engine/instance.ts";
@@ -162,7 +162,14 @@ export function makeBridge(o: BridgeOpts) {
     if (!c) return text({ ok: false, refused: `no criterion ${id} in the contract` }, true);
     try {
       const cfg = loadConfig(path.resolve(o.repo));
-      const r = await prove({ jobDir, criterion: c, role: o.role, testCmd: cfg.test_cmd, log: (m) => console.error(`[kitchen mcp] ${m}`) });
+      const r = await prove({
+        jobDir,
+        criterion: c,
+        role: o.role,
+        testCmd: cfg.test_cmd,
+        checksPrepare: checksPrepareOf(cfg),
+        log: (m) => console.error(`[kitchen mcp] ${m}`),
+      });
       const pass = r.status === "pass";
       return text(
         {
@@ -217,7 +224,7 @@ export function makeBridge(o: BridgeOpts) {
     try {
       const cfg = loadConfig(path.resolve(o.repo));
       if (!cfg.checkList.length) return text({ ok: true, checks: [], note: "kitchen.yaml has no checks" });
-      const r = await runChecks({ jobDir, checks: cfg.checkList, role: o.role, criterion: "-", network: cfg.checks_network });
+      const r = await runChecks({ jobDir, checks: cfg.checkList, role: o.role, criterion: "-", network: cfg.checks_network, prepare: checksPrepareOf(cfg) });
       return text(
         {
           ok: r.ok,

@@ -12,6 +12,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { changedExistingDrive } from "../../checks/feature-lint.ts";
+import { checksPrepareOf } from "../../checks/run-checks.ts";
 import { waitMatchesExpect } from "../../proof/assert.ts";
 import { prove } from "../../proof/prove.ts";
 import { featureFileProblems } from "../../toolkit/feature-check.ts";
@@ -117,6 +118,7 @@ export const repro: StageHandler = async (ctx) => {
       criterion: crit,
       role: "engine",
       testCmd: ctx.config.test_cmd,
+      checksPrepare: checksPrepareOf(ctx.config),
       tag: { phase: "repro" },
       log: (m) => ctx.log(`[drive] ${m}`),
     });

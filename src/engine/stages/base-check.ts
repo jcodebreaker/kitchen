@@ -15,6 +15,7 @@
 // intake.md) holds on the base by design: it runs, but is never counted.
 import fs from "node:fs";
 import path from "node:path";
+import { checksPrepareOf } from "../../checks/run-checks.ts";
 import { type Criterion, guardCriteria, parseRequirements } from "../../checks/spec-lint.ts";
 import { isJudged } from "../../proof/assert.ts";
 import { prove } from "../../proof/prove.ts";
@@ -120,6 +121,7 @@ export async function runBaseCheckAfterDrives(ctx: StageContext, job: Job, crite
           criterion: c,
           role: "engine",
           testCmd: ctx.config.test_cmd,
+          checksPrepare: checksPrepareOf(ctx.config),
           tag: { phase: "base" },
           source: { worktree: source.workTree, gitDir: source.gitDir },
           log: (m) => ctx.log(`[base after drives] ${m}`),
@@ -172,6 +174,7 @@ export async function runBaseCheck(ctx: StageContext, job: Job, criteria: Criter
         criterion: c,
         role: "engine",
         testCmd: ctx.config.test_cmd,
+        checksPrepare: checksPrepareOf(ctx.config),
         tag: { phase: "base" },
         log: (m) => ctx.log(`[base] ${m}`),
       });

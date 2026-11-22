@@ -17,6 +17,7 @@
 // verifier says so) gets one free retry on a fresh instance, then a Toolkit ticket.
 import fs from "node:fs";
 import path from "node:path";
+import { checksPrepareOf } from "../../checks/run-checks.ts";
 import { type ArgsDelta, decideVerdict, type ProofRecord, renderVerdict } from "../../checks/verdict.ts";
 import { appendLedger } from "../../ledger/append.ts";
 import { drivesOf } from "../../ledger/measures.ts";
@@ -87,7 +88,14 @@ export const verify: StageHandler = async (ctx) => {
     if (hasToolkit(job)) await freshUp(job, ctx.jobDir, ctx.log);
     for (const c of todo) {
       if (hasToolkit(job)) await resetUp(job, ctx.jobDir);
-      const p = await prove({ jobDir: ctx.jobDir, criterion: c, role: "engine", testCmd: ctx.config.test_cmd, log: (m) => ctx.log(`[drive] ${m}`) });
+      const p = await prove({
+        jobDir: ctx.jobDir,
+        criterion: c,
+        role: "engine",
+        testCmd: ctx.config.test_cmd,
+        checksPrepare: checksPrepareOf(ctx.config),
+        log: (m) => ctx.log(`[drive] ${m}`),
+      });
       let result: ProofRecord["result"];
       if (p.status === "pass") result = "PASS";
       else if (p.status === "gap") result = "TOOLKIT-GAP";

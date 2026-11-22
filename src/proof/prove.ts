@@ -9,6 +9,7 @@
 // the Toolkit is (the caller asks `doctor`), and judged criteria (the verifier).
 import fs from "node:fs";
 import path from "node:path";
+import { type ChecksPrepare, ensureChecksPrepared } from "../checks/run-checks.ts";
 import type { Criterion } from "../checks/spec-lint.ts";
 import { type AssertResult, evaluate, isJudged, needsPage, type Outcome, parseExpect } from "./assert.ts";
 import { runDrive } from "./drive.ts";
@@ -52,6 +53,8 @@ export type ProveOpts = {
   source?: { worktree: string; gitDir: string };
   /** Stamp the entries for this criterion name instead of the criterion's id (the drives check stamps `drives`). */
   stampAs?: string;
+  /** kitchen.yaml `checks_prepare`: readies the worktree (or `source`) before a cmd or test proof, cached (run-checks.ts). */
+  checksPrepare?: ChecksPrepare;
   log?: (m: string) => void;
 };
 
@@ -126,6 +129,11 @@ export async function prove(o: ProveOpts): Promise<ProveResult> {
       const cmd = s.kind === "cmd" ? s.cmd : o.testCmd.replaceAll("{file}", shq(s.kind === "test" ? s.file : ""));
       // spec-lint's denylist (outside paths, $HOME, env dumps, network tools) is the first line; the proof sandbox
       // (no network, $HOME and $KITCHEN_HOME unreadable, writes only in the worktree) is the boundary. Untrusted env.
+      if (o.checksPrepare) {
+        const p = await ensureChecksPrepared({ jobDir: o.jobDir, prepare: o.checksPrepare, role: o.role, criterion: common.criterion, source: o.source });
+        if (p) evidence.push(p.id);
+        if (p && !p.ok) return res("step-failed", { why: `checks_prepare failed (exit ${p.exit}): ${p.tail.slice(-300)}` });
+      }
       const r = await stampCommand({ ...common, name: `${c.id} ${s.kind}`, cmd, timeoutSec: o.timeoutSec ?? 600, sandbox: true });
       if (!r.sandboxed) o.log?.(`${c.id} ${s.kind} proof ran UNSANDBOXED (no sandbox-exec on this platform)`);
       evidence.push(r.id);

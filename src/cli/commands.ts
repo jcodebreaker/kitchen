@@ -3,6 +3,7 @@ import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { checksPrepareOf } from "../checks/run-checks.ts";
 import { loadConfig } from "../config.ts";
 import { takeTicket } from "../engine/base.ts";
 import { contractOf, specArgsOf } from "../engine/contract.ts";
@@ -212,6 +213,7 @@ export async function drive(
       criterion: c,
       role: o.role,
       testCmd: cfg.test_cmd,
+      checksPrepare: checksPrepareOf(cfg),
       argsOverride: o.args,
       ...(o.repro ? { tag: { phase: "repro" } } : {}),
       log: (m) => console.error(`[kitchen drive] ${m}`),
