@@ -14,8 +14,8 @@ export function migrate(repo: string, o: { dryRun: boolean }, out: Out): number 
     out(unifiedDiff(c.before ?? "", c.after, c.file).trimEnd());
   }
   if (o.dryRun) {
-    out(`migrate: dry run, ${changes.length} file(s) would change; run \`kitchen migrate\` to write them`);
-    return 0;
+    out(`migrate: dry run, ${changes.length} file(s) would change, the repo is not migrated; run \`kitchen migrate\` to write them`);
+    return 1;
   }
   applyMigration(repo, changes);
   out(`migrate: ${changes.length} file(s) written (${changes.map((c) => c.file).join(", ")}); review and commit them`);

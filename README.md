@@ -176,7 +176,7 @@ Every key, with its default:
 | `forge` | `{ kind: local, base: main }` | `github` with `repo: owner/name` (and optional `url`) for PRs |
 | `source` | `{ kind: prompt, label: kitchen, operators: [] }` | `github`: labelled issues are tickets |
 
-`kitchen migrate --dry-run` shows what an upgrade of Kitchen would change in `kitchen.yaml` and in the Toolkit's template files; `kitchen migrate` writes it (you commit it).
+`kitchen migrate --dry-run` shows what an upgrade of Kitchen would change in `kitchen.yaml` and in the Toolkit's template files, and exits 1 when there is something to change (0 when there is nothing), so CI can check it; `kitchen migrate` writes it (you commit it).
 
 ## Safety model
 

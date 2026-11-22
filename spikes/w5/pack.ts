@@ -99,7 +99,11 @@ execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.invalid", 
 execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "init"], { cwd: repo });
 const k = (...a: string[]) => spawnSync(bin, a, { cwd: repo, env: { ...env, KITCHEN_HOME: path.join(root, "home") }, encoding: "utf8", timeout: 60_000 });
 const mig = k("migrate", "--dry-run");
-check("installed: kitchen migrate --dry-run shows the version stamp", mig.status === 0 && mig.stdout.includes("+version: 1"), mig.stdout.split("\n")[0]);
+check(
+  "installed: kitchen migrate --dry-run shows the version stamp and exits 1 (something to change)",
+  mig.status === 1 && mig.stdout.includes("+version: 1"),
+  mig.stdout.split("\n")[0],
+);
 const rep = k("report");
 check("installed: kitchen report runs on an empty ledger", rep.status === 0 && rep.stdout.includes("merge-ready rate"), rep.stdout.split("\n")[0]);
 const sk = k("init", "--skill");

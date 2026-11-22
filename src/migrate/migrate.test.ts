@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "vitest";
+import { migrate } from "../cli/migrate-command.ts";
 import { CONFIG_VERSION, migrateConfigText, planMigration, TEMPLATE_DIR, unifiedDiff } from "./migrate.ts";
 
 test("kitchen.yaml without a version is stamped, comments and order kept; a current one is left alone", () => {
@@ -53,4 +54,26 @@ test("unifiedDiff: hunks with context, empty when equal", () => {
   assert.equal(unifiedDiff("a\nb\n", "a\nb\n", "f"), "");
   const d = unifiedDiff("1\n2\n3\n4\n5\n6\n7\n8\n9\n", "1\n2\n3\n4\nfive\n6\n7\n8\n9\n", "f");
   assert.equal(d, "--- a/f\n+++ b/f\n@@ -2,7 +2,7 @@\n 2\n 3\n 4\n-5\n+five\n 6\n 7\n 8\n");
+});
+
+// From dogfood job 002 (its proof, moved here from tests/ by hand).
+test("migrate --dry-run exits 1 when it would change files and writes nothing; 0 once there is nothing to change", () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "kitchen-dry-"));
+  fs.writeFileSync(path.join(repo, "kitchen.yaml"), "concurrency: 1\n");
+  const lines: string[] = [];
+  assert.equal(
+    migrate(repo, { dryRun: true }, (l) => lines.push(l)),
+    1,
+  );
+  assert.match(lines.at(-1) ?? "", /dry run, 1 file\(s\) would change/);
+  assert.equal(fs.readFileSync(path.join(repo, "kitchen.yaml"), "utf8"), "concurrency: 1\n");
+  assert.equal(
+    migrate(repo, { dryRun: false }, () => {}),
+    0,
+  );
+  assert.equal(
+    migrate(repo, { dryRun: true }, () => {}),
+    0,
+  );
+  fs.rmSync(repo, { recursive: true, force: true });
 });

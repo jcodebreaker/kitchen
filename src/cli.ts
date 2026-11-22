@@ -56,7 +56,8 @@ kitchen --version · kitchen <command> --help · docs: README.md in the package`
 const COMMAND_HELP: Record<string, string> = {
   ticket: 'kitchen ticket "<what you want>"\n\nFiles a ticket from a prompt; kitchen run takes it in. With source.kind github, label an issue instead.',
   run: "kitchen run [--once] [--detach] [<job>]\n\nWorks the queue until nothing is left to do.\n  --once     one pass over the queue, then stop\n  --detach   in the background; the log is .kitchen/run.log\n  <job>      only this job",
-  status: "kitchen status\n\nOne row per job: id, stage, round, title.",
+  status:
+    "kitchen status [--json]\n\nOne row per job: id, title, stage, round, when it last moved, PR, report.\n  --json   the jobs as one JSON array, nothing else",
   resume: "kitchen resume <id|n>\n\nWakes a paused job: it goes back to the stage it paused in. A job that needs you takes kitchen feedback instead.",
   feedback:
     'kitchen feedback <id> ["<text>"] [--to <stage>]\n\nAnswers a job that needs you, or sends a done job back to build with your text.\n  --to <stage>   for a needs-human job: where it goes, at or before the stage it stopped in (intake ... verify)',
@@ -66,7 +67,7 @@ const COMMAND_HELP: Record<string, string> = {
   retro:
     "kitchen retro [status | unmute <lens>/<category> | approve <n>]\n\nWith no argument, runs the retro now: mutes review categories people keep dismissing, proposes lesson tickets as drafts.\n  status                     the mutes and drafts\n  unmute <lens>/<category>   that category blocks again\n  approve <n>                turn draft n into a ticket",
   migrate:
-    "kitchen migrate [--dry-run]\n\nBrings kitchen.yaml's schema and the Toolkit's template files up to this Kitchen; prints each change as a diff.\n  --dry-run   print, change nothing",
+    "kitchen migrate [--dry-run]\n\nBrings kitchen.yaml's schema and the Toolkit's template files up to this Kitchen; prints each change as a diff.\n  --dry-run   print, change nothing; exit 1 when there is something to change (for CI), 0 when not",
   dashboard: "kitchen dashboard [--port 7357]\n\nThe board in a browser, on 127.0.0.1, read-only. Ctrl-C stops it.",
   bench:
     "kitchen bench smoke|full|tuned|heldout [--tool claude|codex] [--runs n] [--only a,b] [--concurrency n] [--max-usd x] [--out dir]\n\nThe benchmark (from a clone of Kitchen only).",
