@@ -8,12 +8,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import { lintSpec, parseRequirements } from "../../checks/spec-lint.ts";
+import { testLayout } from "../../checks/test-layout.ts";
 import { nothingPolicy } from "../contract.ts";
 import { ensureUp } from "../instance.ts";
 import { writeAtomic } from "../store.ts";
 import { commitWith, ensureWorktree } from "../worktree.ts";
 import { runBaseCheck } from "./base-check.ts";
-import { fileBlock, humanFeedback, toolkitBlock } from "./context.ts";
+import { fileBlock, humanFeedback, testLayoutBlock, toolkitBlock } from "./context.ts";
 import { prompt } from "./prompts.ts";
 import { runRole } from "./role.ts";
 import { hasToolkit, toolkitView } from "./toolkit-info.ts";
@@ -40,6 +41,7 @@ export const spec: StageHandler = async (ctx) => {
               ...fileBlock(ctx.jobDir, "spec.md", "Your earlier spec.md"),
             ]
           : []),
+        ...testLayoutBlock(job.worktree, ctx.config.test_cmd),
         await toolkitBlock(job, job.worktree),
       ],
     }),
@@ -52,7 +54,13 @@ export const spec: StageHandler = async (ctx) => {
   // Rule 7: the criteria must cover the requirements intake read in the ticket.
   const intakeFile = path.join(ctx.jobDir, "intake.md");
   const requirements = parseRequirements(fs.existsSync(intakeFile) ? fs.readFileSync(intakeFile, "utf8") : "");
-  const lint = lintSpec(r.text, { kind: job.kind, toolkit: view, protected: ctx.config.protected, requirements });
+  const lint = lintSpec(r.text, {
+    kind: job.kind,
+    toolkit: view,
+    protected: ctx.config.protected,
+    requirements,
+    testLayout: testLayout(job.worktree, ctx.config.test_cmd),
+  });
   if (!lint.ok) {
     ctx.log(`spec-lint: ${lint.reason}`);
     writeAtomic(path.join(ctx.jobDir, "spec-refused.md"), `REASON: ${lint.reason}\n\n${r.text}`);

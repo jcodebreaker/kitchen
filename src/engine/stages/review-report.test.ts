@@ -20,6 +20,17 @@ test("lens routing (PLAN §6): low gets code only over the diff threshold or on 
   assert.deepEqual(lensesFor(cfg, job("low"), [{ file: "server.js", lines: 40 }]), []);
   assert.deepEqual(lensesFor(cfg, job("low"), [{ file: "server.js", lines: 151 }]), ["code"]);
   assert.deepEqual(lensesFor(cfg, job("low"), [{ file: ".kitchen/toolkit/features/x.md", lines: 3 }]), ["code"], "any drive diff forces the code lens");
+  // Dogfood 002/005: a small low-risk diff with a test in a new folder and a widened vitest include got no review.
+  assert.deepEqual(
+    lensesFor(cfg, job("low"), [
+      { file: "src/cli/migrate.ts", lines: 12 },
+      { file: "tests/migrate.test.ts", lines: 30 },
+    ]),
+    ["code"],
+    "a test file",
+  );
+  assert.deepEqual(lensesFor(cfg, job("low"), [{ file: "vitest.config.ts", lines: 1 }]), ["code"], "test-runner config");
+  assert.deepEqual(lensesFor(cfg, job("low"), [{ file: "package.json", lines: 2 }]), ["code"], "build config");
   assert.deepEqual(lensesFor(cfg, job("medium"), []), ["code"]);
   assert.deepEqual(lensesFor(cfg, job("high"), []), ["code", "security"]);
   assert.deepEqual(lensesFor(cfg, job("medium", ["ui"]), []), ["code", "ux", "ui"]);

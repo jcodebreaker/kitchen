@@ -432,7 +432,7 @@ round_limit: 3
 models: { intake: strong, spec: strong, builder: strong, smith: strong,
           verifier: medium, reviewer: medium, report: medium, retro: cheap }
 paths:
-  low:    { spec: inline, verify: short, review: [code-if-diff>150] }   # any drive diff forces the code lens
+  low:    { spec: inline, verify: short, review: [code-if-diff>150] }   # a drive diff, a test file or test/build config forces the code lens
   medium: { spec: full,   verify: full,  review: [code] }
   high:   { spec: full,   verify: related-features, review: [code, security], human: always }
           # human: always → this PR can never be auto-merged (even if automerge is on), the PR gets

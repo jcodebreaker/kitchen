@@ -13,7 +13,7 @@ import { ensureUp } from "../instance.ts";
 import { once, roundDir, updateJob, writeAtomic } from "../store.ts";
 import { changedFiles, commitWith, ensureWorktree, fileAtHead, jobGitOf, pendingFiles } from "../worktree.ts";
 import { runBaseCheck } from "./base-check.ts";
-import { contractBlock, earlierRoundsBlock, humanFeedback, toolkitBlock } from "./context.ts";
+import { contractBlock, earlierRoundsBlock, humanFeedback, testLayoutBlock, toolkitBlock } from "./context.ts";
 import { prompt } from "./prompts.ts";
 import { syncFile } from "./ready.ts";
 import { headers, runRole } from "./role.ts";
@@ -88,11 +88,16 @@ export const build: StageHandler = async (ctx) => {
                     (f) =>
                       `- ${f}${repro.includes(f) ? " (the repro)" : proofFiles.includes(f) ? " (a `test` proof's file: the verifier writes it)" : " (Gate runs through it)"}`,
                   ),
-                  "- the `scripts` of any package.json",
+                  "- the `scripts` (and `jest` config) of any package.json, and the test runner's config files (vitest/jest/playwright config, pytest.ini, .mocharc)",
                 ].join("\n"),
               },
             ]
-          : [{ title: "Files the proofs run through (you may not edit these)", body: "- the `scripts` of any package.json" }]),
+          : [
+              {
+                title: "Files the proofs run through (you may not edit these)",
+                body: "- the `scripts` (and `jest` config) of any package.json, and the test runner's config files (vitest/jest/playwright config, pytest.ini, .mocharc)",
+              },
+            ]),
         ...(syncing
           ? [
               {
@@ -108,6 +113,7 @@ export const build: StageHandler = async (ctx) => {
         ...fileBlockIf(roundDir(ctx.jobDir, job.round - 1), "ci.md", "The PR's CI was red (fix this first)"),
         ...earlierRoundsBlock(ctx.jobDir, job),
         ...(fb.length ? [{ title: "Feedback from a human", body: fb.join("\n\n") }] : []),
+        ...testLayoutBlock(job.worktree, ctx.config.test_cmd),
         await toolkitBlock(job, job.worktree),
       ],
     }),

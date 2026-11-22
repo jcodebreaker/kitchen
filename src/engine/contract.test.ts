@@ -35,6 +35,18 @@ test("the builder may not touch what proofs run through", () => {
   assert.match(p("kitchen.yaml", "M") ?? "", /protected/);
   assert.equal(p("server.js", "M"), null);
   assert.equal(p("db/003_add_column.sql", "A"), null, "a migration is allowed (and raises the risk floor at Gate)");
+  // Dogfood 002/005: the builder widened vitest's include to run tests it put in a new tests/ folder.
+  for (const f of ["vitest.config.ts", "web/vitest.workspace.mjs", "jest.config.js", "pytest.ini", ".mocharc.json", "playwright.config.ts"])
+    assert.match(p(f, "M") ?? "", /test-runner config/, f);
+  assert.equal(p("src/status.test.ts", "A"), null, "the builder still writes its own tests");
+  assert.equal(p("vite.config.ts", "M"), null, "the app's build config is not test-runner config");
+  assert.equal(p("tests/conftest.py", "M"), null, "pytest fixtures are test code");
+});
+
+test("package.json: a changed jest config counts like changed scripts", () => {
+  const a = JSON.stringify({ scripts: { test: "jest" }, jest: { testMatch: ["**/src/**/*.test.js"] } });
+  assert.equal(scriptsChanged(a, JSON.stringify({ scripts: { test: "jest" }, jest: { testMatch: ["**/*.test.js"] } })), true);
+  assert.equal(scriptsChanged(a, JSON.stringify({ scripts: { test: "jest" }, jest: { testMatch: ["**/src/**/*.test.js"] }, version: "2" })), false);
 });
 
 test("the drives stage keeps feature drives and the contract's test files only", () => {

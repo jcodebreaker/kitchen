@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { Dismissal, Member } from "../../checks/findings.ts";
+import { inLayout, type TestLayout, testLayout } from "../../checks/test-layout.ts";
 import { contractOf } from "../contract.ts";
 import type { Job } from "../machine.ts";
 import { roundDir } from "../store.ts";
@@ -26,6 +27,47 @@ export async function toolkitBlock(job: Job, src: string): Promise<PromptBlock> 
   } catch (e) {
     return { title: "The Toolkit", body: `describe failed: ${(e as Error).message}` };
   }
+}
+
+/** A few of the repo's existing files the layout matches, for the role to copy where tests go. */
+function existingTests(dir: string, layout: TestLayout, max = 6): string[] {
+  const out: string[] = [];
+  const skip = new Set(["node_modules", ".git", ".worktrees", ".kitchen", "dist", "build", ".venv", "venv", "__pycache__"]);
+  let seen = 0;
+  const walk = (rel: string) => {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(path.join(dir, rel), { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      if (out.length >= max || ++seen > 5000) return;
+      const p = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isDirectory()) {
+        if (!skip.has(e.name)) walk(p);
+      } else if (inLayout(p, layout)) out.push(p);
+    }
+  };
+  walk("");
+  return out;
+}
+
+/** Where the repo's tests live (dogfood: test proofs in a new `tests/` and a widened vitest include). */
+export function testLayoutBlock(dir: string, testCmd: string): PromptBlock[] {
+  const layout = testLayout(dir, testCmd);
+  if (!layout) return [];
+  const have = existingTests(dir, layout);
+  return [
+    {
+      title: "The repo's test layout",
+      body: [
+        `Runner: ${layout.runner} (from ${layout.source}). It runs files matching: ${layout.globs.map((g) => `\`${g}\``).join(", ")}.`,
+        have.length ? `Existing tests: ${have.join(", ")}.` : "No test file matches yet.",
+        "A new test file goes where these live, named like them. Never add a test folder the runner doesn't read, and never change the runner's config (its include or testMatch) to reach one: spec-lint refuses a `test` proof outside these globs, and the engine keeps test-runner config edits off the branch.",
+      ].join("\n"),
+    },
+  ];
 }
 
 /** What went wrong in earlier rounds: the gate, the verdict, an unreachable drive. Newest round first. */

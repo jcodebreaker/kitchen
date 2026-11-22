@@ -20,7 +20,7 @@ import { contractOf, namedDrives, reproCriterion, reproPolicy, testFilesOf } fro
 import { freshUp } from "../instance.ts";
 import { updateJob, writeAtomic } from "../store.ts";
 import { changedFiles, commitWith, ensureWorktree, headOf } from "../worktree.ts";
-import { contractBlock, toolkitBlock } from "./context.ts";
+import { contractBlock, testLayoutBlock, toolkitBlock } from "./context.ts";
 import { featureFilesAt } from "./drives.ts";
 import { prompt } from "./prompts.ts";
 import { headers, named, runRole } from "./role.ts";
@@ -66,6 +66,7 @@ export const repro: StageHandler = async (ctx) => {
             body: `Repro criterion: ${crit.id}\n${need.length ? `Missing: ${need.join(", ")}` : "Nothing is missing, but the last attempt did not reproduce; see below."}`,
           },
           ...lastAttempt(ctx.jobDir, n - 1),
+          ...testLayoutBlock(job.worktree, ctx.config.test_cmd),
           await toolkitBlock(job, job.worktree),
         ],
       }),

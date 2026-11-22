@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { type Criterion, isProtected, newDrivesOf, parseCriteria } from "../checks/spec-lint.ts";
+import { TEST_RUNNER_CONFIG } from "../checks/test-layout.ts";
 import { parseProof, type ToolkitSegment } from "../proof/proof-line.ts";
 import type { CommitPolicy } from "./worktree.ts";
 
@@ -84,11 +85,12 @@ export function filesChecksRunThrough(cmds: string[]): string[] {
   return [...out];
 }
 
-/** Did the `scripts` of a package.json change (text before → after)? Unparseable counts as changed. Pure. */
+/** Did the `scripts` (or the `jest` config) of a package.json change (text before → after)? Unparseable counts as changed. Pure. */
 export function scriptsChanged(before: string | null, after: string | null): boolean {
   const scripts = (t: string | null) => {
     if (t === null) return {};
-    return (JSON.parse(t) as { scripts?: unknown }).scripts ?? {};
+    const j = JSON.parse(t) as { scripts?: unknown; jest?: unknown };
+    return [j.scripts ?? {}, j.jest ?? null];
   };
   try {
     return JSON.stringify(scripts(before)) !== JSON.stringify(scripts(after));
@@ -115,7 +117,11 @@ const BUILDER_RULES: readonly [(f: string, l: BuilderLimits) => boolean, string]
   [(f, l) => l.reproFiles.includes(f), "the repro's regression test is not the builder's to edit"],
   [(f, l) => (l.proofFiles ?? []).includes(f), "a test file a `test` proof runs is the contract's, not the builder's to write or edit"],
   [(f, l) => (l.checkFiles ?? []).includes(f), "Gate's checks or the test command run through this file"],
-  [(f, l) => (l.scriptsChanged ?? []).includes(f), "package.json `scripts` changed: Gate's checks and test proofs run through them"],
+  [(f, l) => (l.scriptsChanged ?? []).includes(f), "package.json `scripts` or `jest` changed: Gate's checks and test proofs run through them"],
+  [
+    (f) => TEST_RUNNER_CONFIG.test(f),
+    "test-runner config (which files the tests are): put a test where the repo's runner already finds tests, don't widen its include",
+  ],
   [(f, l) => isProtected(f, l.protectedGlobs), "protected path"],
   [(f) => f.startsWith(".kitchen/"), "Kitchen's own files"],
 ];
@@ -152,9 +158,11 @@ export const reproPolicy =
         ? "the repro may not change the Toolkit's primitives"
         : isProtected(f, protectedGlobs)
           ? "protected path"
-          : status !== "A"
-            ? "the repro adds a regression test; it doesn't change existing files (no fix before Build)"
-            : null;
+          : TEST_RUNNER_CONFIG.test(f)
+            ? "test-runner config: the regression test goes where the repo's runner already finds tests"
+            : status !== "A"
+              ? "the repro adds a regression test; it doesn't change existing files (no fix before Build)"
+              : null;
 
 /** Nothing is kept (spec, verify): the role's only output is its file. */
 export const nothingPolicy: CommitPolicy = () => "this role's only output is its file";

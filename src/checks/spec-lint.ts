@@ -34,6 +34,7 @@ import path from "node:path";
 import { absentString, type Clause, ExpectError, isJudged, negativeClauses, parseExpect } from "../proof/assert.ts";
 import { checkPrimArgs, DriveFormatError } from "../proof/drive-format.ts";
 import { ProofLineError, parseProof, type Segment, words } from "../proof/proof-line.ts";
+import { inLayout, type TestLayout } from "./test-layout.ts";
 
 export type Criterion = { id: string; text: string; proof: string | null; expect: string | null; repro: boolean; covers: string[] };
 /**
@@ -276,6 +277,8 @@ export function lintSpec(
     protected?: string[];
     /** intake.md's requirements: rule 7 runs when given. */
     requirements?: Requirement[];
+    /** The repo's test layout (checks/test-layout.ts): rule 8 runs when given. */
+    testLayout?: TestLayout | null;
   },
 ): LintResult {
   const criteria = parseCriteria(md);
@@ -329,6 +332,11 @@ export function lintSpec(
     for (const s of segs) {
       const why = s.kind === "cmd" ? cmdProblem(s.cmd) : s.kind === "test" ? cmdProblem(s.file) : null;
       if (why) return fail(`${c.id}: the ${s.kind} proof is refused: ${why}`);
+      // 8. a test file sits where the repo's runner finds its tests
+      if (s.kind === "test" && o.testLayout && !inLayout(s.file, o.testLayout))
+        return fail(
+          `${c.id}: the test file ${s.file} is outside the repo's test layout (${o.testLayout.runner}: ${o.testLayout.globs.join(", ")}, from ${o.testLayout.source}); put it where the repo's tests live (the builder may not change the runner's config to reach it)`,
+        );
     }
     if (c.repro && o.kind !== "bug") return fail(`${c.id}: \`repro: true\` is only for a bug (this ticket is a ${o.kind ?? "ticket of no kind"})`);
   }

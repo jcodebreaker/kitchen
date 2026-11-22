@@ -23,7 +23,7 @@ import type { Job } from "../machine.ts";
 import { roundDir, writeAtomic } from "../store.ts";
 import { changedFiles, commitWith, fileAtHead, headOf } from "../worktree.ts";
 import { runBaseCheckAfterDrives } from "./base-check.ts";
-import { contractBlock, toolkitBlock } from "./context.ts";
+import { contractBlock, testLayoutBlock, toolkitBlock } from "./context.ts";
 import { gateStillValid } from "./gate.ts";
 import { prompt } from "./prompts.ts";
 import { headers, named as namedHeader, runRole } from "./role.ts";
@@ -124,6 +124,7 @@ export const drives: StageHandler = async (ctx) => {
               ...previousFailure(dir, attempt - 1),
             ].join("\n"),
           },
+          ...testLayoutBlock(job.worktree, ctx.config.test_cmd),
           await toolkitBlock(job, job.worktree),
         ],
       }),

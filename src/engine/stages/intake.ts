@@ -3,9 +3,10 @@
 // pass the full spec-lint against the Toolkit as it is on the repo's checkout.
 import path from "node:path";
 import { lintSpec, parseRequirements } from "../../checks/spec-lint.ts";
+import { testLayout } from "../../checks/test-layout.ts";
 import type { Kind, Risk } from "../machine.ts";
 import { writeAtomic } from "../store.ts";
-import { fileBlock, toolkitBlock } from "./context.ts";
+import { fileBlock, testLayoutBlock, toolkitBlock } from "./context.ts";
 import { prompt } from "./prompts.ts";
 import { headers, runRole } from "./role.ts";
 import { hasToolkit, toolkitView } from "./toolkit-info.ts";
@@ -24,7 +25,11 @@ export const intake: StageHandler = async (ctx) => {
       role: "intake",
       job: ctx.job,
       jobDir: ctx.jobDir,
-      blocks: [await toolkitBlock(ctx.job, ctx.repo), ...fileBlock(ctx.jobDir, "intake-refused.md", "Your last intake.md was refused: fix this")],
+      blocks: [
+        await toolkitBlock(ctx.job, ctx.repo),
+        ...testLayoutBlock(ctx.repo, ctx.config.test_cmd),
+        ...fileBlock(ctx.jobDir, "intake-refused.md", "Your last intake.md was refused: fix this"),
+      ],
     }),
     dest: path.join(ctx.jobDir, "intake.md"),
   });
@@ -40,7 +45,16 @@ export const intake: StageHandler = async (ctx) => {
   const view = hasToolkit(ctx.job) ? await toolkitView(ctx.job, ctx.repo) : { primitives: [], drives: {} };
   // The ticket's requirements, which the criteria (inline here, or the spec's) must cover: spec-lint rule 7.
   const requirements = parseRequirements(r.text);
-  const criteria = risk === "low" ? lintSpec(r.text, { kind: kind ?? null, toolkit: view, protected: ctx.config.protected, requirements }) : undefined;
+  const criteria =
+    risk === "low"
+      ? lintSpec(r.text, {
+          kind: kind ?? null,
+          toolkit: view,
+          protected: ctx.config.protected,
+          requirements,
+          testLayout: testLayout(ctx.repo, ctx.config.test_cmd),
+        })
+      : undefined;
   const refusal =
     criteria && !criteria.ok
       ? `inline criteria refused by spec-lint: ${criteria.reason}`

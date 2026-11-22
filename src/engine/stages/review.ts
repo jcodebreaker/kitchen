@@ -1,7 +1,8 @@
 // review: one read-tier reviewer per lens, run in parallel (up to `concurrency`).
 // Lenses come from the risk path (the stricter of intake's rating and the diff
 // floor) plus the job's surfaces; `code-if-diff>N` adds the code lens when the
-// diff is over N lines or touches a feature drive. A `human: always` path labels
+// diff is over N lines, touches a feature drive, or adds or changes tests or
+// test/build config (package.json, tsconfig, vitest config…). A `human: always` path labels
 // the PR `kitchen:review-required`.
 //
 // Every lens sees the same packet: the ticket's requirements, the contract,
@@ -38,6 +39,7 @@ import {
 } from "../../checks/findings.ts";
 import { seedTouched } from "../../checks/risk-floor.ts";
 import { parseRequirements } from "../../checks/spec-lint.ts";
+import { isTestOrBuildConfig } from "../../checks/test-layout.ts";
 import type { Config } from "../../config.ts";
 import { appendLedger } from "../../ledger/append.ts";
 import { evidenceDir, sealOf } from "../../proof/job.ts";
@@ -66,10 +68,12 @@ export function lensesFor(cfg: Config, job: Pick<Job, "risk" | "riskFloor" | "su
   const out = new Set<string>();
   const lines = diff.reduce((n, d) => n + d.lines, 0);
   const touchesDrive = diff.some((d) => d.file.startsWith(".kitchen/toolkit/features/"));
+  // Tests and test/build config shape what the proofs and checks mean (dogfood: tests outside the layout, a widened include).
+  const touchesTests = diff.some((d) => isTestOrBuildConfig(d.file));
   for (const l of cfg.paths[effectiveRisk(job)].review) {
     const m = /^code-if-diff>(\d+)$/.exec(l);
     if (!m) out.add(l);
-    else if (lines > Number(m[1]) || touchesDrive) out.add("code");
+    else if (lines > Number(m[1]) || touchesDrive || touchesTests) out.add("code");
   }
   for (const s of job.surfaces) for (const l of cfg.surfaces[s] ?? []) out.add(l);
   return [...out];
