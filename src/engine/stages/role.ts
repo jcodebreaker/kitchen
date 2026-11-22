@@ -12,7 +12,7 @@ import { bridgeServer } from "../../bridge/mcp.ts";
 import { modelFor } from "../../config.ts";
 import { kitchenHome } from "../../home.ts";
 import { appendLedger } from "../../ledger/append.ts";
-import { procsDirOf } from "../../procs.ts";
+import { procsDirOf, reapGroups } from "../../procs.ts";
 import type { AgentRunRef } from "../machine.ts";
 import { scratchOf, updateJob, writeAtomic } from "../store.ts";
 import { ensureWorktree } from "../worktree.ts";
@@ -65,6 +65,19 @@ export async function runRole(ctx: StageContext, o: { role: string; file: string
   ctx.log(`${o.role}: ${ctx.agent.name} ${model} (${o.tier}) → ${o.file}`);
   const r = await ctx.agent.run(req);
   const secs = (Date.now() - t0) / 1000;
+  // A bridge killed with its agent's group (SIGKILL: no exit handler) leaves the checks
+  // and Toolkit calls it started running; they must not outlive the stage (src/procs.ts).
+  for (const g of await reapGroups(procsDirOf(ctx.jobDir), { deadOwners: true })) {
+    ctx.log(`killed ${g.what} left running by pid ${g.by} (process group ${g.pgid})`);
+    appendLedger(ctx.repo, {
+      job: job.id,
+      stage: job.stage,
+      round: job.round,
+      event: "orphan-killed",
+      key: `${job.id}/orphan/${g.pgid}/${g.at}`,
+      detail: { ...g },
+    });
+  }
   const run: AgentRunRef = {
     key,
     role: o.role,
@@ -105,5 +118,7 @@ export async function runRole(ctx: StageContext, o: { role: string; file: string
     j.agentRuns.push(run);
     return j;
   });
+  // Kept for whoever holds the lock now (it reuses the file); this runner does nothing more with it.
+  if (!ctx.holdsLock()) throw new LockLost(`run lock lost while ${o.role} ran`);
   return { text, line: r.line, reused: false, run };
 }

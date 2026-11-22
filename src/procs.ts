@@ -11,11 +11,24 @@
 //   for every job before dispatching anything: each group still alive is killed
 //   (TERM, then KILL after a grace) and waited for, so a resumed stage never
 //   runs next to the agent of the stage it replaces.
+// - A process that starts groups for a job and dies without its exit handler
+//   (the bridge, SIGKILLed with its agent's group) leaves them running too:
+//   runRole reaps the job's records whose owner (`by`) is dead once its agent
+//   returns, so a check the bridge started does not outlive the stage.
 // - A pid is never reused while a process group with that id exists, so a live
 //   group with a recorded pgid is the recorded one. A live leader with another
 //   start time is a reused pid and is left alone.
+// - Records are written atomically. One that can't be read, or has no start
+//   time, is deleted without killing anything: a pgid alone can't tell the
+//   recorded group from a later one that reused the pid. Residual window: the
+//   record is written just after spawn, so a crash between the two leaves the
+//   group untracked (it is not killed on restart).
+// - Limit: a process group is not a sandbox. A check or Toolkit call that
+//   daemonises (setsid, a double fork into a new session) leaves the group and
+//   is never killed here; app code runs unsandboxed (ADR 0006).
 import fs from "node:fs";
 import path from "node:path";
+import { writeAtomic } from "./engine/store.ts";
 import { processStart } from "./lock.ts";
 
 export type GroupRecord = { pgid: number; start: string | null; what: string; by: number; at: string };
@@ -63,7 +76,7 @@ export function trackGroup(dir: string | undefined, pid: number | undefined, wha
     fs.mkdirSync(dir, { recursive: true });
     file = path.join(dir, `${pid}.json`);
     const rec: GroupRecord = { pgid: pid, start: processStart(pid), what, by: process.pid, at: new Date().toISOString() };
-    fs.writeFileSync(file, JSON.stringify(rec));
+    writeAtomic(file, JSON.stringify(rec));
   }
   live.set(pid, file);
   return () => {
@@ -85,38 +98,57 @@ async function waitDead(pgids: number[], ms: number): Promise<number[]> {
   return left;
 }
 
+const pidAlive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+};
+
+function readRecord(file: string): GroupRecord | null {
+  try {
+    const r = JSON.parse(fs.readFileSync(file, "utf8")) as GroupRecord;
+    return Number.isInteger(r.pgid) && r.pgid > 1 && typeof r.start === "string" && Number.isInteger(r.by) ? r : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Kill every recorded group in `dir` that is still alive, wait until it is gone,
  * and remove the records. Returns the groups that were killed. Throws if one
  * survives SIGKILL (the job must not be dispatched next to it).
+ * `deadOwners`: only records whose owner (`by`) is dead; a live owner's are left
+ * alone (it is still running them, and removes them itself). A reused owner pid
+ * reads as alive, so the error is on the side of killing nothing.
  */
-export async function reapGroups(dir: string, graceMs = 3000): Promise<GroupRecord[]> {
+export async function reapGroups(dir: string, o: { graceMs?: number; deadOwners?: boolean } = {}): Promise<GroupRecord[]> {
   if (!fs.existsSync(dir)) return [];
   const killed: GroupRecord[] = [];
   const files: string[] = [];
   for (const name of fs.readdirSync(dir).filter((n) => n.endsWith(".json"))) {
     const file = path.join(dir, name);
-    let rec: GroupRecord;
-    try {
-      rec = JSON.parse(fs.readFileSync(file, "utf8")) as GroupRecord;
-    } catch {
-      fs.rmSync(file, { force: true }); // torn by the crash: its pid is in the name
-      rec = { pgid: Number.parseInt(name, 10), start: null, what: "?", by: 0, at: "" };
-      if (!Number.isInteger(rec.pgid) || rec.pgid <= 1) continue;
+    const rec = readRecord(file);
+    if (!rec) {
+      fs.rmSync(file, { force: true }); // torn or no start time: can't tell its group from a reused pid, kill nothing
+      continue;
     }
-    files.push(file);
     if (live.has(rec.pgid)) continue; // ours, running now
+    if (o.deadOwners && rec.by !== process.pid && pidAlive(rec.by)) continue; // its owner is still running it
+    files.push(file);
     const now = processStart(rec.pgid);
-    if (now !== null && rec.start !== null && now !== rec.start) continue; // the pid was reused by another process
+    if (now !== null && now !== rec.start) continue; // the pid was reused by another process
     if (groupAlive(rec.pgid) && killGroup(rec.pgid, "SIGTERM")) killed.push(rec);
   }
   let left = await waitDead(
     killed.map((k) => k.pgid),
-    graceMs,
+    o.graceMs ?? 3000,
   );
   for (const g of left) killGroup(g, "SIGKILL");
   left = await waitDead(left, 2000);
   if (left.length) throw new Error(`process group(s) ${left.join(", ")} survive SIGKILL`);
-  for (const f of files) if (!live.has(Number.parseInt(path.basename(f), 10))) fs.rmSync(f, { force: true });
+  for (const f of files) fs.rmSync(f, { force: true });
   return killed;
 }

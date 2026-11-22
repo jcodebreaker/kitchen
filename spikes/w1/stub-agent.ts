@@ -35,6 +35,26 @@ const open = [...prior.matchAll(/^start (\d+) /gm)].map((m) => Number(m[1])).fil
 const file = path.basename(out);
 fs.appendFileSync(log, `start ${process.pid} ${file} overlap=${open.filter(alive).join(",")}\n`);
 
+// kill.ts part 4: with <repo>/bridge-kill present, the builder starts the bridge from its
+// --mcp-config (a child, in this group, as Claude starts it), calls `checks` (one hangs),
+// and once the check is running SIGKILLs its own group: agent and bridge die, the check
+// (its own group) is left behind. Logs `bridge-kill <bridge pid>`.
+const trigger = path.join(repo, "bridge-kill");
+if (role === "builder" && fs.existsSync(trigger)) {
+  fs.rmSync(trigger);
+  const cfgArg = process.argv[process.argv.indexOf("--mcp-config") + 1];
+  const srv = (JSON.parse(cfgArg) as { mcpServers: { kitchen: { command: string; args: string[]; env: Record<string, string> } } }).mcpServers.kitchen;
+  const { spawn } = await import("node:child_process");
+  const b = spawn(srv.command, srv.args, { env: srv.env, stdio: ["pipe", "ignore", "inherit"] });
+  fs.appendFileSync(log, `bridge-kill ${b.pid}\n`);
+  b.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18" } })}\n`);
+  b.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "checks", arguments: {} } })}\n`);
+  const pidFile = path.join(repo, "check-pid");
+  for (let i = 0; i < 300 && !fs.existsSync(pidFile); i++) await new Promise((r) => setTimeout(r, 100));
+  await new Promise((r) => setTimeout(r, 300));
+  process.kill(0, "SIGKILL");
+}
+
 const req = { role, prompt, cwd, outFile: file, outDir: path.dirname(out), tier: "write", model: "stub", env: {}, timeoutSec: 0, maxTurns: 0 } as AgentRequest;
 const step = await script(req);
 if (step.file !== undefined) {
