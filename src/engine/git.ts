@@ -41,12 +41,13 @@ export class GitError extends Error {
  * Config keys that make the engine's git commands run a program, each set to a
  * value that runs nothing. Filter drivers (`filter.<name>.clean/smudge/process`,
  * run by add, status, commit) can't be wildcarded, so `openGit` lists the
- * drivers the config defines and empties each one. Not covered here because the
- * engine never runs the commands that use them: diff/textconv drivers
- * (`diff`, `log -p`: pass `--no-ext-diff --no-textconv` if that changes),
- * merge drivers (`merge`), `core.alternateRefsCommand` (fetch negotiation).
- * The push path must also push to an explicit URL with `--receive-pack`, so no
- * `remote.<name>.*` program applies.
+ * drivers the config defines and empties each one. Not covered here:
+ * diff/textconv drivers (an engine `diff` that prints content passes
+ * `--no-ext-diff --no-textconv`; name-only/name-status runs none), merge drivers (`mergeRev`, Ready's sync, refuses a repo whose
+ * config defines one: `merge.<name>.driver` can't be wildcarded either), and
+ * `core.alternateRefsCommand` (fetch negotiation; fetches go to an explicit URL
+ * with `--upload-pack`). The push path must also push to an explicit URL with
+ * `--receive-pack`, so no `remote.<name>.*` program applies.
  */
 export const NEUTRAL_CONFIG = [
   "core.fsmonitor=false", // a command run on every index refresh (status, add, commit)

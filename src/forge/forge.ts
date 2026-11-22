@@ -16,7 +16,9 @@ import { withFileLock } from "../lock.ts";
 import { commitEvidence, EVIDENCE_BRANCH } from "./evidence-branch.ts";
 import { GithubForge } from "./github.ts";
 
-export type CiState = "none" | "pending" | "pass" | "fail";
+/** `cancelled`: the run was cancelled (not a failure; Ready reads it once more). */
+export type CiState = "none" | "pending" | "pass" | "fail" | "cancelled";
+export type PrState = "open" | "merged" | "closed";
 /** A review comment on a PR. `association`: the author's relation to the repo (GitHub's author_association: OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR, NONE…). */
 export type PrComment = { id: string; pr: number; author: string; association: string; body: string; at: string };
 /** Where a job's published folder is: the branch commit, and a link prefix for files in it (`<url>report.html`). */
@@ -29,7 +31,8 @@ export interface Forge {
   /** Push the job branch and open (or find) its draft PR. Local: nothing to push, no PR. */
   publish(o: { branch: string; title: string; head: string }): Promise<{ pushed: boolean; pr: number | null }>;
   checks(pr: number | null): Promise<CiState>;
-  prMerged(pr: number): Promise<boolean>;
+  /** A PR's state: open, merged, or closed without merging (a Toolkit PR a human turned down). */
+  prState(pr: number): Promise<PrState>;
   /** Push the smith's Toolkit branch and open (or find) its PR, by key. */
   openToolkitPr(o: ToolkitPrRequest): Promise<number>;
   /** The draft PR becomes ready for review (report → done). */
@@ -86,16 +89,16 @@ export class LocalForge implements Forge {
   async checks(): Promise<CiState> {
     return "none";
   }
-  /** A local Toolkit PR is merged when its head is in the base (the main checkout's HEAD). */
-  async prMerged(pr: number) {
+  /** A local Toolkit PR is merged when its head is in the base (the main checkout's HEAD); nothing closes one locally. */
+  async prState(pr: number): Promise<PrState> {
     const p = readLocalForge(this.repo).find((x) => x.kind === "toolkit-pr" && Number(x.n) === pr);
-    if (!p) return false;
+    if (!p) return "open";
     const git = await openGit(plainCheckout(this.repo));
     try {
       await git.run(["merge-base", "--is-ancestor", String(p.head), "HEAD"]);
-      return true;
+      return "merged";
     } catch {
-      return false;
+      return "open";
     }
   }
   /** No remote: the smith's branch is the PR (a human merges it into the base); recorded with a local number. */
@@ -148,7 +151,7 @@ export class LocalForge implements Forge {
 /** The fake forge's state file. Counts every call per key, so a side effect that ran twice shows. */
 export type FakeForgeState = {
   prs: { n: number; branch: string; title: string; head: string; checks: CiState; merged: boolean; pushes: number; creates: number }[];
-  toolkitPrs: { n: number; key: string; title: string; branch?: string; head?: string; merged: boolean; calls: number }[];
+  toolkitPrs: { n: number; key: string; title: string; branch?: string; head?: string; merged: boolean; closed?: boolean; calls: number }[];
   /** PRs marked ready for review. */
   ready?: number[];
   tickets: { ref: string; key: string; title: string; closed: boolean; calls: number }[];
@@ -216,9 +219,11 @@ export class FakeForge implements Forge {
     if (pr === null) return "none";
     return readFakeForge(this.file).prs.find((p) => p.n === pr)?.checks ?? "none";
   }
-  async prMerged(pr: number) {
+  async prState(pr: number): Promise<PrState> {
     const s = readFakeForge(this.file);
-    return !!(s.prs.find((p) => p.n === pr)?.merged || s.toolkitPrs.find((p) => p.n === pr)?.merged);
+    const t = s.toolkitPrs.find((p) => p.n === pr);
+    if (s.prs.find((p) => p.n === pr)?.merged || t?.merged) return "merged";
+    return t?.closed ? "closed" : "open";
   }
   async markReady(pr: number | null) {
     if (pr === null) return;

@@ -74,7 +74,7 @@ const tpr = await forge.openToolkitPr({
   head: th,
 });
 check("Toolkit PR opened", tpr > 0, `#${tpr}`);
-check("not merged", (await forge.prMerged(tpr)) === false);
+check("not merged", (await forge.prState(tpr)) === "open");
 
 const jobDir = path.join(r.dir, ".kitchen", "jobs", `live-${stamp}`);
 fs.mkdirSync(path.join(jobDir, "evidence", "e1"), { recursive: true });

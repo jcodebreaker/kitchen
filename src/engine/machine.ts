@@ -145,7 +145,8 @@ export type Facts = {
   feedbackTo?: Stage;
   spec?: Lint;
   repro?: { failedAsExpected: boolean; onBase: boolean; committed: boolean; missingPrimitive?: string };
-  build?: { status: "READY" | "BLOCKED"; committed: boolean; pushed: boolean; pr: number | null; localForge: boolean };
+  /** syncRefused: base-changed files of a sync merge the layer rules would have put back to ours (silently dropping the base's change). */
+  build?: { status: "READY" | "BLOCKED"; committed: boolean; pushed: boolean; pr: number | null; localForge: boolean; syncRefused?: string[] };
   gate?: { head: string; currentHead: string; result: "PASS" | "FAIL"; riskFloor?: Risk | null };
   drives?: { gateValid: boolean; resolved: boolean; featureChecks: boolean; unreachable?: boolean; missingPrimitive?: string; writeFailed?: boolean };
   verify?: {
@@ -170,10 +171,17 @@ export type Facts = {
     synced: boolean;
     conflict: boolean;
     ci: "none" | "pending" | "pass" | "fail";
-    toolkitPr: "none" | "open" | "merged";
+    /** closed: the Toolkit PR was closed without merging (→ needs-human). */
+    toolkitPr: "none" | "open" | "merged" | "closed";
     gatePass: boolean;
     baseMoved: boolean;
     recheckFailed: boolean;
+    /** HEAD is on the remote (publish/<head>), so CI and the report are about it. Always true on the local forge. */
+    pushed?: boolean;
+    /** The job PR that HEAD was published to (a closed one is never reused). */
+    pr?: number | null;
+    /** paused(ci): don't read CI again before this (the grace window after a push, or a cancelled run's second read). */
+    until?: string;
     /** The base tip the job branch was just synced with (the job's base from now on). */
     newBase?: string;
     /** toolkitRef after the sync: the new base when it has a Toolkit and no Toolkit PR is still open. */
@@ -281,11 +289,16 @@ const verdictIs =
 const synced = (j: Job, f: Facts) => {
   if (f.ready?.newBase) j.base = f.ready.newBase;
   if (f.ready?.toolkitRef) j.toolkitRef = f.ready.toolkitRef;
+  readyPr(j, f);
+};
+/** The job PR Ready published HEAD to. */
+const readyPr = (j: Job, f: Facts) => {
+  if (f.ready?.pr !== undefined && f.ready.pr !== null) j.pr = f.ready.pr;
 };
 const pause = (waitFor: WaitFor, why: string) => (j: Job, f: Facts) => {
   j.pausedFrom = j.stage;
   j.waitFor = waitFor;
-  j.until = f.adapter?.until;
+  j.until = f.adapter?.until ?? f.ready?.until;
   j.pausedReason = why;
 };
 
@@ -468,10 +481,10 @@ export const TABLE: readonly Row[] = [
     id: "build>needs-human",
     from: "build",
     to: "needs-human",
-    when: "build.md STATUS: BLOCKED",
-    guard: check((_j, f) => f.build?.status === "BLOCKED", "build.md is not BLOCKED"),
+    when: "build.md STATUS: BLOCKED, or a sync merge whose resolution the layer rules would cut a base change from (the merge is aborted)",
+    guard: check((_j, f) => f.build?.status === "BLOCKED" || !!f.build?.syncRefused?.length, "build.md is not BLOCKED and the sync kept every base change"),
     apply: (j, f) => {
-      j.pausedReason = f.why ?? "builder blocked";
+      j.pausedReason = f.why ?? (f.build?.syncRefused?.length ? `sync merge aborted: ${f.build.syncRefused.join(", ")}` : "builder blocked");
     },
   },
   // gate
@@ -662,6 +675,16 @@ export const TABLE: readonly Row[] = [
     ),
     apply: (j, f) => toToolkit("drives", f.verify?.gapPrimitive)(j),
   },
+  {
+    id: "toolkit>toolkit",
+    from: "toolkit",
+    to: "toolkit",
+    when: "the engine's check of the smith's commit fails (or the smith gave up), smith.attempts < 2: the second try reads toolkit-check-<n>.json",
+    guard: all((_j, f) => need(f.toolkit, "toolkit") ?? (f.toolkit?.checkPassed ? "the toolkit check passed" : null), smithLeft),
+    apply: (j) => {
+      j.smith.attempts += 1;
+    },
+  },
   // toolkit → returnTo
   ...(["spec", "repro", "drives"] as const).map(
     (to): Row => ({
@@ -702,16 +725,28 @@ export const TABLE: readonly Row[] = [
     id: "ready>report",
     from: "ready",
     to: "report",
-    when: "synced with base, CI green, Toolkit PR (if any) merged, gate PASS, base unmoved since verify",
+    when: "synced with base, HEAD pushed, CI green on it, Toolkit PR (if any) merged, gate PASS, base unmoved since verify",
     guard: (_j, f) => {
       const r = f.ready;
       if (!r) return "no ready facts";
       if (!r.synced || r.conflict) return "not synced with base";
       if (r.baseMoved) return "base moved since verify: re-verify";
+      if (!r.pushed) return "HEAD is not pushed: CI and the report would be about an older commit";
       if (r.ci !== "pass" && r.ci !== "none") return `CI is ${r.ci}`;
-      if (r.toolkitPr === "open") return "Toolkit PR not merged";
+      if (r.toolkitPr === "open" || r.toolkitPr === "closed") return `Toolkit PR ${r.toolkitPr}, not merged`;
       if (!r.gatePass) return "gate is not PASS on this HEAD";
       return null;
+    },
+    apply: readyPr,
+  },
+  {
+    id: "ready>needs-human",
+    from: "ready",
+    to: "needs-human",
+    when: "the job's Toolkit PR was closed without merging: its primitive will not reach the base",
+    guard: check((_j, f) => f.ready?.toolkitPr === "closed", "the Toolkit PR is not closed"),
+    apply: (j, f) => {
+      j.pausedReason = f.why ?? `Toolkit PR ${j.smith.toolkitPr} was closed without merging`;
     },
   },
   {
@@ -736,7 +771,11 @@ export const TABLE: readonly Row[] = [
     to: "paused",
     when: "CI still running, or the Toolkit PR not merged yet",
     guard: check((_j, f) => f.ready?.ci === "pending" || f.ready?.toolkitPr === "open", "neither CI pending nor a Toolkit PR open"),
-    apply: (j, f) => (f.ready?.toolkitPr === "open" ? pause("toolkit-pr", "waiting for the Toolkit PR to merge")(j, f) : pause("ci", "waiting for CI")(j, f)),
+    apply: (j, f) => {
+      readyPr(j, f);
+      if (f.ready?.toolkitPr === "open") pause("toolkit-pr", "waiting for the Toolkit PR to merge")(j, f);
+      else pause("ci", "waiting for CI")(j, f);
+    },
   },
   {
     id: "ready>build",
@@ -747,7 +786,10 @@ export const TABLE: readonly Row[] = [
       check((_j, f) => !!f.ready && (f.ready.conflict || f.ready.ci === "fail" || f.ready.recheckFailed), "no conflict, red CI or failed re-check"),
       roundLeft,
     ),
-    apply: newRound,
+    apply: (j, f) => {
+      readyPr(j, f);
+      newRound(j);
+    },
   },
   // paused
   ...(["intake", "spec", "repro", "build", "gate", "drives", "verify", "toolkit", "review", "ready", "report"] as const).map(

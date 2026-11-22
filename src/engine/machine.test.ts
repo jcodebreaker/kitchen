@@ -55,6 +55,7 @@ const ready = (o: Partial<NonNullable<Facts["ready"]>> = {}): Facts["ready"] => 
   gatePass: true,
   baseMoved: false,
   recheckFailed: false,
+  pushed: true,
   ...o,
 });
 const verify = (verdict: NonNullable<Facts["verify"]>["verdict"], o: Partial<NonNullable<Facts["verify"]>> = {}): Facts["verify"] => ({
@@ -450,6 +451,31 @@ const cases: Case[] = [
     facts: f({ toolkit: { checkPassed: true, sha: "t1", pr: 9 } }),
     refused: /returnTo is drives/,
   },
+  {
+    row: "toolkit>toolkit",
+    job: { stage: "toolkit", returnTo: "drives", gap: "sql", smith: { attempts: 1, toolkitPr: null } },
+    to: "toolkit",
+    facts: f({ toolkit: { checkPassed: false, sha: "t1", pr: null } }),
+    expect: (j) => {
+      assert.equal(j.smith.attempts, 2);
+      assert.equal(j.returnTo, "drives");
+      assert.equal(j.gap, "sql");
+    },
+  },
+  {
+    row: "toolkit>toolkit",
+    job: { stage: "toolkit", returnTo: "drives", smith: { attempts: 2, toolkitPr: null } },
+    to: "toolkit",
+    facts: f({ toolkit: { checkPassed: false, sha: "t1", pr: null } }),
+    refused: /smith limit/,
+  },
+  {
+    row: "toolkit>toolkit",
+    job: { stage: "toolkit", returnTo: "drives", smith: { attempts: 1, toolkitPr: null } },
+    to: "toolkit",
+    facts: f({ toolkit: { checkPassed: true, sha: "t1", pr: 3 } }),
+    refused: /check passed/,
+  },
   // review
   { row: "review>ready", job: { stage: "review" }, to: "ready", facts: f({ review: { pass: true } }) },
   { row: "review>ready", job: { stage: "review" }, to: "ready", facts: f({ review: { pass: false, blocking: "x" } }), refused: /did not PASS/ },
@@ -471,9 +497,36 @@ const cases: Case[] = [
   // ready
   { row: "ready>report", job: { stage: "ready" }, to: "report", facts: f({ ready: ready() }) },
   { row: "ready>report", job: { stage: "ready" }, to: "report", facts: f({ ready: ready({ ci: "pending" }) }), refused: /CI is pending/ },
+  { row: "ready>report", job: { stage: "ready" }, to: "report", facts: f({ ready: ready({ pushed: false }) }), refused: /not pushed/ },
+  {
+    row: "ready>report",
+    job: { stage: "ready", pr: 3 },
+    to: "report",
+    facts: f({ ready: ready({ pr: 7 }) }),
+    expect: (j) => assert.equal(j.pr, 7),
+  },
+  { row: "ready>report", job: { stage: "ready" }, to: "report", facts: f({ ready: ready({ toolkitPr: "closed" }) }), refused: /Toolkit PR closed/ },
+  {
+    row: "ready>needs-human",
+    job: { stage: "ready", smith: { attempts: 1, toolkitPr: 4 } },
+    to: "needs-human",
+    facts: f({ ready: ready({ toolkitPr: "closed" }), why: "Toolkit PR 4 was closed" }),
+    expect: (j) => {
+      assert.equal(j.escalatedFrom, "ready");
+      assert.match(j.pausedReason ?? "", /closed/);
+    },
+  },
+  { row: "ready>needs-human", job: { stage: "ready" }, to: "needs-human", facts: f({ ready: ready() }), refused: /not closed/ },
   { row: "ready>drives", job: { stage: "ready" }, to: "drives", facts: f({ ready: ready({ baseMoved: true }) }) },
   { row: "ready>drives", job: { stage: "ready" }, to: "drives", facts: f({ ready: ready() }), refused: /base did not move/ },
   { row: "ready>paused", job: { stage: "ready" }, to: "paused", facts: f({ ready: ready({ ci: "pending" }) }), expect: (j) => assert.equal(j.waitFor, "ci") },
+  {
+    row: "ready>paused",
+    job: { stage: "ready" },
+    to: "paused",
+    facts: f({ ready: ready({ ci: "pending", until: "2030-01-01T00:00:00.000Z" }) }),
+    expect: (j) => assert.equal(j.until, "2030-01-01T00:00:00.000Z"),
+  },
   {
     row: "ready>paused",
     job: { stage: "ready" },

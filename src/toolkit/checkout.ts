@@ -13,6 +13,8 @@
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { loadConfig } from "../config.ts";
+import { BASE_REF } from "../engine/base.ts";
 import { type GitRepo, linkedWorktree, openGit, plainCheckout } from "../engine/git.ts";
 import { isActive } from "../engine/machine.ts";
 import { kitchenDir, listJobs, writeAtomic } from "../engine/store.ts";
@@ -74,18 +76,31 @@ export async function resolveRev(repo: string, rev: string): Promise<string> {
 }
 
 /**
- * Whether `sha` is merged: an ancestor of the base, so a human has taken it in. The base is the
- * main checkout's HEAD, or (GitHub forge) the remote base the engine last fetched, `refs/kitchen/base`.
+ * The ref "merged" is measured against: the main checkout's HEAD (local and fake forges), or on the
+ * GitHub forge only the remote base the engine last fetched, `refs/kitchen/base`, never the local
+ * HEAD: a branch merged in someone's local checkout but not on the remote has not been taken in.
+ * A kitchen.yaml that doesn't parse counts as the GitHub case (the stricter one). Pure but for the file read.
+ */
+export function mergeBaseRef(repo: string): string {
+  try {
+    return loadConfig(repo).forge.kind === "github" ? BASE_REF : "HEAD";
+  } catch {
+    return BASE_REF;
+  }
+}
+
+/**
+ * Whether `sha` is merged: an ancestor of the base (`mergeBaseRef`), so a human has taken it in.
+ * No such ref (the base never fetched): not merged.
  */
 export async function mergedIntoBase(repo: string, sha: string): Promise<boolean> {
   const git = await openGit(plainCheckout(repo));
-  for (const base of ["HEAD", "refs/kitchen/base"]) {
-    try {
-      await git.run(["merge-base", "--is-ancestor", sha, base]);
-      return true;
-    } catch {} // exit 1 (not an ancestor), or no such ref: not merged there
+  try {
+    await git.run(["merge-base", "--is-ancestor", sha, mergeBaseRef(repo)]);
+    return true;
+  } catch {
+    return false; // exit 1 (not an ancestor), or no such ref
   }
-  return false;
 }
 
 /**
