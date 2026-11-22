@@ -17,6 +17,7 @@ import { type Config, loadConfig } from "../config.ts";
 import { type Forge, forgeFor } from "../forge/forge.ts";
 import { appendLedger } from "../ledger/append.ts";
 import { self } from "../lock.ts";
+import { procsDirOf, reapGroups } from "../procs.ts";
 import { PromptSource } from "../sources/prompt.ts";
 import type { TicketSource } from "../sources/source.ts";
 import { acquireSlot, downSlot, listSlots, reclaimStaleSlots, releaseSlot } from "../toolkit/slots.ts";
@@ -24,11 +25,11 @@ import { acquireRunLock } from "./lock.ts";
 import { type Facts, isActive, type Job, move, type Stage } from "./machine.ts";
 import { HANDLERS } from "./stages/index.ts";
 import { hasToolkit } from "./stages/toolkit-info.ts";
-import { type Proposal, RoleFailure, type StageContext } from "./stages/types.ts";
-import { jobDirOf, listJobs, readJobAt, repairManifest, updateJob } from "./store.ts";
+import { LockLost, type Proposal, RoleFailure, type StageContext } from "./stages/types.ts";
+import { jobDirOf, listJobs, readJobAt, repairManifest, scanJobs, updateJob } from "./store.ts";
 
 export type RunOpts = { repo: string; once?: boolean; job?: string; tickMs?: number; print?: (line: string) => void; logFile?: string };
-type Deps = { config: Config; agent: AgentAdapter; forge: Forge; source: TicketSource };
+type Deps = { config: Config; agent: AgentAdapter; forge: Forge; source: TicketSource; holdsLock: () => boolean };
 
 export async function adapterFor(repo: string, cfg: Config): Promise<AgentAdapter> {
   const cmd = cfg.agent.command ?? [];
@@ -48,8 +49,14 @@ export async function runKitchen(o: RunOpts): Promise<{ steps: number; moves: nu
   const print = o.print ?? ((l: string) => console.log(l));
   const repo = path.resolve(o.repo);
   const config = loadConfig(repo);
-  const deps: Deps = { config, agent: await adapterFor(repo, config), forge: forgeFor(repo, config), source: new PromptSource(repo) };
   const lock = acquireRunLock(repo, { log: o.logFile, argv: process.argv.slice(2) });
+  const deps: Deps = {
+    config,
+    agent: await adapterFor(repo, config),
+    forge: forgeFor(repo, config),
+    source: new PromptSource(repo),
+    holdsLock: () => !lock.lost(),
+  };
   const me = self();
   const stats = { steps: 0, moves: 0, refused: 0 };
   const runKey = `run/${me.pid}/${lock.info.startedAt}`;
@@ -82,7 +89,7 @@ export async function runKitchen(o: RunOpts): Promise<{ steps: number; moves: nu
       print(`slot ${s.n} (${s.id}) reclaimed: owner pid ${s.pid} is gone`);
       appendLedger(repo, { job: s.id, stage: "-", round: 0, event: "slot-reclaimed", key: `${runKey}/slot/${s.id}/${s.at}`, detail: { n: s.n, pid: s.pid } });
     }
-    await resumeAll(repo, me.pid, print);
+    await resumeAll(repo, me.pid, print, runKey);
 
     const inFlight = new Map<string, Promise<void>>();
     const wanted = (j: Job) => !o.job || j.id === o.job;
@@ -98,8 +105,12 @@ export async function runKitchen(o: RunOpts): Promise<{ steps: number; moves: nu
         .filter((j) => wanted(j) && isActive(j.stage))
         .sort(byOldest);
       while (queue.length || inFlight.size) {
+        if (lock.lost() && queue.length) {
+          print("run: lost the run lock to another runner, dispatching nothing more");
+          queue.length = 0;
+        }
         while (queue.length && inFlight.size < config.concurrency) dispatch(queue.shift() as Job);
-        await Promise.race(inFlight.values());
+        if (inFlight.size) await Promise.race(inFlight.values());
       }
     } else {
       for (;;) {
@@ -131,9 +142,30 @@ export async function runKitchen(o: RunOpts): Promise<{ steps: number; moves: nu
 
 const byOldest = (a: Job, b: Job) => a.updatedAt.localeCompare(b.updatedAt) || a.id.localeCompare(b.id);
 
-/** After a crash: cut unsigned manifest tails back to the signed head, and note jobs a dead runner was working on. */
-async function resumeAll(repo: string, pid: number, print: (l: string) => void) {
+/**
+ * After a crash: name corrupt jobs (skipped from here on), kill the process
+ * groups a dead runner left running for each job (agents, checks: src/procs.ts)
+ * and wait until they are gone, cut unsigned manifest tails back to the signed
+ * head, and note jobs a dead runner was working on.
+ */
+async function resumeAll(repo: string, pid: number, print: (l: string) => void, runKey: string) {
+  for (const e of scanJobs(repo)) {
+    if (e.corrupt === undefined) continue;
+    print(`${e.id}  corrupt (${e.corrupt}): skipped`);
+    appendLedger(repo, { job: e.id, stage: "-", round: 0, event: "corrupt", key: `${runKey}/corrupt/${e.id}`, detail: { reason: e.corrupt } });
+  }
   for (const job of listJobs(repo)) {
+    for (const g of await reapGroups(procsDirOf(jobDirOf(repo, job.id)))) {
+      print(`${short(job)}  killed ${g.what} left running by pid ${g.by} (process group ${g.pgid})`);
+      appendLedger(repo, {
+        job: job.id,
+        stage: job.stage,
+        round: job.round,
+        event: "orphan-killed",
+        key: `${job.id}/orphan/${g.pgid}/${g.at}`,
+        detail: { ...g },
+      });
+    }
     const cut = await repairManifest(repo, job.id);
     if (cut) {
       print(`${short(job)}  manifest: ${cut.from - cut.to} unsigned line(s) past the signed head cut (kept in ${path.basename(cut.kept)})`);
@@ -188,8 +220,9 @@ function backoffUntil(cfg: Config, job: Job): string {
 /** One stage run for one job. */
 async function step(repo: string, start: Job, d: Deps, print: (l: string) => void, stats: { steps: number; moves: number; refused: number }) {
   const me = self();
+  if (!d.holdsLock()) return; // another runner has the lock: it runs the job
   let job = await updateJob(repo, start.id, (j) => {
-    j.running = { pid: me.pid, stage: j.stage, at: new Date().toISOString() };
+    j.running = { pid: me.pid, start: me.start, stage: j.stage, at: new Date().toISOString() };
     return j;
   });
   if (job.stage !== start.stage) return;
@@ -213,10 +246,15 @@ async function step(repo: string, start: Job, d: Deps, print: (l: string) => voi
   } catch (e) {
     const fresh = readJobAt(jobDir);
     const msg = (e as Error).message;
+    if (e instanceof LockLost || !d.holdsLock()) {
+      print(`${short(job)}  ${job.stage}: run lock lost, left for the runner that holds it`);
+      return;
+    }
     if (e instanceof RoleFailure && (e.rateLimited || e.authFailure)) {
       p = { to: "paused", facts: { adapter: { rateLimited: e.rateLimited, authFailure: e.authFailure, until: backoffUntil(d.config, fresh), error: msg } } };
     } else if (fresh.attempts.errors + 1 >= 2) {
-      p = { to: "needs-human", facts: { escalate: "adapter-error", why: msg } };
+      // A role that failed is the adapter's error; anything else (git, worktree, files) is the engine's.
+      p = { to: "needs-human", facts: { escalate: e instanceof RoleFailure ? "adapter-error" : "engine-error", why: msg } };
     } else {
       print(`${short(job)}  ${job.stage}: error (retried next tick): ${msg}`);
       appendLedger(repo, {
@@ -235,6 +273,10 @@ async function step(repo: string, start: Job, d: Deps, print: (l: string) => voi
       return;
     }
   }
+  if (!d.holdsLock()) {
+    print(`${short(job)}  ${job.stage}: run lock lost, ${job.stage} → ${p.to} not made; the runner that holds the lock resumes it`);
+    return;
+  }
   const r = await moveJob(repo, job, p, print);
   if (r === "moved") stats.moves++;
   else if (r === "refused") stats.refused++;
@@ -242,10 +284,20 @@ async function step(repo: string, start: Job, d: Deps, print: (l: string) => voi
 
 /**
  * Ask the machine to move the job, under the job lock against the job as it is
- * on disk. A refusal is printed and logged; an escalation code (round or smith
- * limit) or a second refusal in the same stage sends the job to needs-human.
+ * on disk. A refusal is printed and logged.
+ * - A runner proposal (`by: "runner"`, a stage handler's result): an escalation
+ *   code (round or smith limit) or a second refusal in the same stage sends the
+ *   job to needs-human.
+ * - A human command (`by: "human"`: feedback, reject, resume) that is refused
+ *   changes nothing: no counter, no escalation, job.json untouched.
  */
-export async function moveJob(repo: string, seen: Job, p: Proposal, print: (l: string) => void): Promise<"moved" | "refused" | "stale"> {
+export async function moveJob(
+  repo: string,
+  seen: Job,
+  p: Proposal,
+  print: (l: string) => void,
+  by: "runner" | "human" = "runner",
+): Promise<"moved" | "refused" | "stale"> {
   let outcome: "moved" | "refused" | "stale" = "stale";
   const lines: string[] = [];
   let after: Job | null = null;
@@ -279,9 +331,10 @@ export async function moveJob(repo: string, seen: Job, p: Proposal, print: (l: s
       round: fresh.round,
       event: "refused",
       result: p.to,
-      key: `${fresh.id}/m${fresh.moves}/x${fresh.attempts.refused}/refused`,
-      detail: { reason: r.refused, code: r.code },
+      key: by === "human" ? `${fresh.id}/m${fresh.moves}/human/${now}/refused` : `${fresh.id}/m${fresh.moves}/x${fresh.attempts.refused}/refused`,
+      detail: { reason: r.refused, code: r.code, by, ...(p.note ? { note: p.note } : {}) },
     });
+    if (by === "human") return fresh; // unchanged: updateJob writes nothing
     const esc = move(fresh, "needs-human", { now, escalate: r.code ?? "refused", why: r.refused });
     if ("job" in esc) {
       log(fresh, "needs-human", esc.row, esc.job.pausedReason);

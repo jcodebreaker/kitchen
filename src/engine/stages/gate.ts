@@ -14,9 +14,14 @@ import type { StageHandler } from "./types.ts";
 
 const FEATURE_DRIVE = /^\.kitchen\/toolkit\/features\/[^/]+\.md$/;
 
-/** This round's gate PASSed, and the commits since its HEAD touch nothing but feature drives (PLAN §2, drives → verify). */
+/**
+ * The latest gate (this round's, or an earlier round's when this round has none,
+ * as after `kitchen feedback` sends a job back to verify) PASSed, and the commits
+ * since its HEAD touch nothing but feature drives (PLAN §2, drives → verify).
+ */
 export async function gateStillValid(jobDir: string, job: Job): Promise<boolean> {
-  const g = readGate(jobDir, job.round);
+  let g: ReturnType<typeof readGate> = null;
+  for (let r = job.round; r >= 1 && !g; r--) g = readGate(jobDir, r);
   if (g?.result !== "PASS") return false;
   return (await changedFiles(job, g.head)).every((f) => FEATURE_DRIVE.test(f));
 }

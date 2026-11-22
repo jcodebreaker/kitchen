@@ -21,7 +21,8 @@ export const drives: StageHandler = async (ctx) => {
   });
   const h = headers(r.text);
   const job = ctx.refresh();
-  await commitAll(job, `kitchen(${job.id}): feature drives`);
+  const c = await commitAll(job, `kitchen(${job.id}): feature drives`);
+  if (c.stripped.length) ctx.log(`Toolkit primitive edits kept off the job branch: ${c.stripped.join(", ")}`);
   const gateValid = await gateStillValid(ctx.jobDir, job);
   const status = h.DRIVES ?? "";
   const facts = {

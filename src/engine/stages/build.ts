@@ -33,6 +33,7 @@ export const build: StageHandler = async (ctx) => {
   const localForge = ctx.forge.kind === "local";
   if (status === "BLOCKED") return { to: "needs-human", facts: { build: { status, committed: false, pushed: false, pr: null, localForge }, why: h.REASON } };
   const c = await commitAll(job, `kitchen(${job.id}): round ${job.round}\n\n${job.title}`);
+  if (c.stripped.length) ctx.log(`Toolkit primitive edits kept off the job branch: ${c.stripped.join(", ")}`);
   let pushed = false;
   let pr: number | null = job.pr;
   if (c.ahead) {

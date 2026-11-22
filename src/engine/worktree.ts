@@ -3,6 +3,7 @@
 // write-tier stage needs it, at .worktrees/<id> on branch kitchen/<id> from the
 // job's base; its gitdir is resolved then, engine side, and stored in job.json.
 import fs from "node:fs";
+import path from "node:path";
 import { GitError, linkedWorktree, openGit, plainCheckout } from "./git.ts";
 import type { Job } from "./machine.ts";
 import { updateJob, worktreeOf } from "./store.ts";
@@ -16,12 +17,21 @@ export async function mainHead(repo: string): Promise<string> {
   return (await git.run(["rev-parse", "--verify", "HEAD^{commit}"])).stdout.trim();
 }
 
-/** Idempotent: an existing worktree is reused; a branch left by a crash is checked out again. */
-export async function ensureWorktree(repo: string, job: Job): Promise<Job> {
+/**
+ * Idempotent: a worktree recorded in job.json is reused; a branch left by a
+ * crash is checked out again. A folder at the worktree path that job.json does
+ * not record is not trusted (a `worktree add` cut short by a crash, or anything
+ * else): it is moved aside to `<id>.stray-<time>` and the worktree is created
+ * again. No agent has run in it, since agents run only after this returns.
+ */
+export async function ensureWorktree(repo: string, job: Job, now = new Date()): Promise<Job> {
   const wt = worktreeOf(repo, job.id);
   if (job.worktree && job.gitDir && fs.existsSync(wt)) return job;
   if (!job.base) throw new Error(`${repo} had no commit when ${job.id} was taken in; commit something first`);
   const main = await openGit(plainCheckout(repo));
+  if (fs.existsSync(wt) && !job.worktree) {
+    fs.renameSync(wt, `${wt}.stray-${now.toISOString().replace(/[:.]/g, "-")}`);
+  }
   if (!fs.existsSync(wt)) {
     await main.run(["worktree", "prune"]);
     let hasBranch = true;
@@ -46,12 +56,44 @@ export async function headOf(job: Job): Promise<string> {
   return (await (await gitOf(job)).run(["rev-parse", "--verify", "HEAD^{commit}"])).stdout.trim();
 }
 
+const TOOLKIT = ".kitchen/toolkit";
+/** Toolkit files a job branch may change: feature drives only. Primitives belong on a Toolkit PR. */
+const TOOLKIT_PRIMITIVES = [TOOLKIT, `:(exclude)${TOOLKIT}/features`];
+
 /**
- * Commit everything the role left in the worktree (except .kitchen-out/).
+ * Put every Toolkit file outside features/ back as it is at HEAD, in the index
+ * and the worktree: a job commit never carries a Toolkit primitive change (a
+ * smith's edit, or a builder's). Returns the paths put back.
+ * W3b: the smith works on its own Toolkit PR branch in an engine-owned checkout,
+ * so there is nothing of its work here to lose; in W1 its edits in the job
+ * worktree are dropped by this.
+ */
+export async function stripToolkitEdits(job: Job): Promise<string[]> {
+  const git = await gitOf(job);
+  const z = (s: string) => s.split("\0").filter(Boolean);
+  const inHead = new Set(z((await git.run(["ls-tree", "-r", "-z", "--name-only", "HEAD", "--", TOOLKIT])).stdout));
+  if (!inHead.size && !fs.existsSync(path.join(job.worktree, TOOLKIT))) return []; // no Toolkit either side
+  await git.run(["add", "-A", "--", ...TOOLKIT_PRIMITIVES]);
+  const changed = z((await git.run(["diff", "--cached", "--name-only", "--no-renames", "-z", "HEAD", "--", ...TOOLKIT_PRIMITIVES])).stdout);
+  if (!changed.length) return [];
+  const tracked = changed.filter((p) => inHead.has(p));
+  const added = changed.filter((p) => !inHead.has(p));
+  if (tracked.length) await git.run(["restore", "--source=HEAD", "--staged", "--worktree", "--", ...tracked]);
+  if (added.length) {
+    await git.run(["rm", "--cached", "--quiet", "-f", "--", ...added]);
+    for (const p of added) fs.rmSync(path.join(job.worktree, p), { force: true });
+  }
+  return changed;
+}
+
+/**
+ * Commit everything the role left in the worktree (except .kitchen-out/, and
+ * Toolkit primitive edits, which are put back first: `stripped`).
  * Running it again after a crash finds nothing staged and commits nothing.
  */
-export async function commitAll(job: Job, message: string): Promise<{ committed: boolean; head: string; ahead: boolean; clean: boolean }> {
+export async function commitAll(job: Job, message: string): Promise<{ committed: boolean; head: string; ahead: boolean; clean: boolean; stripped: string[] }> {
   const git = await gitOf(job);
+  const stripped = await stripToolkitEdits(job);
   await git.run(["add", "-A", "--", ".", ...NOT_COMMITTED]);
   let staged = false;
   try {
@@ -63,7 +105,7 @@ export async function commitAll(job: Job, message: string): Promise<{ committed:
   if (staged) await git.run(["commit", "--quiet", "--no-verify", "-m", message], { env: IDENTITY });
   const head = (await git.run(["rev-parse", "HEAD"])).stdout.trim();
   const status = (await git.run(["status", "--porcelain", "--untracked-files=all", "--", ".", ...NOT_COMMITTED])).stdout.trim();
-  return { committed: staged, head, ahead: head !== job.base, clean: status === "" };
+  return { committed: staged, head, ahead: head !== job.base, clean: status === "", stripped };
 }
 
 export async function changedFiles(job: Job, from: string, to = "HEAD"): Promise<string[]> {

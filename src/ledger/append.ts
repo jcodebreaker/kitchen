@@ -22,11 +22,33 @@ export type LedgerLine = {
 
 export const ledgerFile = (repo: string) => path.join(repo, ".kitchen", "ledger.jsonl");
 
-/** One line, one write: an O_APPEND write of one short line is not interleaved with another. */
+/**
+ * One line, one write: an O_APPEND write of one short line is not interleaved with another.
+ * A last line torn by a crash (no newline) is closed first, so it can't swallow this one.
+ */
 export function appendLedger(repo: string, line: Omit<LedgerLine, "t"> & { t?: string }) {
   const f = ledgerFile(repo);
   fs.mkdirSync(path.dirname(f), { recursive: true });
-  fs.appendFileSync(f, `${JSON.stringify({ t: line.t ?? new Date().toISOString(), ...line })}\n`);
+  const text = `${JSON.stringify({ t: line.t ?? new Date().toISOString(), ...line })}\n`;
+  fs.appendFileSync(f, endsTorn(f) ? `\n${text}` : text);
+}
+
+function endsTorn(f: string): boolean {
+  let fd: number;
+  try {
+    fd = fs.openSync(f, "r");
+  } catch {
+    return false;
+  }
+  try {
+    const size = fs.fstatSync(fd).size;
+    if (!size) return false;
+    const b = Buffer.alloc(1);
+    fs.readSync(fd, b, 0, 1, size - 1);
+    return b[0] !== 0x0a;
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 /** Pure: parse ledger text, keep the first line per key, skip a torn line. */

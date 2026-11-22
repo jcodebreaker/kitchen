@@ -12,10 +12,11 @@ import { bridgeServer } from "../../bridge/mcp.ts";
 import { modelFor } from "../../config.ts";
 import { kitchenHome } from "../../home.ts";
 import { appendLedger } from "../../ledger/append.ts";
+import { procsDirOf } from "../../procs.ts";
 import type { AgentRunRef } from "../machine.ts";
 import { scratchOf, updateJob, writeAtomic } from "../store.ts";
 import { ensureWorktree } from "../worktree.ts";
-import { RoleFailure, type StageContext } from "./types.ts";
+import { LockLost, RoleFailure, type StageContext } from "./types.ts";
 
 const BRIDGE_ROLES = new Set(["builder", "verifier", "smith", "spec", "repro"]);
 const AUTH = /not logged in|unauthori[sz]ed|authentication|invalid api key|401|please run .*login/i;
@@ -56,8 +57,10 @@ export async function runRole(ctx: StageContext, o: { role: string; file: string
     outFile: o.file,
     outDir,
     env: buildAgentEnv(path.join(kitchenHome(), "agent-scrub")),
+    procsDir: procsDirOf(ctx.jobDir),
     ...(o.tier === "write" && BRIDGE_ROLES.has(o.role) ? { bridge: bridgeServer({ repo: ctx.repo, job: job.id, role: o.role }) } : {}),
   };
+  if (!ctx.holdsLock()) throw new LockLost(`run lock lost before ${o.role} started`);
   const t0 = Date.now();
   ctx.log(`${o.role}: ${ctx.agent.name} ${model} (${o.tier}) → ${o.file}`);
   const r = await ctx.agent.run(req);
