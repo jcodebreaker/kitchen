@@ -89,7 +89,7 @@ Score each from 1 to 10 (1–3 likely noise, 4–6 needs investigation, 7–10 l
 SEVERITY: HIGH is directly exploitable (RCE, data breach, authentication bypass); MEDIUM needs specific conditions but has significant impact; LOW is defence in depth. Report HIGH and MEDIUM only.
 
 OUTPUT, in Kitchen's review file (the format your role's instructions give, which wins over anything here):
-- One `### F<n>: <category>: <one line>` block per kept vulnerability, with `category: security`.
+- One `### F<n>: <one line: what is wrong>` block per kept vulnerability (the vulnerability type in that line, e.g. "SQL injection in the search query"), with the field `- category: security`.
 - `kind: blocking` only when it is on a line this change adds or removes (`at: <file>:<line>`) or is shown by stamped evidence; otherwise `kind: note`.
 - `confidence: high` for a score of 9–10 (you traced the exploit path), `medium` for 8.
 - `why:` the severity, the exploit scenario (what an attacker sends and what they get) and the fix.

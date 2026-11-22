@@ -21,10 +21,21 @@ export function planRole(reg: Registry, role: string, facts: JobFacts, host: Hos
   const ps = plugins ?? (host === "claude" ? enabledPlugins(env) : []);
   const plan: RolePlan = { role, found: [], blockers: [], skipped: [], refused: [...sel.refused] };
   for (const w of sel.wants) {
-    const l = findSkill(reg, w.name, host, env, ps);
+    let l = findSkill(reg, w.name, host, env, ps);
     if (isFound(l) && personOnly(l.text)) {
-      plan.refused.push({ name: l.name, why: "its author marked it for people only (disable-model-invocation: true)" });
-      continue;
+      const why = "its author marked it for people only (disable-model-invocation: true)";
+      // A vendored skill falls back to Kitchen's own copy; a required one is never dropped silently.
+      const vendored = reg.skills[w.name]?.vendored ? findSkill(reg, w.name, host, { ...env, useInstalled: [] }, ps) : null;
+      if (isFound(vendored) && !personOnly(vendored.text)) {
+        plan.refused.push({ name: `${l.name} (${l.where})`, why: `${why}; Kitchen's vendored copy is used instead` });
+        l = vendored;
+      } else if (w.need === "required") {
+        plan.blockers.push({ role, name: w.name, why: `${w.why}; person-only: ${why}`, hint: installHint(reg, w.name, host) });
+        continue;
+      } else {
+        plan.refused.push({ name: l.name, why });
+        continue;
+      }
     }
     if (isFound(l)) {
       plan.found.push({ ...l, need: w.need, why: w.why });

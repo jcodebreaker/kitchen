@@ -126,6 +126,18 @@ test("security-review ships with Kitchen: the vendored copy is the pinned defaul
   assert.equal(hit(find("security-review", "claude", { ...env, useInstalled: ["security-review"] })).where, "kitchen (vendored)", "configured but missing");
 });
 
+test("use_installed with a person-only user copy of security-review: Kitchen's vendored copy is used instead", () => {
+  skill(path.join(env.home, ".claude", "skills", "security-review"), "---\nname: security-review\ndisable-model-invocation: true\n---\n# Mine, for people\n");
+  const e = { ...env, useInstalled: ["security-review"] };
+  const p = planRole(reg, "reviewer-security", { kind: "feature", surfaces: [], risk: "high", ticket: "" }, "claude", e);
+  assert.deepEqual(
+    p.found.map((f) => [f.name, f.need, f.where]),
+    [["security-review", "required", "kitchen (vendored)"]],
+  );
+  assert.deepEqual(p.blockers, []);
+  assert.match(p.refused[0].why, /people only .*vendored copy is used instead/);
+});
+
 test("Claude plugins: only installed AND enabled ones; a registry skill comes from its source plugin by name, never by order", () => {
   const key = "mattpocock-skills@claude-plugins-official";
   const dir = plugin(key);
@@ -221,11 +233,14 @@ test("a role's plan: required found or blocking with the places searched; person
   assert.doesNotMatch(why, /\/etc\//);
   skill(path.join(env.home, ".claude", "skills", "humanizer"), "---\nname: humanizer\ndisable-model-invocation: true\n---\n# For people\n");
   const p = planRole(reg, "builder", facts, "claude", env);
-  assert.deepEqual(
-    p.refused.map((x) => x.name),
-    ["humanizer"],
-  );
   assert.deepEqual(p.found, []);
+  assert.deepEqual(
+    p.blockers.map((x) => [x.name, x.why]),
+    [["humanizer", "the ticket's Kitchen-Skills: line; person-only: its author marked it for people only (disable-model-invocation: true)"]],
+    "a required skill whose only copy is person-only halts, never silently dropped",
+  );
+  const optional = planRole(reg, "report", facts, "claude", env);
+  assert.deepEqual([optional.found, optional.blockers, optional.refused.map((x) => x.name)], [[], [], ["humanizer"]], "an optional one is refused and logged");
   const r = readinessLines(reg, "claude", env);
   assert.ok(r.lines.some((l) => /^ {2}ok {7}security-review +kitchen \(vendored\): /.test(l)));
   assert.ok(r.lines.some((l) => /^ {2}missing {2}tdd /.test(l)));
