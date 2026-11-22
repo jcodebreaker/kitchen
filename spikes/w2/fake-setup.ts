@@ -73,6 +73,10 @@ const script: FakeScript = (req) => {
         "  proof: toolkit http --method GET --path /books --as ana --save books",
         '  expect: $books contains "Dune"',
         "  covers: R1",
+        "- [C2] the server still parses",
+        "  proof: cmd node --check server.js",
+        "  expect: exit 0",
+        "  covers: R1",
         "",
       ].join("\n"),
     };

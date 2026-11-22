@@ -51,7 +51,11 @@ Setting up Kitchen in your-repo…
 Done in 3.2s · no agent
 ```
 
-It writes `kitchen.yaml` with your project's **checks** (what Gate runs on every job), found in `package.json` scripts (lint, typecheck, test, build; the package manager from the lockfile), `Makefile` targets, `pyproject.toml` (pytest, ruff, mypy), `go.mod` or `Cargo.toml`. Only when none of these say anything does it ask an agent once, briefly, on the cheap model. It installs the `/kitchen` skill, adds Kitchen's entries to `.gitignore`, and runs the checks once. If they fail it says so plainly: Gate would fail every job until they pass, so fix them (or edit `checks:`) first.
+It writes `kitchen.yaml` with your project's **checks** (what Gate runs on every job), found in `package.json` scripts (lint, typecheck, test, build; the package manager from the lockfile), `Makefile` targets (a Makefile with `test` or `check` wins), `pyproject.toml` (pytest, ruff, mypy when they have their own `[tool.…]` section; a repo `.venv` is used), `go.mod` or `Cargo.toml`. A script that changes files or never ends (`--fix`, `--write`, watch, docker, serve) is never taken. It installs the `/kitchen` skill, adds Kitchen's entries to `.gitignore`, and runs the checks once.
+
+**What it runs, and how.** The checks run once on your own checkout (your HEAD, plus whatever you have changed) under the same sandbox Gate uses: no network, your home folder unreadable, writes only inside the repo, `CI=1`. Each prints `Running <name>…` first; Ctrl-C stops it and everything it started. When dependencies aren't installed it installs them only with a frozen install from your lockfile (`npm ci`, `pnpm install --frozen-lockfile`, `yarn install --immutable`, `bun install --frozen-lockfile`), announced first, and only that install gets the network; with no lockfile it installs nothing and skips the checks. If they fail it says so plainly and exits 1: Gate would fail every job until they pass, so fix them (or edit `checks:`) first.
+
+**When nothing obvious is there**, it asks an agent once, briefly, on the cheap model, to read the repo and propose checks. Those are never run without you: in a terminal it shows them and asks `Use these checks? [Y/n]`; without one (a script, an agent's shell) it writes them into `kitchen.yaml` commented out, for you to review and uncomment. It doesn't ask the agent again on the next `kitchen init`.
 
 Commit `kitchen.yaml`, `.gitignore`, `.claude/skills/kitchen/` and `.agents/skills/kitchen/` when you like.
 
@@ -176,8 +180,8 @@ Every key, with its default:
 | `concurrency` | `2` | jobs at once |
 | `round_limit` | `3` | rounds before a human is asked |
 | `checks` | `[]` (`kitchen init` fills them in) | commands Gate runs in the job's worktree: strings, or `{ name, run, timeout_sec }` |
-| `checks_network` | `false` | let checks reach the network (a package install) |
-| `checks_prepare` | none | readies a job worktree before the checks and `test` proofs, in the same sandbox (`npm ci`; needs `checks_network: true` to download). Runs once per worktree, again when a lockfile changes |
+| `checks_network` | `false` | let the checks themselves reach the network (`checks_prepare` always has it) |
+| `checks_prepare` | none | readies a job worktree before the checks and `test` proofs, in the same sandbox (`npm ci`; it always has the network, to download). Runs once per worktree, again when a lockfile changes |
 | `test_cmd` | `npm test -- {file}` | how a `test <file>` proof runs |
 | `paths` | low / medium / high | per risk: `spec` (inline, full), `verify` (short, full, related-features), `review` lenses, `human: always` |
 | `surfaces` | `{ ui: [ux, ui], security: [security] }` | extra review lenses when a ticket touches a surface |

@@ -47,7 +47,9 @@ writes `kitchen.yaml` with the project's checks (lint, tests…, read from
 installs this skill, adds Kitchen's `.gitignore` entries and runs the checks
 once. No agent of its own when the checks are obvious, no app start, no Docker.
 Run it as a normal command and relay its lines. If it says the checks failed,
-tell the user plainly: every job's Gate would fail until they are fixed.
+tell the user plainly: every job's Gate would fail until they are fixed. If an
+agent proposed checks, `kitchen init` wrote them into `kitchen.yaml` commented
+out: show them to the user and uncomment them only if the user says so.
 
 Jobs can run straight away: they are proven by the checks and by tests. Then
 **offer** the Toolkit build ("Kitchen can also learn to start and drive your

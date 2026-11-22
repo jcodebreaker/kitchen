@@ -948,3 +948,5 @@ History: all of these are now part of §2 and §3, which are the current contrac
 | High risk had no Toolkit rule | A high-risk job never reaches ready without a Toolkit: it pauses at spec (or after review, when the diff raised it), and resume refuses to go on without one; so does a bug whose repro drives the app |
 | Setup ran on `strong` (opus) | `models.setup` defaults to `medium` (sonnet); the setup role reads each file once |
 | No background build | Kept so: no auto-build after init (ADR 0010 open question 1, decided no) |
+| (review fixes) quick init ran checks unsandboxed, agent-proposed ones too, gave checks the network, could PASS a job with nothing proven | Quick init's checks run under Gate's sandbox (shared `runSandboxed`) with `CI=1`; agent-proposed checks need the person's OK; frozen installs only, the network for the install alone; a verdict with nothing proven (or a requirement only the app covers) is NO-TOOLKIT and waits for the Toolkit |
+
