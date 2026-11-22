@@ -1,0 +1,143 @@
+// kitchen.yaml: schema and defaults (PLAN §6). Committed in the user's repo.
+// Unknown keys are refused, so a typo never silently falls back to a default.
+import fs from "node:fs";
+import path from "node:path";
+import { parse as parseYaml } from "yaml";
+import { z } from "zod";
+
+export const ROLES = ["intake", "spec", "builder", "smith", "verifier", "reviewer", "report", "retro"] as const;
+export type RoleName = (typeof ROLES)[number];
+export const TIERS = ["strong", "medium", "cheap"] as const;
+export type ModelTier = (typeof TIERS)[number];
+
+const Path = z
+  .object({
+    spec: z.enum(["inline", "full"]),
+    verify: z.enum(["short", "full", "related-features"]),
+    review: z.array(z.string()),
+    human: z.literal("always").optional(),
+  })
+  .strict();
+export type RiskPath = z.infer<typeof Path>;
+
+/** A check is a shell command run in the job worktree with the untrusted env (gate, and the builder's `checks` bridge tool). */
+const Check = z.union([
+  z.string().min(1),
+  z.object({ name: z.string().min(1), run: z.string().min(1), timeout_sec: z.number().int().positive().optional() }).strict(),
+]);
+export type CheckSpec = { name: string; run: string; timeoutSec: number };
+
+const DEFAULT_MODELS: Record<"claude" | "codex" | "fake", Record<ModelTier, string>> = {
+  claude: { strong: "opus", medium: "sonnet", cheap: "haiku" },
+  codex: { strong: "gpt-5.6-terra", medium: "gpt-5.6-terra", cheap: "gpt-6-luna" },
+  fake: { strong: "fake", medium: "fake", cheap: "fake" },
+};
+
+export const ConfigSchema = z
+  .object({
+    concurrency: z.number().int().min(1).max(32).default(2),
+    round_limit: z.number().int().min(1).max(20).default(3),
+    models: z
+      .object({
+        intake: z.string().default("strong"),
+        spec: z.string().default("strong"),
+        builder: z.string().default("strong"),
+        smith: z.string().default("strong"),
+        verifier: z.string().default("medium"),
+        reviewer: z.string().default("medium"),
+        report: z.string().default("medium"),
+        retro: z.string().default("cheap"),
+      })
+      .strict()
+      .prefault({}),
+    paths: z
+      .object({
+        low: Path.default({ spec: "inline", verify: "short", review: ["code-if-diff>150"] }),
+        medium: Path.default({ spec: "full", verify: "full", review: ["code"] }),
+        high: Path.default({ spec: "full", verify: "related-features", review: ["code", "security"], human: "always" }),
+      })
+      .strict()
+      .prefault({}),
+    surfaces: z.record(z.string(), z.array(z.string())).default({ ui: ["ux", "ui"], security: ["security"] }),
+    high_paths: z.array(z.string()).default(["**/migrations/**", "**/auth/**", "**/*payment*", "infra/**", ".github/**"]),
+    risk_floor: z
+      .object({ diff_lines_medium: z.number().int().positive().default(300), diff_lines_high: z.number().int().positive().default(1000) })
+      .strict()
+      .prefault({}),
+    automerge: z.enum(["off", "low"]).default("off"),
+    protected: z.array(z.string()).default(["kitchen.yaml"]),
+    retro: z
+      .object({ every_jobs: z.number().int().positive().default(5) })
+      .strict()
+      .prefault({}),
+    checks: z.array(Check).default([]),
+    agent: z
+      .object({
+        tool: z.enum(["claude", "codex", "fake"]).default("claude"),
+        /** argv prefix that starts the tool, e.g. ["npx", "-y", "@openai/codex@0.171.0"]. Default: `claude` / `codex` on PATH. */
+        command: z.array(z.string().min(1)).min(1).optional(),
+        /** Tier → model name. Defaults per tool. */
+        models: z.object({ strong: z.string(), medium: z.string(), cheap: z.string() }).partial().strict().default({}),
+        /** fake only: module whose default export is a FakeScript. Relative to the repo. */
+        script: z.string().optional(),
+        timeout_sec: z.number().int().positive().default(1800),
+        max_turns: z.number().int().positive().default(80),
+      })
+      .strict()
+      .prefault({}),
+    backoff: z
+      .object({ base_sec: z.number().positive().default(60), max_sec: z.number().positive().default(3600) })
+      .strict()
+      .prefault({}),
+    /** Where PRs, checks and Toolkit tickets live. `local`: no remote (W1/W3a); `fake`: a JSON file, for engine tests. */
+    forge: z
+      .object({ kind: z.enum(["local", "fake", "github"]).default("local"), file: z.string().optional() })
+      .strict()
+      .prefault({}),
+  })
+  .strict();
+
+export type RawConfig = z.infer<typeof ConfigSchema>;
+export type Config = RawConfig & { checkList: CheckSpec[] };
+
+export class ConfigError extends Error {}
+
+/** Pure: parse kitchen.yaml text (empty text = all defaults). */
+export function parseConfig(text: string): Config {
+  let raw: unknown;
+  try {
+    raw = parseYaml(text, { strict: true, uniqueKeys: true }) ?? {};
+  } catch (e) {
+    throw new ConfigError(`kitchen.yaml: ${(e as Error).message.split("\n")[0]}`);
+  }
+  const r = ConfigSchema.safeParse(raw);
+  if (!r.success) {
+    const first = r.error.issues[0];
+    throw new ConfigError(`kitchen.yaml: ${first.path.join(".") || "(top)"}: ${first.message}`);
+  }
+  const checkList = r.data.checks.map((c, i) =>
+    typeof c === "string" ? { name: `check${i + 1}`, run: c, timeoutSec: 600 } : { name: c.name, run: c.run, timeoutSec: c.timeout_sec ?? 600 },
+  );
+  return { ...r.data, checkList };
+}
+
+export const configFile = (repo: string) => path.join(repo, "kitchen.yaml");
+
+export function loadConfig(repo: string): Config {
+  const f = configFile(repo);
+  return parseConfig(fs.existsSync(f) ? fs.readFileSync(f, "utf8") : "");
+}
+
+/** The model for a role: its configured tier mapped through the tool's tier table, or a literal model name. */
+export function modelFor(cfg: Config, role: string): string {
+  const key: RoleName = (ROLES as readonly string[]).includes(role)
+    ? (role as RoleName)
+    : role.startsWith("review")
+      ? "reviewer"
+      : role === "repro"
+        ? "verifier"
+        : "builder";
+  const want = cfg.models[key];
+  const tiers = { ...DEFAULT_MODELS[cfg.agent.tool], ...cfg.agent.models };
+  return (TIERS as readonly string[]).includes(want) ? tiers[want as ModelTier] : want;
+}
