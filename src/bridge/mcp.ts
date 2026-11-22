@@ -3,12 +3,15 @@
 // engine, outside the agent's Bash sandbox, and exposes only job-scoped tools:
 //   drive           one feature drive or one primitive, in the job's slot, stamped
 //   toolkit_status  `doctor` for the job's slot
+//   checks          (builder only) the kitchen.yaml checks in the job worktree, stamped
 // Everything else (other jobs, other slots, raw flags, paths) is refused.
 // A tiny hand-rolled JSON-RPC 2.0 server: newline-delimited messages on stdin/stdout.
 import path from "node:path";
 import readline from "node:readline";
 import type { BridgeServer } from "../agents/adapter.ts";
 import { CONTROL_PLANE } from "../agents/env.ts";
+import { runChecks } from "../checks/run-checks.ts";
+import { loadConfig } from "../config.ts";
 import { kitchenHome } from "../home.ts";
 import { type DriveRequest, runDrive } from "../proof/drive.ts";
 import { DriveFormatError } from "../proof/drive-format.ts";
@@ -78,6 +81,15 @@ const TOOLS = [
   },
 ];
 
+const CHECKS_TOOL = {
+  name: "checks",
+  description:
+    "Run this project's checks (kitchen.yaml `checks`: tests, lint, typecheck…) in your worktree, the way Gate will. " +
+    "The engine runs them with the app's sandbox env and stamps each one as evidence; the result lists each check's exit code and output tail.",
+  inputSchema: { type: "object", properties: {}, additionalProperties: false },
+};
+const toolsFor = (role: string) => (role === "builder" ? [...TOOLS, CHECKS_TOOL] : TOOLS);
+
 const text = (o: unknown, isError = false): ToolResult => ({ content: [{ type: "text", text: JSON.stringify(o) }], ...(isError ? { isError } : {}) });
 
 export function makeBridge(o: BridgeOpts) {
@@ -124,6 +136,23 @@ export function makeBridge(o: BridgeOpts) {
     return text(r.json ?? { status: "fail", why: r.stderr.slice(-400) }, r.json?.status !== "ok");
   }
 
+  async function checks(a: Record<string, unknown>): Promise<ToolResult> {
+    if (o.role !== "builder") return text({ ok: false, refused: "checks is for the builder" }, true);
+    if (Object.keys(a).length) return text({ ok: false, refused: `unknown fields: ${Object.keys(a).join(", ")}` }, true);
+    try {
+      const cfg = loadConfig(path.resolve(o.repo));
+      if (!cfg.checkList.length) return text({ ok: true, checks: [], note: "kitchen.yaml has no checks" });
+      const r = await runChecks({ jobDir, checks: cfg.checkList, role: o.role, criterion: "-" });
+      return text(
+        { ok: r.ok, sha: r.sha, checks: r.results.map((c) => ({ name: c.name, exit: c.exit, ok: c.ok, evidence: c.id, secs: c.secs, tail: c.tail })) },
+        !r.ok,
+      );
+    } catch (e) {
+      if (e instanceof ManifestTampered) return text({ ok: false, refused: e.message }, true);
+      return text({ ok: false, error: (e as Error).message }, true);
+    }
+  }
+
   return async function handle(msg: Rpc): Promise<Rpc | null> {
     const reply = (result: unknown): Rpc => ({ jsonrpc: "2.0", id: msg.id ?? null, result });
     const fail = (code: number, message: string): Rpc => ({ jsonrpc: "2.0", id: msg.id ?? null, error: { code, message } });
@@ -139,12 +168,13 @@ export function makeBridge(o: BridgeOpts) {
       case "ping":
         return reply({});
       case "tools/list":
-        return reply({ tools: TOOLS });
+        return reply({ tools: toolsFor(o.role) });
       case "tools/call": {
         const name = msg.params?.name;
         const args = (msg.params?.arguments ?? {}) as Record<string, unknown>;
         if (name === "drive") return reply(await drive(args));
         if (name === "toolkit_status") return reply(await status());
+        if (name === "checks" && o.role === "builder") return reply(await checks(args));
         return fail(-32602, `unknown tool ${String(name)}`);
       }
       default:

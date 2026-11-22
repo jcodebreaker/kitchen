@@ -131,6 +131,18 @@ export async function acquireSlot(o: AcquireOpts): Promise<{ slot: Slot; reclaim
   });
 }
 
+/** Drop every slot whose owner process is gone, running each one's own `down` first. Returns them. */
+export async function reclaimStaleSlots(o: Pick<AcquireOpts, "home" | "onStale" | "isAlive"> = {}): Promise<Slot[]> {
+  const home = ensureHome(o.home ?? kitchenHome());
+  const isAlive = o.isAlive ?? ((x: Owner) => ownerAlive(x));
+  return withFileLock(path.join(home, "slots.lock"), async () => {
+    const { live, stale } = partitionStale(load(home).slots, isAlive);
+    for (const s of stale) await (o.onStale ?? downSlot)(s);
+    if (stale.length) save(home, { slots: live });
+    return stale;
+  });
+}
+
 export async function releaseSlot(id: string, home = kitchenHome()): Promise<Slot | null> {
   return withFileLock(path.join(ensureHome(home), "slots.lock"), async () => {
     const reg = load(home);
