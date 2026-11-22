@@ -1,0 +1,9 @@
+{
+  "name": "fixture-e-library",
+  "private": true,
+  "version": "0.3.1",
+  "description": "Small lending library API: books, members and loans",
+  "type": "module",
+  "engines": { "node": ">=20.11" },
+  "scripts": { "start": "node server.js", "test": "node --test" }
+}

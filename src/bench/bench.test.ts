@@ -9,7 +9,7 @@ const ROOT = path.resolve(import.meta.dirname, "..", "..");
 
 describe("bench set", () => {
   const set = loadSet(ROOT);
-  it("has the tuned set PLAN §8 asks for, and a held-out set of 6", () => {
+  it("has the tuned set PLAN §8 asks for, and a held-out set of 6 per held-out fixture (D, E)", () => {
     const tuned = set.filter((t) => t.set === "tuned");
     const count = (k: string) => tuned.filter((t) => t.kind === k).length;
     expect(tuned.length).toBe(14);
@@ -18,7 +18,9 @@ describe("bench set", () => {
     expect(tuned.filter((t) => t.kind === "bug" && t.hard).length).toBe(1);
     expect([count("chore"), count("too-big"), count("needs-info"), count("reject"), count("primitive"), count("control")]).toEqual([1, 1, 1, 1, 1, 2]);
     expect(tuned.filter((t) => t.trap).length).toBe(3);
-    expect(set.filter((t) => t.set === "heldout").length).toBe(6);
+    const heldout = set.filter((t) => t.set === "heldout");
+    expect(heldout.length).toBe(12);
+    for (const fx of ["d-api", "e-library"]) expect(heldout.filter((t) => t.fixture === fx).length).toBe(6);
   });
   it("smoke is 5 tickets: a feature, a bug, a trap, a control, a low-risk one", () => {
     const smoke = pick(set, "smoke");
