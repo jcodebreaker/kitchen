@@ -19,7 +19,7 @@ import { changedFiles, commitWith, fileAtHead } from "../worktree.ts";
 import { contractBlock, toolkitBlock } from "./context.ts";
 import { gateStillValid } from "./gate.ts";
 import { prompt } from "./prompts.ts";
-import { headers, runRole } from "./role.ts";
+import { headers, named as namedHeader, runRole } from "./role.ts";
 import { FEATURES_DIR, featureDrives, hasToolkit, primitives } from "./toolkit-info.ts";
 import type { StageHandler } from "./types.ts";
 
@@ -113,7 +113,7 @@ export const drives: StageHandler = async (ctx) => {
   }
   const gateValid = await gateStillValid(ctx.jobDir, job);
   const unreachable = agent?.DRIVES === "UNREACHABLE" && unreachableCited(ctx.jobDir, agentText, job.round);
-  const missingPrimitive = agent?.GAP || a.gaps[0] || undefined;
+  const missingPrimitive = namedHeader(agent?.GAP) || a.gaps[0] || undefined;
   const resolved = a.missing.length === 0 && a.refused.length === 0;
   const featureChecks = resolved && failing.length === 0;
   const why = [

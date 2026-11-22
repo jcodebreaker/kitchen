@@ -19,7 +19,7 @@ import { changedFiles, commitWith, ensureWorktree, headOf } from "../worktree.ts
 import { contractBlock, toolkitBlock } from "./context.ts";
 import { featureFilesAtHead } from "./drives.ts";
 import { prompt } from "./prompts.ts";
-import { headers, runRole } from "./role.ts";
+import { headers, named, runRole } from "./role.ts";
 import { featureDrives, hasToolkit } from "./toolkit-info.ts";
 import type { StageHandler } from "./types.ts";
 
@@ -65,7 +65,7 @@ export const repro: StageHandler = async (ctx) => {
       }),
       dest: path.join(ctx.jobDir, `repro-${n}.md`),
     });
-    gap = headers(r.text).GAP || undefined;
+    gap = named(headers(r.text).GAP);
   }
   job = ctx.refresh();
   const before = await featureFilesAtHead(job);

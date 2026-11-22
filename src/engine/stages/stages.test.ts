@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
 import { fenceTicket, pickMode } from "./prompts.ts";
+import { named } from "./role.ts";
 
 test("the ticket fence carries a nonce the ticket can't contain", () => {
   const nonces = ["abc", "xyz"];
@@ -18,4 +19,11 @@ test("a role file's mode sections: the common part plus the one asked for", () =
   assert.equal(pickMode(f, "verify"), "# Role\ncommon\n\n## Mode: verify\nV");
   assert.ok(!pickMode(f, "drives").includes("V"));
   assert.throws(() => pickMode(f, "repro"), /no "## Mode: repro"/);
+});
+
+test("a GAP header names a primitive only when it names one (agents write `GAP: none`)", () => {
+  for (const v of [undefined, "", "none", "None", "-", "n/a", "N/A", "`none`", "<the missing primitive>", "none (all drives ran)"])
+    assert.equal(named(v), undefined, String(v));
+  assert.equal(named("drag"), "drag");
+  assert.equal(named("`drag` (to reorder rows)"), "drag");
 });

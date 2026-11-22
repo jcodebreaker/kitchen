@@ -20,7 +20,7 @@ Write `drives.md`:
 
 ```
 DRIVES: OK | UNREACHABLE | FAILED
-GAP: <missing primitive; only for a gap>
+GAP: <the missing primitive: write this line only when one is missing>
 EVIDENCE: <e-ids of the failed run; only with UNREACHABLE>
 ```
 
@@ -39,7 +39,7 @@ Write `repro.md`:
 ```
 REPRO: READY | NOT-REPRODUCED
 CRITERION: C<n>
-GAP: <missing primitive; only for a gap>
+GAP: <the missing primitive: write this line only when one is missing>
 ```
 
 then what you added and what the proof showed. Return one line, e.g. `REPRO: READY C1, expect false on base ($theme is Light)`.
@@ -59,7 +59,7 @@ Write `verify.md`:
 VERDICT: PASS | FAIL | INCONCLUSIVE | TOOLKIT-GAP
 JUDGED C<n>: PASS | FAIL
 EVIDENCE C<n>: e<N> e<N>
-GAP: <only with TOOLKIT-GAP>
+GAP: <the missing primitive: write this line only with TOOLKIT-GAP>
 ```
 
 one `JUDGED` and one `EVIDENCE` line per judged criterion, then one sentence per criterion on what you saw. Return one line, e.g. `VERDICT: PASS (C4 judged on e31)`.

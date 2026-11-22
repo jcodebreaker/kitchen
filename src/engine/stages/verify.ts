@@ -28,7 +28,7 @@ import { once, roundDir, writeAtomic } from "../store.ts";
 import { commitWith, headOf } from "../worktree.ts";
 import { contractBlock } from "./context.ts";
 import { prompt } from "./prompts.ts";
-import { headers, runRole } from "./role.ts";
+import { headers, named, runRole } from "./role.ts";
 import { hasToolkit } from "./toolkit-info.ts";
 import type { StageHandler } from "./types.ts";
 
@@ -149,7 +149,7 @@ export const verify: StageHandler = async (ctx) => {
   });
   writeAtomic(path.join(roundDir(ctx.jobDir, job.round), `verdict-m${moves}.md`), renderVerdict(v, head, job.round));
   ctx.log(`verdict ${v.verdict}: ${v.criteria.map((c) => `${c.id} ${c.result}`).join(", ")}${v.citationProblem ? ` (${v.citationProblem})` : ""}`);
-  const agentGap = judgedText ? headers(judgedText).GAP : undefined;
+  const agentGap = judgedText ? named(headers(judgedText).GAP) : undefined;
   const facts = {
     verify: {
       verdict: v.verdict,
