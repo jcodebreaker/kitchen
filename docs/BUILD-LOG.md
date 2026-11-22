@@ -67,7 +67,7 @@ One entry per wave: what was built, review rounds and scores, what is proven, an
 
 **Known gap:** when the loop stops because it lost the lock, it frees the slots of stages that are still finishing.
 
-## Wave 2: Toolkit and setup (built, awaiting review)
+## Wave 2: Toolkit and setup (in review: round 1 6/10)
 
 **Built**
 - `src/toolkit/contract.ts`: zod schemas for every command's JSON line and `describe` (`contract: 1`, surface, primitives, features, `seed_users`, externals, `ports.needs`, parallel), and the parser for a feature file's `kitchen` block (mapped `paths`, `check` args).
@@ -87,7 +87,7 @@ One entry per wave: what was built, review rounds and scores, what is proven, an
 - `toolkit up|down|maintain` are not built.
 - `prepare` has no stall detection (a hung download waits for the 30-minute timeout).
 
-## Wave 3a: proof and the core path (built, awaiting review)
+## Wave 3a: proof and the core path (in review: round 1 6.5/10)
 
 **Built**
 - `src/proof/assert.ts`: mechanical `expect:` matchers (`ok`, exit code, `text "…" visible`, contains, JSON path into the output or a `$var`, row count, `$var` comparisons, `and`). `src/proof/proof-line.ts`: the `proof:` line parser. `src/proof/prove.ts`: one criterion's proof through `kitchen drive` (toolkit segments via runDrive, cmd/test via stampCommand), then assert. `kitchen drive <job> <C> [--repro] [--arg k=v]…` on the CLI.
