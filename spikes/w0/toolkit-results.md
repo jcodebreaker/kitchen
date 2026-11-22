@@ -1,5 +1,32 @@
 # W0 spike B: Toolkit contract and drive format on fixture A
 
+## Rerun after the W0 review (2026-11-22)
+
+`node spikes/w0/run-toolkit-spike.mjs <scratch>`: **48/48 expectations met**, exit 0, no kitchen containers left. The script now asserts every outcome (including the negative ones) and exits 1 on a miss. What changed, and the key lines:
+
+| Area | Expectation (all PASS) | Key output |
+|---|---|---|
+| untrusted env | control with the engine env: local push works, `gh` sees `GH_TOKEN` | `push exit 0 [new branch] control-push`, `mentionsGhToken: true` |
+| | `ps eww <appPid>`: no `GH_TOKEN`/fake token/agent keys/Docker/control vars | `KITCHEN_UNTRUSTED=1` present, nothing else |
+| | app startup `git push origin` fails, no branch | `exit 128 git: 'remote-kitchen-push-blocked' is not a git command` |
+| | app startup `gh auth status` fails | `exit 1, notLoggedIn: true` |
+| engine flags | `login {as: bob-admin, id: p2}` (drive and primitive) refused, nothing stamped | `login: "id" is set by the engine and can't be passed by a step` |
+| | `screenshot {out: <abs>}` refused, nothing written outside evidence | `screenshot: "out" is set by the engine…` |
+| | `bin/dev read --id=s1 … --id=p2` | `{"ok":false,"out":"flag --id given twice"}` |
+| origin | `http @evil.example/x` stays on the app | `{"status":404}` on `/@evil.example/x` |
+| | `http http://evil.example/x`, `open //evil.example/x` | `"…" leaves the app (http://evil.example): refused` |
+| waits | wait on `$empty` (substituted to "") fails | `why: "empty wait text"` |
+| | `read {attr: data-nope}` | `body has no attribute data-nope` (ok:false) |
+| | each wait is one entry with its poll count | `e6:2 e24:6 …` |
+| manifest | entries chained, files hashed, in own `e<N>/` | `e11/call.json,e11/settings-dark.png` |
+| | edited line / deleted manifest / dropped line / replaced PNG / edited or removed head | `does not chain` / `missing or empty but the engine recorded 92` / `has 91 entries` / `content changed` / `signature does not match` / `no expected manifest head` |
+| concurrency | 3 concurrent drives on one job | ids `e89 e90 e91`, verify ok |
+| stamp | sha = tested worktree HEAD (≠ kitchen repo HEAD), `dirty:false`; dirty tree stamped `dirty:true` + own tree; non-git source refused | `git rev-parse … failed: not a git repository` |
+| slots | slot records `toolkitBin`, `src`, `pidStart`; dead owner reclaimed through its own `down`; reused pid (other start time) reclaimed | `reclaimed: ["orphan"]`, `reclaimed: ["fresh"]` |
+| contract | `describe` lists feature files only, `ports.needs: 3`, has `open`/`reload` | `["features/invites.md","features/projects.md","features/settings.md"]` |
+
+The 2026-11-22 sections below are the original spike B run and are kept as history; some details there (manifest hash file, `files/e<N>/`, per-poll entries) were replaced as above.
+
 Date: 2026-11-22. Machine: macOS laptop, Docker Desktop 29.5 (4 CPU, 6 GB), Node 26.9.
 Reproduce: `node spikes/w0/run-toolkit-spike.mjs <scratch dir> [--cold]` (copies
 `fixtures/a-web` to `<scratch>/src` as a stand-in worktree, runs everything below,
@@ -7,20 +34,21 @@ always tears down in `finally`, writes `results.json` + `spike.log`).
 
 ## What was built
 
-| Path | What |
-|---|---|
-| `fixtures/a-web/` | Node `http` app + Postgres: sign-in (alice, bob-admin; fake passwords via pgcrypto), /settings Appearance with a persisted Dark mode switch, two-step "New project" form with step-2 slug validation and a 1.5 s "Provisioning… → Ready", admin invites + public /join. `data-testid`/aria labels throughout |
-| `fixtures/a-web/.kitchen/toolkit/bin/dev` | The contract: `prepare`, `up`, `doctor`, `reset`, `down`, `describe` + primitives `login`, `press`, `type`, `read`, `screenshot`, `http` |
-| `fixtures/a-web/.kitchen/toolkit/lib/driver.mjs` | Per-id headless Chromium daemon (Playwright 1.65.0, headless shell only) that keeps the session between primitive calls |
-| `fixtures/a-web/.kitchen/toolkit/SKILL.md`, `features/*.md` | pstack-shaped skill; three feature drives + index |
-| `src/proof/drive-format.ts` | Parser for the fenced `drive` block (restricted YAML subset, zod-checked), `$var` lint + substitution |
-| `src/proof/drive.ts` | Engine-side interpreter: describe check → one primitive per step, `wait` (polls `read`), `retry`, `save`/`$var`; evidence file + stamped manifest line per call |
-| `src/proof/manifest.ts` | Append with sha256 of `manifest.jsonl` recorded after each write; `verifyManifest` refuses a mismatch (and `appendEntry` refuses to extend a tampered file) |
-| `src/toolkit/slots.ts` | 20-port blocks in 31000–32767 by probing, registry in `$KITCHEN_HOME/slots.json` with owner pid, stale reclaim runs `down` first |
-| `src/proof/cli.ts` | Spike CLI: `drive <feature.md> --id --src --evidence [--arg k=v]…`, `verify --evidence`, `slot acquire/release/list` |
-| `*.test.ts` (3 files, 17 tests) | Pure code only: format parsing, manifest hash, slot picking. All pass (`node --test <file>`, one at a time) |
+| Path                                                        | What                                                                                                                                                                                                                                                                                                         |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `fixtures/a-web/`                                           | Node `http` app + Postgres: sign-in (alice, bob-admin; fake passwords via pgcrypto), /settings Appearance with a persisted Dark mode switch, two-step "New project" form with step-2 slug validation and a 1.5 s "Provisioning… → Ready", admin invites + public /join. `data-testid`/aria labels throughout |
+| `fixtures/a-web/.kitchen/toolkit/bin/dev`                   | The contract: `prepare`, `up`, `doctor`, `reset`, `down`, `describe` + primitives `login`, `press`, `type`, `read`, `screenshot`, `http`                                                                                                                                                                     |
+| `fixtures/a-web/.kitchen/toolkit/lib/driver.mjs`            | Per-id headless Chromium daemon (Playwright 1.65.0, headless shell only) that keeps the session between primitive calls                                                                                                                                                                                      |
+| `fixtures/a-web/.kitchen/toolkit/SKILL.md`, `features/*.md` | pstack-shaped skill; three feature drives + index                                                                                                                                                                                                                                                            |
+| `src/proof/drive-format.ts`                                 | Parser for the fenced `drive` block (restricted YAML subset, zod-checked), `$var` lint + substitution                                                                                                                                                                                                        |
+| `src/proof/drive.ts`                                        | Engine-side interpreter: describe check → one primitive per step, `wait` (polls `read`), `retry`, `save`/`$var`; evidence file + stamped manifest line per call                                                                                                                                              |
+| `src/proof/manifest.ts`                                     | Append with sha256 of `manifest.jsonl` recorded after each write; `verifyManifest` refuses a mismatch (and `appendEntry` refuses to extend a tampered file)                                                                                                                                                  |
+| `src/toolkit/slots.ts`                                      | 20-port blocks in 31000–32767 by probing, registry in `$KITCHEN_HOME/slots.json` with owner pid, stale reclaim runs `down` first                                                                                                                                                                             |
+| `src/proof/cli.ts`                                          | Spike CLI: `drive <feature.md> --id --src --evidence [--arg k=v]…`, `verify --evidence`, `slot acquire/release/list`                                                                                                                                                                                         |
+| `*.test.ts` (3 files, 17 tests)                             | Pure code only: format parsing, manifest hash, slot picking. All pass (`node --test <file>`, one at a time)                                                                                                                                                                                                  |
 
 Design choices:
+
 - **Snapshot restore.** `prepare` bakes migrations + seed into a committed image (`PGDATA=/pgdata` so it isn't a volume) and creates an `app_seed` template DB. `up` = `docker run` that image (Postgres ready in ~0.4 s); `reset` = `DROP DATABASE app WITH (FORCE); CREATE DATABASE app TEMPLATE app_seed` + fresh browser context.
 - **Browser session per id.** A small daemon per id owns one Chromium context; primitives are thin HTTP clients to it. It runs on the slot's 3rd port and dies with `down` (process group kill by recorded pid, never by name).
 - **Waits live in the engine**, not the Toolkit: `wait: { until: { text, target?, attr? }, timeout }` polls the generic `read` primitive every 250 ms. So `wait-text` is not a primitive.
@@ -28,55 +56,55 @@ Design choices:
 
 ## Exits (this half of W0)
 
-| Exit | Result | Key evidence line |
-|---|---|---|
-| `prepare` works | PASS | `{"status":"ok","secs":4.3,"snapshot":"kitchen-a-web-seed:3c167981add8","snapshotCached":false}` (cold snapshot); warm `secs":0.9` |
-| `up` from empty to usable, seconds | PASS | `{"status":"ready","url":"http://127.0.0.1:31000","secs":1.2,"timings":{"postgres":0.363,"app":0.146,"browser":0.622}}` |
-| `doctor` | PASS | 5/5 checks ok: container running, seed users present, app pid alive, healthz on our port, browser driver alive |
-| a drive, `reset`, the drive again | PASS | all 3 drives green in round 1, `reset` `{"status":"ok","secs":0.5}`, all 3 green again in round 2 (same slug `launch-plan` reusable, dark mode starts `before:"false"` again) |
-| `down`; evidence survives | PASS | `{"status":"ok","stopped":["browser","app","postgres"]}` then `verify` `{"ok":true,"entries":86}` and 6 PNGs (`e12/settings-dark.png` … `e86/invite-accepted.png`) still present |
-| two slots at once | PASS | `kitchen-a-web-p1 127.0.0.1:31001->5432`, `kitchen-a-web-p2 127.0.0.1:31021->5432`; both `up` in parallel (1.06 s each), both doctors ok, drives run concurrently on both, both `down` |
-| three flows green through `src/proof/drive.ts`, stamped | PASS | e.g. `{"ok":true,"drive":"invites.generate-and-join","vars":{"admin":"bob-admin","invite":"INV-90CA7A13"}…}`; every line has `{id, sha, round, criterion, cmd, exit, at}` |
-| flows need no new primitive | PASS | only `login press type read screenshot http` + built-in `wait retry save $var` |
-| hand-edited manifest refused | PASS | edited line 6 `ok:false → ok:true`: `{"ok":false,"refused":"manifest.jsonl hash 6696c9b24262 ≠ recorded 146ca8af1805: refused"}` (unedited copy verified ok first) |
-| clean up everything | PASS | `containers left: none`; no `server.js`/`driver.mjs`/headless-shell processes; nothing listening on 31000–31100 |
+| Exit                                                    | Result | Key evidence line                                                                                                                                                                      |
+| ------------------------------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `prepare` works                                         | PASS   | `{"status":"ok","secs":4.3,"snapshot":"kitchen-a-web-seed:3c167981add8","snapshotCached":false}` (cold snapshot); warm `secs":0.9`                                                     |
+| `up` from empty to usable, seconds                      | PASS   | `{"status":"ready","url":"http://127.0.0.1:31000","secs":1.2,"timings":{"postgres":0.363,"app":0.146,"browser":0.622}}`                                                                |
+| `doctor`                                                | PASS   | 5/5 checks ok: container running, seed users present, app pid alive, healthz on our port, browser driver alive                                                                         |
+| a drive, `reset`, the drive again                       | PASS   | all 3 drives green in round 1, `reset` `{"status":"ok","secs":0.5}`, all 3 green again in round 2 (same slug `launch-plan` reusable, dark mode starts `before:"false"` again)          |
+| `down`; evidence survives                               | PASS   | `{"status":"ok","stopped":["browser","app","postgres"]}` then `verify` `{"ok":true,"entries":86}` and 6 PNGs (`e12/settings-dark.png` … `e86/invite-accepted.png`) still present       |
+| two slots at once                                       | PASS   | `kitchen-a-web-p1 127.0.0.1:31001->5432`, `kitchen-a-web-p2 127.0.0.1:31021->5432`; both `up` in parallel (1.06 s each), both doctors ok, drives run concurrently on both, both `down` |
+| three flows green through `src/proof/drive.ts`, stamped | PASS   | e.g. `{"ok":true,"drive":"invites.generate-and-join","vars":{"admin":"bob-admin","invite":"INV-90CA7A13"}…}`; every line has `{id, sha, round, criterion, cmd, exit, at}`              |
+| flows need no new primitive                             | PASS   | only `login press type read screenshot http` + built-in `wait retry save $var`                                                                                                         |
+| hand-edited manifest refused                            | PASS   | edited line 6 `ok:false → ok:true`: `{"ok":false,"refused":"manifest.jsonl hash 6696c9b24262 ≠ recorded 146ca8af1805: refused"}` (unedited copy verified ok first)                     |
+| clean up everything                                     | PASS   | `containers left: none`; no `server.js`/`driver.mjs`/headless-shell processes; nothing listening on 31000–31100                                                                        |
 
 Extra checks run in the same script:
 
-| Check | Result | Evidence |
-|---|---|---|
-| Missing primitive → TOOLKIT-GAP before any step runs | PASS | `negative.needs-sql`: `{"ok":false,"gap":"sql","steps":0}` |
-| Unmeetable wait + retry fails, doesn't hang or pass | PASS | `negative.wrong-text`: fails at line 10 after 4 polls + 4 polls on retry 1, each stamped |
-| Stale slot reclaimed after `down` | PASS | slot `orphan` owned by a dead pid with its app up → next `acquire` logs `reclaiming stale slot 0 (orphan, pid 14744 gone): down first`, `"reclaimed":["orphan"]`, orphan container gone, block 0 reused |
-| Typecheck of `src/proof`, `src/toolkit` | PASS | `tsc --strict --erasableSyntaxOnly --noEmit` clean (typescript run from a scratch dir, not a repo dep) |
+| Check                                                | Result | Evidence                                                                                                                                                                                                |
+| ---------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Missing primitive → TOOLKIT-GAP before any step runs | PASS   | `negative.needs-sql`: `{"ok":false,"gap":"sql","steps":0}`                                                                                                                                              |
+| Unmeetable wait + retry fails, doesn't hang or pass  | PASS   | `negative.wrong-text`: fails at line 10 after 4 polls + 4 polls on retry 1, each stamped                                                                                                                |
+| Stale slot reclaimed after `down`                    | PASS   | slot `orphan` owned by a dead pid with its app up → next `acquire` logs `reclaiming stale slot 0 (orphan, pid 14744 gone): down first`, `"reclaimed":["orphan"]`, orphan container gone, block 0 reused |
+| Typecheck of `src/proof`, `src/toolkit`              | PASS   | `tsc --strict --erasableSyntaxOnly --noEmit` clean (typescript run from a scratch dir, not a repo dep)                                                                                                  |
 
 ## The three flows
 
-| Drive | Exercises | Steps | Key values |
-|---|---|---|---|
-| `settings.toggle-dark` (`features/settings.md`) | sign in, change a setting, full reload, read back + `http GET /api/me` | 11 calls | `before:"false"`, `theme:"Dark"`, `me:{…"theme":"dark"}` |
-| `projects.create` (`features/projects.md`) | 2-step form, invalid slug → error, fix, `wait` ~1.5 s for "Ready" | 15 calls | `created:"launch-plan"` |
-| `invites.generate-and-join` (`features/invites.md`) | read a random value, `save`, reuse as `$invite` after signing out | 11 calls | `invite:"INV-…"` re-used in `type` and in the final `wait` text |
+| Drive                                               | Exercises                                                              | Steps    | Key values                                                      |
+| --------------------------------------------------- | ---------------------------------------------------------------------- | -------- | --------------------------------------------------------------- |
+| `settings.toggle-dark` (`features/settings.md`)     | sign in, change a setting, full reload, read back + `http GET /api/me` | 11 calls | `before:"false"`, `theme:"Dark"`, `me:{…"theme":"dark"}`        |
+| `projects.create` (`features/projects.md`)          | 2-step form, invalid slug → error, fix, `wait` ~1.5 s for "Ready"      | 15 calls | `created:"launch-plan"`                                         |
+| `invites.generate-and-join` (`features/invites.md`) | read a random value, `save`, reuse as `$invite` after signing out      | 11 calls | `invite:"INV-…"` re-used in `type` and in the final `wait` text |
 
 ## Timings (warm run; seconds, wall clock incl. Node start)
 
-| Command | s |
-|---|---|
-| prepare, cold snapshot build (npm + Chromium caches warm) | 4.34 |
-| prepare, warm | 0.89–1.11 |
-| describe | 0.05 |
-| slot acquire / release | 0.12–0.16 |
-| up (single) | 1.24 |
-| up (two in parallel) | 1.06 / 1.07 |
-| doctor | 0.14–0.18 |
-| reset | 0.59 |
-| down | 0.42–0.50 |
-| drive settings.toggle-dark | 1.50–1.71 |
-| drive projects.create (includes the 1.5 s provisioning wait) | 3.22–3.36 |
-| drive invites.generate-and-join | 1.23–1.65 |
-| one primitive call (bin/dev → driver) | ~0.1 |
-| verify manifest | 0.12 |
-| slot acquire that reclaims a stale slot (runs its `down`) | 0.58 |
+| Command                                                      | s           |
+| ------------------------------------------------------------ | ----------- |
+| prepare, cold snapshot build (npm + Chromium caches warm)    | 4.34        |
+| prepare, warm                                                | 0.89–1.11   |
+| describe                                                     | 0.05        |
+| slot acquire / release                                       | 0.12–0.16   |
+| up (single)                                                  | 1.24        |
+| up (two in parallel)                                         | 1.06 / 1.07 |
+| doctor                                                       | 0.14–0.18   |
+| reset                                                        | 0.59        |
+| down                                                         | 0.42–0.50   |
+| drive settings.toggle-dark                                   | 1.50–1.71   |
+| drive projects.create (includes the 1.5 s provisioning wait) | 3.22–3.36   |
+| drive invites.generate-and-join                              | 1.23–1.65   |
+| one primitive call (bin/dev → driver)                        | ~0.1        |
+| verify manifest                                              | 0.12        |
+| slot acquire that reclaims a stale slot (runs its `down`)    | 0.58        |
 
 Not measured: a truly cold machine (empty npm cache, no Chromium download). Playwright
 is pinned to 1.65.0 because its headless shell (revision 1254) was already cached here.

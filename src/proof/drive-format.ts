@@ -76,7 +76,10 @@ export function parseFlow(src: string): Value {
       ws();
       const start = i;
       while (i < src.length && src[i] !== ":" && !/[,{}[\]]/.test(src[i])) i++;
-      const key = src.slice(start, i).trim().replace(/^["']|["']$/g, "");
+      const key = src
+        .slice(start, i)
+        .trim()
+        .replace(/^["']|["']$/g, "");
       if (!key || src[i] !== ":") fail("expected key:");
       i++;
       if (key in out) fail(`duplicate key ${key}`);
@@ -164,7 +167,30 @@ const WaitArgs = z.strictObject({
   timeout: duration.default(10_000),
 });
 const RetryArgs = z.strictObject({ times: z.number().int().min(1).max(5), on: z.literal("fail").default("fail") });
-const PrimArgs = z.record(z.string(), z.custom<Value>(() => true));
+const PrimArgs = z.record(
+  z.string(),
+  z.custom<Value>(() => true),
+);
+
+/**
+ * Flags the engine sets on every primitive call. A step may never pass them (or
+ * anything that looks like a flag), so a drive can't move itself to another
+ * slot, another source, or write files outside its evidence folder.
+ */
+export const RESERVED_ARGS = ["id", "src", "out", "ports"] as const;
+const ARG_NAME = /^[a-z][a-z0-9_]*$/;
+const PRIM_NAME = /^[a-z][a-z0-9_-]*$/;
+
+/** Throws unless every arg name is a plain, non-reserved name. Also used for one-off primitive calls (the MCP bridge). */
+export function checkPrimArgs(name: string, args: Record<string, unknown>, line = 0): void {
+  const where = line ? `line ${line}: ` : "";
+  if (!PRIM_NAME.test(name)) throw new DriveFormatError(`${where}${JSON.stringify(name)} is not a primitive name`);
+  for (const k of Object.keys(args)) {
+    if ((RESERVED_ARGS as readonly string[]).includes(k))
+      throw new DriveFormatError(`${where}${name}: "${k}" is set by the engine and can't be passed by a step`);
+    if (!ARG_NAME.test(k)) throw new DriveFormatError(`${where}${name}: arg name ${JSON.stringify(k)} must match [a-z][a-z0-9_]*`);
+  }
+}
 const VAR = /\$([A-Za-z_][A-Za-z0-9_]*)/g;
 
 function zMsg(e: z.ZodError): string {
@@ -188,8 +214,11 @@ export function parseDrive(body: string, firstLine = 1): Drive {
     const indent = line.length - line.trimStart().length;
     if (indent === 0) {
       const m = line.match(/^([a-z]+):\s*(.*)$/);
-      if (!m) err(n, `expected a top-level key, got ${JSON.stringify(line)}`);
-      const [, key, rest] = m!;
+      if (!m) {
+        err(n, `expected a top-level key, got ${JSON.stringify(line)}`);
+        return;
+      }
+      const [, key, rest] = m;
       inSteps = false;
       if (key === "drive") {
         if (!/^[a-z0-9][a-z0-9._-]*$/.test(rest)) err(n, "drive name must be lowercase like settings.toggle-dark");
@@ -233,7 +262,15 @@ export function parseDrive(body: string, firstLine = 1): Drive {
       if (r.key === "wait") {
         const p = WaitArgs.safeParse(v);
         if (!p.success) throw new DriveFormatError(`line ${r.line}: wait ${zMsg(p.error)}`);
-        return { kind: "wait", text: p.data.until.text, target: p.data.until.target ?? "body", attr: p.data.until.attr, timeoutMs: p.data.timeout, line: r.line };
+        if (p.data.until.text === "") throw new DriveFormatError(`line ${r.line}: wait needs non-empty text`);
+        return {
+          kind: "wait",
+          text: p.data.until.text,
+          target: p.data.until.target ?? "body",
+          attr: p.data.until.attr,
+          timeoutMs: p.data.timeout,
+          line: r.line,
+        };
       }
       const p = RetryArgs.safeParse(v);
       if (!p.success) throw new DriveFormatError(`line ${r.line}: retry ${zMsg(p.error)}`);
@@ -242,6 +279,7 @@ export function parseDrive(body: string, firstLine = 1): Drive {
     }
     const p = PrimArgs.safeParse(v);
     if (!p.success) throw new DriveFormatError(`line ${r.line}: ${zMsg(p.error)}`);
+    checkPrimArgs(r.key, p.data, r.line);
     return { kind: "prim", name: r.key, args: p.data, save: r.save, line: r.line };
   });
 

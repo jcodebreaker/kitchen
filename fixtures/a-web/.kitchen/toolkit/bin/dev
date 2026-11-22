@@ -10,6 +10,7 @@ import {
   PG_IMAGE,
   TOOLKIT_DIR,
   alive,
+  appEnv,
   checkId,
   containerName,
   httpJson,
@@ -36,13 +37,22 @@ const PRIMITIVES = {
   type: { args: { target: "selector", text: "string" }, does: "replace the field's value" },
   read: { args: { target: "selector (default body)", attr: "optional attribute" }, does: "inner text or attribute of the first match" },
   screenshot: { args: { name: "file stem" }, does: "full-page PNG into --out" },
-  http: { args: { method: "GET|POST…", path: "/api/…", body: "optional JSON" }, does: "request as the signed-in browser user" },
+  http: { args: { method: "GET|POST…", path: "/api/…", body: "optional JSON" }, does: "same-origin request as the signed-in browser user" },
+  open: { args: { path: "/settings" }, does: "navigate the page to a path on the app (same origin only)" },
+  reload: { args: {}, does: "reload the current page from the server" },
 };
 const LIFECYCLE = ["prepare", "up", "doctor", "reset", "down", "describe"];
 
 const t0 = Date.now();
 const secs = () => Math.round((Date.now() - t0) / 100) / 10;
-const { flags, pos } = parseArgs(process.argv.slice(2));
+let parsed;
+try {
+  parsed = parseArgs(process.argv.slice(2));
+} catch (e) {
+  // e.g. a flag given twice: refuse the whole call, never pick one of the values
+  out({ ok: false, status: "fail", out: e.message, why: e.message, files: [] }, 2);
+}
+const { flags, pos } = parsed;
 const cmd = pos[0];
 
 function srcOf(f) {
@@ -148,7 +158,7 @@ async function up() {
     t = Date.now();
     state.appPid = spawnDetached(process.execPath, ["server.js"], {
       cwd: src,
-      env: { ...process.env, PORT: String(appPort), DATABASE_URL: `postgres://${env.POSTGRES_USER}:${env.POSTGRES_PASSWORD}@127.0.0.1:${pgPort}/${env.POSTGRES_DB}` },
+      env: appEnv({ PORT: String(appPort), DATABASE_URL: `postgres://${env.POSTGRES_USER}:${env.POSTGRES_PASSWORD}@127.0.0.1:${pgPort}/${env.POSTGRES_DB}` }),
       logFile: path.join(dir, "app.log"),
     });
     writeState(id, state);
@@ -159,7 +169,7 @@ async function up() {
     state.driverUrl = `http://127.0.0.1:${driverPort}`;
     state.driverPid = spawnDetached(process.execPath, [path.join(TOOLKIT_DIR, "lib/driver.mjs"), "--port", String(driverPort), "--base", state.url, "--src", src], {
       cwd: TOOLKIT_DIR,
-      env: process.env,
+      env: appEnv(),
       logFile: path.join(dir, "driver.log"),
     });
     writeState(id, state);
@@ -239,20 +249,14 @@ async function down() {
 }
 
 // ---------- describe (generated from code + files, never hand-kept) ----------
+// Features are listed by file; the engine parses the drives in them.
 function describe() {
   const src = path.resolve(String(flags.src || DEFAULT_SRC));
   const seed = fs.readFileSync(path.join(src, "db/002_seed.sql"), "utf8");
   const seedUsers = [...seed.matchAll(/\('([a-z0-9-]+)', crypt/g)].map((m) => m[1]);
   const featuresDir = path.join(src, ".kitchen/toolkit/features");
   const features = fs.existsSync(featuresDir)
-    ? fs.readdirSync(featuresDir).filter((f) => f.endsWith(".md")).flatMap((f) => {
-        const text = fs.readFileSync(path.join(featuresDir, f), "utf8");
-        return [...text.matchAll(/```drive\n([\s\S]*?)```/g)].map((m) => ({
-          drive: m[1].match(/^drive:\s*(\S+)/m)?.[1],
-          args: m[1].match(/^args:\s*\[(.*)\]/m)?.[1].split(",").map((a) => a.trim()).filter(Boolean) ?? [],
-          file: `features/${f}`,
-        }));
-      })
+    ? fs.readdirSync(featuresDir).filter((f) => f.endsWith(".md") && f !== "README.md").sort().map((f) => `features/${f}`)
     : [];
   out({
     status: "ok",
@@ -273,7 +277,10 @@ async function primitive(op) {
   const s = readState(id);
   if (!s) return out({ ok: false, out: `id ${id} is not up`, files: [] });
   const { id: _i, src: _s, out: outDir, ...args } = flags;
-  if (op === "screenshot") args.out = path.resolve(String(outDir || path.join(stateDir(id), "shots")));
+  if (op === "screenshot") {
+    if (typeof outDir !== "string") return out({ ok: false, out: "screenshot needs --out", files: [] });
+    args.out = path.resolve(outDir);
+  }
   if (op === "http" && typeof args.body === "string") args.body = JSON.parse(args.body);
   log(op, JSON.stringify(args));
   const r = await httpJson(s.driverUrl, { op, args });

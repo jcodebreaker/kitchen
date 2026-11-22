@@ -21,22 +21,59 @@ export function out(obj, code) {
   process.exit(code ?? (obj.status === "fail" || obj.ok === false ? 1 : 0));
 }
 
+/**
+ * `--k=v`, `--k v` or a bare `--flag` (true). A flag given twice is refused, so
+ * nothing appended after the engine's own flags (--id, --src, --out) can
+ * override them.
+ */
 export function parseArgs(argv) {
   const flags = {};
   const pos = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a.startsWith("--")) {
-      const k = a.slice(2);
+    if (!a.startsWith("--")) {
+      pos.push(a);
+      continue;
+    }
+    const eq = a.indexOf("=");
+    let k;
+    let v;
+    if (eq > 2) {
+      k = a.slice(2, eq);
+      v = a.slice(eq + 1);
+    } else {
+      k = a.slice(2);
       const next = argv[i + 1];
-      if (next === undefined || next.startsWith("--")) flags[k] = true;
+      if (next === undefined || next.startsWith("--")) v = true;
       else {
-        flags[k] = next;
+        v = next;
         i++;
       }
-    } else pos.push(a);
+    }
+    if (!/^[a-z][a-z0-9_-]*$/.test(k)) throw new Error(`bad flag ${JSON.stringify(a)}`);
+    if (Object.hasOwn(flags, k)) throw new Error(`flag --${k} given twice`);
+    flags[k] = v;
   }
   return { flags, pos };
+}
+
+/**
+ * The env for processes that run app code (the server) or drive it (the browser
+ * driver): what the engine gave bin/dev, minus the control-plane variables the
+ * engine names in KITCHEN_CONTROL_ENV (Docker). The engine already scrubbed the
+ * rest (no tokens, no credentials, .env.kitchen values added).
+ */
+export function appEnv(extra = {}) {
+  const control = new Set([
+    "DOCKER_HOST",
+    "DOCKER_CONTEXT",
+    ...String(process.env.KITCHEN_CONTROL_ENV || "")
+      .split(",")
+      .filter(Boolean),
+  ]);
+  const env = {};
+  for (const [k, v] of Object.entries(process.env)) if (!control.has(k)) env[k] = v;
+  return { ...env, ...extra };
 }
 
 export function checkId(id) {

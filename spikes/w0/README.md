@@ -19,6 +19,23 @@ sh spikes/w0/skills.sh            # Codex skill roots, no model call
 CLAUDE=/path/to/claude sh spikes/w0/skills.sh --claude   # plus one haiku call for Claude Code
 ```
 
+Toolkit, drive format, manifest, slots, untrusted env (no agent, needs Docker; ≤ 2 Postgres containers; exits 1 on any missed expectation):
+
+```sh
+node spikes/w0/run-toolkit-spike.mjs <scratch dir> [--cold]
+```
+
+Engine bridge (`kitchen mcp`): `selftest` talks to it over stdio (free); the others make one cheap agent call each. `codex-noapprove` is the control without `default_tools_approval_mode`. Exits 1 on any miss.
+
+```sh
+node spikes/w0/bridge.ts selftest <scratch dir>
+node spikes/w0/bridge.ts claude <scratch dir>
+node spikes/w0/bridge.ts codex <scratch dir>
+node spikes/w0/bridge.ts codex-noapprove <scratch dir>
+```
+
+`run.ts` also exits 1 when any check FAILs. Code under `src/` runs directly on Node 26 (`node file.ts`); `tsx` works too.
+
 Models: Claude `haiku`, Codex `gpt-6-luna` (override with `W0_CODEX_MODEL`). Claude runs `/opt/homebrew/bin/claude` unless `KITCHEN_CLAUDE_BIN` is set. Codex runs as `npx -y @openai/codex@0.171.0`.
 
 - `probe.sh` is what the agent runs. It prints one `key: exit=<n> | <line>` per check into `probe.out` and never prints a credential.

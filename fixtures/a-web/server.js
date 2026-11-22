@@ -13,8 +13,7 @@ pool.on("error", (e) => console.error("pg pool:", e.message));
 
 // ---------- tiny helpers ----------
 
-const esc = (s) =>
-  String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -56,10 +55,7 @@ const redirect = (res, to, headers = {}) => send(res, 303, "", { location: to, .
 async function currentUser(req) {
   const sid = cookies(req).sid;
   if (!sid) return null;
-  const { rows } = await pool.query(
-    "SELECT u.id, u.username, u.is_admin, u.theme FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = $1",
-    [sid],
-  );
+  const { rows } = await pool.query("SELECT u.id, u.username, u.is_admin, u.theme FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = $1", [sid]);
   return rows[0] || null;
 }
 
@@ -166,10 +162,10 @@ async function handle(req, res) {
   if (path === "/login" && method === "GET") return send(res, 200, loginPage());
   if (path === "/login" && method === "POST") {
     const { username, password } = await readBody(req);
-    const { rows } = await pool.query(
-      "SELECT id FROM users WHERE username = $1 AND password_hash = crypt($2, password_hash)",
-      [username || "", password || ""],
-    );
+    const { rows } = await pool.query("SELECT id FROM users WHERE username = $1 AND password_hash = crypt($2, password_hash)", [
+      username || "",
+      password || "",
+    ]);
     if (!rows[0]) return send(res, 401, loginPage("Wrong username or password."));
     const token = randomBytes(24).toString("hex");
     await pool.query("INSERT INTO sessions (token, user_id) VALUES ($1, $2)", [token, rows[0].id]);
@@ -192,10 +188,9 @@ async function handle(req, res) {
   }
   if (path === "/join" && method === "POST") {
     const { code } = await readBody(req);
-    const { rows } = await pool.query(
-      "UPDATE invites SET accepted_at = now() WHERE code = $1 AND accepted_at IS NULL RETURNING code",
-      [String(code || "").trim()],
-    );
+    const { rows } = await pool.query("UPDATE invites SET accepted_at = now() WHERE code = $1 AND accepted_at IS NULL RETURNING code", [
+      String(code || "").trim(),
+    ]);
     const msg = rows[0]
       ? `<p role="status" data-testid="invite-result">Invite accepted: ${esc(rows[0].code)}</p>`
       : `<p class="error" role="alert" data-testid="invite-result">Invite code not found or already used.</p>`;
@@ -209,11 +204,7 @@ async function handle(req, res) {
   }
 
   if (path === "/" || path === "/home") {
-    return send(
-      res,
-      200,
-      page("Home", `<h1>Home</h1><section><p data-testid="signed-in-as">Signed in as ${esc(user.username)}</p></section>`, user),
-    );
+    return send(res, 200, page("Home", `<h1>Home</h1><section><p data-testid="signed-in-as">Signed in as ${esc(user.username)}</p></section>`, user));
   }
 
   if (path === "/logout" && method === "POST") {
@@ -270,9 +261,7 @@ async function handle(req, res) {
 
   if (path === "/projects" && method === "GET") {
     const { rows } = await pool.query("SELECT name, slug FROM projects WHERE owner_id = $1 ORDER BY id", [user.id]);
-    const items = rows
-      .map((p) => `<li><a href="/projects/${esc(p.slug)}" data-testid="project-link-${esc(p.slug)}">${esc(p.name)}</a></li>`)
-      .join("");
+    const items = rows.map((p) => `<li><a href="/projects/${esc(p.slug)}" data-testid="project-link-${esc(p.slug)}">${esc(p.name)}</a></li>`).join("");
     return send(res, 200, page("Projects", `<h1>Projects</h1><section><ul data-testid="project-list">${items}</ul></section>`, user));
   }
 
@@ -290,21 +279,16 @@ async function handle(req, res) {
     }
     const taken = await pool.query("SELECT 1 FROM projects WHERE slug = $1", [slug]);
     if (taken.rows[0]) return send(res, 400, step2Page(user, v, "That slug is already taken."));
-    await pool.query("INSERT INTO projects (owner_id, name, description, slug) VALUES ($1, $2, $3, $4)", [
-      user.id,
-      v.name,
-      v.description || "",
-      slug,
-    ]);
+    await pool.query("INSERT INTO projects (owner_id, name, description, slug) VALUES ($1, $2, $3, $4)", [user.id, v.name, v.description || "", slug]);
     return redirect(res, `/projects/${slug}`);
   }
 
   const proj = path.match(/^\/(api\/)?projects\/([a-z0-9-]+)$/);
   if (proj && method === "GET") {
-    const { rows } = await pool.query(
-      "SELECT name, slug, description, now() >= ready_at AS ready FROM projects WHERE slug = $1 AND owner_id = $2",
-      [proj[2], user.id],
-    );
+    const { rows } = await pool.query("SELECT name, slug, description, now() >= ready_at AS ready FROM projects WHERE slug = $1 AND owner_id = $2", [
+      proj[2],
+      user.id,
+    ]);
     const p = rows[0];
     if (proj[1]) return p ? json(res, 200, p) : json(res, 404, { error: "not found" });
     if (!p) return send(res, 404, page("Not found", "<h1>Project not found</h1>", user));
@@ -364,7 +348,8 @@ const server = http.createServer((req, res) => {
   });
 });
 server.listen(PORT, "127.0.0.1", () => console.error(`fixture-a-web listening on http://127.0.0.1:${PORT}`));
-for (const sig of ["SIGTERM", "SIGINT"]) process.on(sig, () => {
+for (const sig of ["SIGTERM", "SIGINT"])
+  process.on(sig, () => {
     server.close(() => pool.end().finally(() => process.exit(0)));
     server.closeAllConnections();
   });
