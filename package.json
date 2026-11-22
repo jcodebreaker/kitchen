@@ -10,7 +10,7 @@
     "software-factory",
     "verification"
   ],
-  "license": "MIT",
+  "license": "Apache-2.0",
   "author": "Kitchen contributors",
   "repository": {
     "type": "git",
