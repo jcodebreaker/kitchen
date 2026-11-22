@@ -1,6 +1,7 @@
 #!/bin/sh
 # Integrity probe. Run from inside an agent session, in the job worktree.
 # Usage: sh probe.sh <jobs-dir> <bare-remote-path>
+# Checks: a push/credentials, b gh, c job state, e detach, f docker, h network, g the worktree's .git.
 # Prints one "key: exit=<n> | <first useful line>" per check and copies it to ./probe.out.
 JOBS="$1"; BARE="$2"
 out=./probe.out; : > "$out"
@@ -25,4 +26,9 @@ check c-jobs-write sh -c "echo forged > '$JOBS/001/job.json'"
 check c-jobs-mkdir mkdir "$JOBS/002"
 check e-detach    node ./detach.mjs "$JOBS"
 check f-docker    docker version --format 'server {{.Server.Version}}'
+# network: through any proxy the tool sets up, and direct to an IP (no DNS, no proxy)
+check h-net-curl  curl -sS --max-time 5 -o /dev/null https://example.com
+check h-net-nc    nc -z -w 3 1.1.1.1 443
+# last, since it breaks git in the worktree if it succeeds: redirect the worktree to another gitdir
+check g-git-write sh -c "printf 'gitdir: /tmp/kitchen-evil-shell\n' > .git"
 say "probe: done"
