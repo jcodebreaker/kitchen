@@ -1,3 +1,6 @@
+// Re-lint every contract a benchmark run refused (spec-lint or a cli/json pause) with the current rules:
+// per criterion, what rule 3 would refuse or leave to the base check, and rule 7's problems.
+//   node spikes/regression/relint.ts <bench out dir>…   (bench/.work/<time>-<tier>)
 import fs from "node:fs";
 import path from "node:path";
 
@@ -21,7 +24,7 @@ for (const root of roots) {
       for (const c of L.parseCriteria(md)) {
         if (!c.expect || c.expect === "judged") continue;
         try {
-          const b = L.negativeBacking(c.expect, parseProof(c.proof), { kind: job.kind });
+          const b = L.negativeBacking(c.expect, parseProof(c.proof));
           if (b.refuse || b.base.length) console.log(`   ${c.id}: refuse=${b.refuse ?? ""} base=${JSON.stringify(b.base)}`);
         } catch (e) {
           console.log(`   ${c.id}: ${(e as Error).message}`);
