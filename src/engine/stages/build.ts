@@ -153,7 +153,7 @@ export const build: StageHandler = async (ctx) => {
       fs.rmSync(syncFile(ctx.jobDir), { force: true });
       const why = `sync with the base ${syncing.base.slice(0, 12)} aborted: the resolution changes files the layer rules keep at this branch's version, which would drop the base's change: ${cut.join("; ")}. Merge the base into ${job.branch} by hand, then \`kitchen feedback ${job.id}\``;
       ctx.log(why);
-      return { to: "needs-human", facts: { build: { status, committed: false, pushed: false, pr: job.pr, localForge, syncRefused: cut } }, why };
+      return { to: "needs-human", facts: { build: { status, committed: false, pushed: false, pr: job.pr, localForge, syncRefused: cut }, why } };
     }
   }
   const c = await commitWith(

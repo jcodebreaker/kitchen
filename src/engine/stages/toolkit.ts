@@ -196,7 +196,7 @@ export const toolkit: StageHandler = async (ctx) => {
         h.SUMMARY ? `**What it does:** ${h.SUMMARY}` : "",
         `**Proven:** \`kitchen toolkit check\` passed on the base plus this branch (${report.steps.length} steps, ${Math.round(report.secs)} s, run sandboxed because it is not merged).`,
         known.length
-          ? `**Known on the base:** ${known.map((d) => `\`${d}\``).join(", ")} already fail on the base (${base.slice(0, 12)}) without this branch, so their failure here is not this PR's.`
+          ? `**Known on the base:** ${known.map((d) => `\`${d}\``).join(", ")} ${known.length === 1 ? "fails" : "fail"} on the base (${base.slice(0, 12)}) without this branch too, so that failure is not this PR's.`
           : "",
         "",
         "The job's proofs run with this commit until it is merged; merging it moves the job back to the base Toolkit, and its drives and Verify run again.",
