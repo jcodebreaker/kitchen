@@ -1,15 +1,18 @@
-// W2 commands (PLAN §4): `kitchen toolkit check`, `kitchen init`, and the setup
-// role's bridge `kitchen setup-mcp`. Registered from src/cli.ts with one line, so
+// W2 commands (PLAN §4): `kitchen init` (quick, ADR 0010), `kitchen toolkit build`
+// and `toolkit check`, and the setup role's bridge `kitchen setup-mcp`. Registered from src/cli.ts with one line, so
 // they parse their own flags (`--k v` or `--k=v`; a flag given twice is refused).
 
 import { randomBytes } from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import { loadConfig } from "../config.ts";
 import { plainCheckout } from "../engine/git.ts";
 import { forgeFor } from "../forge/forge.ts";
 import { serveSetupBridge } from "../init/bridge.ts";
-import { initCmd, installSkill } from "../init/init.ts";
-import { detachInit, readStatus, statusReport, tracked } from "../init/status.ts";
+import { toolkitBuild } from "../init/build.ts";
+import { installSkill } from "../init/files.ts";
+import { quickInit } from "../init/quick.ts";
+import { detachInit, initLog, readStatus, statusReport, tracked } from "../init/status.ts";
 import { ownerAlive } from "../lock.ts";
 
 const CLI = path.resolve(import.meta.dirname, "..", `cli${path.extname(import.meta.filename)}`);
@@ -46,6 +49,78 @@ export function parseFlags(argv: string[], valued: string[]): Flags {
 
 const str = (v: string | true | undefined) => (typeof v === "string" ? v : undefined);
 
+const BUILD_ONLY = ["answers", "model", "effort", "max-fix", "generate-only", "detach"];
+const BUILD_FLAGS = ["repo", "tool", "verbose", "status", "wait", ...BUILD_ONLY];
+const INIT_FLAGS = [...BUILD_FLAGS, "skill", "toolkit"];
+
+/** `--status [--wait <secs>]`: how a detached build is doing; blocks up to `--wait` (at most 110 s, so one agent tool call stays short) while it runs. */
+async function buildStatus(repo: string, flags: Record<string, string | true>, out: (l: string) => void): Promise<number> {
+  // Agent tools may refuse a plain `sleep`; this is the way to wait between polls.
+  const wait = Math.min(110, Math.max(0, Number(str(flags.wait) ?? 0) || 0)) * 1000;
+  const end = Date.now() + wait;
+  const live = () => {
+    const s = readStatus(repo);
+    return { s, alive: !!s && ownerAlive({ pid: s.pid, start: s.pidStart }) };
+  };
+  let cur = live();
+  while (cur.s?.state === "running" && cur.alive && Date.now() < end) {
+    await new Promise((res) => setTimeout(res, 2000));
+    cur = live();
+  }
+  const r = statusReport(cur.s, cur.alive);
+  for (const l of r.lines) out(l);
+  return r.code;
+}
+
+/**
+ * The Toolkit build, in the foreground (status file kept current, every detail appended to
+ * .kitchen/init/init.log, the terminal quiet unless --verbose) or detached (`--detach`: its own
+ * process, whose stdout is init.log, so it logs everything there).
+ */
+async function runBuild(repo: string, flags: Record<string, string | true>, out: (l: string) => void): Promise<number> {
+  if (flags.detach === true) {
+    const args = ["--repo", repo];
+    for (const k of ["tool", "model", "effort", "max-fix"]) if (str(flags[k])) args.push(`--${k}`, str(flags[k]) as string);
+    if (str(flags.answers)) args.push("--answers", path.resolve(str(flags.answers) as string));
+    if (flags["generate-only"] === true) args.push("--generate-only");
+    return detachInit(repo, CLI, args, out);
+  }
+  const intoLog = process.env.KITCHEN_INIT_LOG; // a detached child: stdout already is the log
+  const verbose = flags.verbose === true || !!intoLog;
+  const log = initLog(repo);
+  fs.mkdirSync(path.dirname(log), { recursive: true });
+  const append = (l: string) => {
+    if (!intoLog) fs.appendFileSync(log, `${l}\n`);
+  };
+  return tracked(
+    repo,
+    (tee) =>
+      toolkitBuild(
+        {
+          repo,
+          answers: str(flags.answers),
+          tool: str(flags.tool) as "claude" | "codex" | undefined,
+          model: str(flags.model),
+          effort: str(flags.effort),
+          maxFix: flags["max-fix"] ? Number(flags["max-fix"]) : undefined,
+          generateOnly: flags["generate-only"] === true,
+        },
+        {
+          phase: (l) => {
+            tee(l);
+            append(l);
+          },
+          log: (l) => {
+            append(l);
+            if (verbose) tee(l);
+          },
+        },
+      ),
+    out,
+    intoLog,
+  );
+}
+
 export async function w2(name: string, argv: string[]): Promise<number> {
   const out = (l: string) => console.log(l);
   if (name === "setup-mcp") {
@@ -59,9 +134,7 @@ export async function w2(name: string, argv: string[]): Promise<number> {
   }
   if (name === "init") {
     const { flags } = parseFlags(argv, ["repo", "answers", "tool", "model", "effort", "max-fix", "wait"]);
-    for (const k of Object.keys(flags))
-      if (!["repo", "answers", "tool", "model", "effort", "max-fix", "generate-only", "detach", "status", "wait", "skill"].includes(k))
-        throw new Error(`kitchen init: unknown flag --${k}`);
+    for (const k of Object.keys(flags)) if (!INIT_FLAGS.includes(k)) throw new Error(`kitchen init: unknown flag --${k}`);
     const repo = plainCheckout(path.resolve(str(flags.repo) ?? process.cwd())).workTree;
     // --skill: only the /kitchen skill, so the setup itself can start from inside Claude Code or Codex.
     if (flags.skill === true) {
@@ -69,49 +142,21 @@ export async function w2(name: string, argv: string[]): Promise<number> {
       out("next: open Claude Code (or Codex) in this repo and type: /kitchen set up Kitchen");
       return 0;
     }
-    if (flags.status === true) {
-      // --wait <secs>: block up to that long (at most 110 s, so one agent tool call stays short) while init runs.
-      // Agent tools may refuse a plain `sleep`; this is the way to wait between polls.
-      const wait = Math.min(110, Math.max(0, Number(str(flags.wait) ?? 0) || 0)) * 1000;
-      const end = Date.now() + wait;
-      const live = () => {
-        const s = readStatus(repo);
-        return { s, alive: !!s && ownerAlive({ pid: s.pid, start: s.pidStart }) };
-      };
-      let cur = live();
-      while (cur.s?.state === "running" && cur.alive && Date.now() < end) {
-        await new Promise((res) => setTimeout(res, 2000));
-        cur = live();
-      }
-      const s = cur.s;
-      const r = statusReport(s, cur.alive);
-      for (const l of r.lines) out(l);
-      return r.code;
-    }
-    if (flags.detach === true) {
-      const fixed = argv.map((a) => (a.startsWith("--answers=") ? `--answers=${path.resolve(a.slice(10))}` : a));
-      const i = fixed.indexOf("--answers");
-      if (i >= 0 && fixed[i + 1]) fixed[i + 1] = path.resolve(fixed[i + 1]);
-      return detachInit(repo, CLI, fixed, out);
-    }
-    return tracked(
-      repo,
-      (o) =>
-        initCmd(
-          {
-            repo,
-            answers: str(flags.answers),
-            tool: str(flags.tool) as "claude" | "codex" | undefined,
-            model: str(flags.model),
-            effort: str(flags.effort),
-            maxFix: flags["max-fix"] ? Number(flags["max-fix"]) : undefined,
-            generateOnly: flags["generate-only"] === true,
-          },
-          o,
-        ),
-      out,
-      process.env.KITCHEN_INIT_LOG,
-    );
+    // Flags that only mean something for the Toolkit build (the pre-ADR-0010 init's) run the build too.
+    if (flags.status === true) return buildStatus(repo, flags, out);
+    const toolkit = flags.toolkit === true || BUILD_ONLY.some((k) => k in flags);
+    const code = await quickInit({ repo, tool: str(flags.tool) as "claude" | "codex" | undefined }, out);
+    if (!toolkit || code !== 0) return code;
+    out("");
+    return runBuild(repo, flags, out);
+  }
+  if (name === "toolkit" && argv[0] === "build") {
+    const { flags, pos } = parseFlags(argv.slice(1), ["repo", "answers", "tool", "model", "effort", "max-fix", "wait"]);
+    for (const k of Object.keys(flags)) if (!BUILD_FLAGS.includes(k)) throw new Error(`kitchen toolkit build: unknown flag --${k}`);
+    if (pos.length) throw new Error(`kitchen toolkit build: unexpected ${pos[0]}`);
+    const repo = plainCheckout(path.resolve(str(flags.repo) ?? process.cwd())).workTree;
+    if (flags.status === true) return buildStatus(repo, flags, out);
+    return runBuild(repo, flags, out);
   }
   // toolkit check [--feature x] [--src dir] [--rev r] · toolkit up [--rev r] [--src dir] · toolkit down --id <id>
   const { flags, pos } = parseFlags(argv, ["repo", "feature", "src", "rev", "id"]);
@@ -132,7 +177,9 @@ export async function w2(name: string, argv: string[]): Promise<number> {
     return r.outcome === "blocked" ? 1 : 0;
   }
   if (pos[0] !== "check") {
-    console.error("usage: kitchen toolkit check [--feature <drive|feature>] [--src <worktree>] | up [--rev <ref>] [--src <dir>] | down --id <id> | maintain");
+    console.error(
+      "usage: kitchen toolkit build [--detach] [--status] [--answers <file>] [--verbose] | check [--feature <drive|feature>] [--src <worktree>] | up [--rev <ref>] [--src <dir>] | down --id <id> | maintain",
+    );
     return 2;
   }
   const r = await checkAtRef(repo, { rev: str(flags.rev), src: str(flags.src), feature: str(flags.feature), print: out });

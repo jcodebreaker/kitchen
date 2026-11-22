@@ -1,10 +1,13 @@
-// `kitchen init` (PLAN §4, §5): kitchen.yaml, the /kitchen skill, the setup role
-// (headless survey → at most 3 questions → adopt or build) in a branch worktree,
-// an engine commit on `kitchen/setup`, then `kitchen toolkit check` on that
-// commit. Resumable: every finished step is recorded in .kitchen/init/state.json
-// and skipped on the next run.
-// Without a TTY, questions go to .kitchen/setup-questions.json and init exits 3;
-// `kitchen init --answers <file>` resumes. With a TTY it asks directly.
+// `kitchen toolkit build` (PLAN §4, §5; ADR 0010): the setup role (headless
+// survey → at most 3 questions → adopt or build) in a branch worktree, an
+// engine commit on `kitchen/setup`, then `kitchen toolkit check` on that commit.
+// Resumable: every finished step is recorded in .kitchen/init/state.json and
+// skipped on the next run. `kitchen init` (quick.ts) no longer does any of this;
+// `kitchen init --toolkit` runs it after quick init.
+// Without a TTY, questions go to .kitchen/setup-questions.json and the build
+// exits 3; `kitchen toolkit build --answers <file>` resumes. With a TTY it asks.
+// Output is quiet (one line per phase, say.ts); every detail goes to `log`
+// (.kitchen/init/init.log, and the terminal with --verbose).
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline/promises";
@@ -13,28 +16,21 @@ import { buildAgentEnv } from "../agents/env.ts";
 import { type Config, loadConfig, modelFor } from "../config.ts";
 import { GitError, linkedWorktree, openGit, plainCheckout } from "../engine/git.ts";
 import { adapterFor } from "../engine/runner.ts";
-import { writeAtomic } from "../engine/store.ts";
+import { listJobs, writeAtomic } from "../engine/store.ts";
 import { kitchenHome } from "../home.ts";
 import { appendLedger } from "../ledger/append.ts";
 import { checkAtRef, runToolkitCheck, trackedAt } from "../toolkit/check.ts";
 import { toolkitCheckout } from "../toolkit/checkout.ts";
 import { reclaimStaleSlots } from "../toolkit/slots.ts";
 import { setupBridgeServer } from "./bridge.ts";
+import { detectChecks } from "./detect-checks.ts";
+import { addGitignore, installSkill, toolFor, writeConfig } from "./files.ts";
+import { dur, phaseLine, usd } from "./say.ts";
 import { devEnvValues, refusal, scanText } from "./secrets.ts";
 
 const PKG = path.resolve(import.meta.dirname, "..", "..");
 const TEMPLATE = path.join(PKG, "toolkit-template");
-const SKILL = path.join(PKG, "skills", "kitchen", "SKILL.md");
 const ROLE = path.join(PKG, "roles", "setup.md");
-/** The /kitchen skill, the same file for both tools: .claude/skills (Claude Code) and .agents/skills (Codex). */
-export function installSkill(repo: string): string[] {
-  const files = [".claude/skills/kitchen/SKILL.md", ".agents/skills/kitchen/SKILL.md"];
-  for (const f of files) {
-    fs.mkdirSync(path.dirname(path.join(repo, f)), { recursive: true });
-    fs.copyFileSync(SKILL, path.join(repo, f));
-  }
-  return files;
-}
 
 export const SETUP_BRANCH = "kitchen/setup";
 const WT_ID = "_setup";
@@ -43,28 +39,7 @@ const IDENTITY = { GIT_AUTHOR_NAME: "Kitchen", GIT_AUTHOR_EMAIL: "kitchen@localh
 const NOT_COMMITTED = [":(exclude,glob)**/node_modules/**", ":(exclude,glob)**/__pycache__/**", ":(exclude,glob)**/.venv/**", ":(exclude).kitchen/checks/**"];
 const TOOLKIT_PATHS = [".kitchen/toolkit", ".env.kitchen"];
 
-export const GITIGNORE = [
-  ".kitchen/jobs/",
-  ".kitchen/checks/",
-  ".kitchen/scratch/",
-  ".kitchen/init/",
-  ".kitchen/ledger.jsonl",
-  ".kitchen/run.lock",
-  ".kitchen/run.log",
-  ".kitchen/toolkit.proven",
-  ".kitchen/toolkit-checkouts/",
-  ".kitchen/queue.json",
-  ".kitchen/tickets.jsonl",
-  ".kitchen/setup-questions.json",
-  ".kitchen/setup-answers.json",
-  ".kitchen-out/",
-  ".kitchen/retro/",
-  ".kitchen/local-forge.jsonl",
-  ".kitchen/evidence.lock",
-  ".worktrees/",
-];
-
-export type InitOpts = {
+export type BuildOpts = {
   repo: string;
   answers?: string;
   tool?: "claude" | "codex";
@@ -73,8 +48,11 @@ export type InitOpts = {
   maxFix?: number;
   /** The machine can't run the app's stack: generate and check statically (describe + feature files), prove nothing. */
   generateOnly?: boolean;
+  /** Tests: the adapter to use instead of the configured tool's. */
+  agent?: () => Promise<AgentAdapter>;
 };
-type Out = (l: string) => void;
+/** `phase`: the quiet lines everyone sees. `log`: every detail (init.log; the terminal with --verbose). */
+export type BuildOut = { phase: (l: string) => void; log: (l: string) => void };
 
 export type Question = { id: string; question: string; why?: string; default?: string };
 type RunRecord = {
@@ -154,52 +132,55 @@ export function readAnswers(text: string, questions: Question[]): Record<string,
   return out;
 }
 
-const KITCHEN_YAML = (tool: string) => `# Kitchen (npm package devkitchen). Every key has a default; unknown keys are refused.
-# The full list with defaults: src/config.ts in the package (ConfigSchema).
-version: 1       # the schema version; kitchen migrate raises it
-agent: { tool: ${tool} }
-concurrency: 2   # a Toolkit proven parallel:false runs one job at a time regardless
-round_limit: 3
-# models: { builder: strong, verifier: medium, setup: strong }   # tiers map to models per tool
-# checks: ["npm test"]                            # what Gate runs in a job worktree
-`;
+/** Pure: survey.md's surface line, short (`Surface: web (Next.js)…`), or null. */
+export function surfaceOf(survey: string): string | null {
+  const m = /^\W*surface\W*:?\**\s*(.+)$/im.exec(survey);
+  if (!m) return null;
+  const s = m[1].replace(/\*+/g, "").trim();
+  return s.length > 44 ? `${s.slice(0, 43)}…` : s;
+}
 
-export async function initCmd(o: InitOpts, out: Out): Promise<number> {
+/** The feature files the build wrote (`features/<x>.md`, README aside). */
+function featureNames(wt: string): string[] {
+  const d = path.join(wt, ".kitchen", "toolkit", "features");
+  return fs.existsSync(d)
+    ? fs
+        .readdirSync(d)
+        .filter((f) => f.endsWith(".md") && f.toLowerCase() !== "readme.md")
+        .map((f) => f.slice(0, -3))
+        .sort()
+    : [];
+}
+
+export async function toolkitBuild(o: BuildOpts, out: BuildOut): Promise<number> {
+  const t0 = Date.now();
   const repo = plainCheckout(o.repo).workTree;
   fs.mkdirSync(initDir(repo), { recursive: true });
   const st: InitState = readInitState(repo) ?? { version: 1, startedAt: new Date().toISOString(), steps: {}, fixes: 0, runs: [] };
   const save = () => writeAtomic(stateFile(repo), `${JSON.stringify(st, null, 2)}\n`);
   const done = (k: keyof InitState["steps"]) => st.steps[k] !== undefined;
-  const say = (l: string) => out(`init: ${l}`);
+  const say = (l: string) => out.log(`toolkit build: ${l}`);
   const main = await openGit(plainCheckout(repo));
+  out.log(`--- toolkit build ${new Date().toISOString()} in ${repo}`);
+  out.phase(`Teaching Kitchen to run ${path.basename(repo)}…`);
 
-  // 1. kitchen.yaml
+  // 1–3. kitchen.yaml, the skill, .gitignore: what quick init writes, for a repo that skipped it
   if (!done("config")) {
-    const f = path.join(repo, "kitchen.yaml");
-    const exists = fs.existsSync(f);
-    const tool = o.tool ?? (exists ? loadConfig(repo).agent.tool : process.env.CODEX_SANDBOX || process.env.CODEX_HOME ? "codex" : "claude");
-    if (!exists) fs.writeFileSync(f, KITCHEN_YAML(tool));
-    st.steps.config = { file: "kitchen.yaml", tool, written: !exists };
+    const tool = toolFor(repo, o.tool);
+    const w = writeConfig(repo, tool, fs.existsSync(path.join(repo, "kitchen.yaml")) ? null : detectChecks(repo));
+    st.steps.config = { file: "kitchen.yaml", tool, written: w.written };
     save();
-    say(exists ? "kitchen.yaml kept" : `kitchen.yaml written (agent: ${tool})`);
+    say(w.written ? `kitchen.yaml written (agent: ${tool})` : "kitchen.yaml kept");
   }
-  // 2. the /kitchen skill, the same file for both tools
   if (!done("skills")) {
-    const files = installSkill(repo);
-    st.steps.skills = { files };
+    st.steps.skills = { files: installSkill(repo) };
     save();
-    say(`skill installed: ${files.join(", ")}`);
+    say(`skill installed: ${st.steps.skills.files.join(", ")}`);
   }
-  // 3. .gitignore: Kitchen's state never gets committed
   if (!done("gitignore")) {
-    const f = path.join(repo, ".gitignore");
-    const have = fs.existsSync(f) ? fs.readFileSync(f, "utf8") : "";
-    const lines = new Set(have.split("\n").map((l) => l.trim()));
-    const added = GITIGNORE.filter((l) => !lines.has(l));
-    if (added.length) fs.writeFileSync(f, `${have}${have && !have.endsWith("\n") ? "\n" : ""}${have ? "\n" : ""}# Kitchen\n${added.join("\n")}\n`);
-    st.steps.gitignore = { added };
+    st.steps.gitignore = { added: addGitignore(repo) };
     save();
-    if (added.length) say(`.gitignore: ${added.length} Kitchen entries added`);
+    if (st.steps.gitignore.added.length) say(`.gitignore: ${st.steps.gitignore.added.length} Kitchen entries added`);
   }
 
   // 4. the setup worktree on kitchen/setup, from HEAD
@@ -243,6 +224,7 @@ export async function initCmd(o: InitOpts, out: Out): Promise<number> {
     save();
     say(existing ? "the base already has a Toolkit: proving it, no generation" : `Toolkit template copied into ${path.relative(repo, wt)}/.kitchen/toolkit`);
   }
+  if (existing) out.phase(phaseLine(true, "Found a Toolkit", "on the base already: proving it, no generation"));
 
   const cfg = loadConfig(repo);
   const tool = o.tool ?? cfg.agent.tool;
@@ -251,11 +233,11 @@ export async function initCmd(o: InitOpts, out: Out): Promise<number> {
   const effort = (o.effort ?? "medium") as AgentRequest["effort"];
   let adapter: AgentAdapter | null = null;
   const agent = async () => {
-    adapter ??= await adapterFor(repo, config);
+    adapter ??= o.agent ? await o.agent() : await adapterFor(repo, config);
     return adapter;
   };
   const role = fs.readFileSync(ROLE, "utf8");
-  const runSetup = async (mode: string, prompt: string, outFile: string, resume?: string): Promise<{ r: AgentResult; text: string | null }> => {
+  const runSetup = async (mode: string, prompt: string, outFile: string, resume?: string): Promise<{ r: AgentResult; text: string | null; rec: RunRecord }> => {
     const a = await agent();
     const req: AgentRequest = {
       role: "setup",
@@ -272,7 +254,7 @@ export async function initCmd(o: InitOpts, out: Out): Promise<number> {
       effort,
     };
     say(`setup (${mode}): ${a.name} ${model}${effort ? ` effort ${effort}` : ""}${resume ? `, resuming ${resume.slice(0, 8)}` : ""} …`);
-    const t0 = Date.now();
+    const t1 = Date.now();
     let r = await a.run(req);
     // A resumed session that the tool can't find any more: start fresh with the survey as context.
     if (!r.ok && resume && /session|thread|not found|no conversation/i.test(r.error ?? "")) {
@@ -289,7 +271,7 @@ export async function initCmd(o: InitOpts, out: Out): Promise<number> {
       });
       if (again.ok) r = { ...again, usage: sumUsage(r.usage, again.usage) };
     }
-    const secs = (Date.now() - t0) / 1000;
+    const secs = (Date.now() - t1) / 1000;
     const rec: RunRecord = {
       mode,
       ok: r.ok,
@@ -328,16 +310,35 @@ export async function initCmd(o: InitOpts, out: Out): Promise<number> {
       writeAtomic(path.join(initDir(repo), outFile), text);
       fs.rmSync(r.outPath, { force: true });
     }
-    return { r, text };
+    return { r, text, rec };
+  };
+  /** A failed step, in full: the phase line, then why, then where the whole log is. */
+  const fail = (label: string, why: string, secs?: number) => {
+    out.phase(phaseLine(false, label, why.split("\n")[0], secs));
+    for (const l of why.split("\n").slice(1)) out.phase(`    ${l}`);
+    out.phase("Not done. Every detail: .kitchen/init/init.log; kitchen toolkit build again resumes from this step.");
   };
 
   if (!existing) {
     // 6. survey: headless, reads the repo; at most 3 questions
     if (!done("survey")) {
-      const { r, text } = await runSetup("survey", `${role}\n\n${SURVEY}`, "survey.md");
-      if (!r.ok || text === null) throw new Error(`setup survey failed: ${r.error ?? "no survey.md written"} (rerun kitchen init to retry)`);
+      const { r, text, rec } = await runSetup("survey", `${role}\n\n${SURVEY}`, "survey.md");
+      if (!r.ok || text === null) {
+        fail("Read the repo", `the survey failed: ${r.error ?? "no survey.md written"}`, rec.secs);
+        throw new Error(`setup survey failed: ${r.error ?? "no survey.md written"} (rerun kitchen toolkit build to retry)`);
+      }
       st.steps.survey = { sessionId: r.sessionId, questions: parseQuestions(text) };
       save();
+      const q = st.steps.survey.questions.length;
+      out.phase(
+        phaseLine(
+          true,
+          "Read the repo",
+          [surfaceOf(text), q ? `${q} question${q === 1 ? "" : "s"} for you` : "no questions"].filter(Boolean).join(" · "),
+          rec.secs,
+          rec.usd,
+        ),
+      );
     }
     // 7. questions → answers
     const qs = st.steps.survey?.questions ?? [];
@@ -348,9 +349,11 @@ export async function initCmd(o: InitOpts, out: Out): Promise<number> {
       else {
         writeAtomic(
           questionsFile(repo),
-          `${JSON.stringify({ questions: qs, answerWith: 'kitchen init --answers <file with {"answers":{"<id>":"…"}}>' }, null, 2)}\n`,
+          `${JSON.stringify({ questions: qs, answerWith: 'kitchen toolkit build --answers <file with {"answers":{"<id>":"…"}}>' }, null, 2)}\n`,
         );
-        say(`${qs.length} question(s) for you in ${path.relative(repo, questionsFile(repo))}; answer them and run kitchen init --answers <file>`);
+        out.phase(`${qs.length} question(s) for you in ${path.relative(repo, questionsFile(repo))}:`);
+        for (const q of qs) out.phase(`  ${q.id}: ${q.question}${q.default ? ` [default: ${q.default}]` : ""}`);
+        out.phase('Answer them in a file ({"answers":{"q1":"…"}}) and run kitchen toolkit build --answers <file>');
         return 3;
       }
       save();
@@ -363,20 +366,28 @@ export async function initCmd(o: InitOpts, out: Out): Promise<number> {
       save();
     }
     if (!done("build")) {
-      const { r, text } = await runSetup(
+      const { r, text, rec } = await runSetup(
         "build",
         buildPrompt(st.steps.answers ?? {}, qs) + (o.generateOnly ? STATIC : ""),
         "setup.md",
         st.steps.survey?.sessionId,
       );
-      if (!r.ok || text === null) throw new Error(`setup build failed: ${r.error ?? "no setup.md written"} (rerun kitchen init to retry)`);
+      if (!r.ok || text === null) {
+        fail("Wrote the Toolkit", `the setup build failed: ${r.error ?? "no setup.md written"}`, rec.secs);
+        throw new Error(`setup build failed: ${r.error ?? "no setup.md written"} (rerun kitchen toolkit build to retry)`);
+      }
       const status = /^STATUS:\s*(\S+)/m.exec(text)?.[1] ?? "?";
       st.steps.build = { status, sessionId: r.sessionId };
       save();
       if (status !== "READY") {
-        say(`setup says ${status}: ${/^REASON:\s*(.*)$/m.exec(text)?.[1] ?? "see .kitchen/init/setup.md"}`);
+        fail("Wrote the Toolkit", `setup says ${status}: ${/^REASON:\s*(.*)$/m.exec(text)?.[1] ?? "see .kitchen/init/setup.md"}\n${text.trim()}`, rec.secs);
         return 1;
       }
+      const feats = featureNames(wtGit.workTree);
+      const surface = /^SURFACE:\s*(.+)$/m.exec(text)?.[1]?.trim();
+      out.phase(
+        phaseLine(true, "Wrote the Toolkit", [surface, feats.length ? `features: ${feats.join(", ")}` : ""].filter(Boolean).join(" · "), rec.secs, rec.usd),
+      );
     }
   }
 
@@ -399,40 +410,59 @@ export async function initCmd(o: InitOpts, out: Out): Promise<number> {
     if (o.generateOnly && !done("check")) {
       const sha = st.steps.commit?.sha ?? base;
       const co = await toolkitCheckout(repo, sha);
-      const r = await runToolkitCheck({ repo, toolkitBin: co.bin, src: co.dir, staticOnly: true, print: (l) => out(`  ${l}`) }).finally(co.release);
+      const r = await runToolkitCheck({ repo, toolkitBin: co.bin, src: co.dir, staticOnly: true, print: (l) => out.log(`  ${l}`) }).finally(co.release);
       st.steps.check = { ok: r.ok, sha, secs: r.secs, failed: r.failed, parallel: r.describe?.parallel !== false, static: true };
       save();
-      say(
-        `generated only (--generate-only): describe and the feature files ${r.ok ? "pass" : `fail at ${r.failed}`}; the Toolkit is NOT proven (no toolkit.proven)`,
+      out.phase(
+        phaseLine(
+          r.ok,
+          "Checked it (static)",
+          `describe and the feature files ${r.ok ? "pass" : `fail at ${r.failed}`}; NOT proven (--generate-only: no toolkit.proven)`,
+          r.secs,
+        ),
       );
       return r.ok ? 0 : 1;
     }
     if (!done("check")) {
       const sha = st.steps.commit?.sha ?? base;
       say(`toolkit check on ${sha.slice(0, 12)}${existing ? "" : ` (${SETUP_BRANCH})`}`);
-      const r = await checkAtRef(repo, { rev: sha, branch: existing ? undefined : SETUP_BRANCH, print: (l) => out(`  ${l}`) });
+      const r = await checkAtRef(repo, { rev: sha, branch: existing ? undefined : SETUP_BRANCH, print: (l) => out.log(`  ${l}`) });
       st.steps.check = { ok: r.ok, sha: r.sha, secs: r.secs, failed: r.failed, parallel: r.parallel };
       save();
       if (!r.ok) {
+        const failed = r.steps.filter((s) => !s.ok);
+        const report = failed.map((s) => `- ${s.step}: ${s.detail ?? ""}${s.tail ? `\n  stderr:\n${s.tail.replace(/^/gm, "    ")}` : ""}`).join("\n");
         if (existing || st.fixes >= maxFix) {
-          say(`toolkit check failed at ${r.failed}${existing ? "" : ` after ${st.fixes} fix round(s)`}; evidence in ${path.relative(repo, r.jobDir)}`);
+          fail(
+            "Proved it",
+            `toolkit check failed at ${r.failed}${existing ? "" : ` after ${st.fixes} fix round(s)`}\n${report}\nevidence: ${path.relative(repo, r.jobDir)}`,
+            r.secs,
+          );
           return 1;
         }
+        out.phase(phaseLine(false, "Proved it", `failed at ${r.failed}: the setup role fixes it`, r.secs));
         st.fixes += 1;
-        const failed = r.steps.filter((s) => !s.ok);
-        const { r: fr, text } = await runSetup(
-          `fix-${st.fixes}`,
-          fixPrompt(failed.map((s) => `- ${s.step}: ${s.detail ?? ""}${s.tail ? `\n  stderr:\n${s.tail.replace(/^/gm, "    ")}` : ""}`).join("\n")),
-          "setup.md",
-          st.steps.build?.sessionId,
-        );
-        if (!fr.ok || text === null) throw new Error(`setup fix failed: ${fr.error ?? "no setup.md written"}`);
+        const { r: fr, text, rec } = await runSetup(`fix-${st.fixes}`, fixPrompt(report), "setup.md", st.steps.build?.sessionId);
+        if (!fr.ok || text === null) {
+          fail(`Fixed it (round ${st.fixes})`, `the setup fix failed: ${fr.error ?? "no setup.md written"}`, rec.secs);
+          throw new Error(`setup fix failed: ${fr.error ?? "no setup.md written"}`);
+        }
+        out.phase(phaseLine(true, `Fixed it (round ${st.fixes})`, fr.line.slice(0, 50), rec.secs, rec.usd));
         if (st.steps.build && fr.sessionId) st.steps.build.sessionId = fr.sessionId;
         delete st.steps.commit;
         delete st.steps.check;
         save();
         continue;
       }
+      const drives = r.steps.filter((s) => /^drive /.test(s.step) && !/after reset$/.test(s.step)).length;
+      out.phase(
+        phaseLine(
+          true,
+          "Proved it",
+          `${drives} drive${drives === 1 ? "" : "s"} × 2 (after a reset) · ${r.parallel ? "2 copies at once" : "one copy at a time (parallel:false)"}`,
+          r.secs,
+        ),
+      );
     }
     break;
   }
@@ -440,21 +470,23 @@ export async function initCmd(o: InitOpts, out: Out): Promise<number> {
   // 11. next steps: only a passing full check counts as done
   const check = st.steps.check;
   if (!check?.ok) {
-    say(`not done: ${check ? `toolkit check failed at ${check.failed}` : "no check ran"}; see .kitchen/init/state.json`);
+    fail("Proved it", check ? `toolkit check failed at ${check.failed}` : "no check ran");
     return 1;
   }
   if (check.static) {
-    say("generated only (--generate-only): describe and the feature files pass; the Toolkit is NOT proven (no toolkit.proven)");
+    out.phase("Generated only (--generate-only): describe and the feature files pass; the Toolkit is NOT proven (no toolkit.proven)");
     return 0;
   }
-  if (!check.parallel) say("the Toolkit can't run two instances at once (parallel:false): kitchen run takes one job at a time");
-  const usd = st.runs.reduce((s, r) => s + (r.usd ?? 0), 0);
-  const secs = st.runs.reduce((s, r) => s + r.secs, 0);
-  say(`done: Toolkit proven on ${check.sha.slice(0, 12)}; agent time ${Math.round(secs)}s${usd ? `, $${usd.toFixed(2)}` : ""} over ${st.runs.length} run(s)`);
-  out("next:");
-  if (!existing) out(`  1. review the branch ${SETUP_BRANCH} (git log -p main..${SETUP_BRANCH}) and merge it`);
-  out("  2. commit kitchen.yaml, .gitignore, .claude/skills/kitchen/ and .agents/skills/kitchen/");
-  out('  3. kitchen ticket "<what you want done>"  then  kitchen run --detach');
+  if (!check.parallel) out.log("the Toolkit can't run two instances at once (parallel:false): kitchen run takes one job at a time");
+  const cost = st.runs.reduce((s, r) => s + (r.usd ?? 0), 0);
+  out.phase(
+    `Done in ${dur((Date.now() - t0) / 1000)}${cost ? ` · ${usd(cost)}` : ""} · ${existing ? `proven on ${check.sha.slice(0, 12)}` : `on branch ${SETUP_BRANCH}`}`,
+  );
+  const branch = (await main.run(["symbolic-ref", "--short", "-q", "HEAD"]).catch(() => ({ stdout: "main" }))).stdout.trim() || "main";
+  if (!existing) out.phase(`Next: review it (git log -p ${branch}..${SETUP_BRANCH}), then git merge ${SETUP_BRANCH}`);
+  const waiting = listJobs(repo).filter((j) => j.stage === "paused" && j.waitFor === "no-toolkit");
+  if (waiting.length)
+    out.phase(`${existing ? "Next" : "Then"}: kitchen resume ${waiting.map((j) => j.id).join(" · kitchen resume ")}  (waiting for the Toolkit)`);
   return 0;
 }
 

@@ -6,7 +6,7 @@
 //   kitchen resume <id|n> · feedback <id> [--to <stage>] ["<text>"] · reject <id>
 //   kitchen report [--bench]
 //   kitchen bench smoke|full|tuned|heldout [--tool claude|codex] [--runs n] [--only a,b] [--concurrency n] [--max-usd x] [--out dir]   (src/bench/run.ts)
-//   kitchen init [--answers <file>] [--tool claude|codex] [--detach] · init --status  ·  kitchen toolkit check [--feature x] [--src dir] · toolkit up · toolkit down --id <id>   (src/cli/toolkit-commands.ts)
+//   kitchen init [--tool claude|codex] [--toolkit] · kitchen toolkit build [--answers <file>] [--detach] [--status] [--verbose] · toolkit check [--feature x] [--src dir] · toolkit up · toolkit down --id <id>   (src/cli/toolkit-commands.ts)
 //   kitchen drive <job> <C> [--repro] [--arg k=v]… [--role r]   one criterion's proof (src/proof/prove.ts)
 //   kitchen drive <job> --view "<view>" [--role reviewer-ux]     one extra view for a UX/UI lens (src/engine/views.ts)
 //   kitchen dismiss <job> [<finding-id>] [--reason "<why>"]      list a job's findings, or say one was not useful (ledger, per lens)
@@ -21,15 +21,17 @@ import { serveBridge } from "./bridge/mcp.ts";
 import * as cmd from "./cli/commands.ts";
 
 const USAGE =
-  'usage: kitchen ticket "<text>" | run [--once] [--detach] [<job>] | status | resume <id|n> | feedback <id> [--to <stage>] ["<text>"] | reject <id> | report [--bench] [--json] | retro [status | unmute <lens>/<category> | approve <n>] | migrate [--dry-run] | dashboard [--port n] | bench smoke|full|tuned|heldout […] | init [--answers <file>] [--detach] | init --status [--wait <s>] | toolkit check [--feature x] [--src dir] | toolkit up | toolkit down --id <id> | drive <job> <C> [--repro] [--arg k=v]… | drive <job> --view "<view>" | dismiss <job> <finding> [--reason "<why>"] | toolkit maintain [--force] | mcp …';
+  'usage: kitchen ticket "<text>" | run [--once] [--detach] [<job>] | status | resume <id|n> | feedback <id> [--to <stage>] ["<text>"] | reject <id> | report [--bench] [--json] | retro [status | unmute <lens>/<category> | approve <n>] | migrate [--dry-run] | dashboard [--port n] | bench smoke|full|tuned|heldout […] | init [--tool claude|codex] [--toolkit] | toolkit build [--answers <file>] [--detach] [--verbose] | toolkit build --status [--wait <s>] | toolkit check [--feature x] [--src dir] | toolkit up | toolkit down --id <id> | drive <job> <C> [--repro] [--arg k=v]… | drive <job> --view "<view>" | dismiss <job> <finding> [--reason "<why>"] | toolkit maintain [--force] | mcp …';
 
 const HELP = `kitchen: turns tickets into proven, reviewed pull requests (Claude Code or Codex)
 
 Setup
-  kitchen init [--tool claude|codex] [--detach]   kitchen.yaml, the /kitchen skill, a proven Toolkit on the branch kitchen/setup
+  kitchen init [--tool claude|codex]      seconds: kitchen.yaml with your checks, the /kitchen skill, .gitignore; runs the checks once
   kitchen init --skill                    only the /kitchen skill (then: /kitchen set up Kitchen in Claude Code or Codex)
-  kitchen init --answers <file>           resume setup with answers to its questions (.kitchen/setup-questions.json)
-  kitchen init --status [--wait <s>]      how a detached init is doing
+  kitchen toolkit build [--detach]        3-15 min: an agent teaches Kitchen to start and drive your app (a proven Toolkit on kitchen/setup)
+  kitchen toolkit build --answers <file>  resume the build with answers to its questions (.kitchen/setup-questions.json)
+  kitchen toolkit build --status [--wait <s>]   how a detached build is doing
+  kitchen init --toolkit                  both: quick init, then the Toolkit build
   kitchen toolkit check                   prove the Toolkit end to end (up, drives, reset, down)
 
 Work
@@ -58,7 +60,8 @@ const COMMAND_HELP: Record<string, string> = {
   run: "kitchen run [--once] [--detach] [<job>]\n\nWorks the queue until nothing is left to do.\n  --once     one pass over the queue, then stop\n  --detach   in the background; the log is .kitchen/run.log\n  <job>      only this job",
   status:
     "kitchen status [--json]\n\nOne row per job: id, title, stage, round, when it last moved, PR, report.\n  --json   the jobs as one JSON array, nothing else",
-  resume: "kitchen resume <id|n>\n\nWakes a paused job: it goes back to the stage it paused in. A job that needs you takes kitchen feedback instead.",
+  resume:
+    "kitchen resume <id|n>\n\nWakes a paused job: it goes back to the stage it paused in. A job that needs you takes kitchen feedback instead.\nA job paused no-toolkit takes the Toolkit once it is on your base branch (kitchen toolkit build, then merge kitchen/setup); without one it goes on with checks and tests only, unless it is high risk.",
   feedback:
     'kitchen feedback <id> ["<text>"] [--to <stage>]\n\nAnswers a job that needs you, or sends a done job back to build with your text.\n  --to <stage>   for a needs-human job: where it goes, at or before the stage it stopped in (intake ... verify)',
   reject: "kitchen reject <id>\n\nCloses a job without a PR.",
@@ -71,9 +74,9 @@ const COMMAND_HELP: Record<string, string> = {
   dashboard: "kitchen dashboard [--port 7357]\n\nThe board in a browser, on 127.0.0.1, read-only. Ctrl-C stops it.",
   bench:
     "kitchen bench smoke|full|tuned|heldout [--tool claude|codex] [--runs n] [--only a,b] [--concurrency n] [--max-usd x] [--out dir]\n\nThe benchmark (from a clone of Kitchen only).",
-  init: "kitchen init [--tool claude|codex] [--detach] | init --skill | init --answers <file> | init --status [--wait <s>]\n\nkitchen.yaml, the /kitchen skill and a proven Toolkit on the branch kitchen/setup.\n  --skill     only the /kitchen skill\n  --answers   resume setup with answers to its questions (.kitchen/setup-questions.json)\n  --detach    in the background; then init --status",
+  init: "kitchen init [--tool claude|codex] [--toolkit] | init --skill\n\nQuick init, in seconds: writes kitchen.yaml with the checks it finds (package.json, Makefile, pyproject.toml, go.mod, Cargo.toml; one short agent call only when none are obvious), installs the /kitchen skill, adds Kitchen's .gitignore entries, and runs the checks once. No Toolkit, no app start, no Docker.\n  --tool      claude (default) or codex\n  --skill     only the /kitchen skill\n  --toolkit   then build the Toolkit too (kitchen toolkit build; its flags --answers, --detach, --verbose… pass through)",
   toolkit:
-    "kitchen toolkit check [--feature x] [--src dir] | up | down --id <id> | maintain [--force]\n\n  check      prove the Toolkit end to end (up, drives, reset, down)\n  up/down    start or stop an instance of the app\n  maintain   the maintain pass: re-prove the Toolkit on the base and fix what broke",
+    "kitchen toolkit build [--answers <file>] [--detach] [--status [--wait <s>]] [--verbose] [--tool claude|codex] | check [--feature x] [--src dir] | up | down --id <id> | maintain [--force]\n\n  build      an agent surveys the repo (at most 3 questions), writes the Toolkit and Kitchen proves it, on the branch kitchen/setup; 3-15 min, resumable. One line per phase; every detail in .kitchen/init/init.log (--verbose: on the terminal too)\n  check      prove the Toolkit end to end (up, drives, reset, down), every step shown\n  up/down    start or stop an instance of the app\n  maintain   the maintain pass: re-prove the Toolkit on the base and fix what broke",
   drive:
     'kitchen drive <job> <C> [--repro] [--arg k=v]... [--role r] | drive <job> --view "<view>"\n\nRuns one criterion\'s proof by hand (or one extra view for a review lens) and stamps the evidence.',
   dismiss:

@@ -56,8 +56,8 @@ export const ConfigSchema = z
         reviewer: z.string().default("medium"),
         report: z.string().default("medium"),
         retro: z.string().default("cheap"),
-        /** `kitchen init`'s setup role (survey, build, fix rounds). */
-        setup: z.string().default("strong"),
+        /** `kitchen toolkit build`'s setup role (survey, build, fix rounds). */
+        setup: z.string().default("medium"),
         /** `kitchen toolkit maintain`: the source wave and the fix pass. */
         maintain: z.string().default("medium"),
       })
@@ -222,6 +222,10 @@ export function modelFor(cfg: Config, role: string): string {
             ? "verifier"
             : "builder";
   const want = cfg.models[key];
-  const tiers = { ...DEFAULT_MODELS[cfg.agent.tool], ...cfg.agent.models };
-  return (TIERS as readonly string[]).includes(want) ? tiers[want as ModelTier] : want;
+  return (TIERS as readonly string[]).includes(want) ? tierModel(cfg, want as ModelTier) : want;
+}
+
+/** The model a tier maps to for the configured tool. */
+export function tierModel(cfg: Config, tier: ModelTier): string {
+  return { ...DEFAULT_MODELS[cfg.agent.tool], ...cfg.agent.models }[tier] as string;
 }
