@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { loadDrive } from "../proof/drive-format.ts";
-import { globRe, MISSING_TARGET, oneJsonLine, parseFeature, planProbes, touched, unmatchedGlobs, upUrlProblem, validate } from "./contract.ts";
+import { globRe, MISSING_TARGET, oneJsonLine, PLACEHOLDER, parseFeature, planProbes, touched, unmatchedGlobs, upUrlProblem, validate } from "./contract.ts";
 
 const describeOk = {
   contract: 1,
@@ -104,6 +104,15 @@ describe("the contract, held harder (W2 review)", () => {
     expect(p.find((x) => x.primitive === "read" && x.expect === "refuse")?.args).toEqual({ target: MISSING_TARGET });
     expect(p.filter((x) => x.expect === "refuse" && (x.primitive === "open" || x.primitive === "http"))).toHaveLength(4);
     expect(p.find((x) => x.dupFlag)?.primitive).toBe("read");
+  });
+  it("a primitive no drive or table entry covers: ok:true with no args, or its declared args as placeholders", () => {
+    const d = validate("describe", { ...describeOk, primitives: [...describeOk.primitives, "frobnicate", { name: "export", args: { format: "csv|json" } }] });
+    if (!d.ok) throw new Error(d.why);
+    const p = planProbes(d.value, []);
+    expect(p.find((x) => x.primitive === "frobnicate")).toMatchObject({ args: {}, expect: "ok", uncovered: "none" });
+    expect(p.find((x) => x.primitive === "export")).toMatchObject({ args: { format: PLACEHOLDER }, expect: "shape", uncovered: "placeholder" });
+    expect(p.find((x) => x.primitive === "press")).toMatchObject({ args: { target: MISSING_TARGET }, expect: "shape" });
+    expect(p.find((x) => x.primitive === "login")?.uncovered).toBeUndefined();
   });
 });
 

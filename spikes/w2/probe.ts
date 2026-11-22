@@ -3,6 +3,8 @@
 //  - the reviewer's fake bin/dev (ok to everything, logs on stdout, two describe
 //    lines, an unimplemented `frobnicate`, url:"x", doctor checks:[]) fails;
 //  - each of those faults alone fails at its step, with its reason;
+//  - round 2: a listed `frobnicate` that answers a well-formed {"ok":false,"out":"not implemented"}
+//    (no drive uses it) fails at the probe, named, with and without args declared in describe;
 //  - feature `paths` empty, or a glob that matches no tracked file, fails;
 //  - the same fake without faults passes (the contract probe doesn't refuse a correct Toolkit).
 //   node spikes/w2/probe.ts [scratch dir]
@@ -75,6 +77,18 @@ const cases: [string, string[], string, RegExp, string?][] = [
   ["bad-url", ["badUrl"], "up", /url "x" is not an absolute URL/],
   ["no-checks", ["noChecks"], "doctor", /doctor must run at least one check/],
   ["frobnicate", ["frobnicate"], "contract probe", /frobnicate \{\}: not a primitive answer.*is frobnicate implemented/],
+  [
+    "frobnicate-stub",
+    ["frobnicateStub"],
+    "contract probe",
+    /frobnicate \{\}: frobnicate is listed in describe, no drive uses it and it declares no args, so called with none it must answer ok:true; got ok:false "not implemented"/,
+  ],
+  [
+    "frobnicate-args-stub",
+    ["frobnicateArgsStub"],
+    "contract probe",
+    /frobnicate \{"level":"kitchen-probe"\}: frobnicate is listed in describe but answered "not implemented": is it implemented\?/,
+  ],
   ["ok-to-everything", ["okAll"], "contract probe", /read of a missing target is ok:false, but .*answered ok:true/],
   ["empty-paths", [], "features", /no paths/, "[]"],
   ["typo-glob", [], "features", /paths "srver\.js" match no tracked file/, '[srver.js, "lib/**"]'],

@@ -6,6 +6,8 @@
 //   stdoutLogs  logs go to stdout next to the JSON line
 //   twoDescribe describe prints two JSON lines
 //   frobnicate  describe lists a primitive bin/dev doesn't implement
+//   frobnicateStub      the round-2 reviewer's: frobnicate answers a well-formed {"ok":false,"out":"not implemented"}
+//   frobnicateArgsStub  the same, with args declared in describe (probed with placeholders)
 //   badUrl      up says url:"x"
 //   noChecks    doctor says checks:[]
 const FAULTS = new Set([]);
@@ -35,7 +37,9 @@ const say = (o, code) => {
 };
 if (dup && !FAULTS.has("okAll")) say({ ok: false, status: "fail", out: `flag --${dup} given twice`, why: "dup", files: [] }, 2);
 const state = path.join(process.env.KITCHEN_TOOLKIT_STATE || os.tmpdir(), "kitchen-fake-toolkit");
-const prims = ["read", "open", "reload", "press", "type", "screenshot", "login", "http", ...(FAULTS.has("frobnicate") ? ["frobnicate"] : [])];
+const stub = FAULTS.has("frobnicateStub") || FAULTS.has("frobnicateArgsStub");
+const prims = ["read", "open", "reload", "press", "type", "screenshot", "login", "http", ...(FAULTS.has("frobnicate") || stub ? ["frobnicate"] : [])];
+const listed = prims.map((p) => (p === "frobnicate" && FAULTS.has("frobnicateArgsStub") ? { name: p, args: { level: "how hard" } } : p));
 const sameOrigin = (p) => {
   try {
     return new URL(p, "http://127.0.0.1:1").origin === "http://127.0.0.1:1";
@@ -54,7 +58,7 @@ switch (cmd) {
           .filter((f) => f.endsWith(".md") && f !== "README.md")
           .map((f) => `features/${f}`)
       : [];
-    const d = { contract: 1, surface: "web", primitives: prims, features, seed_users: ["alice"], externals: [], ports: { needs: 1 }, parallel: true };
+    const d = { contract: 1, surface: "web", primitives: listed, features, seed_users: ["alice"], externals: [], ports: { needs: 1 }, parallel: true };
     if (FAULTS.has("twoDescribe")) process.stdout.write(`${JSON.stringify({ ...d, toolkit: "draft" })}\n`);
     say(d);
     break;
@@ -76,6 +80,7 @@ switch (cmd) {
     break;
   default: {
     if (!prims.includes(cmd) || (cmd === "frobnicate" && FAULTS.has("frobnicate"))) say({ status: "fail", why: `unknown command ${cmd}` }, 2);
+    if (cmd === "frobnicate" && stub) say({ ok: false, out: "not implemented", files: [] });
     if (FAULTS.has("okAll")) say({ ok: true, out: "ok", files: [] });
     if (cmd === "read")
       say(flags.target === "body" || flags.target === undefined ? { ok: true, out: "hello", files: [] } : { ok: false, out: "no such element", files: [] });
