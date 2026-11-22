@@ -95,3 +95,51 @@ No role prompt had to change for the four exit tickets to pass beyond the `GAP:`
 - INCONCLUSIVE twice → paused (toolkit-ticket) and TOOLKIT-GAP from Verify with the real Toolkit: covered by `machine.test.ts` only; the W1 `paths.ts` scenarios for bug/gap/inconclusive relied on the W1 stubs and no longer apply (see `spikes/w1/README.md`).
 - Review, ready and report: W3b/W4 (jobs stop at review).
 - `toolkit check --feature` is this wave's engine check (reset, drive, reset, drive) through the W1 seam, not W2's `src/toolkit/check.ts` (not merged when this was built).
+
+# Review round 1 fixes (2026-11-22)
+
+Same machine and tools. Claude Code (`sonnet` strong, `haiku` medium); Codex could not run (below).
+
+## Finding → fix → proof
+
+| # | finding | fix | proof |
+|---|---|---|---|
+| 1 | `named()` / verdict `agentGap` took the first word of free text (`GAP: the \`read\` primitive fails…` → "the") | `gapName`: one primitive-shaped name, alone or before a separator, not in describe; otherwise drives counts a failed write (cap), Verify an INCONCLUSIVE | `paths.ts bad-gap`: `drives → drives → verify → review`, no toolkit stage, `drives-check-1.md` says why; unit tests |
+| 2 | drives checked each new drive alone from seed | each affected criterion's whole proof, twice, reset between, every step must run (`checkChain`); drives-written and repro-written feature files must pass W2's `parseFeature` + a `check:` line per drive + describe listing, or are kept off the branch | `engine.ts attacks`: chain check stamped for C1 and C3 on both passes; the new file carries its `check:` line; unit tests |
+| 3a | a negative expect could hold because the thing never existed | spec-lint: the absent text must be an arg of an earlier segment of the same proof | the real admin run's first spec was refused for `$alicelink != ""`; the retry made `bob-hidden-proj` first; unit tests |
+| 3b | `not visible` on an error page, `!=` on an empty read | a negative clause fails on an error/not-found page, a failed response (`status ≥ 400`) or an empty read | unit tests |
+| 3c | nothing showed a criterion already held before the change | `base-check.json`: every mechanical criterion runs once on the base (fresh app, `phase: base`) in spec (and build, for inline criteria); a feature criterion passing there sends the spec back once, then is flagged `NON-DISCRIMINATING` in the verdict | admin run: `base check: C1 step-failed, C2 step-failed, C3 pass`; verdict flags C3 (a guard of existing behaviour) |
+| 4 | the builder controlled what proofs run through | builder may not change `test` proof files, files Gate's checks / `test_cmd` run through, package.json `scripts`; a diff in `seed_paths` → risk high + `seed-diff.md` + review prompt | `contract.test.ts`; attacks still strips Toolkit/repro/kitchen.yaml edits |
+| 5 | cmd proofs unrestricted | spec-lint refuses outside paths, `~`/`$HOME`, `env`/`printenv`, network tools, redirections out; untrusted env kept (`// W2 sandbox:` marks where sandbox-exec goes, not on main yet); bridge results pass `proof/redact.ts`; `_proofs.md` states the real rule | unit tests (`spec-lint.test.ts`, `redact.test.ts`) |
+| 6 | a cmd/test expect could pass on a crash | `exit 0` is implied unless the expect names `exit` | unit-level (prove) |
+| 7 | any timed-out wait counted as a reproduction | only when the waited text is what the criterion's expect asks for; `roles/spec.md`, `verifier.md` aligned | `paths.ts repro-retry`: try 1's wait for "Preferences" timed out → not reproduced; try 2 assert-fail → build |
+| 8 | judged regex too broad, no screenshot required | layout/appearance/style/tone/copy only; the proof must take a screenshot | unit tests |
+| 9 | refused manifest could PASS | INCONCLUSIVE | unit test |
+| 10 | no attacks case for the role rule alone | after review, a builder bridge self-check stamped for this HEAD (clean), round 4, C3 is cited: refused as "a builder self-check, not proof" | `engine.ts attacks` 26/26 |
+| 11 | spec role assumed primitive behaviour; `repro: true` anywhere | spec role told to check primitives through the bridge; spec-lint refuses `repro: true` on non-bugs | unit test |
+| new | the first real admin spec wrote `read … --save owner`, which bin/dev got as an arg (no var kept; the builder rightly said BLOCKED) | `--save <var>` on a primitive proof segment keeps its output, like a drive's `save:` | the second admin run passed with three `--save` reads |
+| new | a job could never fix a drive it added itself on a retry (compared against HEAD) | "existing" drives are the base's (and the repro's, for the drives stage) | `paths.ts repro-retry` |
+
+## The review ticket, real agents
+
+"Admins see every user's projects with owner; regular users still see only their own."
+
+**Claude, run 2 (final code): PASS, 96 s, $0.308.** intake sonnet 10 s $0.053 → spec sonnet ×2 (first refused by spec-lint: `$alicelink != ""` unbacked) $0.174 → base check (C1, C2 fail on the base; C3 passes: the guard) → builder sonnet 23 s $0.081 (server.js +4/−2) → gate → drives (no new drives) → verify: C1, C2, C3 PASS by the engine, C3 flagged non-discriminating (a guard) → review. The negative criterion:
+
+```
+- [C3] A regular user still sees only their own projects: after the admin creates `bob-hidden-proj`, alice's Projects page (fresh full-page GET) lacks it but still lists `onboarding`.
+  proof: toolkit projects.create --user bob-admin --slug bob-hidden-proj ; toolkit login --as alice ; toolkit http --method GET --path /projects
+  expect: contains "project-link-onboarding" and not contains "project-link-bob-hidden-proj"
+```
+
+**The same spec against a wrong builder** (`wrong.ts claude`, no model): the real build with `user.is_admin → true` in `GET /projects` (every project, with owner, for everyone). Verify: C1 PASS, C2 PASS, **C3 FAIL** (`not contains "project-link-bob-hidden-proj"`: the HTML has it) → verdict FAIL. 4/4.
+
+**Claude, run 1 (spent): needs-human, $0.583.** The spec used `read … --save owner`; the engine passed `--save` to bin/dev and kept no var, so C1, C2, C4 failed on the right build; the round-2 builder said BLOCKED with exactly that reason. Fixed in the engine (`--save` above), not the prompt.
+
+**Codex: not run.** The account's Codex usage limit is reached ("try again at Dec 21st, 2026"); the intake call was rate limited after 4 s and the job paused (backoff), as it should. Nothing else was spent.
+
+Real-agent total this round: Claude $0.891, Codex 0 tokens.
+
+## Spike totals (final code)
+
+`engine.ts attacks` 26/26, `engine.ts kill` 8/8, `paths.ts` 24/24 (repro-retry 5, gap 5, bad-gap 4, inconclusive 7, backoff 3; inconclusive re-run alone after fixing its own round assertion), `wrong.ts claude` 4/4, `e2e.ts claude admin` 8/8, W1 `paths.ts` 34/34 with the stub-bound scenarios removed (ported here).
