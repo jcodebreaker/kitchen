@@ -268,6 +268,10 @@ export async function resume(repo: string, ref: string, out: Out): Promise<numbe
   }
   if (job.stage === "paused" && job.pausedFrom && job.waitFor === "no-toolkit") return resumeNoToolkit(repo, ref, job, out);
   if (job.stage === "paused" && job.pausedFrom) return human(repo, ref, job.pausedFrom, { operator: "resume" }, "resumed by kitchen resume", out);
+  // An engine error is Kitchen's own trouble, not a question for the person: resume tries the stage it escalated from
+  // again (the same move `kitchen feedback` makes, with nothing to say).
+  if (job.stage === "needs-human" && job.pausedReason?.startsWith("engine-error"))
+    return human(repo, ref, feedbackTarget(job, {}), { operator: "feedback" }, "resumed by kitchen resume after an engine error", out);
   out(
     `${job.id}  is ${job.stage}: nothing to resume${job.stage === "needs-info" || job.stage === "needs-human" ? " (answer with kitchen feedback)" : " (kitchen run picks it up)"}`,
   );

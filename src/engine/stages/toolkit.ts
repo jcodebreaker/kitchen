@@ -23,10 +23,11 @@ import { setupBridgeServer } from "../../init/bridge.ts";
 import { describeToolkit } from "../../proof/drive.ts";
 import { runToolkitCheck } from "../../toolkit/check.ts";
 import { toolkitCheckout } from "../../toolkit/checkout.ts";
+import { handRolledBrowser, isBrowserGap, restoreBrowserModule } from "../../toolkit/template-modules.ts";
 import { recordPassed } from "../../toolkit/trust.ts";
 import type { Job } from "../machine.ts";
 import { kitchenDir, once, roundDir, writeAtomic } from "../store.ts";
-import { commitWith, ensureSmithWorktree, removeSmithWorktree } from "../worktree.ts";
+import { commitWith, ensureSmithWorktree, putBackRefused, removeSmithWorktree } from "../worktree.ts";
 import { contractBlock, fileBlock } from "./context.ts";
 import { prompt } from "./prompts.ts";
 import { headers, runRole } from "./role.ts";
@@ -53,12 +54,30 @@ export async function offerSmithCommit(
   return { to: job.returnTo ?? "drives", facts: { toolkit: { checkPassed: true, sha: o.head, pr: null, approvable: true } } };
 }
 
-/** What the smith may leave for the engine to commit: Toolkit files outside features/. Pure. */
+/** What the smith may leave for the engine to commit: Toolkit files outside features/, and .env.kitchen. Pure. */
 export function smithPolicy(file: string): string | null {
-  if (!file.startsWith(TOOLKIT)) return "the smith changes the Toolkit only";
+  if (file === ".env.kitchen") return null;
+  if (!file.startsWith(TOOLKIT)) return "the smith changes the Toolkit only (.kitchen/toolkit/** and .env.kitchen), never the app";
   if (file.startsWith(`${TOOLKIT}features/`)) return "feature drives belong to the job branch (the verifier writes them)";
   return null;
 }
+
+/** What the smith reads when it changed files outside the Toolkit. Pure. */
+export function refusalText(refused: string[]): string {
+  return [
+    ...refused.map((x) => `- ${x}`),
+    "",
+    "The smith may change only `.kitchen/toolkit/**` (outside features/) and `.env.kitchen`; the engine put those files back.",
+    "Your test fixtures belong under `.kitchen/toolkit/` too: a static page the Toolkit serves itself (its own tiny server on a slot port), or a `data:` URL, never a route added to the app.",
+    "Run toolkit_check again without them, then write your file.",
+  ].join("\n");
+}
+
+/** What the smith is told when the gap is a browser primitive and the engine restored Kitchen's browser module. */
+const BROWSER_BLOCK = [
+  "`.kitchen/toolkit/lib/browser.mjs` and `lib/browser-daemon.mjs` are Kitchen's own browser module (Playwright), copied from Kitchen's template by the engine, and `package.json` lists `playwright` at the version Kitchen is tested with. Do not edit them and do not write another browser driver: a Toolkit with a hand-rolled one (CDP by hand, puppeteer, a launched Chrome) is refused.",
+  "Wire it into `app.mjs` as the comment at the top of `lib/browser.mjs` shows: `prepare` installs the Toolkit's deps and runs `node_modules/.bin/playwright install --only-shell chromium`; `up` calls `startBrowser(ctx, { port: <a slot port>, base: <the app's URL> })`; `reset` calls `resetBrowser(ctx)`; `primitives` spreads `browserPrimitives({ passwordOf })` (open, reload, press, type, read, screenshot, login, http). Add a port to `ports.needs` for the browser daemon.",
+].join("\n\n");
 
 /**
  * Which failed drives the smith's proof tolerates: the ones that already fail on the base,
@@ -155,35 +174,54 @@ export const toolkit: StageHandler = async (ctx) => {
       .filter((d) => d.isFile() && /^(drives-\d+|verdict-m\d+)\.md$/.test(d.name))
       .map((d) => ({ title: `Round ${job.round}: ${d.name}`, body: fs.readFileSync(path.join(dir, d.name), "utf8") })),
   ];
-  const r = await runRole(ctx, {
-    role: "smith",
-    file: "smith.md",
-    tier: "write",
-    cwd: smith.worktree,
-    bridge: setupBridgeServer({ repo: ctx.repo, worktree: smith.worktree }),
-    prompt: prompt({
-      role: "toolkit-smith",
-      job,
-      jobDir: ctx.jobDir,
-      blocks: [
-        contractBlock(ctx.jobDir),
-        ...why,
-        ...(retry
-          ? [
-              {
-                title: "The engine's check of your last commit FAILED (fix this first; your branch starts from that commit)",
-                body: JSON.stringify(retry, null, 2),
-              },
-            ]
-          : []),
-      ],
-      extra: [`Missing primitive: ${gap}`, `Your worktree (the Toolkit branch ${smith.branch}): ${smith.worktree}`],
-    }),
-    dest: path.join(dir, `smith-${n}.md`),
-  });
+  // A browser gap is solved by Kitchen's own browser module (Playwright), copied here by the engine, never retyped.
+  const browser = isBrowserGap(gap);
+  if (browser) {
+    const restored = restoreBrowserModule(path.join(smith.worktree, TOOLKIT));
+    if (restored.length) ctx.log(`Kitchen's browser module restored on the Toolkit branch: ${restored.join(", ")}`);
+  }
+  const smithRun = (file: string, extraBlocks: { title: string; body: string }[]) =>
+    runRole(ctx, {
+      role: "smith",
+      file,
+      tier: "write",
+      cwd: smith.worktree,
+      bridge: setupBridgeServer({ repo: ctx.repo, worktree: smith.worktree }),
+      prompt: prompt({
+        role: "toolkit-smith",
+        job,
+        jobDir: ctx.jobDir,
+        blocks: [
+          contractBlock(ctx.jobDir),
+          ...why,
+          ...(browser ? [{ title: "Kitchen's browser module is in place (the engine copied it)", body: BROWSER_BLOCK }] : []),
+          ...(retry
+            ? [
+                {
+                  title: "The engine's check of your last commit FAILED (fix this first; your branch starts from that commit)",
+                  body: JSON.stringify(retry, null, 2),
+                },
+              ]
+            : []),
+          ...extraBlocks,
+        ],
+        extra: [`Missing primitive: ${gap}`, `Your worktree (the Toolkit branch ${smith.branch}): ${smith.worktree}`],
+      }),
+      dest: path.join(dir, file.replace(/\.md$/, `-${n}.md`)),
+    });
+  let r = await smithRun("smith.md", []);
+  // The smith changes the Toolkit only. Anything else is refused before the commit: put back, and the smith is sent
+  // back once with the reason (its proof may have leaned on that change, e.g. a test page added to the app).
+  let outside = (await putBackRefused(smith, smithPolicy)).refused;
+  if (outside.length) {
+    ctx.log(`refused, put back: the smith changed files outside the Toolkit: ${outside.join("; ")}`);
+    r = await smithRun("smith-again.md", [
+      { title: "REFUSED: you changed files outside the Toolkit (put back; redo your proof without them)", body: refusalText(outside) },
+    ]);
+    outside = (await putBackRefused(smith, smithPolicy)).refused;
+  }
   const h = headers(r.text);
   const c = await commitWith(smith, `kitchen(${job.id}): Toolkit primitive ${gap}`, smithPolicy);
-  for (const x of c.refused) ctx.log(`kept off the Toolkit branch: ${x}`);
   job = ctx.refresh();
   const write = (rec: Omit<CheckRecord, "sha" | "gap">) => writeAtomic(checkFile, `${JSON.stringify({ ...rec, sha: c.head, gap }, null, 2)}\n`);
   const fail = (why: string, extra: Partial<CheckRecord> = {}) => {
@@ -192,8 +230,11 @@ export const toolkit: StageHandler = async (ctx) => {
     // A second try while the smith has one (toolkit → toolkit); after that the machine refuses with smith-limit → needs-human.
     return { to: "toolkit", facts: { toolkit: { checkPassed: false, sha: c.head, pr: null } }, note: why } as const;
   };
+  if (outside.length) return fail(`the smith changed files outside the Toolkit again, after it was told: ${outside.join("; ")}`);
   if (h.STATUS !== "READY") return fail(`smith: ${h.STATUS ?? "no STATUS"}${h.REASON ? `: ${h.REASON}` : ""}`);
   if (!c.ahead && !retry) return fail("the smith committed nothing");
+  const drivers = handRolledBrowser(path.join(smith.worktree, TOOLKIT));
+  if (drivers.length) return fail(`hand-rolled browser driver refused: ${drivers.join("; ")}`);
   // What already fails on the base is not the smith's doing (cached per base sha).
   const onBase = await baseDriveFailures(ctx, base);
   if (onBase.failing.length) ctx.log(`drives that already fail on the base ${base.slice(0, 12)}: ${onBase.failing.join(", ")}`);

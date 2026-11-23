@@ -9,7 +9,7 @@
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { openGit, plainCheckout } from "../engine/git.ts";
+import { linkedWorktree, openGit, plainCheckout } from "../engine/git.ts";
 import { kitchenDir, writeAtomic } from "../engine/store.ts";
 import { runDrive, toFlags } from "../proof/drive.ts";
 import { loadDrive } from "../proof/drive-format.ts";
@@ -32,6 +32,7 @@ import {
 } from "./contract.ts";
 import { runToolkit, type ToolkitCall } from "./run.ts";
 import { acquireSlot, releaseSlot, type Slot } from "./slots.ts";
+import { handRolledBrowser } from "./template-modules.ts";
 import { recordPassed, trustFile, untrustedNote } from "./trust.ts";
 
 /** `known`: a drive that failed but was tolerated (`CheckOpts.tolerate`: it fails on the base too). */
@@ -111,14 +112,22 @@ const TAIL = 1500;
 const NOT_IMPLEMENTED = /\b(not (yet )?implemented|unimplemented|not supported|todo)\b/i;
 const tail = (c: ToolkitCall) => (c.stderr.trim() ? c.stderr.trim().slice(-TAIL) : c.stdout.trim().slice(-TAIL));
 
-/** Engine side: the gitdir of a source tree, so drives can stamp it. A plain checkout, or a linked worktree under <repo>/.worktrees/. */
+/** Engine side: the gitdir of a source tree, so drives can stamp it. A plain checkout, or a linked worktree of the repo. */
 export function srcLink(repo: string, src: string): { mainRepo: string; id: string } | undefined {
   const real = fs.realpathSync(src);
   const st = fs.lstatSync(path.join(real, ".git"), { throwIfNoEntry: false });
   if (st?.isDirectory()) return undefined;
-  const wts = path.join(fs.realpathSync(repo), ".worktrees");
-  if (path.dirname(real) === wts) return { mainRepo: fs.realpathSync(repo), id: path.basename(real) };
-  throw new Error(`--src ${src} is neither a git checkout nor a worktree under ${wts}`);
+  // Any linked worktree of this repo, wherever it lives: `<repo>/.worktrees/<id>` (job, smith, untrusted Toolkit
+  // checkouts) or `$KITCHEN_HOME/repos/<repo>/checkouts/_trusted@<sha>` (a trusted Toolkit checkout, ADR 0015).
+  // Checked against git's own back-pointer in `<repo>/.git/worktrees/<id>`, never against the folder's place.
+  const mainRepo = fs.realpathSync(repo);
+  const id = path.basename(real);
+  try {
+    linkedWorktree(mainRepo, id, real);
+  } catch (e) {
+    throw new Error(`--src ${src} is neither a git checkout nor a linked worktree of ${mainRepo} (${(e as Error).message})`);
+  }
+  return { mainRepo, id };
 }
 
 export async function runToolkitCheck(o: CheckOpts): Promise<CheckReport> {
@@ -242,6 +251,8 @@ export async function runToolkitCheck(o: CheckOpts): Promise<CheckReport> {
     const unlisted = onDisk.filter((f) => !desc.features.includes(f));
     if (unlisted.length) problems.push(`describe doesn't list ${unlisted.join(", ")} (it must be generated from the files)`);
     if (!desc.features.length) problems.push("no feature files: map the top 3–5 features");
+    // A browser is driven only through Kitchen's own module (Playwright), never a driver an agent wrote.
+    problems.push(...handRolledBrowser(fdir));
     for (const f of desc.features) {
       const file = path.join(fdir, f);
       if (!fs.existsSync(file)) {
@@ -424,7 +435,7 @@ export async function runToolkitCheck(o: CheckOpts): Promise<CheckReport> {
       await releaseSlot(s.id);
     }
     report.secs = (Date.now() - t0) / 1000;
-    print(`toolkit check: ${report.ok ? "PASS" : `FAIL at ${report.failed}`} in ${report.secs.toFixed(1)}s`);
+    print(`toolkit check: ${report.ok ? "PASS" : `FAIL at ${report.failed ?? "an engine error"}`} in ${report.secs.toFixed(1)}s`);
   }
 }
 

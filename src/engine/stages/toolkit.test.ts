@@ -8,6 +8,8 @@ describe("smith commit policy", () => {
     expect(smithPolicy(".kitchen/toolkit/bin/dev")).toBeNull();
     expect(smithPolicy(".kitchen/toolkit/lib/sql.mjs")).toBeNull();
     expect(smithPolicy("server.js")).toMatch(/Toolkit only/);
+    expect(smithPolicy("public/__t.html")).toMatch(/never the app/);
+    expect(smithPolicy(".env.kitchen")).toBeNull();
     expect(smithPolicy(".kitchen/toolkit/features/settings.md")).toMatch(/feature drives/);
   });
   it("tolerates only drives that fail on the base and don't use the new primitive", () => {
