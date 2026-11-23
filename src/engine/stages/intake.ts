@@ -6,7 +6,8 @@
 import path from "node:path";
 import { guardCriteria, lintSpec, parseRequirements } from "../../checks/spec-lint.ts";
 import { testLayout } from "../../checks/test-layout.ts";
-import type { Kind, Risk } from "../machine.ts";
+import { recordQuestion } from "../clarify.ts";
+import { ASK_LIMIT, type Kind, type Risk } from "../machine.ts";
 import { unprovableWithoutToolkit } from "../no-toolkit.ts";
 import { shortTitle, writeAtomic } from "../store.ts";
 import { ensureWorktree } from "../worktree.ts";
@@ -86,7 +87,20 @@ export const intake: StageHandler = async (ctx) => {
     ctx.log(refusal);
     writeAtomic(path.join(ctx.jobDir, "intake-refused.md"), `REASON: ${refusal}\n\n${r.text}`);
   }
-  if (decision === "NEEDS-INFO") await ctx.source.ask(ctx.job, { key: `ask/m${ctx.job.moves}`, text: h.QUESTION ?? h.REASON ?? r.text });
+  // NEEDS-INFO: the question is a round of the clarification thread (clarify.ts), asked of the author; after
+  // ASK_LIMIT questions a further one goes to a person (needs-human) instead of looping on the author.
+  const question = (h.QUESTION ?? h.REASON ?? r.text).trim();
+  const askedOut = decision === "NEEDS-INFO" && (ctx.job.attempts.asked ?? 0) >= ASK_LIMIT;
+  if (decision === "NEEDS-INFO") recordQuestion(ctx.jobDir, { key: `ask/m${ctx.job.moves}`, question });
+  if (askedOut)
+    return {
+      to: "needs-human",
+      facts: {
+        escalate: "info-limit",
+        why: `intake asked the author ${ctx.job.attempts.asked} questions and still can't tell what done looks like. It asks: ${question}`,
+      },
+    };
+  if (decision === "NEEDS-INFO") await ctx.source.ask(ctx.job, { key: `ask/m${ctx.job.moves}`, text: question });
   if (waits)
     ctx.log(`no Toolkit, and ${needsApp.join(", ")} drive${needsApp.length === 1 ? "s" : ""} the app: waiting for a Toolkit (build it, then approve it)`);
   const to = waits

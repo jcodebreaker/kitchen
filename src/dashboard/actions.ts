@@ -1,5 +1,7 @@
 // The dashboard's POST actions (ADR 0009). Each is a CLI verb: the same engine function, so the
 // page can do nothing `kitchen` can't. The body is JSON; text is operator input, capped like a steer.
+// An action that makes work runnable (WAKES) starts a detached runner when none works the queue, the
+// same way `kitchen run --detach` does (commands.ts startRunner), so an answer never waits for a terminal.
 import * as cmd from "../cli/commands.ts";
 import { answerSetup } from "../cli/toolkit-commands.ts";
 import { MAX_MESSAGE } from "../engine/messages.ts";
@@ -36,9 +38,13 @@ export const ACTIONS: Record<string, (repo: string, b: Body, out: Out) => Promis
     }
     return cmd.feedback(repo, id, textOf(b, j.stage === "needs-info"), out);
   },
-  /** Follow up on a done job: another Build round (kitchen feedback, ADR 0007). */
+  /**
+   * Follow up on a done job: another Build round (kitchen feedback, ADR 0007). It reopens a finished job, so the
+   * page must say so: `reopen: true`, sent only by its Ask for changes button, never by a plain message.
+   */
   "follow-up": (repo, b, out) => {
     const id = idOf(b);
+    if (b.reopen !== true) throw new BadRequest("follow-up reopens a done job for another round: it needs { reopen: true }");
     const j = findJob(repo, id);
     if (j.stage !== "done") {
       out(`${j.id}  is ${j.stage}: only a done job takes a follow-up`);
@@ -67,10 +73,22 @@ export const ACTIONS: Record<string, (repo: string, b: Body, out: Out) => Promis
       throw new BadRequest('toolkit-approve takes { "expect": "<the sha you were shown>" } only');
     return approveToolkit(repo, { expect: b.expect }, out);
   },
+  /** The runner bar's Start runner: `kitchen run --detach` (none is started while one works the queue). */
+  "start-runner": (repo, _b, out) => (starter ?? cmd.startRunner)(repo, out),
   "setup-answers": (repo, b, out) => {
     if (!b.answers || typeof b.answers !== "object" || Array.isArray(b.answers)) throw new BadRequest('answers: { "<question id>": "<answer>" }');
     return answerSetup(repo, b.answers as Record<string, unknown>, out);
   },
+};
+
+/** Actions after which a job can run: when one succeeds and no runner works the queue, one is started. */
+export const WAKES = new Set(["answer", "follow-up", "resume", "ticket", "toolkit-approve"]);
+
+type Starter = (repo: string, out: Out) => number;
+let starter: Starter | null = null;
+/** Tests: what starts a runner, instead of a real detached `kitchen run`. null: the real one. */
+export const setRunnerStarter = (f: Starter | null) => {
+  starter = f;
 };
 
 export async function act(repo: string, name: string, body: Body): Promise<ActionResult> {
@@ -79,7 +97,9 @@ export async function act(repo: string, name: string, body: Body): Promise<Actio
   const f = Object.hasOwn(ACTIONS, name) ? ACTIONS[name] : undefined; // never a prototype key such as constructor
   if (!f) throw new BadRequest(`no action ${name}`);
   try {
-    return { ok: (await f(repo, body, out)) === 0, lines };
+    const ok = (await f(repo, body, out)) === 0;
+    if (ok && WAKES.has(name) && !cmd.liveRunner(repo)) (starter ?? cmd.startRunner)(repo, out);
+    return { ok, lines };
   } catch (e) {
     if (e instanceof BadRequest) throw e;
     return { ok: false, lines: [...lines, (e as Error).message] };

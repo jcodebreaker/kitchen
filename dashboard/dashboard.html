@@ -240,6 +240,13 @@ button.a{font-weight:600}button.a:hover{text-decoration:underline;text-underline
 .send:active{transform:scale(.9)}
 .cmp:has(textarea:placeholder-shown):not(.ready) .send{opacity:.35}
 .cmp.nope .box{animation:nope .3s}
+/* a done job: its report and branch, and an explicit way to reopen it (never a stray message) */
+.fin .cbar{gap:8px;padding:8px;flex-wrap:wrap}
+.br{display:flex;align-items:center;gap:4px;min-width:0;flex:1 1 100%}
+.br i{font-style:normal;font-size:12px;color:var(--faint);flex:none}
+.br code{font:12px var(--mono);color:var(--fg2);background:var(--band);border:1px solid var(--line);border-radius:6px;padding:2px 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.br .ib{width:26px;height:26px}
+a.btn{text-decoration:none}
 @keyframes nope{25%{transform:translateX(-3px)}75%{transform:translateX(3px)}}
 
 /* ── panel ── */
@@ -487,6 +494,8 @@ const I={
   box:sv('<path d="M2.5 5L8 2.5 13.5 5v6L8 13.5 2.5 11zM2.5 5L8 7.5 13.5 5M8 7.5v6"/>'), coin:sv('<circle cx="8" cy="8" r="5.5"/><path d="M9.8 6.2c-.3-.6-1-.9-1.8-.9-1 0-1.9.5-1.9 1.4 0 2 3.8.8 3.8 2.7 0 .9-.9 1.4-1.9 1.4-.9 0-1.6-.4-1.9-1M8 4.2v1M8 10.8v1"/>'),
   sun:sv('<circle cx="8" cy="8" r="2.8"/><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1 1M11.6 11.6l1 1M12.6 3.4l-1 1M4.4 11.6l-1 1"/>'),
   list:sv('<path d="M2.5 4h11M2.5 8h11M2.5 12h7"/>'),
+  copy:sv('<rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 3.5v-.5a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 3v5A1.5 1.5 0 0 0 4 9.5h.5"/>',14),
+  doc:sv('<path d="M4 1.8h5.2L12.5 5v8.2a1 1 0 0 1-1 1h-7.5a1 1 0 0 1-1-1V2.8a1 1 0 0 1 1-1z"/><path d="M9 1.8V5h3.5M5.5 8h5M5.5 10.5h5"/>',14),
   board:sv('<rect x="2.5" y="2.5" width="4" height="11" rx="1"/><rect x="9.5" y="2.5" width="4" height="7" rx="1"/>',14),
   chk:`<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 6.3l2.3 2.3 4.7-5"/></svg>`,
   xx:`<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 3l6 6M9 3l-6 6"/></svg>`,
@@ -664,7 +673,7 @@ function rowHTML(j){
   else if(g==="run"){sub=`<div class="sub" id="lv-${esc(j.id)}">${liveHTML(j)}</div>`;mid=chgHTML(j)+trackHTML(j);tm=`<span class="tm mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`;
     acts=`<span class="acts"><button class="ib" title="Message ${esc(agent(j))} (R)" aria-label="Message agent" data-act="message" data-id="${esc(j.id)}">${I.msg}</button></span>`}
   else{mid=`<span class="fin ${fresh.has(j.id)?"new":""}">${fresh.has(j.id)?"Just finished · ":""}${finLabel(j)}</span>`;tm=`<span class="tm mono num">$${j.cost.toFixed(2)}</span>`;
-    if(j.state==="done"&&j.kind!=="setup")acts=`<span class="acts"><button class="ib" title="Follow up (R)" aria-label="Follow up" data-act="message" data-id="${esc(j.id)}">${I.msg}</button></span>`;
+    if(j.state==="done"&&j.kind!=="setup")acts=`<span class="acts"><button class="ib" title="Report, branch, ask for changes (R)" aria-label="Report, branch, ask for changes" data-act="message" data-id="${esc(j.id)}">${I.msg}</button></span>`;
     else if(stopped(j))acts=`<span class="acts"><button class="ib" title="Leave a note or resume (R)" aria-label="Leave a note" data-act="message" data-id="${esc(j.id)}">${I.msg}</button></span>`}
   return `<div class="rw ${g} ${g==="done"?"end":""} ${j.state==="rejected"?"gone":""} ${open===j.id?"open":""} ${sel===j.id?"sel":""} ${just.has(j.id)?"flash":""}" id="rw-${esc(j.id)}" style="view-transition-name:r-${esc(j.id)}">
     <div class="row" tabindex="0" role="button" data-row="${esc(j.id)}">
@@ -748,7 +757,7 @@ function renderList(){
     const o=order(),you=o.filter(j=>group(j)==="you"),run=o.filter(j=>group(j)==="run"),done=o.filter(j=>group(j)==="done");
     const idle=snap&&!snap.runner.running&&jobs.some(j=>j.kind!=="setup"&&(j.state==="run"||(j.state==="paused"&&!j.pausedBy)));
     $("#scroll").classList.toggle("bd",view==="board");
-    $("#list").innerHTML=(idle?`<div class="rbar" role="status">${S.paused}<span>Kitchen isn't working the queue: jobs move only while it runs.</span><code>kitchen run --detach</code><button type="button" class="btn sm" data-act="copy">Copy</button></div>`:"")+
+    $("#list").innerHTML=(idle?`<div class="rbar" role="status">${S.paused}<span>Kitchen isn't working the queue: jobs move only while it runs.</span><span class="sp" style="flex:1"></span><button type="button" class="btn act sm" data-act="start-runner" title="Start kitchen run in the background (kitchen run --detach). It keeps going, and waits for work when nothing is left">${I.play}Start runner</button><button type="button" class="btn ghost sm" data-act="copy" title="Copy kitchen run --detach, to start it in a terminal">Copy command</button></div>`:"")+
      (view==="board"?boardHTML():`<section id="g-you"><div class="ghead ${you.length?"act":""}">${you.length?S.you:S.wait} Needs you <span class="n num">${you.length}</span></div>${you.map(rowHTML).join("")||'<div class="empty">Nothing needs you.</div>'}</section>
       ${(()=>{const q=queueWords(!!(snap&&snap.runner.running),run);return `<section id="g-run"><div class="ghead">${q.busy?S.run:S.wait} ${q.group} <span class="n num">${run.length}</span><span class="hint">${q.hint}</span></div>${run.map(rowHTML).join("")||`<div class="empty">${q.empty}</div>`}</section>`})()}
       <section id="g-done"><div class="ghead">${S.ok} Done <span class="n num">${done.length}</span></div>${done.map(rowHTML).join("")||'<div class="empty">Nothing done yet.</div>'}</section>`);
@@ -783,13 +792,16 @@ function structural(fn){ if(document.startViewTransition&&!RM&&!document.hidden)
 function composerHTML(j,where="row"){
   const g=wgroup(j),a=agent(j),eng=!j.agent&&j.kind!=="setup";
   if(j.state==="rejected"||(j.kind==="setup"&&g!=="you"))return "";
-  const ph=g==="you"?(j.kind==="setup"?"Anything else the setup agent should know (optional)…":`Reply to ${a}…`):j.state==="paused"?`Leave a note for ${a}…`:g==="run"?`Message ${a}: redirect it, add context, ask…`:`Follow up to reopen ${j.num} for another round…`;
-  const hint=g==="you"?(j.needsToolkit?"Kitchen needs a Toolkit to drive the app: build it, or resume with checks and tests only":`${Agent(j)} is waiting for you`):g==="done"?"Starts round "+(j.round+1):j.state==="paused"?"Paused. It reads this when you resume":eng?"Automatic step. Your note goes to the next agent":g==="run"&&!j.runnerOn?"Not running now. The next agent reads this when it starts":g==="run"&&snap&&snap.tool==="codex"?"Codex reads this when its next role starts":g==="run"?"It reads this at its next step, without stopping":"Starts round "+(j.round+1);
+  const ph=g==="you"?(j.kind==="setup"?"Anything else the setup agent should know (optional)…":`Reply to ${a}…`):j.state==="paused"?`Leave a note for ${a}…`:g==="run"?`Message ${a}: redirect it, add context, ask…`:`What should change in ${j.num}?`;
+  const hint=g==="you"?(j.needsToolkit?"Kitchen needs a Toolkit to drive the app: build it, or resume with checks and tests only":`${Agent(j)} is waiting for you`):g==="done"?"This starts round "+(j.round+1):j.state==="paused"?"Paused. It reads this when you resume":eng?"Automatic step. Your note goes to the next agent":g==="run"&&!j.runnerOn?"Not running now. The next agent reads this when it starts":g==="run"&&snap&&snap.tool==="codex"?"Codex reads this when its next role starts":g==="run"?"It reads this at its next step, without stopping":"Starts round "+(j.round+1);
   const chips=g==="run"&&j.state!=="paused"?["What are you doing right now?","Add a test for this","Keep the diff minimal"]:[];
   const qs=j.kind==="setup"&&g==="you"?j.setup.questions:[];
   const ch=qs.map(q=>`<div class="choice qa"><b>${esc(q.id)}</b><span class="qq">${esc(q.question)}${q.why?`<i>${esc(q.why)}</i>`:""}</span><div class="box qbox"><input data-draft="setup-${esc(q.id)}" data-where="${where}" data-q="${esc(q.id)}" placeholder="${esc(q.default?"Default: "+q.default:"Your answer")}" value="${esc(answersDraft[q.id]||"")}" aria-label="${esc(q.question)}"></div></div>`).join("");
   const ctl=g==="run"&&where==="panel"?"":g==="run"?`<button type="button" class="btn ghost sm" data-act="${j.state==="paused"?"resume":"pause"}" data-id="${esc(j.id)}">${j.state==="paused"?I.play+"Resume":I.pause+"Pause"}</button>${j.state==="paused"?"":`<button type="button" class="btn ghost sm" data-act="stop" data-id="${esc(j.id)}">${I.stop}Stop</button>`}`
-    :g==="you"&&j.kind!=="setup"?`<button type="button" class="btn ghost sm" data-act="reject" data-id="${esc(j.id)}">Reject</button>`:"";
+    :g==="you"&&j.kind!=="setup"?`<button type="button" class="btn ghost sm" data-act="reject" data-id="${esc(j.id)}">Reject</button>`
+    :g==="done"&&j.kind!=="setup"?`<button type="button" class="btn ghost sm" data-act="ask-cancel" data-id="${esc(j.id)}">Cancel</button>`:"";
+  /* A done job takes no stray message: its report, its branch, and Ask for changes, which says it starts another round. */
+  if(j.state==="done"&&j.kind!=="setup"&&!asking.has(j.id))return doneBar(j);
   /* A wait only you can end takes no message: nothing would read it. Its two ways on are the actions. */
   if(j.waitYou)return `<div class="cmp you"><div class="box"><div class="cbar"><span class="hint">${waitHint(j)}</span><span class="sp"></span>${waitActs(j,"panel")}<button type="button" class="btn ghost sm" data-act="reject" data-id="${esc(j.id)}">Reject</button></div></div></div>`;
   return `<form class="cmp ${g==="you"?"you":""} ${qs.length?"ready":""}" data-cmp="${esc(j.id)}">${ch}
@@ -797,6 +809,15 @@ function composerHTML(j,where="row"){
     <div class="box"><textarea rows="1" data-draft="${esc(j.id)}" data-where="${where}" placeholder="${esc(ph)}" aria-label="${esc(ph)}" maxlength="4000">${esc(drafts[j.id]||"")}</textarea>
     <div class="cbar"><span class="hint">${esc(hint)}</span><span class="sp"></span>${ctl}<button class="send" type="submit" aria-label="Send" title="Send (Enter)">${I.up}</button></div></div></form>`;
 }
+/* Done: Open report, the branch with a copy button, and Ask for changes (opens the composer: the only way to send a follow-up). */
+const asking=new Set();
+function doneBar(j){
+  return `<div class="cmp fin"><div class="box"><div class="cbar"><span class="br" title="${esc(j.branch||"")}"><i>Branch</i><code>${esc(j.branch||"")}</code><button type="button" class="ib" data-act="copy-branch" data-id="${esc(j.id)}" title="Copy the branch name" aria-label="Copy the branch name">${I.copy}</button></span>${j.report?`<a class="btn pri sm" href="/${esc(j.report)}" target="_blank" rel="noopener">${I.doc}Open report</a>`:""}<span class="sp"></span><button type="button" class="btn sm" data-act="ask" data-id="${esc(j.id)}" title="Reopen ${esc(j.num)} for round ${j.round+1}">Ask for changes</button></div></div></div>`}
+function askChanges(id,on){const j=J(id);if(!j)return;on?asking.add(id):asking.delete(id);
+  if(open===id)renderPanel();else{expanded=id;renderList()}
+  if(on){const t=$(`textarea[data-draft="${id}"][data-where="${open===id?"panel":"row"}"]`);if(t)t.focus()}}
+async function copyBranch(id){const b=(J(id)||{}).branch||"";try{await navigator.clipboard.writeText(b);toast("Copied: "+b)}catch(e){toast("The branch: "+b)}}
+async function startRunner(){const r=await post("start-runner",{});toast(r.ok?(said(r.lines)||"Runner started").replace(/^run detached: /,"Runner started: "):said(r.lines)||"Not started");refreshSoon()}
 function grow(){$$(".box textarea").forEach(t=>{t.style.height="auto";t.style.height=Math.min(160,t.scrollHeight)+"px"})}
 document.addEventListener("input",e=>{const t=e.target;if(!t.dataset)return;
   if(t.dataset.q){answersDraft[t.dataset.q]=t.value;$$(`input[data-q="${t.dataset.q}"]`).forEach(o=>{if(o!==t)o.value=t.value});return}
@@ -833,10 +854,12 @@ async function send(id){
   }
   if(!text&&!(g==="you"&&j.stage==="needs-human")){nope(id);return}
   const verb=g==="you"?"answer":g==="done"?"follow-up":"steer";
+  if(verb==="follow-up"&&!asking.has(id)){nope(id);return}
   clearDraft(id);
   const d=details[id];
   if(d&&open===id){const last=d.tl.at(-1);if(last){last.evs.push({c:"you",t:text,at:new Date().toISOString(),kind:verb,status:"Sending…"});if(tab==="activity")renderPanel()}}
-  const r=await post(verb,{id:j.id,text});
+  const r=await post(verb,verb==="follow-up"?{id:j.id,text,reopen:true}:{id:j.id,text});
+  if(r.ok&&verb==="follow-up")asking.delete(id);
   if(!r.ok){drafts[id]=text;$$(`textarea[data-draft="${id}"]`).forEach(o=>o.value=text);grow();nope(id);toast(said(r.lines)||"Not sent")}
   else{if(open!==id){expanded=null;toast(verb==="steer"?`Sent to ${agent(j)} on ${j.num}`:verb==="answer"?`Answer sent to ${j.num}`:`${j.num} reopened for another round`,"View",()=>openJob(id))}}
   refreshSoon();
@@ -977,7 +1000,7 @@ document.addEventListener("keydown",e=>{
 document.addEventListener("click",e=>{
   const b=e.target.closest("[data-act]");
   if(b){const id=b.dataset.id,a=b.dataset.act;e.stopPropagation();
-    if(a==="message")message(id);else if(a==="pause")pause(id);else if(a==="resume")resume(id);else if(a==="stop")stopJob(id);else if(a==="reject")reject(id);else if(a==="chip")useChip(id,b);else if(a==="copy")copyRun();else if(a==="copy-build")copyBuild();else if(a==="approve-tk")approveTk();
+    if(a==="message")message(id);else if(a==="pause")pause(id);else if(a==="resume")resume(id);else if(a==="stop")stopJob(id);else if(a==="reject")reject(id);else if(a==="chip")useChip(id,b);else if(a==="copy")copyRun();else if(a==="copy-build")copyBuild();else if(a==="approve-tk")approveTk();else if(a==="start-runner")startRunner();else if(a==="ask")askChanges(id,true);else if(a==="ask-cancel")askChanges(id,false);else if(a==="copy-branch")copyBranch(id);
     return}
   const r=e.target.closest("[data-row]");if(r)openJob(r.dataset.row);
 });

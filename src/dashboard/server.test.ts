@@ -7,6 +7,7 @@ import path from "node:path";
 import { afterAll, beforeAll, test } from "vitest";
 import { readMessages } from "../engine/messages.ts";
 import { createJob, jobDirOf, updateJob } from "../engine/store.ts";
+import { setRunnerStarter } from "./actions.ts";
 import { dashboardServer, PAGE_CSP, refusePost } from "./server.ts";
 
 const TOKEN = "t".repeat(64);
@@ -93,6 +94,28 @@ test("the page's own request goes through, to the same engine verb as kitchen st
   const p = await req({ headers: good(), path: "/api/pause", body: JSON.stringify({ id }) });
   assert.equal(p.code, 200, p.body);
   assert.match(fs.readFileSync(path.join(jobDirOf(repo, id), "job.json"), "utf8"), /"pausedReason": "by-you"/);
+});
+
+test("Start runner is a POST behind the same token, Origin and Host checks", async () => {
+  const started: string[] = [];
+  setRunnerStarter((r, out) => {
+    started.push(r);
+    out("run detached: pid 0 (test)");
+    return 0;
+  });
+  try {
+    const noToken: Record<string, string> = { ...good() };
+    delete noToken["x-kitchen-token"];
+    assert.equal((await req({ path: "/api/start-runner", headers: noToken, body: "{}" })).code, 403);
+    assert.equal((await req({ path: "/api/start-runner", headers: { ...good(), origin: "https://evil.example" }, body: "{}" })).code, 403);
+    assert.equal((await req({ path: "/api/start-runner", headers: { ...good(), host: "evil.example" }, body: "{}" })).code, 403);
+    assert.deepEqual(started, []);
+    const r = await req({ path: "/api/start-runner", headers: { ...good(), origin: `http://127.0.0.1:${port}` }, body: "{}" });
+    assert.equal(r.code, 200, r.body);
+    assert.deepEqual(started, [repo]);
+  } finally {
+    setRunnerStarter(null);
+  }
 });
 
 test("the page carries this launch's token, under a CSP that loads nothing from elsewhere", async () => {

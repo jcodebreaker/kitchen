@@ -137,6 +137,8 @@ export type Job = {
     refused: number;
     /** The repro sent the contract back to its author (intake or spec) once: its proof can't show the bug on the base. */
     contract?: number;
+    /** Questions intake asked the author (intake → needs-info). A third NEEDS-INFO goes to needs-human instead of looping. */
+    asked?: number;
   };
   smith: { attempts: number; toolkitPr: number | null };
   toolkitTicketRef: string | null;
@@ -168,7 +170,9 @@ export type Lint = { ok: boolean; reason?: string; missingPrimitive?: string };
 /** NO-TOOLKIT (overall): nothing proved the change, or a requirement, without the app (ADR 0010). */
 export type Verdict = "PASS" | "FAIL" | "INCONCLUSIVE" | "TOOLKIT-GAP" | "NO-TOOLKIT";
 /** review-unparseable: a lens said VERDICT: BLOCKING twice without a finding the engine could read (never a silent PASS). */
-export type Escalation = "round-limit" | "smith-limit" | "adapter-error" | "engine-error" | "refused" | "review-unparseable" | "skill-missing";
+export type Escalation = "round-limit" | "smith-limit" | "adapter-error" | "engine-error" | "refused" | "review-unparseable" | "skill-missing" | "info-limit";
+/** Questions intake may ask the author before a further NEEDS-INFO goes to a person (needs-human) instead. */
+export const ASK_LIMIT = 2;
 
 /** What guards read. Gathered by the caller (stage handlers, runner, CLI) from files, git and the forge. */
 export type Facts = {
@@ -461,10 +465,13 @@ export const TABLE: readonly Row[] = [
     id: "intake>needs-info",
     from: "intake",
     to: "needs-info",
-    when: "DECISION: NEEDS-INFO",
-    guard: intakeIs("NEEDS-INFO"),
+    when: `DECISION: NEEDS-INFO, fewer than ${ASK_LIMIT} questions asked (then needs-human, info-limit)`,
+    guard: all(intakeIs("NEEDS-INFO"), (j) =>
+      (j.attempts.asked ?? 0) < ASK_LIMIT ? null : { refused: `intake already asked ${j.attempts.asked} questions`, code: "info-limit" },
+    ),
     apply: (j, f) => {
       setTitle(j, f);
+      j.attempts.asked = (j.attempts.asked ?? 0) + 1;
       j.pausedReason = f.why ?? "question for the author";
     },
   },
@@ -1128,7 +1135,7 @@ export const TABLE: readonly Row[] = [
     id: "*>needs-human",
     from: "*",
     to: "needs-human",
-    when: "round limit, smith limit, an adapter error that repeats (not a rate limit), a stage whose result was refused twice, a review lens that said BLOCKING twice without a readable finding, or a required skill that is not installed (before any agent runs)",
+    when: "round limit, smith limit, intake's third NEEDS-INFO (info-limit), an adapter error that repeats (not a rate limit), a stage whose result was refused twice, a review lens that said BLOCKING twice without a readable finding, or a required skill that is not installed (before any agent runs)",
     guard: all(
       check(
         (j) => isActive(j.stage),
@@ -1149,6 +1156,8 @@ export const TABLE: readonly Row[] = [
             return j.stage === "review" ? null : "review-unparseable comes from review";
           case "skill-missing":
             return null;
+          case "info-limit":
+            return j.stage === "intake" && (j.attempts.asked ?? 0) >= ASK_LIMIT ? null : `intake has asked ${j.attempts.asked ?? 0} of ${ASK_LIMIT} questions`;
           default:
             return "no escalation reason";
         }

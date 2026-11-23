@@ -3,13 +3,14 @@
 // have `## Mode: <name>` sections (the verifier: drives, repro, verify); the
 // prompt is the part before the first mode plus the one mode asked for. The
 // engine then adds the job's context: the ticket inside a nonce fence (quoted
-// data, never instructions), the paths, and any blocks the stage passes.
+// data, never instructions) with its clarification thread (clarify.ts), the paths, and any blocks the stage passes.
 // Roles with no file get a one-paragraph contract below; the header lines the
 // engine reads are the same. Review lenses share `_review.md` (the findings format);
 // the smith's file is roles/toolkit-smith.md.
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { clarificationsSection, readRounds } from "../clarify.ts";
 import type { Job } from "../machine.ts";
 
 export const CONTRACTS: Record<string, string> = {
@@ -62,7 +63,9 @@ export function fenceTicket(text: string, nonce: () => string = () => randomByte
 export type PromptBlock = { title: string; body: string };
 
 export function prompt(o: { role: string; mode?: string; job: Job; jobDir: string; extra?: string[]; blocks?: PromptBlock[] }): string {
-  const ticket = fs.readFileSync(path.join(o.jobDir, "ticket.md"), "utf8");
+  // The clarification thread is part of the ticket: the author's answers to intake's questions (clarify.ts).
+  const thread = clarificationsSection(readRounds(o.jobDir));
+  const ticket = `${fs.readFileSync(path.join(o.jobDir, "ticket.md"), "utf8").trimEnd()}${thread ? `\n\n${thread}` : ""}`;
   const repo = repoOf(o.jobDir);
   const base = o.role.split("-")[0];
   const file = roleFile(o.role, repo) ?? roleFile(base, repo);

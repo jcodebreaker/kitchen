@@ -23,6 +23,7 @@ Run commands from the repo root. If `kitchen` is not on PATH, use
 | "stop using the Toolkit" | `kitchen toolkit revoke` |
 | "share the Toolkit with my team", "commit the Toolkit" | `kitchen toolkit commit` (it asks the user itself in a terminal; from here, ask first, then `kitchen toolkit commit --yes`) |
 | start, run, "go", work the queue | `kitchen run --detach` (see Running), then `kitchen status` |
+| stop the queue, "stop the runner" | `kitchen run --stop` |
 | what's happening, status, progress | `kitchen status` |
 | tell a running job something: "tell 005 to keep the diff small", "ask 003 what it is doing", "005: use the existing formatter" | `kitchen steer <id> "<their words>"` |
 | "hold 005", "pause it after this step" | `kitchen pause <id>` |
@@ -63,9 +64,17 @@ write its job folders or reach the network.
 - Codex: run it with escalated permissions (`require_escalated` / "run outside
   the sandbox"); the user approves it once.
 
-It prints `run detached: pid <n>, log <file>` and returns. Then show
-`kitchen status`. Check back with `kitchen status` when the user asks; don't
-poll in a loop.
+It prints `run detached: pid <n>, log <file>` (or `runner: already running`)
+and returns. Then show `kitchen status`. Check back with `kitchen status` when
+the user asks; don't poll in a loop.
+
+The detached runner keeps going: when every job waits on the user it idles
+and picks the work up by itself once there is some again (a new ticket, an
+answer, a resume, an approval). So after `kitchen feedback`, `kitchen resume`
+or a new ticket, don't start it again; `kitchen status` shows `runner: pid …`
+while it is up. The dashboard starts one by itself when an action needs it.
+Only if the status says `runner: not running` run `kitchen run --detach`.
+`kitchen run --stop` ends it, when the user asks to stop the queue.
 
 ## Setup
 
