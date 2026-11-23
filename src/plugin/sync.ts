@@ -28,17 +28,16 @@ export const PIN_FILE = path.join("plugins", "kitchen", "pin.json");
 
 /** Pure: how the plugin runs Kitchen: npx only for the pinned tarball, else `kitchen` on PATH. */
 export function runBlock(version: string, integrity: string | null): string {
-  const install = `3. If neither works, tell the user Kitchen isn't installed and how to get it:
+  const install = (n: number, lead: string) => `${n}. ${lead}, tell the user Kitchen isn't installed and how to get it:
    \`npm install -g devkitchen@${version}\`. Don't install it yourself unless
    they say so.`;
   if (!integrity)
-    return `This skill comes from the Kitchen plugin, for devkitchen ${version}, which this plugin has not pinned yet:
-never run it through \`npx\`. Find how to run Kitchen once per session, from the repo root:
+    return `This skill comes from the Kitchen plugin, for devkitchen ${version}. The plugin has no pinned package yet, so
+never run Kitchen through \`npx\`. Find how to run it once per session, from the repo root:
 
 1. \`kitchen --version\`: if it prints a version, use \`kitchen\` from PATH, and say
    which version it is if it isn't ${version}.
-2. (Nothing else to try: there is no pinned package to fetch.)
-${install}
+${install(2, "If it doesn't")}
 
 Run every command below from the repo root. (This plugin's skill is \`/kitchen:kitchen\` in Claude Code and
 \`kitchen:kitchen\` in Codex: plugin skills are namespaced; where this page says \`/kitchen\`, that is this skill.)
@@ -54,7 +53,7 @@ Find how to run Kitchen once per session, from the repo root:
    didn't pin: don't run it, and tell the user.
 2. Otherwise \`kitchen --version\`: if it prints a version, use \`kitchen\` from
    PATH, and say which version it is if it isn't ${version}.
-${install}
+${install(3, "If neither works")}
 
 Run every command below from the repo root. (This plugin's skill is \`/kitchen:kitchen\` in Claude Code and
 \`kitchen:kitchen\` in Codex: plugin skills are namespaced; where this page says \`/kitchen\`, that is this skill.)

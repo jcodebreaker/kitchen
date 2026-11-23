@@ -224,11 +224,17 @@ test("with no runner, jobs in an active stage are waiting (Queued), not running;
   assert.doesNotMatch(html, /<b>\$\{run\.length\}<\/b> running<\/span>/, "no fixed 'running' left in the header");
 });
 
-test("the header's counts never clip: the view labels go at 620px, 'ready' at 520px, the queue count at 420px; never a ready card", () => {
+test("the header's counts never clip: view labels at 620px, 'ready' at 520px, title at 480px, queue count at 420px, '0 need you' at 380px; never a ready card", () => {
   const html = fs.readFileSync(path.resolve(import.meta.dirname, "..", "..", "dashboard", "dashboard.html"), "utf8");
   // Checked in headless Chromium with the panel open at 1280, 1100 and 900 px: #sum's scrollWidth fits its box.
   assert.match(html, /@container main \(max-width:620px\)\{ \.segc span\{display:none\} \}/);
   assert.match(html, /@container main \(max-width:520px\)\{ #sum \.rdy\{display:none\} \}/);
   assert.match(html, /@container main \(max-width:420px\)\{ #sum \.qn\{display:none\} \}/);
+  // Then the title and New ticket's label, then the words: by the main column's width, never the window's (the panel takes room).
+  assert.match(html, /@container main \(max-width:480px\)\{ \.top\{[^}]*\} \.top h2,\.top \.pri \.lg\{display:none\} \}/);
+  assert.match(html, /@container main \(max-width:380px\)\{ #sum \.none\{display:none\} #sum \.zero\{display:inline\} \}/);
+  assert.match(html, /<span class="none">Nothing needs you<\/span><span class="zero">0 need you<\/span>/);
+  for (const m of html.matchAll(/@media \(max-width:\d+px\)\{[\s\S]*?\n\}/g))
+    assert.doesNotMatch(m[0], /\.top h2|\.segc span|\.sumline \.rdy/, "no window-width rule hides the header's parts");
   assert.doesNotMatch(html, /[{}]\s*\.rdy\{display:none\}/, "`.rdy` is also a ready card's class: only the header's is hidden");
 });

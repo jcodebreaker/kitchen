@@ -18,7 +18,10 @@ test("the committed plugin files are current (run npm run plugin:sync when this 
 test("no pin (nothing published and pinned): the skill never runs npx; kitchen on PATH, else how to install", () => {
   const plugin = pluginSkill(repoSkill, version, null);
   assert.doesNotMatch(plugin, /npx -y/);
-  assert.match(plugin, /never run it through `npx`/);
+  assert.match(plugin, /never run Kitchen through `npx`/);
+  // Two clean steps: PATH, else how to install. No empty step.
+  assert.match(plugin, /\n1\. `kitchen --version`[\s\S]*\n2\. If it doesn't, tell the user Kitchen isn't installed/);
+  assert.doesNotMatch(plugin, /\n3\. |Nothing else to try/);
   assert.match(plugin, /use `kitchen` from PATH/);
   assert.match(plugin, new RegExp(`npm install -g devkitchen@${version.replace(/\./g, "\\.")}`));
 });
