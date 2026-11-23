@@ -85,3 +85,10 @@ In the same run the app kept its state in a gitignored `data/library.json` and `
 - `kitchen init` takes the reset from a `db:reset`, `reset`, `reset:db`, `seed:reset`, `db:seed` or `seed` script (or Makefile target); without one it leaves `app.reset` unset and says how to add it.
 - `kitchen qa reset <job>` is down, `app.reset`, up. The QA role uses it before a criterion that needs seed data and never touches the app's data files itself; with no `app.reset` the command says the data isn't fresh and QA notes it.
 - Not chosen: a per-instance data directory in an env variable (app-specific), or deleting gitignored files Kitchen didn't create (it can't tell the app's data from dependencies and build output).
+
+## Amendment, 2026-11-23: intake sees the queue
+
+A 4-ticket run on library-demo overlapped: intake for "let people search books" added a page search box the ticket never named, and intake for "show my overdue loans in red and add a search box" planned a second one while its builder recomputed overdue on the server, which job 001 already did. That job conflicted twice and used all 3 rounds. Now:
+- The intake brief has "Other jobs in the queue": every other unfinished job and the last few merged (7 days, at most 5), with id, title and stage, plus criteria, FILES and LEFT OUT once accepted, or the ticket text while still in intake (a wave's intakes run side by side). Capped at about 3,500 characters.
+- The intake role doesn't promise what another job covers: `AFTER: <id>` when it needs that job's code, or `LEFT OUT:` naming the job. A ticket worded about behaviour gets the API only unless it names a page.
+- The build brief lists its AFTER: jobs and whether they are merged, so the builder reuses their code.

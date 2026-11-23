@@ -19,6 +19,7 @@ import { branchExists, diffSize, git, gitOut, revParse } from "./git.ts";
 import { criteriaOf, intakeFile, matchPath, parseIntake, qaDir, readQa, readReview, reviewFile } from "./lanes.ts";
 import { BY_YOU, isLane, type Job, type Lane, outOfRounds, roundsUsed, type Stage } from "./machine.ts";
 import { markRead, operatorNotes, unreadMessages } from "./messages.ts";
+import { afterSection, queueSection } from "./others.ts";
 import { type Plan, planWave } from "./plan.ts";
 import { writeReport } from "./report.ts";
 import { type CatchUp, catchUpWithStaging, mergeToStaging, stagingTip } from "./staging.ts";
@@ -102,7 +103,7 @@ function brief(
   cfg: Config,
   job: Job,
   lane: Lane,
-  o: { wt: string; base: string; head?: string; notes: string; skills: string; caught?: CatchUp | null },
+  o: { wt: string; base: string; head?: string; notes: string; skills: string; caught?: CatchUp | null; others?: string },
 ): string {
   const dir = jobDirOf(repo, job.id);
   const ticket = fs.readFileSync(path.join(dir, "ticket.md"), "utf8");
@@ -152,6 +153,7 @@ function brief(
     fence(t),
     "",
     crit.length && lane !== "intake" ? `## Criteria (fixed)\n\n${crit.map((c) => `- ${c.id} (${c.check}): ${c.text}`).join("\n")}\n` : "",
+    o.others ?? "",
     o.notes,
     lane === "build" && o.caught ? stagingMoved(cfg, o.caught) : "",
     lane === "build" || lane === "intake" ? earlier(dir, job) : "",
@@ -234,7 +236,8 @@ export async function start(
   fs.writeFileSync(path.join(dir, stream), "");
   fs.rmSync(path.join(dir, "refused.txt"), { force: true });
   if (lane === "qa") fs.mkdirSync(qaDir(dir, job.round), { recursive: true });
-  const text = brief(repo, cfg, { ...job, base }, lane, { wt, base, head, notes: operatorNotes(unread), skills: sk.text, caught });
+  const others = lane === "intake" ? queueSection(repo, job, listJobs(repo)) : lane === "build" ? afterSection(repo, job, listJobs(repo)) : "";
+  const text = brief(repo, cfg, { ...job, base }, lane, { wt, base, head, notes: operatorNotes(unread), skills: sk.text, caught, others });
   const briefFile = path.join(roundDir(dir, job.round), `brief-${lane}-m${job.moves}.md`);
   writeAtomic(briefFile, text);
   const model = modelFor(cfg, ROLE_OF[lane]);
