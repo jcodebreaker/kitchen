@@ -16,6 +16,8 @@
 
 Coding agents (Claude Code or Codex) write the code. Kitchen runs every proof itself and keeps the evidence. You merge.
 
+> **Why I built it.** I'm a senior engineer, and I got tired of the same ritual: every new Claude session, every new branch, I spent ages rebuilding the test setup so the agent could actually try the feature. So I built my own factory and called it Kitchen, because I like food and I like my agents cooking. Kitchen learns how to run your app once, and every job after that reuses it.
+
 ## Four steps
 
 ```sh
