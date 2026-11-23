@@ -46,6 +46,12 @@
 //      globs, checks/test-layout.ts), when the layout is known
 //   9. a seed user a proof names (`--as`, `--user`, `--admin`, `username = '…'`)
 //      is in describe's `seed_users`, or an earlier step of the proof makes it
+//  10. app behaviour is proven by driving the app (README: "Kitchen drives the real
+//      app"): a criterion about what the running app does (an HTTP route or status,
+//      a page, a button, a form, a CLI command's output or exit; appSurface) has at
+//      least one toolkit segment in its proof. A `test`/`cmd` proof alone is only for
+//      pure logic with no app surface, or as an extra check next to a drive. Not
+//      without a Toolkit (ADR 0010: checks and tests are all there is then)
 import path from "node:path";
 import { absentString, type Clause, ExpectError, isJudged, negativeClauses, parseExpect, wantedStrings } from "../proof/assert.ts";
 import { checkPrimArgs, DriveFormatError } from "../proof/drive-format.ts";
@@ -507,6 +513,10 @@ export function lintSpec(
     const ghost = unresolved ? null : unknownUser(segs, o.toolkit.seedUsers ?? []);
     if (ghost)
       return `${c.id}: the proof uses the user ${JSON.stringify(ghost)}, who is not a seed user (${(o.toolkit.seedUsers ?? []).join(", ")}) and no earlier step makes; use a seed user, or create that user in an earlier step`;
+    // 10. what the running app does is proven by driving it, not by a test the verifier wrote
+    const surface = o.noToolkit || segs.some((s) => s.kind === "toolkit") ? null : appSurface(c.text);
+    if (surface)
+      return `${c.id}: it is about what the running app does (${surface}), so its proof must drive the app through the Toolkit (a primitive or feature drive: \`toolkit http …\`, \`toolkit open …\`, \`toolkit cli …\`); a \`${kindOf}\` proof alone is only for pure logic with no app surface, or as an extra criterion next to one whose proof drives the app`;
     // 4. protected paths
     const hit = pathsOf(segs).find((p) => isProtected(p, o.protected ?? []));
     if (hit) return `${c.id}: the proof touches protected path ${hit}`;
@@ -525,6 +535,22 @@ export function lintSpec(
     problems.push("a bug needs a `repro: true` criterion with a mechanical expect");
   if (problems.length) return fail(problems.join("\n"), missingPrimitive ? { missingPrimitive } : {});
   return { ok: true, criteria, newDrives, baseNegatives, ...(o.noToolkit ? { needsApp } : {}) };
+}
+
+/** What makes a criterion about the running app's behaviour (rule 10). */
+const SURFACES: [RegExp, string][] = [
+  [/\b(GET|POST|PUT|PATCH|DELETE)\s+\/[\w/:{}-]*/, "an HTTP route"],
+  [/\b(returns?|gets?|answers?|responds?( with)?|status( code)?)\s+(an?\s+)?[1-5]\d\d\b/i, "an HTTP status"],
+  [/\b(page|screen|button|form|link|dialog|modal|click(s|ed)?|presses|pressing|data-testid)\b/i, "a page"],
+  [/\b(exits? (with|code|0|1|non-zero)|prints?|stdout|stderr|subcommand|on the command line)\b/i, "a command's output or exit"],
+];
+/** Which app surface a criterion's text is about (rule 10), or null for pure logic. Pure. */
+export function appSurface(text: string): string | null {
+  for (const [re, what] of SURFACES) {
+    const m = re.exec(text);
+    if (m) return `${what}: "${m[0]}"`;
+  }
+  return null;
 }
 
 /**
