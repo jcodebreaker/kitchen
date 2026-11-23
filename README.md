@@ -126,15 +126,12 @@ Plugin skills are namespaced, so the skill is `/kitchen:kitchen` (type `/kitchen
 <!-- skills-registry:start (generated from skills/registry.json: npm run skills:readme) -->
 | Role | Required | Picked by kind / surface / risk | Optional | Fallback if missing |
 |---|---|---|---|---|
-| builder | — | kind bug → `diagnosing-bugs`; kind feature/ui → `tdd`; kind chore → `codebase-design` | a registry skill named on the ticket's `Kitchen-Skills:` line (required) | the role prompt alone (today's behaviour) |
 | intake | — | — | `domain-modeling` | the role prompt |
-| spec | — | — | — | the role prompt |
-| reviewer-code | — | — | `code-review`, `codebase-design` | the roles/_review.md checklist |
+| builder | — | kind bug → `diagnosing-bugs`; kind feature/ui → `tdd`; kind chore → `codebase-design` | a registry skill named on the ticket's `Kitchen-Skills:` line (required) | the role prompt alone |
+| qa | — | — | — | the roles/qa.md steps |
+| reviewer-code | — | — | `code-review`, `codebase-design` | the roles/reviewer.md checklist |
 | reviewer-security | `security-review` (high risk) | security surface → `security-review` | — | none needed: Kitchen ships it |
 | reviewer-ui | — | ui surface → `impeccable` | — | the reviewer-ui.md rubric; the Report says degraded |
-| reviewer-ux | — | — | — | the role prompt |
-| verifier | — | — | — | none: the verifier judges only what needs eyes |
-| report | — | — | `humanizer` | the role prompt |
 
 Never loaded: the interactive `grilling`, `grill-me`, `grill-with-docs`, `wizard`, `triage`, `ask-matt`, `to-questionnaire`, and any skill whose frontmatter says `disable-model-invocation: true`. Shipped with Kitchen (skills/vendor/, see NOTICE): `security-review`.
 <!-- skills-registry:end -->

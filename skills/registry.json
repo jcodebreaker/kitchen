@@ -1,16 +1,41 @@
 {
   "version": 1,
-  "about": "Role → skill registry (docs/adr/0014-role-skills.md). Validated at load by src/skills/registry.ts; the README table between the skills-registry markers is generated from it (src/skills/readme.ts). A skill is only guidance: Kitchen copies its SKILL.md text into the role's prompt, pinned by sha256 in the ledger.",
-  "forbidden": ["grilling", "grill-me", "grill-with-docs", "wizard", "triage", "ask-matt", "to-questionnaire"],
+  "about": "Role → skill registry (docs/adr/0014-role-skills.md). Validated at load by src/skills/registry.ts; the README table between the skills-registry markers is generated from it (src/skills/readme.ts). A skill is only guidance: `kitchen job start` quotes its SKILL.md text into the lane's brief.",
+  "forbidden": [
+    "grilling",
+    "grill-me",
+    "grill-with-docs",
+    "wizard",
+    "triage",
+    "ask-matt",
+    "to-questionnaire"
+  ],
   "skills": {
-    "tdd": { "source": "mattpocock-skills" },
-    "diagnosing-bugs": { "source": "mattpocock-skills" },
-    "codebase-design": { "source": "mattpocock-skills" },
-    "domain-modeling": { "source": "mattpocock-skills" },
-    "code-review": { "source": "mattpocock-skills" },
-    "security-review": { "source": "kitchen", "vendored": "vendor/security-review" },
-    "impeccable": { "source": "local" },
-    "humanizer": { "source": "local" }
+    "tdd": {
+      "source": "mattpocock-skills"
+    },
+    "diagnosing-bugs": {
+      "source": "mattpocock-skills"
+    },
+    "codebase-design": {
+      "source": "mattpocock-skills"
+    },
+    "domain-modeling": {
+      "source": "mattpocock-skills"
+    },
+    "code-review": {
+      "source": "mattpocock-skills"
+    },
+    "security-review": {
+      "source": "kitchen",
+      "vendored": "vendor/security-review"
+    },
+    "impeccable": {
+      "source": "local"
+    },
+    "humanizer": {
+      "source": "local"
+    }
   },
   "sources": {
     "mattpocock-skills": {
@@ -31,30 +56,77 @@
     }
   },
   "roles": {
+    "intake": {
+      "optional": [
+        "domain-modeling"
+      ],
+      "fallback": "the role prompt"
+    },
     "builder": {
       "picked": [
-        { "skill": "diagnosing-bugs", "kind": ["bug"] },
-        { "skill": "tdd", "kind": ["feature", "ui"] },
-        { "skill": "codebase-design", "kind": ["chore"] }
+        {
+          "skill": "diagnosing-bugs",
+          "kind": [
+            "bug"
+          ]
+        },
+        {
+          "skill": "tdd",
+          "kind": [
+            "feature",
+            "ui"
+          ]
+        },
+        {
+          "skill": "codebase-design",
+          "kind": [
+            "chore"
+          ]
+        }
       ],
       "ticket": true,
-      "fallback": "the role prompt alone (today's behaviour)"
+      "fallback": "the role prompt alone"
     },
-    "intake": { "optional": ["domain-modeling"], "fallback": "the role prompt" },
-    "spec": { "fallback": "the role prompt" },
-    "reviewer-code": { "optional": ["code-review", "codebase-design"], "fallback": "the roles/_review.md checklist" },
+    "qa": {
+      "fallback": "the roles/qa.md steps"
+    },
+    "reviewer-code": {
+      "optional": [
+        "code-review",
+        "codebase-design"
+      ],
+      "fallback": "the roles/reviewer.md checklist"
+    },
     "reviewer-security": {
-      "required": [{ "skill": "security-review", "risk": ["high"] }],
-      "picked": [{ "skill": "security-review", "surface": ["security"] }],
+      "required": [
+        {
+          "skill": "security-review",
+          "risk": [
+            "high"
+          ]
+        }
+      ],
+      "picked": [
+        {
+          "skill": "security-review",
+          "surface": [
+            "security"
+          ]
+        }
+      ],
       "fallback": "none needed: Kitchen ships it"
     },
     "reviewer-ui": {
-      "picked": [{ "skill": "impeccable", "surface": ["ui"] }],
+      "picked": [
+        {
+          "skill": "impeccable",
+          "surface": [
+            "ui"
+          ]
+        }
+      ],
       "fallback": "the reviewer-ui.md rubric; the Report says degraded",
       "degraded": true
-    },
-    "reviewer-ux": { "fallback": "the role prompt" },
-    "verifier": { "fallback": "none: the verifier judges only what needs eyes" },
-    "report": { "optional": ["humanizer"], "fallback": "the role prompt" }
+    }
   }
 }
