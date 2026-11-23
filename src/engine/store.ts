@@ -85,7 +85,7 @@ export function titleOf(text: string): string {
 /** Pure: intake's `TITLE:` made safe to show: one line, no markup, at most 60 characters; null when there is none. */
 export function shortTitle(raw: string | undefined): string | null {
   const t = (raw ?? "")
-    .replace(/[\u0000-\u001f`*_#<>]/g, "")
+    .replace(/\p{Cc}|[`*_#<>]/gu, "")
     .replace(/\s+/g, " ")
     .trim();
   return t ? cutAtWord(t, TITLE_MAX) : null;
