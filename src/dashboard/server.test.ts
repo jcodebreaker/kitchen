@@ -101,10 +101,8 @@ test("the page carries this launch's token, under a CSP that loads nothing from 
   assert.ok(r.body.includes(`content="${TOKEN}"`));
   assert.equal(r.headers["content-security-policy"], PAGE_CSP);
   assert.doesNotMatch(r.body, /https?:\/\/(?!127\.0\.0\.1)[a-z]/i, "no URL to another host in the page");
-  const f = await req({ method: "GET", path: "/fonts/Geist-Variable.woff2", headers: { host: `127.0.0.1:${port}` } });
-  assert.equal(f.code, 200);
-  assert.equal(f.headers["content-type"], "font/woff2");
-  assert.equal((await req({ method: "GET", path: "/fonts/../../package.json", headers: { host: `127.0.0.1:${port}` } })).code, 404);
+  assert.doesNotMatch(r.body, /@font-face|url\(/, "system fonts only: nothing for the page to fetch");
+  assert.equal((await req({ method: "GET", path: "/fonts/Geist-Variable.woff2", headers: { host: `127.0.0.1:${port}` } })).code, 404);
 });
 
 test("hygiene: a prototype key is no action, a malformed % in a path is a 400, an announced oversize body is refused unread", async () => {
