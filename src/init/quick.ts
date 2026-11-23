@@ -93,7 +93,11 @@ export async function init(o: InitOpts, out: (l: string) => void): Promise<numbe
       true,
       cfgW.written ? "Wrote kitchen.yaml" : "Kept kitchen.yaml",
       `${n ? `${n} check${n === 1 ? "" : "s"}${det?.checks.length && !own ? ` from ${det.from.join(", ")}` : ""}` : "no checks found"} · app: ${
-        cfg.app.start ? `\`${cfg.app.start}\`` : legacyToolkit ? "the repo's Toolkit (bin/dev up)" : "none"
+        cfg.app.start
+          ? `\`${cfg.app.start}\`${cfg.app.reset ? ` (reset \`${cfg.app.reset}\`)` : ""}`
+          : legacyToolkit
+            ? "the repo's Toolkit (bin/dev up)"
+            : "none"
       } · staging from ${cfg.staging.base}${cfg.forge.kind === "github" ? " (GitHub)" : ""}`,
     ),
   );
@@ -160,6 +164,10 @@ export async function init(o: InitOpts, out: (l: string) => void): Promise<numbe
   }
   if (!n) out('No checks: add them to kitchen.yaml (checks: ["npm test"]) so Kitchen can hold every job to them.');
   if (!cfg.app.start && !legacyToolkit) out("No app to start: QA checks with tests and commands. Add app: { start: … } to kitchen.yaml if there is one.");
+  else if (cfg.app.start && !cfg.app.reset)
+    out(
+      "No app.reset found: QA's restarts keep the data earlier checks left. If the app stores data, add app.reset to kitchen.yaml (a command that puts it back to its seed, e.g. rm -f data/*.json) so kitchen qa reset starts it fresh.",
+    );
   out('Next: kitchen ticket "<what you want>"  then  kitchen run  (or /kitchen run in Claude Code)');
   out("      commit kitchen.yaml, .gitignore, .claude/settings.json and the skill and hook folders when you like");
   return 0;

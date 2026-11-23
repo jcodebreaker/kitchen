@@ -6,12 +6,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, test } from "vitest";
-import { parseConfig } from "../config.ts";
+import { loadConfig, parseConfig } from "../config.ts";
 import * as control from "../engine/control.ts";
 import { qaDir } from "../engine/lanes.ts";
 import { findJob, jobDirOf } from "../engine/store.ts";
 import { orchestratorCommand, scrubbedEnv, streamLine } from "../run/orchestrator.ts";
-import { appDown, appUp, http, page } from "./app.ts";
+import { appDown, appReset, appUp, http, page } from "./app.ts";
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kitchen-qa-"));
 const lines: string[] = [];
@@ -29,7 +29,7 @@ http.createServer((req, res) => {
 }).listen(Number(process.env.PORT));
 `,
   );
-  fs.writeFileSync(path.join(root, "kitchen.yaml"), 'app: { start: "node srv.mjs", health: "/healthz", reset: "echo reset > reset.txt" }\n');
+  fs.writeFileSync(path.join(root, "kitchen.yaml"), 'app: { start: "node srv.mjs", health: "/healthz", reset: "echo reset >> reset.txt" }\n');
   await control.ticket(root, "check the shelf", () => {});
   id = findJob(root, "1").id;
   const f = path.join(jobDirOf(root, id), "job.json");
@@ -61,6 +61,23 @@ test("up on a free port after the reset, an HTTP transcript, a Playwright screen
   await assert.rejects(http(root, id, "GET", "/", { name: "../escape", headers: [] }, out), /--name/);
   assert.equal(await appDown(root, id, out), 0);
   assert.equal(lines.at(-1), "app: stopped");
+});
+
+test("qa reset: down, app.reset, up again on a fresh process; without app.reset it says the data is not fresh", async () => {
+  assert.equal(await appUp(root, id, out), 0, lines.join("\n"));
+  const state = path.join(jobDirOf(root, id), "app.json");
+  const pid = (JSON.parse(fs.readFileSync(state, "utf8")) as { pid: number }).pid;
+  const resets = () => fs.readFileSync(path.join(root, "reset.txt"), "utf8").trim().split("\n").length;
+  const before = resets();
+  assert.equal(await appReset(root, id, out), 0, lines.join("\n"));
+  assert.equal(resets(), before + 1, "app.reset ran again");
+  assert.notEqual((JSON.parse(fs.readFileSync(state, "utf8")) as { pid: number }).pid, pid, "a new app process");
+  assert.match(lines.at(-1) ?? "", /reset \(echo reset >> reset\.txt\) and restarted on fresh data/);
+  const cfg = loadConfig(root);
+  assert.equal(await appReset(root, id, out, { ...cfg, app: { ...cfg.app, reset: undefined } }), 0);
+  assert.match(lines.at(-1) ?? "", /no app\.reset: the data is what earlier checks left/);
+  assert.equal(resets(), before + 1, "nothing to reset with");
+  await appDown(root, id);
 });
 
 test("kitchen run: a headless claude -p running the /kitchen skill, its tools allowed up front, no GitHub token handed over", () => {

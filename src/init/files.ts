@@ -83,7 +83,10 @@ export function checksYaml(d: Detected, o: { proposed?: boolean } = {}): string 
 export function appYaml(a: DetectedApp | null, o: { asked?: boolean } = {}): string {
   if (!a) return '# How QA starts the app (none found): app: { start: "npm start", health: "/" }\n';
   const fields = [`start: ${scalar(a.start)}`, `health: ${scalar(a.health)}`, ...(a.reset ? [`reset: ${scalar(a.reset)}`] : [])];
-  return `# How QA starts the app (${o.asked ? "your answer" : `found in ${a.from}`}); it gets a free port in $PORT\napp: { ${fields.join(", ")} }\n`;
+  const noReset = a.reset
+    ? ""
+    : '# No reset found. So QA can restart on fresh data (kitchen qa reset), add to app: reset: "<a command that puts the data back to its seed>"\n';
+  return `# How QA starts the app (${o.asked ? "your answer" : `found in ${a.from}`}); it gets a free port in $PORT\n${noReset}app: { ${fields.join(", ")} }\n`;
 }
 
 /** The config the person already has decides: a kitchen.yaml that names checks keeps them, whoever runs (quick init or the build). */

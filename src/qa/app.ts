@@ -1,8 +1,9 @@
-// What the QA lane runs the app and gathers evidence with (ADR 0016 §3): `kitchen qa up|down|page|http <job>`.
+// What the QA lane runs the app and gathers evidence with (ADR 0016 §3): `kitchen qa up|down|reset|page|http <job>`.
 //
 // - up: the app from the job's worktree, as kitchen.yaml `app:` says (reset, then start on a free port, then wait
 //   for the health check). A repo that still has an older Kitchen Toolkit (.kitchen/toolkit/bin/dev) and no
 //   `app.start` keeps working: its `bin/dev prepare` and `up` start the app instead.
+// - reset: down, then up again (which runs `app.reset` first): fresh seed data between criteria that need it.
 // - page: a real browser (Playwright's Chromium, pinned in Kitchen's package.json) opens a page, optionally runs a
 //   small script, and saves a screenshot plus a text file (final URL, title, visible text, console errors).
 // - http: one request, saved as a plain transcript.
@@ -160,6 +161,18 @@ export async function appDown(repo: string, ref: string, out: (l: string) => voi
   fs.rmSync(stateFile(repo, id), { force: true });
   out("app: stopped");
   return 0;
+}
+
+/**
+ * `kitchen qa reset`: the app down, `app.reset`, the app up again (appUp runs the reset), so the next criterion
+ * starts on the seed data. Without an app.reset it only restarts, and says the data is what earlier checks left.
+ */
+export async function appReset(repo: string, ref: string, out: (l: string) => void, cfg: Config = loadConfig(repo)): Promise<number> {
+  await appDown(repo, ref);
+  const code = await appUp(repo, ref, out, cfg);
+  if (code === 0 && cfg.app.start && !cfg.app.reset) out("app: restarted, but kitchen.yaml has no app.reset: the data is what earlier checks left (not fresh)");
+  else if (code === 0 && cfg.app.reset) out(`app: reset (${cfg.app.reset}) and restarted on fresh data`);
+  return code;
 }
 
 function baseUrl(repo: string, id: string): string | null {

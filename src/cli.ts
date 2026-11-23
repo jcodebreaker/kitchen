@@ -34,6 +34,7 @@ The orchestrator's verbs (the only way a job moves)
 
 QA's tools (evidence lands in the job's QA folder)
   kitchen qa up <id> · qa down <id>      start / stop the app from the job's worktree
+  kitchen qa reset <id>                  down, app.reset, up: the app again on fresh seed data
   kitchen qa page <id> <path> --name <n> [--script f.mjs]   Playwright: screenshot + page text
   kitchen qa http <id> <METHOD> <path> --name <n> [--header 'K: v']… [--data '<json>']   an HTTP transcript
 
@@ -58,7 +59,7 @@ const COMMAND_HELP: Record<string, string> = {
   skills: "kitchen skills\n\nEvery skill in Kitchen's role registry (skills/registry.json): found or not for the agent tool, and how to install a missing one.",
   init: "kitchen init [--tool claude|codex] [--yes] | init --skill\n\nChecks what Kitchen needs (node, git and a commit, python3 for the hooks, claude or codex signed in, gh optional), then writes kitchen.yaml with the checks and how to start the app it finds (one question at most when none is obvious; --yes asks nothing), installs the /kitchen skill and the guard hooks (merged into .claude/settings.json, with a backup), adds .gitignore entries, creates the staging branch from your branch, and runs the checks once.",
   job: "kitchen job next|start|finish|show …\n\nThe orchestrator's verbs: the single writer of job state. See kitchen --help.",
-  qa: "kitchen qa up|down|page|http <id> …\n\nThe QA lane's tools: the app from the job's worktree, Playwright screenshots, HTTP transcripts. See kitchen --help.",
+  qa: "kitchen qa up|down|reset|page|http <id> …\n\nThe QA lane's tools: the app from the job's worktree (reset: down, app.reset, up, for fresh seed data), Playwright screenshots, HTTP transcripts. See kitchen --help.",
 };
 
 type Flags = { pos: string[]; flags: Set<string>; vals: Record<string, string[]> };
@@ -226,6 +227,7 @@ async function qaVerb(repo: string, f: Flags, out: (l: string) => void): Promise
   const name = f.vals.name?.[0];
   if (verb === "up") return qa.appUp(repo, id, out);
   if (verb === "down") return qa.appDown(repo, id, out);
+  if (verb === "reset") return qa.appReset(repo, id, out);
   if (verb === "page") {
     if (!a || !name) throw new Error("kitchen qa page <id> <path> --name <name> [--script f.mjs]");
     return qa.page(repo, id, a, { name, script: f.vals.script?.[0] }, out);
@@ -234,7 +236,7 @@ async function qaVerb(repo: string, f: Flags, out: (l: string) => void): Promise
     if (!a || !b || !name) throw new Error("kitchen qa http <id> <METHOD> <path> --name <name> [--header 'K: v']… [--data '<json>']");
     return qa.http(repo, id, a, b, { name, headers: f.vals.header ?? [], data: f.vals.data?.[0] }, out);
   }
-  throw new Error(`kitchen qa: up, down, page or http (got ${verb ?? "nothing"})`);
+  throw new Error(`kitchen qa: up, down, reset, page or http (got ${verb ?? "nothing"})`);
 }
 
 quietOnEpipe(process.stdout);

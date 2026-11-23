@@ -78,3 +78,10 @@ A paid run on library-demo (a renew-loan endpoint and a React UI, both touching 
 - Only an explicit dependency holds a job: a ticket's `AFTER:` line (intake writes it when the ticket builds on another job). Intake's `FILES:` is a hint, not a lock.
 - Jobs touching the same files build side by side. Git merges each into `staging`; a conflict (or red checks on the merged result) sends the job back to Build, as before.
 - Every Build round after the first starts with Kitchen merging `staging`'s tip into the job branch: committed when clean, left in progress for the builder to resolve when it conflicts. `kitchen job finish` refuses a build whose branch doesn't contain that tip, and the job's base moves to it, so review and the diff size see only the job's own change.
+
+## Amendment, 2026-11-23: fresh data between QA's checks
+
+In the same run the app kept its state in a gitignored `data/library.json` and `kitchen.yaml` had no `app.reset`, so QA deleted the file by hand and one criterion ran on data an earlier check had changed. Now:
+- `kitchen init` takes the reset from a `db:reset`, `reset`, `reset:db`, `seed:reset`, `db:seed` or `seed` script (or Makefile target); without one it leaves `app.reset` unset and says how to add it.
+- `kitchen qa reset <job>` is down, `app.reset`, up. The QA role uses it before a criterion that needs seed data and never touches the app's data files itself; with no `app.reset` the command says the data isn't fresh and QA notes it.
+- Not chosen: a per-instance data directory in an env variable (app-specific), or deleting gitignored files Kitchen didn't create (it can't tell the app's data from dependencies and build output).

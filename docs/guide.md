@@ -78,7 +78,7 @@ The session is the orchestrator. It loops:
 |---|---|---|
 | intake | writes `intake.md`: decision, kind, risk, files, criteria | accepts it into Build, or asks you, or rejects |
 | build | changes the code in the worktree and commits | refuses uncommitted work or no commits; runs your checks itself; red checks: Build again |
-| qa | `kitchen qa up`, then each criterion against the running app (`kitchen qa page` for pages, `kitchen qa http` for APIs), `verdict.json` citing its evidence files | refuses a verdict with a missing row or missing evidence (a page PASS needs a screenshot); FAIL: Build again, next round |
+| qa | `kitchen qa up`, then each criterion against the running app (`kitchen qa page` for pages, `kitchen qa http` for APIs; `kitchen qa reset` before one that needs fresh seed data), `verdict.json` citing its evidence files | refuses a verdict with a missing row or missing evidence (a page PASS needs a screenshot); FAIL: Build again, next round |
 | review | reads the diff and QA's evidence, writes `review.json` | refuses a review whose branch moved; a blocking finding: Build again; else the merge |
 
 A lane refused three times, or a job out of rounds (`round_limit`), goes to you (`needs-human`).
@@ -101,7 +101,7 @@ kitchen status [--json] · kitchen report [--json] · kitchen dashboard [--port 
 kitchen feedback <id> ["<text>"] [--to intake|build|qa|review]
 kitchen steer <id> "<text>" · pause <id> · stop <id> · resume <id> · reject <id>
 kitchen job next|start|finish|show …     the orchestrator's verbs
-kitchen qa up|down|page|http <id> …      the QA lane's tools
+kitchen qa up|down|reset|page|http <id> …   the QA lane's tools
 ```
 
 - `steer`: a message for the job's next agent; it is quoted into that lane's brief as operator notes and marked read by it.

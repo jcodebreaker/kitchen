@@ -31,7 +31,7 @@ forge: { kind: github, repo: you/your-repo }   # merge into staging through a PR
 | `app.port` | a free one | a fixed port, for an app that can't take `$PORT` (then QA runs one app at a time) |
 | `app.url` | `http://127.0.0.1:{port}` | where the app answers |
 | `app.health` | `/` | a path that answers below 400 once the app is up |
-| `app.reset` | none | run before the app starts: back to the seed data |
+| `app.reset` | none | puts the data back to its seed; run before every `kitchen qa up` and by `kitchen qa reset` (down, reset, up) between QA's checks. `kitchen init` takes a `db:reset`, `reset`, `seed` (and similar) script or Makefile target; without one, QA's restarts keep the data, so add it if the app stores any (e.g. `rm -f data/*.json`) |
 | `app.ready_timeout_sec` | 60 | how long `kitchen qa up` waits for the health check |
 | `staging.branch` | staging | where passing jobs merge; never the base, `main` or `master` |
 | `staging.base` | the branch init ran on | what staging is created from; Kitchen never touches it |
