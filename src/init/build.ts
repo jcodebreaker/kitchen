@@ -191,18 +191,36 @@ export async function toolkitBuild(o: BuildOpts, out: BuildOut): Promise<number>
   out.log(`--- toolkit build ${new Date().toISOString()} in ${repo}`);
   if (!o.restarted) out.phase(`Teaching Kitchen to run ${path.basename(repo)}…`);
   if (o.startOver) {
-    const moved = startOver(repo, "toolkit", [stateFile(repo), questionsFile(repo)]);
+    // The old branch first: it is kept under a name no other branch has (never -M, which would overwrite an older
+    // backup), and if it can't be renamed nothing else moves either: a build must not go on on the old branch.
     const wt0 = path.join(repo, ".worktrees", WT_ID);
     const g = await openGit(plainCheckout(repo));
     if (fs.existsSync(wt0)) await g.run(["worktree", "remove", "--force", wt0]).catch(() => fs.rmSync(wt0, { recursive: true, force: true }));
     await g.run(["worktree", "prune"]);
-    const kept = await g
-      .run(["branch", "-M", SETUP_BRANCH, `${SETUP_BRANCH}-bak`])
-      .then(() => true)
-      .catch(() => false);
-    out.phase(
-      `Starting over: ${[...moved.map((f) => `${f} → ${f}.bak`), ...(kept ? [`${SETUP_BRANCH} → ${SETUP_BRANCH}-bak`] : [])].join(", ") || "nothing to move"}`,
-    );
+    const has = (b: string) =>
+      g
+        .run(["rev-parse", "--verify", "--quiet", `refs/heads/${b}`])
+        .then(() => true)
+        .catch(() => false);
+    let kept: string | null = null;
+    if (await has(SETUP_BRANCH)) {
+      kept = `${SETUP_BRANCH}-bak`;
+      if (await has(kept))
+        kept = `${SETUP_BRANCH}-bak-${new Date()
+          .toISOString()
+          .replace(/[-:]/g, "")
+          .replace(/\.\d+Z$/, "Z")}`;
+      try {
+        await g.run(["branch", "-m", SETUP_BRANCH, kept]);
+      } catch (e) {
+        out.phase(`Not started over: ${SETUP_BRANCH} could not be renamed to ${kept} (${(e as Error).message.split("\n")[0]}).`);
+        out.phase(`Something holds it (another git process, a stale .lock file, another worktree). Free it, then: ${resumeCmd} --start-over`);
+        return 1;
+      }
+    }
+    const moved = startOver(repo, "toolkit", [stateFile(repo), questionsFile(repo)]);
+    out.phase(`Starting over: ${[...moved.map((f) => `${f} → ${f}.bak`), ...(kept ? [`${SETUP_BRANCH} → ${kept}`] : [])].join(", ") || "nothing to move"}`);
+    if (kept) out.phase(`  (A ${SETUP_BRANCH} you pushed, and its pull request, stay on GitHub as they are: this renames the local branch only.)`);
   } else {
     const at = buildStoppedAt(readInitState(repo));
     if (at) {

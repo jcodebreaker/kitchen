@@ -32,11 +32,18 @@ test("a prompt ticket's title until intake runs: the first sentence, no kind pre
   // A dot inside a word (a file name) is not the end of a sentence.
   assert.equal(titleOf("Add lib/stats.js: print the counts. Then more."), "Add lib/stats.js: print the counts");
   assert.equal(titleOf("   "), "untitled");
+  // An abbreviation is not the end of a sentence: one needs a space and a capital letter after it, and some length.
+  assert.equal(titleOf("Show overdue loans, e.g. the ones past 14 days, in red. Then sort them."), "Show overdue loans, e.g. the ones past 14 days, in red");
+  assert.equal(titleOf("Fix it. Now the list breaks on empty input."), "Fix it. Now the list breaks on empty input");
+  // Bidi overrides and zero-width characters never reach a title.
+  assert.equal(titleOf("Rename \u202Etxt.exe\u202C and the \u200Bdocs"), "Rename txt.exe and the docs");
 });
 
 test("intake's TITLE is cleaned to one short line, or nothing", () => {
   assert.equal(shortTitle("Renew a loan once for 14 more days"), "Renew a loan once for 14 more days");
-  assert.equal(shortTitle("  **Renew** a `loan`\n "), "Renew a loan");
+  assert.equal(shortTitle("  Renew a `loan`\n "), "Renew a loan");
+  assert.equal(shortTitle("Fix parse_args for a*b"), "Fix parse_args for a*b", "underscores and stars stay");
+  assert.equal(shortTitle("Rename \u202Eexe.txt\u202C now"), "Rename exe.txt now", "no bidi override");
   assert.equal(shortTitle(""), null);
   assert.equal(shortTitle(undefined), null);
   assert.ok((shortTitle("word ".repeat(30)) ?? "").length <= 61);

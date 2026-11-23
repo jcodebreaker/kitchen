@@ -129,7 +129,7 @@ test("--yes takes every recommended answer, and never an agent's proposal", asyn
 
 const ODD = { "README.md": "Run ./ci.sh before pushing.\n", "ci.sh": "#!/bin/sh\ntouch ran-ci\necho ok\n" };
 
-test("kitchen init --yes: proposed checks stay commented out (ADR 0010 R8), and the answer is on disk", async () => {
+test("kitchen init --yes: proposed checks stay commented out (ADR 0010 R8)", async () => {
   const script = path.join(root, "propose.mjs");
   fs.writeFileSync(script, `export default () => ({ line: "1 check", file: "CHECK: ci | sh ci.sh\\nTEST_CMD: none\\n" });\n`);
   const dir = repo("odd-yes", ODD, `version: 1\nagent: { tool: fake, script: ${JSON.stringify(script)} }\n`);
@@ -143,7 +143,8 @@ test("kitchen init --yes: proposed checks stay commented out (ADR 0010 R8), and 
   assert.match(printed.join("\n"), /Use these checks\? \[y\/N\] no \(--yes never accepts what an agent proposed\)/);
   assert.deepEqual(loadConfig(dir).checkList, []);
   assert.equal(fs.existsSync(path.join(dir, "ran-ci")), false);
-  assert.equal(readResume(dir).init?.answers["use-proposed-checks"], "no");
+  // The decision lives in kitchen.yaml (commented out) and checks.json (`proposed`): no second copy in answers.json.
+  assert.equal(readResume(dir).init?.answers["use-proposed-checks"], undefined);
   assert.equal(readResume(dir).init?.step, "done");
 });
 
@@ -306,4 +307,41 @@ test("heartbeat lines: agenda strip, what each agent event says, and the throttl
   assert.equal(t.at(-1), "\r\x1b[2K", "a new phase clears the old heartbeat");
   term.beat("x".repeat(200));
   assert.ok((t.at(-1) ?? "").length <= 80 + 5, "one row");
+});
+
+test("toolkit build --start-over keeps every old branch: kitchen/setup-bak, then a timestamped one; a rename that fails stops it", async () => {
+  const script = path.join(root, "setup-q3.mjs");
+  fs.writeFileSync(script, SETUP_SCRIPT(path.join(KITCHEN, "bench", "toolkits", "e-library")));
+  const dir = repo("tk-over", "e-library", `version: 1\nagent: { tool: fake, script: ${JSON.stringify(script)} }\n`);
+  const tip = git(dir, "rev-parse", "HEAD");
+  const ask = yesToAll(() => {});
+  const lines: string[] = [];
+  const out = { phase: (l: string) => lines.push(l), log: () => {} };
+  // An older backup exists: it is never overwritten.
+  git(dir, "branch", "kitchen/setup", tip);
+  git(dir, "branch", "kitchen/setup-bak", tip);
+  fs.mkdirSync(path.join(dir, ".kitchen", "init"), { recursive: true });
+  fs.writeFileSync(path.join(dir, ".kitchen", "init", "state.json"), JSON.stringify({ version: 1, steps: {}, fixes: 0, runs: [] }));
+  assert.equal(await toolkitBuild({ repo: dir, generateOnly: true, startOver: true, ask }, out), 0, lines.join("\n"));
+  const branches = git(dir, "branch", "--list", "kitchen/setup*", "--format=%(refname:short)").split("\n");
+  assert.ok(branches.includes("kitchen/setup-bak"), branches.join(" "));
+  const stamped = branches.find((b) => /^kitchen\/setup-bak-\d{8}T\d{6}Z$/.test(b));
+  assert.ok(stamped, branches.join(" "));
+  assert.match(lines.join("\n"), new RegExp(`kitchen/setup → ${stamped}`));
+  assert.match(lines.join("\n"), /pushed, and its pull request, stay on GitHub/);
+  assert.ok(fs.existsSync(path.join(dir, ".kitchen", "init", "state.json.bak")));
+
+  // A rename git refuses (here a stale lock on the target): nothing moves, and the build doesn't go on on the old branch.
+  const again = repo("tk-over-locked", "e-library", `version: 1\nagent: { tool: fake, script: ${JSON.stringify(script)} }\n`);
+  git(again, "branch", "kitchen/setup", git(again, "rev-parse", "HEAD"));
+  fs.mkdirSync(path.join(again, ".git", "refs", "heads", "kitchen"), { recursive: true });
+  fs.writeFileSync(path.join(again, ".git", "refs", "heads", "kitchen", "setup-bak.lock"), "");
+  fs.mkdirSync(path.join(again, ".kitchen", "init"), { recursive: true });
+  fs.writeFileSync(path.join(again, ".kitchen", "init", "state.json"), JSON.stringify({ version: 1, steps: {}, fixes: 0, runs: [] }));
+  lines.splice(0);
+  assert.equal(await toolkitBuild({ repo: again, generateOnly: true, startOver: true, ask }, out), 1);
+  assert.match(lines.join("\n"), /Not started over: kitchen\/setup could not be renamed to kitchen\/setup-bak/);
+  assert.match(lines.join("\n"), /Free it, then: kitchen toolkit build --start-over/);
+  assert.ok(fs.existsSync(path.join(again, ".kitchen", "init", "state.json")), "the state stays where it was");
+  assert.ok(!lines.some((l) => l.startsWith("AGENDA") || /Read the repo/.test(l)), "no build on the old branch");
 });

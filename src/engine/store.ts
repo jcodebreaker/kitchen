@@ -66,6 +66,18 @@ function cutAtWord(s: string, max: number): string {
 const KIND_PREFIX =
   /^(?:please\s+)?(?:(?:add|file|create|open|new)\s+)?(?:an?\s+|the\s+)?(?:new\s+)?(?:feature(?:\s+request)?|bug(?:\s*fix|\s+report)?|fix|chore|task|ticket|story|request|issue|improvement|enhancement)\s*[:\-–—]\s*/i;
 
+/** Control and format characters (bidi overrides, zero-width joiners…): never in a title, where they could reorder what a person reads. */
+const INVISIBLE = /[\p{Cc}\p{Cf}]/gu;
+/** Shorter than this, a "sentence" is an abbreviation ("e.g.", "No.") or a fragment: keep reading. */
+const MIN_SENTENCE = 12;
+
+/** Pure: the first sentence of `s`: it ends at `.`, `!` or `?` followed by a space and a capital letter, at least MIN_SENTENCE in. */
+function firstSentence(s: string): string {
+  const end = /[.!?](?=\s+\p{Lu})/gu;
+  for (let m = end.exec(s); m; m = end.exec(s)) if (m.index + 1 >= MIN_SENTENCE) return s.slice(0, m.index + 1);
+  return s;
+}
+
 /**
  * Pure: the short title of a prompt ticket until intake gives one (ADR 0011): its first sentence, without a kind
  * prefix ("add a feature:"), cut at a word boundary at about 60 characters. The full text stays in ticket.md.
@@ -74,18 +86,22 @@ export function titleOf(text: string): string {
   const first =
     text
       .split("\n")
-      .map((l) => l.trim())
+      .map((l) => l.replace(INVISIBLE, "").trim())
       .find(Boolean) ?? "";
   const bare = first.replace(KIND_PREFIX, "").trim() || first;
-  const sentence = (/^.+?[.!?](?=\s|$)/.exec(bare)?.[0] ?? bare).replace(/[.!]$/, "").trim();
+  const sentence = firstSentence(bare).replace(/[.!]$/, "").trim();
   const t = cutAtWord(sentence, TITLE_MAX);
   return t ? t[0].toUpperCase() + t.slice(1) : "untitled";
 }
 
-/** Pure: intake's `TITLE:` made safe to show: one line, no markup, at most 60 characters; null when there is none. */
+/**
+ * Pure: intake's `TITLE:` made safe to show: one line, no control or format characters, no backticks, `#` or angle
+ * brackets (`_` and `*` stay: `snake_case` names and `a*b` are real titles), at most 60 characters; null when none.
+ */
 export function shortTitle(raw: string | undefined): string | null {
   const t = (raw ?? "")
-    .replace(/\p{Cc}|[`*_#<>]/gu, "")
+    .replace(INVISIBLE, " ")
+    .replace(/[`#<>]/g, "")
     .replace(/\s+/g, " ")
     .trim();
   return t ? cutAtWord(t, TITLE_MAX) : null;

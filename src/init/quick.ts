@@ -26,7 +26,7 @@ import { appendLedger } from "../ledger/append.ts";
 import { runSandboxed } from "../proof/run-sandboxed.ts";
 import { type Detected, detectChecks } from "./detect-checks.ts";
 import { addGitignore, hasOwnChecks, installSkill, toolFor, writeConfig } from "./files.ts";
-import { markStep, saveAnswer } from "./resume.ts";
+import { markStep } from "./resume.ts";
 import { dur, phaseLine, usd } from "./say.ts";
 import { skillsReport } from "./skills-report.ts";
 
@@ -144,7 +144,6 @@ export async function quickInit(o: QuickOpts, out: (l: string) => void): Promise
       for (const c of a.detected.checks) out(`    ${c.name}: ${c.run}`);
       // No means no: the default is not to use them (review R8).
       const yes = o.confirm ? await o.confirm("Use these checks? [y/N] ") : false;
-      if (o.confirm) saveAnswer(repo, "init", "use-proposed-checks", yes ? "yes" : "no");
       proposed = !yes;
       found = yes ? "agent" : "proposed";
       if (!yes)
