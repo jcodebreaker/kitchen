@@ -62,7 +62,7 @@ only through `kitchen job` verbs, which refuse any illegal move. The Agent tool 
 **Loop** (repeat until the plan says `drained`):
 
 1. `kitchen job next --json` (the **first** call of a run: add `--restart-stranded`, which hands back lanes an
-   earlier session left open). It returns `start` (lanes to open now, downstream first), `running`, `held` (each
+   earlier session left open). It returns `start` (lanes to open now: every job in intake, then downstream first), `running`, `held` (each
    with why: a job it names on its `AFTER:` line, or no room; jobs touching the same files run side by side) and
    `you` (jobs waiting on the person). Tell the user the wave in one line.
 2. For **every** entry in `start`, in parallel:

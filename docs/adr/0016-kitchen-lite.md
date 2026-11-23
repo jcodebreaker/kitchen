@@ -92,3 +92,7 @@ A 4-ticket run on library-demo overlapped: intake for "let people search books" 
 - The intake brief has "Other jobs in the queue": every other unfinished job and the last few merged (7 days, at most 5), with id, title and stage, plus criteria, FILES and LEFT OUT once accepted, or the ticket text while still in intake (a wave's intakes run side by side). Capped at about 3,500 characters.
 - The intake role doesn't promise what another job covers: `AFTER: <id>` when it needs that job's code, or `LEFT OUT:` naming the job. A ticket worded about behaviour gets the API only unless it names a page.
 - The build brief lists its AFTER: jobs and whether they are merged, so the builder reuses their code.
+
+## Amendment, 2026-11-23: intake is never held for room
+
+In the same run, with `parallel: 3`, the planner gave free slots downstream first, so job 004 waited about 4 minutes for an intake agent while 001–003 held every slot. Now every job in intake starts in the next wave, even past `parallel` (intake is short and read-only); intake lanes, running or starting, still take room, and review, QA and build share what is left, downstream first. The default `parallel` is 4. Not chosen: a reserved intake slot (one slot still queues a burst of tickets behind each other).

@@ -70,7 +70,7 @@ In Claude Code: `/kitchen run` (or `/kitchen:kitchen run` from the plugin). In a
 
 The session is the orchestrator. It loops:
 
-1. `kitchen job next`: the next wave. Downstream first (review, QA, build, intake), at most `parallel` lanes at once. Jobs that touch the same files build side by side: git merges each into `staging`, and one that conflicts goes back to Build. Only a job that names an unfinished one on its `AFTER:` line waits for it.
+1. `kitchen job next`: the next wave. Intake first (never held for room, even past `parallel`), then downstream first (review, QA, build) in the room `parallel` leaves. Jobs that touch the same files build side by side: git merges each into `staging`, and one that conflicts goes back to Build. Only a job that names an unfinished one on its `AFTER:` line waits for it.
 2. For each lane, `kitchen job start <id> <lane>` makes the job's worktree (`.worktrees/<id>`, branch `kitchen/<id>` from staging), writes the lane's brief and hands over your unread messages; the session starts one agent with the prompt and model it returns.
 3. When the agent returns, `kitchen job finish <id>`: Kitchen reads what the lane left and moves the job, or refuses and says why.
 

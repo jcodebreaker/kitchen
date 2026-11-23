@@ -54,7 +54,7 @@ const KITCHEN_YAML = (tool: string, base: string) => `# Kitchen (npm package dev
 version: 1
 agent: { tool: ${tool} }
 round_limit: 3   # Build → QA → Review rounds before a person is asked
-parallel: 3      # lane agents at once
+parallel: 4      # lane agents at once (intake lanes are never held for room)
 # Passing jobs merge into staging (never ${base}); high risk or over max_lines stops at Ready for you.
 staging: { branch: staging, base: ${JSON.stringify(base)}, max_lines: 400 }
 `;
