@@ -61,7 +61,9 @@ export function orchestratorCommand(repo: string, cfg: Config, o: { bin?: string
 export function scrubbedEnv(parent: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const env = { ...parent };
   for (const k of SCRUBBED) delete env[k];
-  return { ...env, KITCHEN_ORCHESTRATOR: "1" };
+  // A headless `claude -p` ends when its turn ends and, by default, kills lane agents still running in the background
+  // 10 minutes later: a long Build lane was cut off mid-job. 0 = wait for them however long they take.
+  return { ...env, KITCHEN_ORCHESTRATOR: "1", CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: "0" };
 }
 
 /** The session's spend, from its result line (what the dashboard's cost shows), or null. Pure. */

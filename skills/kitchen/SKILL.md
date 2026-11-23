@@ -62,7 +62,9 @@ only through `kitchen job` verbs, which refuse any illegal move. The Agent tool 
    - `kitchen job start <id> <lane> --json` (`--restart` when the entry says `restart`). It prepares the job's
      worktree and brief, hands over the person's unread messages, and returns `{ prompt, model, cwd, brief }`, or
      `refused` / `parked` (say why and skip it).
-   - Spawn one Agent with exactly that `prompt`, and `model` set to the returned model. Use one agent per lane per
+   - Spawn one Agent with exactly that `prompt`, and `model` set to the returned model, in the foreground (never
+     `run_in_background`): parallel lanes are several Agent calls in one message. Never end your turn while a lane
+     agent is still running: a headless session that ends its turn stops the run. Use one agent per lane per
      job: never reuse one, never give one two jobs, never do a lane yourself.
 3. When an agent returns, run `kitchen job finish <id> --json` for its job, at once. Kitchen reads the files the
    lane left (intake.md, the commits, the QA verdict and evidence, review.json), runs the checks itself, merges into
