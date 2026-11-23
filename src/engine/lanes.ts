@@ -152,8 +152,7 @@ export function readQa(jobDir: string, round: number, criteria: Criterion[]): Qa
         return { refused: `${row.id}: evidence ${f} is missing, empty or outside the QA folder` };
     }
   }
-  const allPass =
-    criteria.every((c) => rows.find((r) => r.id === c.id)?.result === "PASS") && rows.every((r) => !r.id.startsWith("R-") || r.result === "PASS");
+  const allPass = criteria.every((c) => rows.find((r) => r.id === c.id)?.result === "PASS") && rows.every((r) => !r.id.startsWith("R-") || r.result === "PASS");
   const said = String(v.verdict ?? "").toUpperCase();
   if (said === "PASS" && !allPass) return { refused: "verdict PASS, but a criterion's row is FAIL" };
   return { verdict: allPass ? "PASS" : "FAIL", criteria: rows };
