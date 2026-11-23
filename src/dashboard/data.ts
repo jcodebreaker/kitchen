@@ -221,6 +221,8 @@ export type JobCard = {
   active: boolean;
   pr: number | null;
   report: string | null;
+  /** The job's branch (kitchen/<id>): a done job's panel shows it, with a copy button. */
+  branch: string;
   // ADR 0009: what the interactive page needs
   state: JobState;
   phase: Phase;
@@ -387,6 +389,7 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
       active,
       pr: j.pr,
       report: fs.existsSync(path.join(dir, "report.html")) ? `jobs/${encodeURIComponent(j.id)}/report.html` : null,
+      branch: j.branch,
       state: stateOf(j),
       phase: phaseOf(stage),
       agent: agentOf(stage),
