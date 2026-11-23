@@ -192,3 +192,17 @@ test("refusePost, pure: the order of the checks", () => {
   assert.equal(refusePost({ ...h, origin: undefined }, TOKEN, 7357), null, "no Origin (curl, the CLI): the token decides");
   assert.equal(refusePost({ ...h, origin: "http://localhost:7358" }, TOKEN, 7357)?.code, 403);
 });
+
+test("with no runner, jobs in an active stage are waiting (Queued), not running; the header and the sidebar say the same", () => {
+  const html = fs.readFileSync(path.resolve(import.meta.dirname, "..", "..", "dashboard", "dashboard.html"), "utf8");
+  const block = /\/\* queue-words:start[^*]*\*\/([\s\S]*?)\/\* queue-words:end \*\//.exec(html)?.[1];
+  assert.ok(block, "the queue-words block is in the page");
+  const queueWords = new Function(`${block}\nreturn queueWords;`)() as (r: boolean, n: number) => { count: string; group: string; busy: boolean };
+  assert.deepEqual([queueWords(false, 1).count, queueWords(false, 1).group, queueWords(false, 1).busy], ["1 waiting", "Queued", false]);
+  assert.deepEqual([queueWords(true, 2).count, queueWords(true, 2).group, queueWords(true, 2).busy], ["2 running", "Running", true]);
+  // Every place that counts them takes its words from queueWords: the header (#sum), the sidebar (#sRunN), the list group.
+  assert.match(html, /\$\("#sRunN"\)\.textContent=queueWords\(/);
+  assert.match(html, /queueWords\(!!snap\.runner\.running,run\.length\)\)\}<\/span>/);
+  assert.match(html, /const q=queueWords\(!!\(snap&&snap\.runner\.running\),run\.length\)/);
+  assert.doesNotMatch(html, /<b>\$\{run\.length\}<\/b> running/, "no fixed 'running' left in the header");
+});

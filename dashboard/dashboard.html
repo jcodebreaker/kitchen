@@ -272,6 +272,7 @@ button.a{font-weight:600}button.a:hover{text-decoration:underline;text-underline
 .sg .who{color:var(--faint);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sg .du{color:var(--faint);font-size:11.5px}
 .sgsum{margin:-5px 0 6px 26px;color:var(--mute);font-size:12.5px}
+.tkt{margin:-4px 0 12px;color:var(--mute);font-size:13px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;max-height:9em;overflow:auto}
 .sgsum.bad{color:var(--fail)}
 .sgsk{margin:-5px 0 6px 26px;display:flex;flex-wrap:wrap;gap:4px}
 .sgsk span{font-size:10.5px;line-height:16px;padding:0 6px;border-radius:999px;border:1px solid var(--line2);color:var(--faint)}
@@ -401,7 +402,7 @@ button.a{font-weight:600}button.a:hover{text-decoration:underline;text-underline
     <div class="ws"><span class="logo">K</span><span id="wsName">kitchen</span></div>
     <button class="nav on" onclick="jump('g-you')"><span id="nJobI"></span>Jobs</button>
     <button class="nav subn" onclick="jump('g-you')"><span id="nYouI"></span>Needs you <span class="c act num" id="sYou"></span></button>
-    <button class="nav subn" onclick="jump('g-run')"><span id="nRunI"></span>Running <span class="c num" id="sRun"></span></button>
+    <button class="nav subn" onclick="jump('g-run')"><span id="nRunI"></span><span id="sRunN">Running</span> <span class="c num" id="sRun"></span></button>
     <button class="nav subn" onclick="jump('g-done')"><span id="nDoneI"></span>Done <span class="c num" id="sDone"></span></button>
     <div class="lbl">Project</div>
     <button class="nav" onclick="openJob('setup')"><span id="nSetI"></span>Setup <span class="c" id="sSetup"></span></button>
@@ -701,6 +702,15 @@ function clipVT(){const b=$(".board");if(!b)return;const r=b.getBoundingClientRe
 function setView(v){view=v;try{localStorage.setItem("kitchen.view",v)}catch(e){}expanded=null;structural(()=>{})}
 function order(){if(view==="board")return lanes().flatMap(l=>inLane(l.k));
   return [...jobs.filter(j=>group(j)==="you"),...jobs.filter(j=>group(j)==="run"),...jobs.filter(j=>group(j)==="done").sort((a,b)=>doneT(b)-doneT(a))]}
+/* queue-words:start (src/dashboard/server.test.ts runs this block) */
+/* Jobs in an active stage are running only while a runner holds the queue; with none they are queued, waiting
+   for kitchen run. The header, the sidebar and the list (or Board) all take their words from here. */
+function queueWords(runnerRunning,n){
+  return runnerRunning
+    ?{count:`${n} running`,group:"Running",hint:"Message any agent while it works",empty:"Nothing running. Start one with New ticket.",busy:n>0}
+    :{count:`${n} waiting`,group:"Queued",hint:"Waiting for kitchen run: start it and they move",empty:"Nothing queued. Start one with New ticket.",busy:false};
+}
+/* queue-words:end */
 function renderList(){
   keepFocus(()=>{
     const o=order(),you=o.filter(j=>group(j)==="you"),run=o.filter(j=>group(j)==="run"),done=o.filter(j=>group(j)==="done");
@@ -708,7 +718,7 @@ function renderList(){
     $("#scroll").classList.toggle("bd",view==="board");
     $("#list").innerHTML=(idle?`<div class="rbar" role="status">${S.paused}<span>Kitchen isn't working the queue: jobs move only while it runs.</span><code>kitchen run --detach</code><button type="button" class="btn sm" data-act="copy">Copy</button></div>`:"")+
      (view==="board"?boardHTML():`<section id="g-you"><div class="ghead ${you.length?"act":""}">${you.length?S.you:S.wait} Needs you <span class="n num">${you.length}</span></div>${you.map(rowHTML).join("")||'<div class="empty">Nothing needs you.</div>'}</section>
-      <section id="g-run"><div class="ghead">${run.length?S.run:S.wait} Running <span class="n num">${run.length}</span><span class="hint">Message any agent while it works</span></div>${run.map(rowHTML).join("")||'<div class="empty">Nothing running. Start one with New ticket.</div>'}</section>
+      ${(()=>{const q=queueWords(!!(snap&&snap.runner.running),run.length);return `<section id="g-run"><div class="ghead">${q.busy?S.run:S.wait} ${q.group} <span class="n num">${run.length}</span><span class="hint">${q.hint}</span></div>${run.map(rowHTML).join("")||`<div class="empty">${q.empty}</div>`}</section>`})()}
       <section id="g-done"><div class="ghead">${S.ok} Done <span class="n num">${done.length}</span></div>${done.map(rowHTML).join("")||'<div class="empty">Nothing done yet.</div>'}</section>`);
     $("#vList").classList.toggle("on",view==="list");$("#vBoard").classList.toggle("on",view==="board");
     renderCounts(); just.clear(); grow();
@@ -719,8 +729,8 @@ function renderCounts(){
   if(!snap)return;
   const you=jobs.filter(j=>group(j)==="you"),run=jobs.filter(j=>group(j)==="run"),done=jobs.filter(j=>group(j)==="done");
   const nyou=`${you.length} need${you.length===1?"s":""} you`;
-  $("#sum").innerHTML=(you.length?(view==="board"?`<button class="a" onclick="jump('g-you')">${nyou}</button>`:`<span class="a">${nyou}</span>`):`<span>Nothing needs you</span>`)+`<i>·</i><span><b>${run.length}</b> running</span><i class="rdy">·</i><span class="rdy"><b>${done.filter(j=>j.state==="done"&&j.kind!=="setup").length}</b> ready</span>`;
-  $("#sYou").textContent=you.length||"";$("#sRun").textContent=run.length;$("#sDone").textContent=done.length;
+  $("#sum").innerHTML=(you.length?(view==="board"?`<button class="a" onclick="jump('g-you')">${nyou}</button>`:`<span class="a">${nyou}</span>`):`<span>Nothing needs you</span>`)+`<i>·</i><span>${(q=>`<b>${run.length}</b>${q.count.slice(String(run.length).length)}`)(queueWords(!!snap.runner.running,run.length))}</span><i class="rdy">·</i><span class="rdy"><b>${done.filter(j=>j.state==="done"&&j.kind!=="setup").length}</b> ready</span>`;
+  $("#sYou").textContent=you.length||"";$("#sRun").textContent=run.length;$("#sRunN").textContent=queueWords(!!snap.runner.running,run.length).group;$("#sDone").textContent=done.length;
   $("#wsName").textContent=snap.repo;document.title=(you.length?`(${you.length}) `:"")+"Kitchen · "+snap.repo;
   $("#sSetup").textContent=!setup||setup.state==="none"?"not run":setup.state==="quick"?"Toolkit not built":setup.state==="done"?"proven":setup.state==="failed"?"failed":"step "+(setup.idx+1)+"/"+setup.steps.length;
   $("#sTk").textContent=snap.toolkitProven?"proven":"not proven";
@@ -863,7 +873,7 @@ function renderPanel(scrollEnd){
   const sub=j.kind==="setup"?(snap?snap.repo:"setup"):[j.kind,j.risk?j.risk+" risk":""].filter(Boolean).join(" · ");
   keepFocus(()=>{$("#pin").innerHTML=`
     <div class="ph"><button class="ib back" onclick="closePanel()" aria-label="Back">${I.back}</button><span class="mono">${esc(j.num)}</span><span>·</span><span>${esc(sub)}</span><span class="sp"></span>${ctl}<button class="ib" onclick="closePanel()" aria-label="Close" title="Close (Esc)">${I.x}</button></div>
-    <div class="pscroll" id="pscroll"><h1>${esc(j.title)}</h1>
+    <div class="pscroll" id="pscroll"><h1>${esc(j.title)}</h1>${(t=>t&&t!==j.title?`<p class="tkt" title="The ticket, as it was filed">${esc(t)}</p>`:"")(details[j.id]&&details[j.id].ticket)}
       <div class="meta"><span class="st ${j.state==="you"?"you":""}" id="pst">${icon(j)}${esc(statusOf(j))}</span><span class="mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span><span class="age" title="Since the ticket came in">age <span class="mono num" id="pt">${clock(secsOf(j))}</span></span><span class="mono num" id="pc">$${j.cost.toFixed(2)}</span>${j.report?`<a href="/${esc(j.report)}" target="_blank" rel="noopener">Open report</a>`:""}${j.pr?`<span>PR #${j.pr}</span>`:""}</div>
       <div class="ptrk ${ss.length>6?"many":""}">${trackHTML(j)}<div class="lbls">${ss.length>6?`<span class="cur ${j.state==="you"?"you":""}">${j.kind==="setup"&&j.setup.state==="quick"?"Step 2 of "+ss.length+" · run kitchen toolkit build":ended(j)&&j.state==="done"?"All "+ss.length+" steps done":"Step "+(i+1)+" of "+ss.length+" · "+esc(ss[i]?ss[i].nm:"")}</span>`:ss.map((s,k)=>`<span class="${k===i&&!ended(j)?"cur "+(j.state==="you"?"you":""):""}">${esc(s.nm)}</span>`).join("")}</div></div>
       <div class="tabs" id="tabs">${tabsHTML(j)}</div><div id="tabbody">${tabBody(j)}</div></div>
