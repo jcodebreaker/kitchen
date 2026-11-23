@@ -70,16 +70,6 @@ export function recordAnswers(jobDir: string, answers: string[], o: { replace?: 
   save(jobDir, rounds);
 }
 
-/** Take back an answer `recordAnswers` added (the move it went with was refused). */
-export function dropAnswer(jobDir: string, answer: string) {
-  const rounds = readRounds(jobDir);
-  const last = rounds.at(-1);
-  const i = last ? last.answers.lastIndexOf(answer.trim()) : -1;
-  if (!last || i < 0) return;
-  last.answers.splice(i, 1);
-  save(jobDir, rounds);
-}
-
 /** Pure: the thread as a section of the ticket, or "" when nothing was asked. */
 export function clarificationsSection(rounds: Round[]): string {
   if (!rounds.length) return "";

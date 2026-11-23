@@ -1,9 +1,9 @@
-// The few files Kitchen adds to a repo, shared by quick init and the Toolkit
-// build: kitchen.yaml, the /kitchen skill (the same file for Claude Code and
-// Codex) and Kitchen's .gitignore entries. Each step is idempotent.
+// The few files `kitchen init` adds to a repo: kitchen.yaml (checks, how to start the app, staging), the /kitchen
+// skill (the same file for Claude Code and Codex) and Kitchen's .gitignore entries. Each step is idempotent.
 import fs from "node:fs";
 import path from "node:path";
 import { loadConfig } from "../config.ts";
+import type { DetectedApp } from "./detect-app.ts";
 import type { Detected } from "./detect-checks.ts";
 
 const PKG = path.resolve(import.meta.dirname, "..", "..");
@@ -21,24 +21,14 @@ export function installSkill(repo: string): string[] {
 
 export const GITIGNORE = [
   ".kitchen/jobs/",
-  ".kitchen/checks/",
-  ".kitchen/scratch/",
   ".kitchen/init/",
+  ".kitchen/agents/",
+  ".kitchen/merge/",
   ".kitchen/ledger.jsonl",
-  ".kitchen/run.lock",
+  ".kitchen/run.json",
   ".kitchen/run.log",
-  ".kitchen/toolkit.proven",
-  ".kitchen/toolkit.approved",
-  ".kitchen/toolkit.passed",
-  ".kitchen/toolkit-checkouts/",
-  ".kitchen/queue.json",
-  ".kitchen/tickets.jsonl",
-  ".kitchen/setup-questions.json",
-  ".kitchen/setup-answers.json",
-  ".kitchen-out/",
-  ".kitchen/retro/",
-  ".kitchen/local-forge.jsonl",
-  ".kitchen/evidence.lock",
+  ".kitchen/orchestrator.json",
+  ".kitchen/*.lock",
   ".worktrees/",
 ];
 
@@ -59,41 +49,44 @@ export function toolFor(repo: string, flag?: "claude" | "codex"): string {
   return process.env.CODEX_SANDBOX || process.env.CODEX_HOME ? "codex" : "claude";
 }
 
-const KITCHEN_YAML = (tool: string) => `# Kitchen (npm package devkitchen). Every key has a default; unknown keys are refused.
+const KITCHEN_YAML = (tool: string, base: string) => `# Kitchen (npm package devkitchen). Every key has a default; unknown keys are refused.
 # The full list with defaults: src/config.ts in the package (ConfigSchema).
-version: 1       # the schema version; kitchen migrate raises it
+version: 1
 agent: { tool: ${tool} }
-concurrency: 2   # a Toolkit proven parallel:false runs one job at a time regardless
-round_limit: 3
-# models: { builder: strong, verifier: medium, setup: medium }   # tiers map to models per tool
+round_limit: 3   # Build → QA → Review rounds before a person is asked
+parallel: 3      # lane agents at once
+# Passing jobs merge into staging (never ${base}); high risk or over max_lines stops at Ready for you.
+staging: { branch: staging, base: ${JSON.stringify(base)}, max_lines: 400 }
 `;
 
 /** A YAML scalar on one line, whatever its length (JSON is YAML; `stringify` folds long strings, review R1). */
 const scalar = (v: string) => JSON.stringify(v);
 
-const INSTALL_LINES = (pm: string) => [
-  "# A frozen install from the lockfile: downloads with the network, runs no package scripts; they run after (online only while the dependency files are the base's)",
-  `checks_install: ${pm}`,
-];
+const INSTALL_LINES = (pm: string) => ["# A frozen install from the lockfile, run once in each fresh job worktree before the checks", `checks_install: ${pm}`];
 
 /**
- * Pure: the YAML lines for the detected checks (Gate runs them in every job). `proposed`: checks an agent
+ * Pure: the YAML lines for the detected checks (Kitchen runs them in every job). `proposed`: checks an agent
  * proposed that the person hasn't accepted: written commented out, so nothing runs them until they do.
  */
 export function checksYaml(d: Detected, o: { proposed?: boolean } = {}): string {
-  const lines = [
-    "checks:",
-    ...d.checks.map((c) => `  - { name: ${scalar(c.name)}, run: ${scalar(c.run)} }`),
-    ...(d.install ? INSTALL_LINES(d.install) : []),
-    ...(d.testCmd ? ["# How a `test <file>` proof runs", `test_cmd: ${scalar(d.testCmd)}`] : []),
-  ];
+  const lines = ["checks:", ...d.checks.map((c) => `  - { name: ${scalar(c.name)}, run: ${scalar(c.run)} }`), ...(d.install ? INSTALL_LINES(d.install) : [])];
   return [
     o.proposed
       ? "# Checks an agent proposed from reading the repo. NOT used and never run until you uncomment them (review them first):"
-      : `# What Gate runs in every job's worktree (found in ${d.from.join(", ")}; edit freely)`,
+      : `# What Kitchen runs in every job's worktree after Build, and on staging before a merge (found in ${d.from.join(", ")}; edit freely)`,
     ...(o.proposed ? lines.map((l) => (l.startsWith("#") ? l : `# ${l}`)) : lines),
     "",
   ].join("\n");
+}
+
+/** Pure: the `app:` block for kitchen.yaml: how QA starts the app ($PORT / {port} is a free port). */
+export function appYaml(a: DetectedApp | null, o: { asked?: boolean } = {}): string {
+  if (!a) return '# How QA starts the app (none found): app: { start: "npm start", health: "/" }\n';
+  const fields = [`start: ${scalar(a.start)}`, `health: ${scalar(a.health)}`, ...(a.reset ? [`reset: ${scalar(a.reset)}`] : [])];
+  const noReset = a.reset
+    ? ""
+    : '# No reset found. So QA can restart on fresh data (kitchen qa reset), add to app: reset: "<a command that puts the data back to its seed>"\n';
+  return `# How QA starts the app (${o.asked ? "your answer" : `found in ${a.from}`}); it gets a free port in $PORT\n${noReset}app: { ${fields.join(", ")} }\n`;
 }
 
 /** The config the person already has decides: a kitchen.yaml that names checks keeps them, whoever runs (quick init or the build). */
@@ -104,21 +97,34 @@ export const hasOwnChecks = (repo: string): boolean => {
 
 /**
  * kitchen.yaml: written when missing; an existing one is kept, and only gets the detected checks when it names
- * none (no `checks:` key yet). One that names checks but has no install gets just `checks_install` when the repo now
- * has a lockfile to install from (review R3). The one rule for quick init and the build.
+ * none (no `checks:` key yet), and the detected `app:` when it has none. One that names checks but has no install gets
+ * just `checks_install` when the repo now has a lockfile to install from.
  */
 export function writeConfig(
   repo: string,
   tool: string,
   d: Detected | null,
-  o: { proposed?: boolean } = {},
-): { written: boolean; checksAdded: boolean; installAdded: boolean } {
+  o: { proposed?: boolean; app?: DetectedApp | null; appAsked?: boolean; base?: string } = {},
+): { written: boolean; checksAdded: boolean; installAdded: boolean; appAdded: boolean } {
   const f = path.join(repo, "kitchen.yaml");
   const checks = !!d?.checks.length;
   if (!fs.existsSync(f)) {
-    fs.writeFileSync(f, `${KITCHEN_YAML(tool)}${d && checks ? checksYaml(d, o) : ""}`);
-    return { written: true, checksAdded: checks && !o.proposed, installAdded: false };
+    fs.writeFileSync(f, `${KITCHEN_YAML(tool, o.base ?? "main")}${appYaml(o.app ?? null, { asked: o.appAsked })}${d && checks ? checksYaml(d, o) : ""}`);
+    return { written: true, checksAdded: checks && !o.proposed, installAdded: false, appAdded: !!o.app };
   }
+  let appAdded = false;
+  if (o.app && !/^app\s*:/m.test(fs.readFileSync(f, "utf8"))) {
+    const t = fs.readFileSync(f, "utf8");
+    fs.writeFileSync(f, `${t}${t.endsWith("\n") ? "" : "\n"}${appYaml(o.app, { asked: o.appAsked })}`);
+    appAdded = true;
+  }
+  const r = writeChecks(f, d, o);
+  return { ...r, appAdded };
+}
+
+function writeChecks(f: string, d: Detected | null, o: { proposed?: boolean }): { written: boolean; checksAdded: boolean; installAdded: boolean } {
+  const repo = path.dirname(f);
+  const checks = !!d?.checks.length;
   const have = fs.readFileSync(f, "utf8");
   const append = (text: string) => fs.writeFileSync(f, `${have}${have.endsWith("\n") ? "" : "\n"}${text}`);
   if (hasOwnChecks(repo)) {
@@ -132,7 +138,6 @@ export function writeConfig(
       {
         ...d,
         install: /^checks_(install|prepare)\s*:/m.test(have) ? undefined : d.install,
-        testCmd: /^test_cmd\s*:/m.test(have) ? undefined : d.testCmd,
       },
       o,
     ),

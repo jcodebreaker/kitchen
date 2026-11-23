@@ -1,5 +1,5 @@
 // Where tickets come from (PLAN §1 sources/). One interface for prompt tickets
-// (prompt.ts) and GitHub issues (github.ts): take tickets in, ask the author a question,
+// (prompt.ts): take tickets in, ask the author a question,
 // and tell the runner when an answer arrived (needs-info → intake).
 import type { Job, TicketRef } from "../engine/machine.ts";
 
@@ -13,9 +13,4 @@ export interface TicketSource {
   ask(job: Job, o: { key: string; text: string }): Promise<void>;
   /** Replies since the job entered needs-info (job.updatedAt); empty while there are none. */
   replies(job: Job): Promise<string[]>;
-  /**
-   * A proposed ticket for a person to approve (the retro's lessons). It is never work by itself: a GitHub
-   * issue without the source label, a prompt draft under .kitchen/retro/drafts/. Idempotent by key; returns its ref.
-   */
-  draft(o: { key: string; title: string; body: string }): Promise<string>;
 }

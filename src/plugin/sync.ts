@@ -19,7 +19,8 @@ export const ROOT = path.resolve(import.meta.dirname, "..", "..");
 const RUN_START = /<!-- kitchen-run:start[^>]*-->\n/;
 const RUN_END = "<!-- kitchen-run:end -->\n";
 
-const DESCRIPTION = "Kitchen turns tickets into pull requests proven by driving your real app, with Claude Code or Codex doing the judgment.";
+const DESCRIPTION =
+  "Kitchen turns tickets into reviewed changes on a staging branch: one Claude Code session runs intake, build, QA (Playwright, against your running app) and review agents.";
 const KEYWORDS = ["kitchen", "pull-requests", "verification", "agents", "software-factory"];
 
 /** The published tarball's integrity the skill trusts, written at release (null: nothing published and pinned yet). */

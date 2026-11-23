@@ -1,5 +1,7 @@
 # Approve the Toolkit locally; no merge, no commit
 
+> **Superseded by [ADR 0016](0016-kitchen-lite.md)** (Kitchen lite, 2026-11-22): what this records was removed. Kept as history.
+
 **Status.** Accepted, 2026-11-22, by the user. This amends ADR 0008 ("not merged = sandboxed") and ADR 0010 (where a Toolkit comes from).
 
 **Problem.** A built Toolkit was usable only after `git merge kitchen/setup` into the base branch. A person running Kitchen locally doesn't want an unrequested commit on their `main`. They don't need git to say "I accept this code", and they may never push.

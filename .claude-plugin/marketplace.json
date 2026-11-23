@@ -4,14 +4,14 @@
     "name": "Kitchen contributors"
   },
   "metadata": {
-    "description": "Kitchen turns tickets into pull requests proven by driving your real app, with Claude Code or Codex doing the judgment.",
+    "description": "Kitchen turns tickets into reviewed changes on a staging branch: one Claude Code session runs intake, build, QA (Playwright, against your running app) and review agents.",
     "version": "0.1.0"
   },
   "plugins": [
     {
       "name": "kitchen",
       "source": "./plugins/kitchen",
-      "description": "Kitchen turns tickets into pull requests proven by driving your real app, with Claude Code or Codex doing the judgment.",
+      "description": "Kitchen turns tickets into reviewed changes on a staging branch: one Claude Code session runs intake, build, QA (Playwright, against your running app) and review agents.",
       "version": "0.1.0",
       "category": "development",
       "keywords": [

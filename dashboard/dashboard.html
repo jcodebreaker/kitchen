@@ -410,7 +410,6 @@ a.btn{text-decoration:none}
 /* A Needs-you row that waits on you: its one action sits under the reason, so the title and reason keep the row's width. */
 .row .mn .tka{display:flex;margin-top:8px}
 #sTk{text-align:right;line-height:1.3}
-.tkbar>span{flex:1 1 260px}
 .sub.q code,.ev.ask p code,.card .cq code,.card .evl code{font:11.5px var(--mono);background:var(--raise);border:1px solid var(--line2);border-radius:4px;padding:0 4px}
 @container main (max-width:680px){ .rbar{padding:9px 12px 9px 16px} }
 /* logo:start (scripts/brand/gen-icons.mjs writes this block: logo B, the cook, 16px cut) */
@@ -429,8 +428,6 @@ a.btn{text-decoration:none}
     <button class="nav subn" onclick="jump('g-run')"><span id="nRunI"></span><span id="sRunN">Running</span> <span class="c num" id="sRun"></span></button>
     <button class="nav subn" onclick="jump('g-done')"><span id="nDoneI"></span>Done <span class="c num" id="sDone"></span></button>
     <div class="lbl">Project</div>
-    <button class="nav" onclick="openJob('setup')"><span id="nSetI"></span>Setup <span class="c" id="sSetup"></span></button>
-    <button class="nav" onclick="openJob('setup')"><span id="nTkI"></span>Toolkit <span class="c" id="sTk"></span></button>
     <button class="nav" onclick="palette()"><span id="nCoI"></span>Cost <span class="c mono num" id="sCost"></span></button>
     <div class="foot">
       <div class="keys"><kbd>J</kbd><span>/ <kbd>K</kbd> move</span><kbd>R</kbd><span>message the agent</span><kbd>⌘K</kbd><span>commands</span></div>
@@ -460,7 +457,7 @@ a.btn{text-decoration:none}
 
 <script>
 /* Kitchen dashboard (ADR 0009, design: docs/mockups/dashboard-v4.html). Everything here is read from
-   this server (/data.json, /jobs/<id>/detail.json, /setup.json) and every action is a POST to /api/<verb>,
+   this server (/data.json, /jobs/<id>/detail.json) and every action is a POST to /api/<verb>,
    the same engine code as the kitchen CLI verbs. Nothing loads from elsewhere. */
 const TOKEN=document.querySelector('meta[name="kitchen-token"]').content;
 const LAUNCH=document.querySelector('meta[name="kitchen-launch"]').content;
@@ -514,7 +511,7 @@ const S={
 S.rejected=S.skip; S.done=S.ok;
 
 /* ───────── model ───────── */
-let snap=null, setup=null, jobs=[], details={}, tick0=performance.now();
+let snap=null, jobs=[], details={}, tick0=performance.now();
 const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const J=id=>jobs.find(j=>j.id===id);
@@ -523,9 +520,9 @@ const clock=s=>{s=Math.max(0,Math.floor(s));return s>=3600?Math.floor(s/3600)+":
 const fmtL=s=>{s=Math.round(s);return s>=3600?Math.floor(s/3600)+"h "+String(Math.floor(s%3600/60)).padStart(2,"0")+"m":s>=60?Math.floor(s/60)+"m "+String(s%60).padStart(2,"0")+"s":s+"s"};
 const hhmm=iso=>iso?new Date(iso).toTimeString().slice(0,8):"";
 const num=id=>(/^(\d+)-/.exec(id)||[])[1]||id;
-/* A job's own track (data.ts phasesFor: the Toolkit step shows once the smith ran for it), else the six. */
-const steps=j=>j.kind==="setup"?(setup?setup.steps:[]):(j.phases||(snap?snap.phases:[]));
-const sidx=j=>j.kind==="setup"?(setup?setup.idx:0):Math.max(0,steps(j).findIndex(s=>s.k===j.phase));
+/* A job's track: intake, build, QA, review, merge (data.ts PHASES). */
+const steps=j=>j.phases||(snap?snap.phases:[]);
+const sidx=j=>Math.max(0,steps(j).findIndex(s=>s.k===j.phase));
 const stp=j=>steps(j)[sidx(j)]||{nm:""};
 const stopped=j=>j.pausedBy==="stop";
 /* you, run (working, paused or waiting) or done (finished, rejected, stopped by you): the List's sections and every count. */
@@ -533,17 +530,17 @@ const group=j=>j.state==="you"?"you":stopped(j)?"done":j.state==="run"||j.state=
 /* What the composer and the controls act on: a stopped job still takes a note and a Resume, like a paused one. */
 const wgroup=j=>stopped(j)?"run":group(j);
 const ended=j=>group(j)==="done";
-const agent=j=>j.kind==="setup"?"the setup agent":j.agent?"the "+j.agent:"Kitchen";
+const agent=j=>j.agent?"the "+j.agent:"Kitchen";
 const Agent=j=>{const a=agent(j);return a[0].toUpperCase()+a.slice(1)};
 const secsOf=j=>j.secs0+(ended(j)?0:(performance.now()-j.at0)/1000);
 const since=iso=>Math.max(0,(Date.now()-Date.parse(iso))/1000);
 const short=s=>s<60?Math.floor(s)+"s":s<3600?Math.floor(s/60)+"m":s<86400?Math.floor(s/3600)+"h":Math.floor(s/86400)+"d";
 /* Running: time in this stage. Needs you: how long it has waited. Paused: frozen at the time it ran before the pause. */
-function timerHTML(j){if(j.kind==="setup")return clock(secsOf(j));if(j.state==="you")return `<i>waiting</i> ${short(since(j.movedAt))}`;if(j.state==="paused")return clock(j.pausedSecs||0);return clock(since(j.movedAt))}
+function timerHTML(j){if(j.state==="you")return `<i>waiting</i> ${short(since(j.movedAt))}`;if(j.state==="paused")return clock(j.pausedSecs||0);return clock(since(j.movedAt))}
 function timerTitle(j){return j.state==="you"?"Waiting for you since "+hhmm(j.movedAt):j.state==="paused"?"Ran this long in the stage before it was paused":"Time in this stage"}
 let view="list";try{view=localStorage.getItem("kitchen.view")==="board"?"board":"list"}catch(e){}
 try{const t=localStorage.getItem("kitchen.theme");if(t)document.documentElement.dataset.theme=t}catch(e){}
-let drafts={},answersDraft={},expanded=null,open=null,tab="activity",openSegs=new Set(),sel=null,fresh=new Set(),just=new Set(),pending={},sigs={},typing=new Map();
+let drafts={},expanded=null,open=null,tab="activity",openSegs=new Set(),sel=null,fresh=new Set(),just=new Set(),pending={},sigs={},typing=new Map();
 
 function fromSnap(c){
   const prev=J(c.id)||{};
@@ -556,30 +553,20 @@ function freshCrit(c,prev){const d=details[c.id];
   if(d&&d.mv===c.movedAt)return d.crit;
   return prev.movedAt===c.movedAt&&prev.crit?prev.crit:[];
 }
-function fromSetup(s){
-  /* quick: quick init ran and nothing failed; the Toolkit just isn't built (ADR 0010). It sits with the finished rows, not as a failure. */
-  const st=s.state==="questions"?"you":s.state==="running"?"run":s.state==="done"||s.state==="quick"?"done":"rejected";
-  return {id:"setup",num:"setup",kind:"setup",title:"Set up Kitchen for "+(snap?snap.repo:"this repo"),state:st,round:1,cost:s.usd,secs0:s.secs,at0:performance.now(),
-    q:s.questions.length?s.questions.length===1?s.questions[0].question:`${s.questions.length} questions before I build the Toolkit.`:null,
-    live:s.evs.at(-1)||null,files:[],crit:[],runnerOn:s.state==="running",failed:s.state==="failed",setup:s,lane:setupLane(s)};
-}
-/* Setup's steps (src/dashboard/setup.ts SETUP_STEPS) on the Board's lanes: config, branch, survey → Intake; build, commit → Build; prove it → Check. */
-function setupLane(s){if(s.state==="questions")return "you";if(s.state!=="running")return "done";const k=(s.steps[s.idx]||{}).k;return k==="check"?"check":k==="build"||k==="commit"?"build":"intake"}
-
 /* ───────── polling ───────── */
 async function getJSON(u){const r=await fetch(u,{cache:"no-store"});if(!r.ok)throw new Error(u+": "+r.status);return r.json()}
 let offline=false;
 async function poll(){
   try{
-    const [d,s]=await Promise.all([getJSON("/data.json"),getJSON("/setup.json")]);
+    const d=await getJSON("/data.json");
     if(d.launch&&d.launch!==LAUNCH){restarted();return}
     try{onConnected(window.sessionStorage)}catch(e){}
     if(offline){offline=false;toast("Back in touch with Kitchen")}
-    snap=d; setup=s;
+    snap=d;
     const before=new Map(jobs.map(j=>[j.id,j]));
-    jobs=d.jobs.map(fromSnap); if(s.state!=="none")jobs.unshift(fromSetup(s));
+    jobs=d.jobs.map(fromSnap);
     for(const j of jobs){const b=before.get(j.id);
-      if(b&&!ended(b)&&ended(j)&&j.state==="done"){fresh.add(j.id);toast(j.kind==="setup"?"Setup is proven":`${j.num} is ready to merge`,"View",()=>openJob(j.id));setTimeout(()=>{fresh.delete(j.id);replaceRow(J(j.id))},20000)}
+      if(b&&!ended(b)&&ended(j)&&j.state==="done"){fresh.add(j.id);toast(`${j.num} ${j.stage==="ready"?"is ready for you":"is merged into staging"}`,"View",()=>openJob(j.id));setTimeout(()=>{fresh.delete(j.id);replaceRow(J(j.id))},20000)}
       if(b&&(b.phase!==j.phase||b.state!==j.state))just.add(j.id);
       if(b&&b.live&&j.live&&b.live.at===j.live.at&&b.live.t===j.live.t)j.liveShown=b.liveShown; else if(j.live&&b)startTyping(j);
     }
@@ -588,12 +575,12 @@ async function poll(){
   setTimeout(poll,jobs.some(j=>j.state==="run")?1500:3000);
 }
 async function pollDetail(){
-  if(open&&open!=="setup"&&J(open)){
+  if(open&&J(open)){
     try{const id=open,d=await getJSON(`/jobs/${encodeURIComponent(id)}/detail.json`);if(open===id){const old=details[id],j=J(id);d.mv=j?j.movedAt:null;details[id]=d;if(j)j.crit=d.crit;panelUpdate(old,d)}}catch(e){}
   }
   setTimeout(pollDetail,1500);
 }
-function sigOf(j){return [j.state,j.phase,j.stage,j.lane,j.round,j.q,j.pausedBy,j.title,j.report,j.files.length,j.runnerOn,j.movedAt,j.failed,j.risk,j.proof,j.waitYou,fresh.has(j.id),expanded===j.id].join("|")}
+function sigOf(j){return [j.state,j.phase,j.stage,j.lane,j.round,j.q,j.pausedBy,j.title,j.report,j.files.length,j.runnerOn,j.movedAt,j.failed,j.risk,j.proof,fresh.has(j.id),expanded===j.id].join("|")}
 function paint(before){
   const order0=[...before.keys()].join(),order1=jobs.map(j=>j.id).join();
   const groups=j=>j?(view==="board"?j.lane:group(j)):"";
@@ -604,9 +591,7 @@ function paint(before){
     let openChanged=false;
     for(const j of jobs){const s=sigOf(j);if(sigs[j.id]!==s){if(j.id===open)openChanged=true;replaceRow(j);sigs[j.id]=s}else patchLive(j)}
     renderCounts();
-    const ss=setup?[setup.state,setup.idx,setup.evs.length,setup.last.join()].join("|"):"";
-    if(open&&J(open)&&((open==="setup"&&ss!==paint.setup)||(open!=="setup"&&(!details[open]||openChanged))))renderPanel(); else if(open&&open!=="setup")paintHead();
-    paint.setup=ss;
+    if(open&&J(open)&&(!details[open]||openChanged))renderPanel(); else if(open)paintHead();
   }
 }
 
@@ -626,13 +611,10 @@ function evHTML(e,uid,anim){
   return `<div class="ev sys${a}">${esc(e.t)}${e.at?` · <span class="mono">${hhmm(e.at)}</span>`:""}</div>`;
 }
 function liveHTML(j){
-  if(j.kind==="setup"){const st=stp(j);let h=`<span class="stg">${esc(st.nm)}</span><span class="dot">·</span>`;
-    if(j.failed)return h+`<span class="bad">Failed: ${esc((j.setup.last||[]).at(-1)||"see kitchen toolkit build --status")}</span>`;
-    return h+liveEv(j)}
   const st=stp(j);
   let h=`<span class="stg">${esc(st.nm)}</span>${j.round>1?`<span class="rd">round ${j.round}</span>`:""}<span class="dot">·</span>`;
   if(j.state==="paused") return h+`<span>${j.pausedBy==="stop"?"Stopped by you":j.pausedBy?"Paused by you":"Waiting: "+esc(j.reason||j.paused||"")}</span>`;
-  if(!j.runnerOn) return h+`<span>${snap&&snap.runner.running?"Waiting for a free slot":"Waiting for kitchen run"}</span>`;
+  if(!j.runnerOn) return h+`<span>${snap&&snap.runner.running?"Waiting for a free lane":"Waiting for the orchestrator (kitchen run)"}</span>`;
   if(!j.agent&&!j.live) return h+`<span class="shim">${esc(j.step&&j.step.split(" · ").pop()||"Working")}</span>`;
   return h+liveEv(j);
 }
@@ -643,46 +625,33 @@ function liveEv(j){
   if(e.c==="res"||e.c==="bad") return `<span class="mono ${e.c}${car}" data-lv="${j.id}">${shown}</span>`;
   return `<span class="${car}" data-lv="${j.id}">${shown}</span>`;
 }
-function patchLive(j){const el=$("#lv-"+CSS.escape(j.id));if(el)el.innerHTML=view==="board"?evLine(j):liveHTML(j);const p=$("#pl-"+CSS.escape(j.id));if(p)p.innerHTML=pillsHTML(j);const c=$("#c-"+CSS.escape(j.id));if(c)c.textContent="$"+j.cost.toFixed(2)}
+function patchLive(j){const el=$("#lv-"+CSS.escape(j.id));if(el)el.innerHTML=view==="board"?evLine(j):liveHTML(j);const p=$("#pl-"+CSS.escape(j.id));if(p)p.innerHTML=pillsHTML(j);const c=$("#c-"+CSS.escape(j.id));if(c)c.textContent=costTxt(j)}
+/* A job's own spend is known only when an orchestrator reports it per job; the session total is in the header. */
+const costTxt=j=>j.cost?"$"+j.cost.toFixed(2):"";
 
 /* ───────── list ───────── */
 function trackHTML(j){
   const ss=steps(j),i=sidx(j);
   return `<span class="trk" title="${esc(stp(j).nm)} · step ${i+1} of ${ss.length}">${ss.map((s,k)=>{
-    let c=j.kind==="setup"&&j.setup.state==="quick"?(k<i?"ok":""):j.state==="done"?"ok":k<i?"ok":k>i?"":j.state==="you"?"you":j.state==="paused"?"paused":j.state==="run"?(j.runnerOn?"run":"paused"):"skip";
-    if(j.kind==="setup"&&j.failed&&k===i)c="you";
+    let c=j.state==="done"?"ok":k<i?"ok":k>i?"":j.state==="you"?"you":j.state==="paused"?"paused":j.state==="run"?(j.runnerOn?"run":"paused"):"skip";
     if(k===i-1&&just.has(j.id))c+=" just"; return `<i class="seg ${c}"></i>`}).join("")}</span>`;
 }
 function chgHTML(j,bump){const A=j.files.reduce((a,f)=>a+f.a,0),D=j.files.reduce((a,f)=>a+f.d,0);
   return `<span class="chg${bump?" bump":""}" id="chg-${esc(j.id)}">${j.files.length&&group(j)==="run"?`${j.files.length} file${j.files.length>1?"s":""}${dfHTML(A,D)}`:""}</span>`}
-const setupWaits=j=>j.kind==="setup"&&j.setup.toolkit==="waiting"&&j.state==="done";
-function finLabel(j){if(j.kind==="setup"&&j.setup.state==="quick")return "Toolkit not built — kitchen toolkit build";if(setupWaits(j))return "Proven · waiting for your approval";if(stopped(j))return "Stopped by you";return j.state==="done"?(j.kind==="setup"?"Proven":"Ready to merge"):j.kind==="setup"?"Failed":"Rejected"}
-/* A job paused no-toolkit (ADR 0010): build the Toolkit in a terminal, or resume (the resume rules decide whether it may go on without one). */
+/* A finished job: merged into staging by Kitchen, or held at Ready for a person (high risk, a large diff). */
+const doneWords=j=>j.stage==="ready"?"Ready for you":"Merged into staging";
+function finLabel(j){if(stopped(j))return "Stopped by you";return j.state==="done"?doneWords(j):"Rejected"}
 /* Kitchen's own messages name commands in backticks: shown as code. */
 const md=t=>esc(t).replace(/`([^`]+)`/g,"<code>$1</code>");
-/* Where the Toolkit stands (data.ts snapshot.toolkit, ADR 0015): waiting = proven, waiting for the person's approval. */
-const tkState=()=>snap&&snap.toolkit?snap.toolkit.state:"none";
-const tkSha=()=>snap&&snap.toolkit&&snap.toolkit.sha?snap.toolkit.sha:"";
-const approveBtn=()=>`<button type="button" class="btn act sm" data-act="approve-tk" title="Use Toolkit ${esc(tkSha().slice(0,12))} for every job (kitchen toolkit approve). Nothing is merged or committed">Approve Toolkit <span class="mono">${esc(tkSha().slice(0,7))}</span></button>`;
-/* A job waiting for a Toolkit: one action in a List row (the title and reason keep the room), the rest on the card and in the panel. */
-function tkActs(j,where){
-  const primary=j.tkApprove?approveBtn():tkState()==="building"?"":`<button type="button" class="btn act sm" data-act="copy-build" title="Copy kitchen toolkit build. Approve it when it is proven; the job wakes by itself">${where==="panel"?"Copy kitchen toolkit build":"Copy command"}</button>`;
-  if(where==="row")return primary;
-  return primary+`<button type="button" class="btn ghost sm" data-act="resume" data-id="${esc(j.id)}" title="Go on with checks and tests only, if it can">${I.play}Resume</button>`}
-/* A pause only the person can end (data.ts waitYouOf): a Toolkit to build or approve, the agent's login to fix, a Toolkit PR to merge. */
-function waitActs(j,where){return j.waitYou==="no-toolkit"?tkActs(j,where):`<button type="button" class="btn act sm" data-act="resume" data-id="${esc(j.id)}" title="${j.waitYou==="auth"?"After you log the agent in again":"Try now, without waiting for the merge"}">${I.play}Resume</button>`}
-const WAIT_HINT={auth:"Log the agent's CLI in again, then Resume.","toolkit-pr":"Merge the Toolkit PR and it goes on by itself, or Resume to try now."};
-function waitHint(j){if(j.waitYou!=="no-toolkit")return WAIT_HINT[j.waitYou]||"";
-  return j.tkApprove?`Approve Toolkit ${esc(tkSha().slice(0,12))}; it goes on by itself.`:tkState()==="building"?"The Toolkit is being built.":"Build the Toolkit, then approve it."}
-function icon(j){if(j.kind==="setup"&&j.setup.state==="quick")return S.wait;return S[j.state==="done"?"ok":j.state==="rejected"?"skip":j.state==="run"&&!j.runnerOn?"paused":j.state]}
+function icon(j){return S[j.state==="done"?"ok":j.state==="rejected"?"skip":j.state==="run"&&!j.runnerOn?"paused":j.state]}
 function rowHTML(j){
   const g=group(j),ex=expanded===j.id;
   let sub="",mid="",tm="",acts="";
-  if(g==="you"){const wa=j.waitYou?waitActs(j,"row"):"";sub=`<div class="sub q">${md(j.q)}</div>${wa?`<span class="tka">${wa}</span>`:""}`;mid=j.waitYou?"":`<button class="btn act sm rep" data-act="message" data-id="${esc(j.id)}">${ex?"Close":"Reply"}</button>`;tm=`<span class="tm mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`}
+  if(g==="you"){sub=`<div class="sub q">${md(j.q)}</div>`;mid=`<button class="btn act sm rep" data-act="message" data-id="${esc(j.id)}">${ex?"Close":"Reply"}</button>`;tm=`<span class="tm mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`}
   else if(g==="run"){sub=`<div class="sub" id="lv-${esc(j.id)}">${liveHTML(j)}</div>`;mid=chgHTML(j)+trackHTML(j);tm=`<span class="tm mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`;
     acts=`<span class="acts"><button class="ib" title="Message ${esc(agent(j))} (R)" aria-label="Message agent" data-act="message" data-id="${esc(j.id)}">${I.msg}</button></span>`}
-  else{mid=`<span class="fin ${fresh.has(j.id)?"new":""}">${fresh.has(j.id)?"Just finished · ":""}${finLabel(j)}</span>`;tm=`<span class="tm mono num">$${j.cost.toFixed(2)}</span>`;
-    if(j.state==="done"&&j.kind!=="setup")acts=`<span class="acts"><button class="ib" title="Report, branch, ask for changes (R)" aria-label="Report, branch, ask for changes" data-act="message" data-id="${esc(j.id)}">${I.msg}</button></span>`;
+  else{mid=`<span class="fin ${fresh.has(j.id)?"new":""}">${fresh.has(j.id)?"Just finished · ":""}${finLabel(j)}</span>`;tm=`<span class="tm mono num">${costTxt(j)}</span>`;
+    if(j.state==="done")acts=`<span class="acts"><button class="ib" title="Report, branch, ask for changes (R)" aria-label="Report, branch, ask for changes" data-act="message" data-id="${esc(j.id)}">${I.msg}</button></span>`;
     else if(stopped(j))acts=`<span class="acts"><button class="ib" title="Leave a note or resume (R)" aria-label="Leave a note" data-act="message" data-id="${esc(j.id)}">${I.msg}</button></span>`}
   return `<div class="rw ${g} ${g==="done"?"end":""} ${j.state==="rejected"?"gone":""} ${open===j.id?"open":""} ${sel===j.id?"sel":""} ${just.has(j.id)?"flash":""}" id="rw-${esc(j.id)}" style="view-transition-name:r-${esc(j.id)}">
     <div class="row" tabindex="0" role="button" data-row="${esc(j.id)}">
@@ -697,26 +666,18 @@ const doneT=j=>Date.parse(j.doneAt||j.updatedAt||0)||0;
 function inLane(k){const a=jobs.filter(j=>j.lane===k);return k==="ready"||k==="done"?a.sort((x,y)=>doneT(y)-doneT(x)):a}
 const RISK={low:"low",medium:"med",high:"high"};
 function pillsHTML(j){
-  if(j.kind==="setup"){const s=j.setup;return `<span class="pl ${setupWaits(j)?"high":""}">${setupWaits(j)?"waiting for approval":s.state==="done"?"proven":s.state==="quick"?"Toolkit not built":s.state==="failed"?"failed":"step "+(s.idx+1)+" of "+s.steps.length}</span>`}
   const p=j.proof;
   return (j.risk?`<span class="pl ${j.risk==="high"?"high":""}" title="Risk: ${esc(j.risk)}">${RISK[j.risk]||esc(j.risk)}</span>`:"")
-    +(p?`<span class="pl ${p==="pass"?"pass":p==="fail"?"fail":""}" title="${p==="fail"?"Verdict of the last round":p==="pass"?"Verdict: every criterion proven":"No passing verdict yet"}">${p}</span>`:"")
-    +(j.state==="rejected"?'<span class="pl">rejected</span>':j.pausedBy==="stop"?'<span class="pl">stopped</span>':j.state==="paused"&&!j.waitYou?`<span class="pl high">${j.pausedBy?"paused":"waiting"}</span>`:"");
+    +(p?`<span class="pl ${p==="pass"?"pass":p==="fail"?"fail":""}" title="${p==="fail"?"Verdict of the last round":p==="pass"?"QA: every criterion checked against the running app":"No QA verdict yet"}">${p}</span>`:"")
+    +(j.state==="rejected"?'<span class="pl">rejected</span>':j.pausedBy==="stop"?'<span class="pl">stopped</span>':j.state==="paused"?`<span class="pl high">${j.pausedBy?"paused":"waiting"}</span>`:"");
 }
 /* The card's two-line activity line: what the agent working on it did last, from its own stream. */
 function evLine(j){
-  if(j.kind==="setup"){
-    if(j.failed)return `<span class="bad">✗ Failed: ${esc((j.setup.last||[]).at(-1)||"see kitchen toolkit build --status")}</span>`;
-    if(j.setup.state==="quick")return "Toolkit not built. Run kitchen toolkit build";
-    if(setupWaits(j))return `<span class="ok">✓ Proven twice</span> · waiting for your approval`;
-    if(j.state==="done")return `<span class="ok">✓ Proven twice</span>`;
-    return evOf(j);
-  }
-  if(j.state==="done")return `<span class="ok">✓ ${fresh.has(j.id)?"Just finished · ready to merge":"Ready to merge"}</span>`;
+  if(j.state==="done")return `<span class="ok">✓ ${fresh.has(j.id)?"Just finished · ":""}${doneWords(j)}</span>`;
   if(j.state==="rejected")return esc(j.reason&&!/^by-you/.test(j.reason)?"Rejected: "+j.reason:"Rejected");
   if(j.pausedBy==="stop")return "Stopped by you";
   if(j.state==="paused")return j.pausedBy?"Paused by you":"Waiting: "+esc(j.reason||j.paused||"");
-  if(!j.runnerOn)return snap&&snap.runner.running?"Waiting for a free slot":"Waiting for kitchen run";
+  if(!j.runnerOn)return snap&&snap.runner.running?"Waiting for a free lane":"Waiting for the orchestrator (kitchen run)";
   if(!j.agent&&!j.live)return `<span class="shim">${esc(j.step&&j.step.split(" · ").pop()||"Working")}</span>`;
   return evOf(j);
 }
@@ -729,14 +690,14 @@ function evOf(j){
   return `<span class="${car}" data-lv="${esc(j.id)}">${shown}</span>`;
 }
 function cardHTML(j){
-  const l=j.lane,end=ended(j)||l==="done",idt=j.kind==="setup"?"setup":"#"+j.num;
-  const cls=`${l==="you"?"ny":""} ${end?"end":""} ${j.state==="done"&&j.kind!=="setup"?"rdy":""} ${j.state==="rejected"||j.pausedBy==="stop"?"gone":""} ${open===j.id?"open":""} ${sel===j.id?"sel":""} ${just.has(j.id)?"flash":""}`;
+  const l=j.lane,end=ended(j)||l==="done",idt="#"+j.num;
+  const cls=`${l==="you"?"ny":""} ${end?"end":""} ${j.state==="done"?"rdy":""} ${j.state==="rejected"||j.pausedBy==="stop"?"gone":""} ${open===j.id?"open":""} ${sel===j.id?"sel":""} ${just.has(j.id)?"flash":""}`;
   const bot=l==="you"
-    ?`<div class="cq">${md(j.q)}</div>${j.waitYou?`<span class="tka">${waitActs(j,"card")}<button type="button" class="btn ghost sm" data-act="reject" data-id="${esc(j.id)}">Reject</button></span>`:`<button class="btn act sm" data-act="message" data-id="${esc(j.id)}">Reply</button>`}`
-    :`<div class="cbot"><div class="evl" id="lv-${esc(j.id)}">${evLine(j)}</div>${j.kind==="setup"||j.state==="rejected"?"":`<button class="ib" title="${j.state==="done"?"Follow up":"Message "+esc(agent(j))} (R)" aria-label="${j.state==="done"?"Follow up":"Message agent"}" data-act="message" data-id="${esc(j.id)}">${I.msg}</button>`}</div>`;
+    ?`<div class="cq">${md(j.q)}</div><button class="btn act sm" data-act="message" data-id="${esc(j.id)}">Reply</button>`
+    :`<div class="cbot"><div class="evl" id="lv-${esc(j.id)}">${evLine(j)}</div>${j.state==="rejected"?"":`<button class="ib" title="${j.state==="done"?"Follow up":"Message "+esc(agent(j))} (R)" aria-label="${j.state==="done"?"Follow up":"Message agent"}" data-act="message" data-id="${esc(j.id)}">${I.msg}</button>`}</div>`;
   return `<div class="rw card ${cls}" id="rw-${esc(j.id)}" style="view-transition-name:r-${esc(j.id)}" tabindex="0" role="button" data-row="${esc(j.id)}">
     <div class="ctop"><span class="id">${esc(idt)}</span>${j.round>1?`<span class="rnd">round ${j.round}</span>`:""}<span class="sp"></span>${j.state==="run"&&j.runnerOn?'<i class="pulse" title="Working now"></i>':""}${end?"":`<span class="mt num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`}</div>
-    <div class="ctt">${esc(j.title)}</div><div class="prow"><div class="pills" id="pl-${esc(j.id)}">${pillsHTML(j)}</div><span class="cst num" id="c-${esc(j.id)}">$${j.cost.toFixed(2)}</span></div>${bot}</div>`;
+    <div class="ctt">${esc(j.title)}</div><div class="prow"><div class="pills" id="pl-${esc(j.id)}">${pillsHTML(j)}</div><span class="cst num" id="c-${esc(j.id)}">${costTxt(j)}</span></div>${bot}</div>`;
 }
 function boardHTML(){
   if(!snap)return ""; /* the lanes come with the first snapshot */
@@ -750,23 +711,19 @@ function setView(v){view=v;try{localStorage.setItem("kitchen.view",v)}catch(e){}
 function order(){if(view==="board")return lanes().flatMap(l=>inLane(l.k));
   return [...jobs.filter(j=>group(j)==="you"),...jobs.filter(j=>group(j)==="run"),...jobs.filter(j=>group(j)==="done").sort((a,b)=>doneT(b)-doneT(a))]}
 /* queue-words:start (src/dashboard/server.test.ts runs this block) */
-/* Jobs in an active stage are running only while a runner holds the queue; with none they are queued, waiting
-   for kitchen run. A Toolkit build (the setup row) runs on its own, runner or not: it counts as running, never as
-   waiting. The header, the sidebar and the list (or Board) all take their words from here.
-   `run`: the jobs in the running group, each {kind, state}. */
+/* Jobs in a lane move only while an orchestrator works the queue (kitchen run, or /kitchen run in Claude Code); with
+   none they are queued. The header, the sidebar and the list (or Board) all take their words from here. */
 function queueWords(runnerRunning,run){
-  const setupOn=run.some(j=>j.kind==="setup"&&j.state==="run"),jobs=run.filter(j=>j.kind!=="setup").length;
-  if(runnerRunning)return {count:`<b>${run.length}</b> running`,group:"Running",hint:"Message any agent while it works",empty:"Nothing running. Start one with New ticket.",busy:run.length>0};
-  if(!jobs&&setupOn)return {count:"<b>1</b> running",group:"Running",hint:"The Toolkit build works on its own",empty:"",busy:true};
-  return {count:`<b>${jobs}</b> waiting${setupOn?" · <b>1</b> running":""}`,group:"Queued",hint:"Waiting for kitchen run: start it and they move",empty:"Nothing queued. Start one with New ticket.",busy:setupOn};
+  if(runnerRunning)return {count:`<b>${run.length}</b> running`,group:"Running",hint:"Your message reaches the job's next agent",empty:"Nothing running. Start one with New ticket.",busy:run.length>0};
+  return {count:`<b>${run.length}</b> waiting`,group:"Queued",hint:"Waiting for the orchestrator: start it and they move",empty:"Nothing queued. Start one with New ticket.",busy:false};
 }
 /* queue-words:end */
 function renderList(){
   keepFocus(()=>{
     const o=order(),you=o.filter(j=>group(j)==="you"),run=o.filter(j=>group(j)==="run"),done=o.filter(j=>group(j)==="done");
-    const idle=snap&&!snap.runner.running&&jobs.some(j=>j.kind!=="setup"&&(j.state==="run"||(j.state==="paused"&&!j.pausedBy)));
+    const idle=snap&&!snap.runner.running&&jobs.some(j=>(j.state==="run"||(j.state==="paused"&&!j.pausedBy)));
     $("#scroll").classList.toggle("bd",view==="board");
-    $("#list").innerHTML=(idle?`<div class="rbar" role="status">${S.paused}<span>Kitchen isn't working the queue: jobs move only while it runs.</span><span class="sp" style="flex:1"></span><button type="button" class="btn act sm" data-act="start-runner" title="Start kitchen run in the background (kitchen run --detach). It keeps going, and waits for work when nothing is left">${I.play}Start runner</button><button type="button" class="btn ghost sm" data-act="copy" title="Copy kitchen run --detach, to start it in a terminal">Copy command</button></div>`:"")+
+    $("#list").innerHTML=(idle?`<div class="rbar" role="status">${S.paused}<span>No orchestrator is working the queue: jobs move only while one runs.</span><span class="sp" style="flex:1"></span><button type="button" class="btn act sm" data-act="start-runner" title="Start a headless orchestrator session in the background (kitchen run --detach)">${I.play}Start Kitchen</button><button type="button" class="btn ghost sm" data-act="copy" title="Copy kitchen run, to start it in a terminal (or type /kitchen run in Claude Code)">Copy command</button></div>`:"")+
      (view==="board"?boardHTML():`<section id="g-you"><div class="ghead ${you.length?"act":""}">${you.length?S.you:S.wait} Needs you <span class="n num">${you.length}</span></div>${you.map(rowHTML).join("")||'<div class="empty">Nothing needs you.</div>'}</section>
       ${(()=>{const q=queueWords(!!(snap&&snap.runner.running),run);return `<section id="g-run"><div class="ghead">${q.busy?S.run:S.wait} ${q.group} <span class="n num">${run.length}</span><span class="hint">${q.hint}</span></div>${run.map(rowHTML).join("")||`<div class="empty">${q.empty}</div>`}</section>`})()}
       <section id="g-done"><div class="ghead">${S.ok} Done <span class="n num">${done.length}</span></div>${done.map(rowHTML).join("")||'<div class="empty">Nothing done yet.</div>'}</section>`);
@@ -779,14 +736,11 @@ function renderCounts(){
   if(!snap)return;
   const you=jobs.filter(j=>group(j)==="you"),run=jobs.filter(j=>group(j)==="run"),done=jobs.filter(j=>group(j)==="done");
   const nyou=`${you.length} need${you.length===1?"s":""} you`;
-  $("#sum").innerHTML=(you.length?(view==="board"?`<button class="a" onclick="jump('g-you')">${nyou}</button>`:`<span class="a">${nyou}</span>`):`<span class="none">Nothing needs you</span><span class="zero">0 need you</span>`)+`<i class="qn">·</i><span class="qn">${queueWords(!!snap.runner.running,run).count}</span><i class="rdy">·</i><span class="rdy"><b>${done.filter(j=>j.state==="done"&&j.kind!=="setup").length}</b> ready</span>`;
+  $("#sum").innerHTML=(you.length?(view==="board"?`<button class="a" onclick="jump('g-you')">${nyou}</button>`:`<span class="a">${nyou}</span>`):`<span class="none">Nothing needs you</span><span class="zero">0 need you</span>`)+`<i class="qn">·</i><span class="qn">${queueWords(!!snap.runner.running,run).count}</span><i class="rdy">·</i><span class="rdy"><b>${done.filter(j=>j.state==="done").length}</b> done</span>`;
   $("#sYou").textContent=you.length||"";$("#sRun").textContent=run.length;$("#sRunN").textContent=queueWords(!!snap.runner.running,run).group;$("#sDone").textContent=done.length;
   $("#wsName").textContent=snap.repo;document.title=(you.length?`(${you.length}) `:"")+"Kitchen · "+snap.repo;
-  $("#sSetup").textContent=!setup||setup.state==="none"?"not run":setup.state==="quick"?"Toolkit not built":setup.state==="done"?"proven":setup.state==="failed"?"failed":"step "+(setup.idx+1)+"/"+setup.steps.length;
-  $("#sTk").textContent=snap.toolkit?snap.toolkit.label:snap.toolkitProven?"proven":"not proven";
-  $("#sTk").classList.toggle("act",tkState()==="waiting");
-  $("#tCost").textContent="$"+snap.usdToday.toFixed(2)+" today";$("#tCost").title="Spent today on every agent run, setup and retro included";$("#sCost").textContent="$"+snap.usdTotal.toFixed(2);$("#sCost").parentElement.title="Spent in all on every agent run, setup and retro included";
-  $("#foot").innerHTML=`Runner: ${esc(snap.runner.text)}${snap.runner.running?"":`. Jobs move only while <span class="mono">kitchen run</span> works the queue.`}${snap.corrupt.length?` · Unreadable job folders: ${esc(snap.corrupt.join(", "))}`:""}`;
+  $("#tCost").textContent="$"+snap.usdToday.toFixed(2)+" today";$("#tCost").title="Spent today by kitchen run's orchestrator sessions (an in-session /kitchen run is billed to that session)";$("#sCost").textContent="$"+snap.usdTotal.toFixed(2);$("#sCost").parentElement.title="Spent in all by kitchen run's orchestrator sessions";
+  $("#foot").innerHTML=`Orchestrator: ${esc(snap.runner.text)}${snap.runner.running?"":`. Jobs move only while <span class="mono">kitchen run</span> (or <span class="mono">/kitchen run</span> in Claude Code) works the queue.`}${snap.corrupt.length?` · Unreadable job folders: ${esc(snap.corrupt.join(", "))}`:""}`;
 }
 function replaceRow(j){if(!j)return;const n=$("#rw-"+CSS.escape(j.id));if(n)keepFocus(()=>{n.outerHTML=view==="board"?cardHTML(j):rowHTML(j);just.delete(j.id);sigs[j.id]=sigOf(j);grow()})}
 function keepFocus(fn){
@@ -799,21 +753,17 @@ function structural(fn){ if(document.startViewTransition&&!RM&&!document.hidden)
 
 /* ───────── composer ───────── */
 function composerHTML(j,where="row"){
-  const g=wgroup(j),a=agent(j),eng=!j.agent&&j.kind!=="setup";
-  if(j.state==="rejected"||(j.kind==="setup"&&g!=="you"))return "";
-  const ph=g==="you"?(j.kind==="setup"?"Anything else the setup agent should know (optional)…":`Reply to ${a}…`):j.state==="paused"?`Leave a note for ${a}…`:g==="run"?`Message ${a}: redirect it, add context, ask…`:`What should change in ${j.num}?`;
-  const hint=g==="you"?(j.needsToolkit?"Kitchen needs a Toolkit to drive the app: build it, or resume with checks and tests only":`${Agent(j)} is waiting for you`):g==="done"?"This starts round "+(j.round+1):j.state==="paused"?"Paused. It reads this when you resume":eng?"Automatic step. Your note goes to the next agent":g==="run"&&!j.runnerOn?"Not running now. The next agent reads this when it starts":g==="run"&&snap&&snap.tool==="codex"?"Codex reads this when its next role starts":g==="run"?"It reads this at its next step, without stopping":"Starts round "+(j.round+1);
+  const g=wgroup(j),a=agent(j),eng=!j.agent;
+  if(j.state==="rejected")return "";
+  const ph=g==="you"?`Reply to ${a}…`:j.state==="paused"?`Leave a note for ${a}…`:g==="run"?`Message ${a}: redirect it, add context, ask…`:`What should change in ${j.num}?`;
+  const hint=g==="you"?`${Agent(j)} is waiting for you`:g==="done"?"This starts round "+(j.round+1):j.state==="paused"?"Paused. It reads this when you resume":g==="run"?"The job's next agent reads this when its lane starts":"Starts round "+(j.round+1);
   const chips=g==="run"&&j.state!=="paused"?["What are you doing right now?","Add a test for this","Keep the diff minimal"]:[];
-  const qs=j.kind==="setup"&&g==="you"?j.setup.questions:[];
-  const ch=qs.map(q=>`<div class="choice qa"><b>${esc(q.id)}</b><span class="qq">${esc(q.question)}${q.why?`<i>${esc(q.why)}</i>`:""}</span><div class="box qbox"><input data-draft="setup-${esc(q.id)}" data-where="${where}" data-q="${esc(q.id)}" placeholder="${esc(q.default?"Default: "+q.default:"Your answer")}" value="${esc(answersDraft[q.id]||"")}" aria-label="${esc(q.question)}"></div></div>`).join("");
   const ctl=g==="run"&&where==="panel"?"":g==="run"?`<button type="button" class="btn ghost sm" data-act="${j.state==="paused"?"resume":"pause"}" data-id="${esc(j.id)}">${j.state==="paused"?I.play+"Resume":I.pause+"Pause"}</button>${j.state==="paused"?"":`<button type="button" class="btn ghost sm" data-act="stop" data-id="${esc(j.id)}">${I.stop}Stop</button>`}`
-    :g==="you"&&j.kind!=="setup"?`<button type="button" class="btn ghost sm" data-act="reject" data-id="${esc(j.id)}">Reject</button>`
-    :g==="done"&&j.kind!=="setup"?`<button type="button" class="btn ghost sm" data-act="ask-cancel" data-id="${esc(j.id)}">Cancel</button>`:"";
+    :g==="you"?`<button type="button" class="btn ghost sm" data-act="reject" data-id="${esc(j.id)}">Reject</button>`
+    :g==="done"?`<button type="button" class="btn ghost sm" data-act="ask-cancel" data-id="${esc(j.id)}">Cancel</button>`:"";
   /* A done job takes no stray message: its report, its branch, and Ask for changes, which says it starts another round. */
-  if(j.state==="done"&&j.kind!=="setup"&&!asking.has(j.id))return doneBar(j);
-  /* A wait only you can end takes no message: nothing would read it. Its two ways on are the actions. */
-  if(j.waitYou)return `<div class="cmp you"><div class="box"><div class="cbar"><span class="hint">${waitHint(j)}</span><span class="sp"></span>${waitActs(j,"panel")}<button type="button" class="btn ghost sm" data-act="reject" data-id="${esc(j.id)}">Reject</button></div></div></div>`;
-  return `<form class="cmp ${g==="you"?"you":""} ${qs.length?"ready":""}" data-cmp="${esc(j.id)}">${ch}
+  if(j.state==="done"&&!asking.has(j.id))return doneBar(j);
+  return `<form class="cmp ${g==="you"?"you":""}" data-cmp="${esc(j.id)}">
     ${chips.length?`<div class="chips">${chips.map(c=>`<button type="button" class="chip" data-act="chip" data-id="${esc(j.id)}">${esc(c)}</button>`).join("")}</div>`:""}
     <div class="box"><textarea rows="1" data-draft="${esc(j.id)}" data-where="${where}" placeholder="${esc(ph)}" aria-label="${esc(ph)}" maxlength="4000">${esc(drafts[j.id]||"")}</textarea>
     <div class="cbar"><span class="hint">${esc(hint)}</span><span class="sp"></span>${ctl}<button class="send" type="submit" aria-label="Send" title="Send (Enter)">${I.up}</button></div></div></form>`;
@@ -826,10 +776,9 @@ function askChanges(id,on){const j=J(id);if(!j)return;on?asking.add(id):asking.d
   if(open===id)renderPanel();else{expanded=id;renderList()}
   if(on){const t=$(`textarea[data-draft="${id}"][data-where="${open===id?"panel":"row"}"]`);if(t)t.focus()}}
 async function copyBranch(id){const b=(J(id)||{}).branch||"";try{await navigator.clipboard.writeText(b);toast("Copied: "+b)}catch(e){toast("The branch: "+b)}}
-async function startRunner(){const r=await post("start-runner",{});toast(r.ok?(said(r.lines)||"Runner started").replace(/^run detached: /,"Runner started: "):said(r.lines)||"Not started");refreshSoon()}
+async function startRunner(){const r=await post("start-runner",{});toast(r.ok?(said(r.lines)||"Kitchen started").replace(/^orchestrator detached: /,"Kitchen started: "):said(r.lines)||"Not started");refreshSoon()}
 function grow(){$$(".box textarea").forEach(t=>{t.style.height="auto";t.style.height=Math.min(160,t.scrollHeight)+"px"})}
 document.addEventListener("input",e=>{const t=e.target;if(!t.dataset)return;
-  if(t.dataset.q){answersDraft[t.dataset.q]=t.value;$$(`input[data-q="${t.dataset.q}"]`).forEach(o=>{if(o!==t)o.value=t.value});return}
   if(t.dataset.draft){drafts[t.dataset.draft]=t.value;$$(`textarea[data-draft="${t.dataset.draft}"]`).forEach(o=>{if(o!==t)o.value=t.value});grow()}});
 function useChip(id,b){drafts[id]=b.textContent;const f=b.closest(".cmp"),t=f.querySelector("textarea");$$(`textarea[data-draft="${id}"]`).forEach(o=>o.value=drafts[id]);grow();t.focus()}
 function message(id){
@@ -850,17 +799,10 @@ async function post(verb,body){
   }catch(e){return {ok:false,lines:["Kitchen's dashboard server is not answering"]}}
 }
 const said=lines=>(lines.at(-1)||"").replace(/^\S+\s\s/,"");
-function refreshSoon(){clearTimeout(refreshSoon.t);refreshSoon.t=setTimeout(async()=>{try{const [d,s]=await Promise.all([getJSON("/data.json"),getJSON("/setup.json")]);snap=d;setup=s;const before=new Map(jobs.map(j=>[j.id,j]));jobs=d.jobs.map(fromSnap);if(s.state!=="none")jobs.unshift(fromSetup(s));paint(before);if(open&&open!=="setup"&&J(open)){const dd=await getJSON(`/jobs/${encodeURIComponent(open)}/detail.json`);const old=details[open];details[open]=dd;panelUpdate(old,dd)}}catch(e){}},120)}
+function refreshSoon(){clearTimeout(refreshSoon.t);refreshSoon.t=setTimeout(async()=>{try{const d=await getJSON("/data.json");snap=d;const before=new Map(jobs.map(j=>[j.id,j]));jobs=d.jobs.map(fromSnap);paint(before);if(open&&J(open)){const dd=await getJSON(`/jobs/${encodeURIComponent(open)}/detail.json`);const old=details[open];details[open]=dd;panelUpdate(old,dd)}}catch(e){}},120)}
 function clearDraft(id){drafts[id]="";$$(`textarea[data-draft="${id}"]`).forEach(o=>o.value="");grow()}
 async function send(id){
   const j=J(id); if(!j)return; const text=(drafts[id]||"").trim(), g=wgroup(j);
-  if(j.kind==="setup"){
-    if(g!=="you")return;
-    const answers={};for(const q of j.setup.questions)answers[q.id]=(answersDraft[q.id]||"")+(text&&q===j.setup.questions.at(-1)?(answersDraft[q.id]?" — ":"")+text:"");
-    const r=await post("setup-answers",{answers});
-    if(r.ok){answersDraft={};clearDraft(id);toast("Answers sent. Setup goes on")}else{nope(id);toast(said(r.lines)||"Not sent")}
-    refreshSoon();return;
-  }
   if(!text&&!(g==="you"&&j.stage==="needs-human")){nope(id);return}
   const verb=g==="you"?"answer":g==="done"?"follow-up":"steer";
   if(verb==="follow-up"&&!asking.has(id)){nope(id);return}
@@ -894,18 +836,9 @@ function segHTML(j,s,i,n){
   return `<button class="sg ${can?"exp":""}" ${can?`onclick="togSeg(${i})"`:"tabindex=-1"}>${S[state]||S.wait}<b>${esc(s.nm)}</b><span class="who">${esc(who)}</span><span class="du mono num" ${liveT?`id="segt" data-start="${esc(s.start)}"`:""}>${liveT?clock(elapsed(s.start)):dur}</span></button>
     ${s.sk&&s.sk.length?`<div class="sgsk" title="Skills quoted into this step's prompt">${s.sk.map(n=>`<span class="mono" title="${esc(n)}">${esc(n.split(":").pop())}</span>`).join("")}</div>`:""}
     ${s.sum?`<div class="sgsum ${s.st==="bad"?"bad":""}">${esc(s.sum)}</div>`:""}
-    ${s.approve&&tkState()==="waiting"&&tkSha()===s.approve?`<div class="rbar tkbar" role="status">${S.you}<span><b>Proven · waiting for your approval:</b> the smith's Toolkit <code>${esc(s.approve.slice(0,12))}</code>. This job runs it sandboxed until you approve it.</span>${approveBtn()}</div>`:""}
     ${isOpen&&(s.evs.length||last)?`<div class="evs" ${last?'id="evs"':""}>${s.evs.map(e=>evHTML(e)).join("")}</div>`:""}`;
 }
-function setupBody(j){
-  const s=j.setup, evs=s.evs;
-  return `${setupWaits(j)?`<div class="rbar tkbar" role="status">${S.you}<span><b>Proven · waiting for your approval:</b> <code>${esc((j.setup.sha||"").slice(0,12))}</code>. Approve it and every job runs your app with it. Nothing is merged or committed; share it later with <code>kitchen toolkit commit</code>.</span>${approveBtn()}</div>`:""}${s.state==="quick"?`<div class="rbar" role="status">${S.wait}<span>Toolkit not built — Kitchen proves jobs with your checks and tests until it can drive the app.</span><code>kitchen toolkit build</code><button type="button" class="btn sm" data-act="copy-build">Copy</button></div>`:""}${s.questions.length?`<div class="evs" style="border:0;padding-left:0;margin-left:0">${s.questions.map(q=>`<div class="ev ask"><span class="whoo">The setup agent asks · ${esc(q.id)}</span><p>${esc(q.question)}</p>${q.why?`<p style="color:var(--mute);margin-top:4px">${esc(q.why)}</p>`:""}</div>`).join("")}</div>`:""}
-    ${s.steps.map((x,k)=>`<button class="sg" tabindex="-1">${S[x.st==="wait"?"wait":x.st==="run"?"run":x.st]||S.wait}<b>${esc(x.nm)}</b><span class="who">${x.k==="answers"?"you":x.k==="survey"||x.k==="build"?"setup agent":"Kitchen"}</span><span class="du mono num"></span></button>
-      ${k===s.idx&&evs.length&&s.state!=="done"?`<div class="evs" id="evs">${evs.map(e=>evHTML(e)).join("")}</div>`:""}`).join("")}
-    ${s.last.length?`<div class="sgsum" style="margin:10px 0 0;font-family:var(--mono);font-size:11.5px;white-space:pre-wrap">${esc(s.last.slice(-6).join("\n"))}</div>`:""}`;
-}
 function tabBody(j){
-  if(j.kind==="setup")return setupBody(j);
   const d=details[j.id];
   if(tab==="checks") return !j.crit.length&&j.checks&&j.checks.total?`<div class="none">Loading…</div>`:j.crit.length?j.crit.map((c,i)=>`<div class="crit">${S[c.st]||S.wait}<span><span class="mono" style="color:var(--faint);margin-right:6px">${esc(c.id)}</span>${esc(c.text)}</span>${c.e?`<span class="e">${esc(c.e)}</span>`:""}</div>`).join(""):`<div class="none">No checks yet. Intake writes them.</div>`;
   if(tab==="changes") return j.files.length?j.files.map(f=>`<div class="file"><span class="p">${esc(f.p)}</span>${dfHTML(f.a,f.d)}</div>`).join(""):`<div class="none">No files touched yet.</div>`;
@@ -914,9 +847,9 @@ function tabBody(j){
 }
 /* The Checks count comes with every poll (data.ts checks), never from a detail fetched at another stage. */
 function tabsHTML(j){const ck=j.checks||{ok:j.crit.filter(c=>c.st==="ok").length,total:j.crit.length};
-  return [["activity","Activity",""],["checks","Checks",ck.total?ck.ok+"/"+ck.total:""],["changes","Changes",j.files.length||""]].filter(([k])=>k==="activity"||j.kind!=="setup").map(([k,n,c])=>`<button class="tab ${tab===k?"on":""}" onclick="setTab('${k}')">${n}${c!==""?`<span class="n num">${c}</span>`:""}</button>`).join("")}
-function statusOf(j){if(j.kind==="setup"&&j.setup.state==="quick")return "Toolkit not built";if(setupWaits(j))return "Proven · waiting for your approval";return j.state==="you"?"Needs you":j.state==="run"?(j.runnerOn?stp(j).nm+(j.round>1?" · round "+j.round:""):"Waiting · "+stp(j).nm):j.state==="paused"?(j.pausedBy==="stop"?"Stopped in ":"Paused in ")+stp(j).nm:j.state==="done"?(j.kind==="setup"?"Proven":"Ready to merge"):j.kind==="setup"?"Failed":"Rejected"}
-function paintHead(){const j=J(open);if(!j)return;const t=$("#tabs");if(t)t.innerHTML=tabsHTML(j);const st=$("#pst");if(st)st.innerHTML=icon(j)+esc(statusOf(j));if(tab!=="activity"&&j.kind!=="setup"){const b=$("#tabbody");if(b)b.innerHTML=tabBody(j)}}
+  return [["activity","Activity",""],["checks","Checks",ck.total?ck.ok+"/"+ck.total:""],["changes","Changes",j.files.length||""]].map(([k,n,c])=>`<button class="tab ${tab===k?"on":""}" onclick="setTab('${k}')">${n}${c!==""?`<span class="n num">${c}</span>`:""}</button>`).join("")}
+function statusOf(j){return j.state==="you"?"Needs you":j.state==="run"?(j.runnerOn?stp(j).nm+(j.round>1?" · round "+j.round:""):"Waiting · "+stp(j).nm):j.state==="paused"?(j.pausedBy==="stop"?"Stopped in ":"Paused in ")+stp(j).nm:j.state==="done"?doneWords(j):"Rejected"}
+function paintHead(){const j=J(open);if(!j)return;const t=$("#tabs");if(t)t.innerHTML=tabsHTML(j);const st=$("#pst");if(st)st.innerHTML=icon(j)+esc(statusOf(j));if(tab!=="activity"){const b=$("#tabbody");if(b)b.innerHTML=tabBody(j)}}
 function panelUpdate(old,d){
   if(!old||tab!=="activity"){renderPanel();return}
   const shape=x=>x.tl.map(s=>[s.stage,s.st,s.sum,s.end,s.evs.filter(e=>e.c==="you").map(e=>e.status).join()].join("~")).join("|");
@@ -936,19 +869,19 @@ function renderPanel(scrollEnd){
   const p=$("#panel"); const j=open&&J(open); if(!j){if(open&&!J(open))open=null;p.classList.remove("on");return}
   const g=wgroup(j),sc0=$("#pscroll"),keep=sc0&&!scrollEnd?sc0.scrollTop:null,atEnd=sc0?sc0.scrollHeight-sc0.scrollTop-sc0.clientHeight<90:true;
   const ss=steps(j),i=sidx(j);
-  const ctl=g==="run"&&j.kind!=="setup"?`<button type="button" class="btn ghost sm" data-act="${j.state==="paused"?"resume":"pause"}" data-id="${esc(j.id)}">${j.state==="paused"?I.play+"Resume":I.pause+"Pause"}</button>${j.state==="paused"?"":`<button type="button" class="btn ghost sm" data-act="stop" data-id="${esc(j.id)}">${I.stop}Stop</button>`}`:"";
-  const sub=j.kind==="setup"?(snap?snap.repo:"setup"):[j.kind,j.risk?j.risk+" risk":""].filter(Boolean).join(" · ");
+  const ctl=g==="run"?`<button type="button" class="btn ghost sm" data-act="${j.state==="paused"?"resume":"pause"}" data-id="${esc(j.id)}">${j.state==="paused"?I.play+"Resume":I.pause+"Pause"}</button>${j.state==="paused"?"":`<button type="button" class="btn ghost sm" data-act="stop" data-id="${esc(j.id)}">${I.stop}Stop</button>`}`:"";
+  const sub=[j.kind,j.risk?j.risk+" risk":""].filter(Boolean).join(" · ");
   keepFocus(()=>{$("#pin").innerHTML=`
     <div class="ph"><button class="ib back" onclick="closePanel()" aria-label="Back">${I.back}</button><span class="mono">${esc(j.num)}</span><span>·</span><span>${esc(sub)}</span><span class="sp"></span>${ctl}<button class="ib" onclick="closePanel()" aria-label="Close" title="Close (Esc)">${I.x}</button></div>
     <div class="pscroll" id="pscroll"><h1>${esc(j.title)}</h1>${(t=>t&&t!==j.title?`<p class="tkt" title="The ticket, as it was filed">${esc(t)}</p>`:"")(details[j.id]&&details[j.id].ticket)}
-      <div class="meta"><span class="st ${j.state==="you"?"you":""}" id="pst">${icon(j)}${esc(statusOf(j))}</span><span class="mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span><span class="age" title="Since the ticket came in">age <span class="mono num" id="pt">${clock(secsOf(j))}</span></span><span class="mono num" id="pc">$${j.cost.toFixed(2)}</span>${j.report?`<a href="/${esc(j.report)}" target="_blank" rel="noopener">Open report</a>`:""}${j.pr?`<span>PR #${j.pr}</span>`:""}</div>
-      <div class="ptrk ${ss.length>6?"many":""}">${trackHTML(j)}<div class="lbls">${ss.length>6?`<span class="cur ${j.state==="you"?"you":""}">${j.kind==="setup"&&j.setup.state==="quick"?"Step 2 of "+ss.length+" · run kitchen toolkit build":ended(j)&&j.state==="done"?"All "+ss.length+" steps done":"Step "+(i+1)+" of "+ss.length+" · "+esc(ss[i]?ss[i].nm:"")}</span>`:ss.map((s,k)=>`<span class="${k===i&&!ended(j)?"cur "+(j.state==="you"?"you":""):""}">${esc(s.nm)}</span>`).join("")}</div></div>
+      <div class="meta"><span class="st ${j.state==="you"?"you":""}" id="pst">${icon(j)}${esc(statusOf(j))}</span><span class="mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span><span class="age" title="Since the ticket came in">age <span class="mono num" id="pt">${clock(secsOf(j))}</span></span><span class="mono num" id="pc">${costTxt(j)}</span>${j.report?`<a href="/${esc(j.report)}" target="_blank" rel="noopener">Open report</a>`:""}${j.pr?`<span>PR #${j.pr}</span>`:""}</div>
+      <div class="ptrk ${ss.length>6?"many":""}">${trackHTML(j)}<div class="lbls">${ss.length>6?`<span class="cur ${j.state==="you"?"you":""}">${ended(j)&&j.state==="done"?"All "+ss.length+" steps done":"Step "+(i+1)+" of "+ss.length+" · "+esc(ss[i]?ss[i].nm:"")}</span>`:ss.map((s,k)=>`<span class="${k===i&&!ended(j)?"cur "+(j.state==="you"?"you":""):""}">${esc(s.nm)}</span>`).join("")}</div></div>
       <div class="tabs" id="tabs">${tabsHTML(j)}</div><div id="tabbody">${tabBody(j)}</div></div>
     <div class="pcmp" ${composerHTML(j,"panel")?"":'style="display:none"'}>${composerHTML(j,"panel")}</div>`});
   p.classList.add("on"); grow();
   const sc=$("#pscroll"); if(tab==="activity"&&(keep===null||atEnd))sc.scrollTop=sc.scrollHeight; else if(keep!==null)sc.scrollTop=keep;
 }
-function openJob(id){if(!J(id)){if(id==="setup")toast("Setup has not run here. Run kitchen init in a terminal");return}$("#toast").classList.remove("on");const first=open!==id;open=id;sel=id;tab=first?"activity":tab;if(expanded===id)expanded=null;renderList();renderPanel(first);if(first&&id!=="setup")refreshSoon()}
+function openJob(id){if(!J(id))return;$("#toast").classList.remove("on");const first=open!==id;open=id;sel=id;tab=first?"activity":tab;if(expanded===id)expanded=null;renderList();renderPanel(first);if(first)refreshSoon()}
 function closePanel(){open=null;renderList();renderPanel()}
 function setTab(t){tab=t;renderPanel()}
 function togSeg(i){const k=open+":"+i;openSegs.has(k)?openSegs.delete(k):openSegs.add(k);renderPanel()}
@@ -965,9 +898,6 @@ setInterval(()=>{
 /* ───────── misc ───────── */
 let toastT;function toast(msg,label,fn){const t=$("#toast");t.innerHTML=`<span>${esc(msg)}</span>${label?`<button>${esc(label)}</button>`:""}`;if(label)t.querySelector("button").onclick=()=>{fn();t.classList.remove("on")};t.classList.add("on");clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove("on"),5000)}
 function newTicket(){palette(true,"ticket")}
-async function copyBuild(){try{await navigator.clipboard.writeText("kitchen toolkit build");toast("Copied: kitchen toolkit build. Run it in the repo, then approve the Toolkit")}catch(e){toast("Run this in the repo: kitchen toolkit build")}}
-/* The person approves the proven Toolkit (POST /api/toolkit-approve = kitchen toolkit approve); waiting jobs wake. */
-async function approveTk(){const r=await post("toolkit-approve",{expect:tkSha()});toast(r.ok?said(r.lines).replace(/\. Undo:.*/,"")||"Toolkit approved":said(r.lines)||"Not approved");refreshSoon()}
 async function copyRun(){try{await navigator.clipboard.writeText("kitchen run --detach");toast("Copied: kitchen run --detach. Run it in the repo")}catch(e){toast("Run this in the repo: kitchen run --detach")}}
 function jump(id){const n=$("#"+id);if(n)n.scrollIntoView({behavior:RM?"auto":"smooth",block:"start"})}
 function toggleTheme(){const r=document.documentElement,dark=r.dataset.theme?r.dataset.theme==="dark":matchMedia("(prefers-color-scheme: dark)").matches;r.dataset.theme=dark?"light":"dark";try{localStorage.setItem("kitchen.theme",r.dataset.theme)}catch(e){}}
@@ -976,14 +906,13 @@ function palette(on=true,mode="cmd"){const p=$("#pal");p.classList.toggle("on",o
 function paintPal(){const q=$("#palin").value.toLowerCase();
   if(palMode==="ticket"){const t=$("#palin").value.trim();palItems=t?[{t:"File a ticket: "+t,h:"Enter",f:async()=>{const r=await post("ticket",{text:t});toast(r.ok?said(r.lines).replace(/\s+→ intake$/,"")+" · filed":said(r.lines)||"Not filed");refreshSoon()}}]:[];
     $("#pallist").innerHTML=palItems.map((x,i)=>`<button class="pali ${i===palI?"on":""}" onclick="runPal(${i})"><em>${esc(x.t)}</em><span>${x.h}</span></button>`).join("")||`<div class="none" style="padding:14px 16px">One line is enough; the intake agent asks if it needs more. Kitchen run picks it up.</div>`;return}
-  const live=order().filter(j=>(!ended(j)||stopped(j))&&j.kind!=="setup");
+  const live=order().filter(j=>(!ended(j)||stopped(j)));
   palItems=[...live.map(j=>({t:(j.state==="you"?"Reply to ":"Message ")+j.num+" · "+j.title,h:j.state==="you"?"needs you":stp(j).nm,f:()=>{openJob(j.id);setTimeout(()=>message(j.id),60)}})),
     ...live.filter(j=>j.state==="run").map(j=>({t:"Pause "+j.num+" · "+j.title,h:"after its step",f:()=>pause(j.id)})),
     ...live.filter(j=>j.state==="paused").map(j=>({t:"Resume "+j.num+" · "+j.title,h:"paused",f:()=>resume(j.id)})),
     ...order().filter(ended).map(j=>({t:"Open "+j.num+" · "+j.title,h:j.state==="done"?"done":j.state,f:()=>openJob(j.id)})),
     {t:"New ticket",h:"",f:()=>setTimeout(newTicket,10)},
-    ...(setup&&setup.state!=="none"?[{t:"Open Setup",h:setup.state,f:()=>openJob("setup")}]:[]),
-    {t:"Pause every running agent",h:"",f:()=>jobs.filter(j=>j.state==="run"&&j.kind!=="setup").forEach(j=>pause(j.id))},
+    {t:"Pause every running agent",h:"",f:()=>jobs.filter(j=>j.state==="run").forEach(j=>pause(j.id))},
     {t:"Resume every paused agent",h:"",f:()=>jobs.filter(j=>j.state==="paused").forEach(j=>resume(j.id))},
     {t:view==="list"?"Switch to Board":"Switch to List",h:"",f:()=>setView(view==="list"?"board":"list")},
     {t:"Switch theme",h:"",f:toggleTheme}].filter(x=>x.t.toLowerCase().includes(q));
@@ -996,7 +925,7 @@ document.addEventListener("keydown",e=>{
   const t=e.target,typingIn=t.tagName==="TEXTAREA"||t.tagName==="INPUT";
   if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==="k"){e.preventDefault();palette(!$("#pal").classList.contains("on"));return}
   if($("#pal").classList.contains("on")){if(e.key==="Escape")palette(false);else if(e.key==="ArrowDown"){e.preventDefault();palI=Math.min(palItems.length-1,palI+1);paintPal()}else if(e.key==="ArrowUp"){e.preventDefault();palI=Math.max(0,palI-1);paintPal()}else if(e.key==="Enter"){e.preventDefault();runPal(palI)}return}
-  if(t.dataset&&(t.dataset.draft||t.dataset.q)){const id=t.dataset.q?"setup":t.dataset.draft; if(e.key==="Enter"&&!e.shiftKey&&!e.isComposing){e.preventDefault();send(id)} else if(e.key==="Escape"){t.blur();if(expanded){expanded=null;renderList()}} return}
+  if(t.dataset&&t.dataset.draft){const id=t.dataset.draft; if(e.key==="Enter"&&!e.shiftKey&&!e.isComposing){e.preventDefault();send(id)} else if(e.key==="Escape"){t.blur();if(expanded){expanded=null;renderList()}} return}
   if(typingIn||e.metaKey||e.ctrlKey||e.altKey)return;
   const o=order().map(j=>j.id),i=o.indexOf(sel);
   if(e.key==="j"||e.key==="ArrowDown"){e.preventDefault();sel=o[Math.min(o.length-1,i+1)];if(open){open=sel;renderPanel(true);refreshSoon()}renderList();const n=$("#rw-"+CSS.escape(sel||""));if(n)n.scrollIntoView({block:"nearest"})}
@@ -1011,14 +940,14 @@ document.addEventListener("keydown",e=>{
 document.addEventListener("click",e=>{
   const b=e.target.closest("[data-act]");
   if(b){const id=b.dataset.id,a=b.dataset.act;e.stopPropagation();
-    if(a==="message")message(id);else if(a==="pause")pause(id);else if(a==="resume")resume(id);else if(a==="stop")stopJob(id);else if(a==="reject")reject(id);else if(a==="chip")useChip(id,b);else if(a==="copy")copyRun();else if(a==="copy-build")copyBuild();else if(a==="approve-tk")approveTk();else if(a==="start-runner")startRunner();else if(a==="ask")askChanges(id,true);else if(a==="ask-cancel")askChanges(id,false);else if(a==="copy-branch")copyBranch(id);
+    if(a==="message")message(id);else if(a==="pause")pause(id);else if(a==="resume")resume(id);else if(a==="stop")stopJob(id);else if(a==="reject")reject(id);else if(a==="chip")useChip(id,b);else if(a==="copy")copyRun();else if(a==="start-runner")startRunner();else if(a==="ask")askChanges(id,true);else if(a==="ask-cancel")askChanges(id,false);else if(a==="copy-branch")copyBranch(id);
     return}
   const r=e.target.closest("[data-row]");if(r)openJob(r.dataset.row);
 });
 document.addEventListener("submit",e=>{const f=e.target.closest("form[data-cmp]");if(f){e.preventDefault();send(f.dataset.cmp)}});
 
 /* ───────── boot ───────── */
-$("#nJobI").innerHTML=I.list;$("#vList").innerHTML=sv('<path d="M2.5 4h11M2.5 8h11M2.5 12h11"/>',14)+"<span>List</span>";$("#vBoard").innerHTML=I.board+"<span>Board</span>";$("#nYouI").innerHTML=S.you;$("#nRunI").innerHTML=S.run.replace('class="spin"','');$("#nDoneI").innerHTML=S.ok;$("#nSetI").innerHTML=I.gear;$("#nTkI").innerHTML=I.box;$("#nCoI").innerHTML=I.coin;$("#nThI").innerHTML=I.sun;$("#kI").innerHTML=I.search;
+$("#nJobI").innerHTML=I.list;$("#vList").innerHTML=sv('<path d="M2.5 4h11M2.5 8h11M2.5 12h11"/>',14)+"<span>List</span>";$("#vBoard").innerHTML=I.board+"<span>Board</span>";$("#nYouI").innerHTML=S.you;$("#nRunI").innerHTML=S.run.replace('class="spin"','');$("#nDoneI").innerHTML=S.ok;$("#nCoI").innerHTML=I.coin;$("#nThI").innerHTML=I.sun;$("#kI").innerHTML=I.search;
 renderList();poll();pollDetail();
 </script>
 </body>

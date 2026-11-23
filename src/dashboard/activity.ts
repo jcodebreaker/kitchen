@@ -1,10 +1,8 @@
-// What an agent did, for the dashboard's Activity tab and a job's live line, read from its own
-// event stream: the stream-json events the adapters tee to jobs/<id>/activity/*.jsonl, or a Claude
-// session transcript (same message shapes) for runs from before the tee. Codex `exec --json` events
-// are read too. Files are read incrementally: only the bytes added since the last read are parsed.
+// What a lane agent did, for the dashboard's Activity tab and a job's live line, read from its own
+// event stream: jobs/<id>/activity/*.jsonl, which Kitchen's activity hook (hooks/activity.py) writes in
+// Claude Code's stream-json message shapes. Codex `exec --json` events are
+// read too. Files are read incrementally: only the bytes added since the last read are parsed.
 import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 
 /** One line of activity. `tool` is a call (open while `dur` is null), `res`/`bad` its outcome, `think` a short line of the agent's own text. */
@@ -202,21 +200,4 @@ export function activityOf(file: string, roots: string[] = []): Ev[] {
   c.size = st.size;
   c.mtime = st.mtimeMs;
   return c.p.events;
-}
-
-const transcripts = new Map<string, string>();
-/** A Claude session's transcript under ~/.claude/projects (where `claude` keeps it), found once and remembered. */
-export function claudeTranscript(sessionId: string, home = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude")): string | undefined {
-  const hit = transcripts.get(sessionId);
-  if (hit) return hit;
-  const base = path.join(home, "projects");
-  if (!/^[\w-]+$/.test(sessionId) || !fs.existsSync(base)) return undefined;
-  for (const d of fs.readdirSync(base)) {
-    const p = path.join(base, d, `${sessionId}.jsonl`);
-    if (fs.existsSync(p)) {
-      transcripts.set(sessionId, p);
-      return p;
-    }
-  }
-  return undefined;
 }

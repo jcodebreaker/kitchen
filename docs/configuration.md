@@ -1,47 +1,47 @@
 # Configuration
 
-`kitchen.yaml` in your repo. Every key has a default; an unknown key is refused. The ones you are most likely to change:
+`kitchen.yaml` in your repo. Every key has a default; an unknown key is refused (keys an older Kitchen wrote are
+ignored, and `kitchen init` names them). The schema is `src/config.ts` (`ConfigSchema`).
 
 ```yaml
 version: 1
-agent: { tool: claude }                 # or codex; models: { strong, medium, cheap }
-concurrency: 2                          # jobs at once (each gets its own app instance)
-round_limit: 3                          # build/verify/review rounds before a human is asked
-checks: ["npm run lint", "npm test"]    # what Gate runs on every build
-test_cmd: "npm test -- {file}"          # how a `test <file>` proof runs
-forge: { kind: github, repo: you/your-repo }   # PRs on GitHub (default: local, no PRs)
-source: { kind: github, label: kitchen }       # take labelled issues as tickets (default: prompt)
-retro: { every_jobs: 5, mute_after: 3, max_tickets: 3 }
+agent: { tool: claude, max_usd: 20 }          # max_usd: kitchen run's spend cap
+round_limit: 3                                 # Build → QA → Review rounds before a person is asked
+parallel: 3                                    # lane agents at once
+checks: [{ name: test, run: "npm test" }]      # Kitchen runs them after Build and on staging before a merge
+checks_install: npm                            # a frozen install in each fresh worktree
+app: { start: "npm start", health: "/healthz", reset: "npm run seed" }
+staging: { branch: staging, base: main, max_lines: 400 }
+forge: { kind: github, repo: you/your-repo }   # merge into staging through a PR (default: local)
 ```
-
-Every key, with its default:
 
 | key | default | what |
 |---|---|---|
-| `version` | `1` | schema version (`kitchen migrate` raises it) |
-| `agent` | `{ tool: claude, timeout_sec: 1800, max_turns: 80 }` | `tool` claude or codex; `models: { strong, medium, cheap }` maps tiers to model names; `command: [argv]` to start the tool another way |
-| `models` | intake, spec, builder, smith: `strong`; setup (`kitchen toolkit build`), verifier, reviewer, report, maintain: `medium`; retro: `cheap` | the tier (or a literal model name) per role |
-| `concurrency` | `2` | jobs at once |
-| `round_limit` | `3` | rounds before a human is asked |
-| `checks` | `[]` (`kitchen init` fills them in) | commands Gate runs in the job's worktree: strings, or `{ name, run, timeout_sec }` |
-| `checks_network` | `false` | let the checks, `checks_prepare` and the install's scripts reach the network (the `checks_install` download always has it) |
-| `checks_install` | none (`kitchen init` sets it from your lockfile) | `npm`, `pnpm`, `yarn` or `bun`: a frozen install before the checks and `test` proofs. The download has the network and runs no package scripts; the scripts run after in a rebuild, offline unless `checks_network` |
-| `checks_prepare` | none | your own command that readies a job worktree, after `checks_install`, in the same sandbox; it has the network only with `checks_network: true`. Runs once per worktree, again when a lockfile changes |
-| `test_cmd` | `npm test -- {file}` | how a `test <file>` proof runs |
-| `paths` | low / medium / high | per risk: `spec` (inline, full), `verify` (short, full, related-features), `review` lenses, `human: always` |
-| `surfaces` | `{ ui: [ux, ui], security: [security] }` | extra review lenses when a ticket touches a surface |
-| `high_paths` | migrations, auth, payment, infra, .github | files that make a diff high risk |
-| `seed_paths` | migrations, seeds, fixtures, `db/**`, `*.sql`… | seed or schema files: a diff touching them is high risk |
-| `risk_floor` | `{ diff_lines_medium: 300, diff_lines_high: 1000 }` | diff size that raises risk |
-| `automerge` | `off` | reserved: v0.1 never merges, whatever this says |
-| `protected` | `[kitchen.yaml]` | files no builder may change |
-| `retro` | `{ every_jobs: 5, mute_after: 3, max_tickets: 3, never_mute: [security], lookback_days: 30 }` | see Retro above; `never_mute` names lenses or categories |
-| `backoff` | `{ base_sec: 60, max_sec: 3600 }` | waits after a rate limit |
-| `evidence_keep_days` | `30` | Reports older than this are pruned from `kitchen-evidence` |
-| `maintain_churn_lines` | `300` | changed lines in feature code that start `kitchen toolkit maintain` |
-| `feedback` | `{ trusted: [], trust_associations: [OWNER, MEMBER, COLLABORATOR] }` | whose PR comments count |
-| `forge` | `{ kind: local, base: main }` | `github` with `repo: owner/name` (and optional `url`) for PRs |
-| `source` | `{ kind: prompt, label: kitchen, operators: [] }` | `github`: labelled issues are tickets |
-| `skills` | `{ enabled: true, use_installed: [] }` | role skills (see [Role skills](../README.md#role-skills)); `enabled: false` runs every role on its prompt alone; `use_installed` names vendored skills to take from your own install; `host: claude\|codex` says where to look for the `fake` tool |
+| `round_limit` | 3 | rounds (QA or review sending the job back to Build) before it goes to a person |
+| `parallel` | 3 | lane agents at once; the wave plan holds the rest |
+| `models.intake` / `builder` / `qa` / `reviewer` | strong / strong / medium / medium | the model each lane's agent runs on: a tier, or a model name |
+| `agent.tool` | claude | the orchestrator's tool (`kitchen run` starts Claude Code) |
+| `agent.command` | `claude` on PATH | the argv prefix `kitchen run` starts |
+| `agent.models` | opus / sonnet / haiku | what `strong` / `medium` / `cheap` mean |
+| `agent.max_usd` | none | `kitchen run`'s `--max-budget-usd` |
+| `checks` | [] | shell commands, run in the job's worktree from its root; a string or `{ name, run, timeout_sec }` |
+| `checks_install` | none | `npm`, `pnpm`, `yarn`, `yarn-classic` or `bun`: a frozen install before the checks in a fresh worktree |
+| `checks_prepare` | none | another command to ready a worktree (after the install) |
+| `app.start` | "" | the command that serves the app in the foreground; it gets `$PORT` (and `{port}` in the command) |
+| `app.port` | a free one | a fixed port, for an app that can't take `$PORT` (then QA runs one app at a time) |
+| `app.url` | `http://127.0.0.1:{port}` | where the app answers |
+| `app.health` | `/` | a path that answers below 400 once the app is up |
+| `app.reset` | none | puts the data back to its seed; run before every `kitchen qa up` and by `kitchen qa reset` (down, reset, up) between QA's checks. `kitchen init` takes a `db:reset`, `reset`, `seed` (and similar) script or Makefile target; without one, QA's restarts keep the data, so add it if the app stores any (e.g. `rm -f data/*.json`) |
+| `app.ready_timeout_sec` | 60 | how long `kitchen qa up` waits for the health check |
+| `staging.branch` | staging | where passing jobs merge; never the base, `main` or `master` |
+| `staging.base` | the branch init ran on | what staging is created from; Kitchen never touches it |
+| `staging.max_lines` | 400 | a bigger change stops at Ready |
+| `staging.auto_merge` | true | false: every job stops at Ready |
+| `high_paths` | migrations, auth, payments, infra, CI, `.env*` | a change touching one stops at Ready |
+| `forge.kind` | local (github when init found GitHub and `gh`) | `github`: push the job branch, PR into staging, merge pinned to the reviewed head |
+| `skills.enabled` | true | false: every lane on its role prompt alone |
+| `skills.use_installed` | [] | vendored skills to take from your own install instead |
 
-`kitchen migrate --dry-run` shows what an upgrade of Kitchen would change in `kitchen.yaml` and in the Toolkit's template files, and exits 1 when there is something to change (0 when there is nothing), so CI can check it; `kitchen migrate` writes it (you commit it).
+Environment: `KITCHEN_CLAUDE_BIN` (the `claude` binary `kitchen run` starts), `KITCHEN_GH_BIN` (the `gh` Kitchen's
+merge uses), `KITCHEN_PROTECTED_BRANCHES` (more branches the push guard protects), `KITCHEN_ALLOW_PROTECTED_PUSH=1`
+(turns the push guard off for one Claude Code session: a person's own).

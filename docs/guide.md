@@ -1,240 +1,157 @@
 # Kitchen guide
 
-The long version of the README's Quick start: every step, what each command does and prints, the commands,
-the dashboard and what Kitchen learns. Settings are in [configuration.md](configuration.md); what Kitchen
-protects and what it can't yet in [safety.md](safety.md).
+The long version of the README's four steps: what each command does and prints, the commands, the dashboard and a
+worked example. Settings are in [configuration.md](configuration.md); what Kitchen protects and what it can't in
+[safety.md](safety.md). Why it is built this way: [ADR 0016](adr/0016-kitchen-lite.md).
 
 ## 0. What you need
 
-- Node 20.11 or newer, and git. Your project must be a git repository with at least one commit.
-- [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude`) or Codex (`codex`) installed and logged in. Kitchen starts them as its agents and uses their login.
-- For GitHub pull requests: the GitHub CLI (`gh`) logged in. Without it Kitchen works locally (branches and reports, no PRs).
-- Later, for step 6: whatever your app needs to run locally (Docker, Postgres, Python…). Kitchen starts your app the way a developer would.
+- Node 20.11 or newer, git, and a repository with at least one commit.
+- Python 3 (standard library only): the guard hooks run on it.
+- [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude`), signed in. The queue runs in a Claude Code session: yours (`/kitchen run`) or a headless one (`kitchen run`).
+- Optional: the GitHub CLI (`gh`), signed in. With it, and `origin` on GitHub, passing jobs merge into `staging` through a pull request; without it, into a local `staging` branch.
 
-You don't have to check these by hand: `kitchen init` checks them first (step 2).
+`kitchen init` checks all of these first.
 
 ## 1. Install
 
 ```sh
-npm install -g devkitchen        # puts `kitchen` on your PATH
-kitchen --version                # 0.1.0
+npm install -g devkitchen        # puts `kitchen` on your PATH, with Playwright pinned
+npx playwright install chromium  # once per machine, if Playwright's Chromium isn't there yet
 ```
-
-Or run it without installing: put `npx devkitchen` wherever this page says `kitchen`.
-
-**Optional: choose cheaper models first.** Kitchen uses three model tiers. On Claude they are `strong` = opus, `medium` = sonnet, `cheap` = haiku. To spend less, create `kitchen.yaml` in your repo before step 2 (`kitchen init` keeps an existing file):
-
-```yaml
-version: 1
-agent: { tool: claude, models: { strong: sonnet, medium: sonnet, cheap: haiku } }
-```
-
-(For Codex: `tool: codex`.)
 
 ## 2. Set up Kitchen in your repo
 
 ```sh
 cd your-repo
-kitchen init                     # or: kitchen init --tool codex
+kitchen init
 ```
-
-It takes seconds, like `git init`. First it checks what Kitchen needs, one line per tool, before it writes anything:
 
 ```
 Checking what Kitchen needs…
-  ✓ node     22.11.0
+  ✓ node     26.9.0
   ✓ git      2.39.5 · the repo has a commit
+  ✓ python3  3.11.9 · for the guard hooks
   ✓ claude   signed in (claude.ai)
-  ✗ codex    not found (not needed: claude is ready)
-  ✓ gh       signed in (optional: for GitHub pull requests)
+  ✓ gh       signed in (optional: to merge into staging on GitHub)
 
-Setting up Kitchen in your-repo…
-  ✓ Wrote kitchen.yaml     agent claude · 1 check from package.json
-  ✓ Installed the skill    /kitchen for Claude Code and Codex · role skills: 6 of 8 found (kitchen skills)
-  ✓ Updated .gitignore     18 Kitchen entries
-  … Running test (npm test)…
-  ✓ Ran the checks         test passed on main (d23dc73)                     0.3s
-Done in 0.5s · no agent
+Setting up Kitchen in e2e-lib…
+  ✓ Wrote kitchen.yaml     1 check from package.json · app: `npm start` · staging from main
+  ✓ Installed the skill    /kitchen for Claude Code and Codex · role skills: 6 of 7 found (kitchen skills)
+  ✓ Installed guard hooks  8 added to .claude/settings.json · secrets, key literals, protected push, deletes, worktree
+  ✓ Updated .gitignore     10 Kitchen entries
+  ✓ Staging branch         created staging from main (18a0d5a)
+  ✓ Ran the checks         test passed on main                               0.3s
+Done in 0.7s · no agent
 ```
 
-**The preflight.** Node 20.11 or newer; git, and a commit in the repo; `claude` or `codex`, and whether it is signed in (`claude auth status`, `codex login status`: local checks, never a model call); and `gh` (optional, required once `forge.kind: github`). A ✗ comes with the exact command that fixes it on your OS, and a required ✗ stops init with exit code 2 before anything is written:
+- **The preflight.** A ✗ comes with the exact command that fixes it on your OS; a required ✗ stops init (exit 2) before anything is written. Kitchen installs nothing and signs no one in.
+- **kitchen.yaml.** The checks (from `package.json`, `Makefile`, `pyproject.toml`, `go.mod`, `Cargo.toml`) and how QA starts your app (`app:`: from `package.json` scripts, Django's `manage.py`, a `Makefile`). When nothing obvious starts the app, init asks you one question in a terminal; `--yes` asks nothing. The app gets a free port in `$PORT`, so two jobs can run theirs at once.
+- **The guard hooks** are copied to `.claude/hooks/kitchen/` and merged into `.claude/settings.json`: what was there stays, the old file is backed up beside it, nothing is added twice. See [safety.md](safety.md).
+- **staging** is created from the branch you are on (on GitHub too, when `origin` is there and `gh` is signed in).
+- **The checks run once** on your checkout. If they fail, every job's would too: fix them first.
 
-```
-Checking what Kitchen needs…
-  ✓ node     22.11.0
-  ✓ git      2.39.5 · the repo has a commit
-  ✗ claude   not signed in
-      claude        then type /login in it, and /exit when it says you're signed in
-  ✓ gh       signed in (optional: for GitHub pull requests)
+Commit `kitchen.yaml`, `.gitignore`, `.claude/settings.json`, `.claude/hooks/kitchen/` and the skill folders when you like.
 
-Kitchen needs the ✗ lines not marked optional fixed first. Run the command under each one yourself
-(Kitchen installs nothing and signs no one in), then check again. Resume: kitchen init
-```
-
-Kitchen never installs anything or signs you in. In a terminal it offers to check again once you have fixed it (`Fixed it (in another terminal)? Check again [Y/n]`); success is judged by that re-check, not by an installer's exit code.
-
-**Questions.** Every question shows its recommended answer first, and Enter takes it: `[Y/n]`, or a numbered list with `(recommended)` beside the default (for example which agent to use when both `claude` and `codex` are signed in). `kitchen init --yes` takes every recommended answer, for CI. One exception: checks an agent proposed are `[y/N]`, and `--yes` never accepts them.
-
-**Resume.** Each answer is written to `.kitchen/init/answers.json` the moment you give it. If init stops (a missing tool, a failing check, Ctrl-C at a question) it prints the one command that resumes it, and running it again says where it stopped and continues there. `kitchen init --start-over` begins again; the old state goes to `.bak`.
-
-It writes `kitchen.yaml` with your project's **checks** (what Gate runs on every job), found in `package.json` scripts (lint, typecheck, test, build; the package manager from the lockfile), `Makefile` targets (a Makefile with `test` or `check` wins), `pyproject.toml` (pytest, ruff, mypy when they have their own `[tool.…]` section; a repo `.venv` is used), `go.mod` or `Cargo.toml`. A script that changes files or never ends (`--fix`, `--write`, watch, docker, serve) is never taken. It installs the `/kitchen` skill, adds Kitchen's entries to `.gitignore`, and runs the checks once.
-
-**What it runs, and how.** The checks run once on your own checkout (your HEAD, plus whatever you have changed) under the same sandbox Gate uses: no network, your home folder unreadable, writes only inside the repo, `CI=1`. Each prints `Running <name>…` first; Ctrl-C stops it and everything it started. When dependencies aren't installed it installs them only with a frozen install from your lockfile, announced first. It writes that as `checks_install: npm` (or pnpm, yarn, bun), which jobs use too, in two steps: the download, the only step with the network, runs no package scripts (`npm ci --ignore-scripts`, `pnpm install --frozen-lockfile --ignore-scripts`, `yarn install --immutable --mode=skip-build`, `bun install --frozen-lockfile --ignore-scripts`); then the packages' install scripts run in a rebuild (`npm rebuild`, `pnpm rebuild`, `yarn rebuild`; Bun runs none), online only while the dependency files are exactly your base's (a native module's prebuilt download needs it), offline once a job changes them, unless you set `checks_network: true`. So a `postinstall` a builder adds, or a git dependency's, never runs with the network. Yarn 1 (no `.yarnrc.yml`, no Berry lockfile) installs with `yarn install --frozen-lockfile --ignore-scripts` and `npm rebuild`, and its scripts run through `npm run`. With no lockfile it installs nothing and skips the checks; commit one and run `kitchen init` again to add the install. If they fail it says so plainly and exits 1: Gate would fail every job until they pass, so fix them (or edit `checks:`) first.
-
-**When nothing obvious is there**, it asks an agent once, briefly, on the cheap model, to read the repo and propose checks. Those are never run without you: in a terminal it shows them and asks `Use these checks? [y/N]` (Enter is no); without one (a script, an agent's shell) it writes them into `kitchen.yaml` commented out, for you to review and uncomment. It doesn't ask the agent again on the next `kitchen init` (unless the call failed). Scripts it leaves out as unsafe are named (`skipped lint (\`eslint . --fix\` changes files)`).
-
-Commit `kitchen.yaml`, `.gitignore`, `.claude/skills/kitchen/` and `.agents/skills/kitchen/` when you like.
-
-From Claude Code or Codex instead: `kitchen init --skill`, then type `/kitchen set up Kitchen`.
+A repo set up by an older Kitchen keeps working: `kitchen.yaml` keys that no longer exist are ignored (init names them), old job folders read with their stages folded in, and an old `.kitchen/toolkit` is used to start the app when `app.start` is empty.
 
 ## 3. Give Kitchen a ticket
 
 ```sh
-kitchen ticket "On the tasks list, show how many tasks are open at the top"
+kitchen ticket "Add GET /stats returning how many books and members the library has"
+# ticket 001-add-get-stats-returning-how-many-books-a  "Add GET /stats returning how many books and members the…"  → intake
 ```
 
-Or tell `/kitchen` what you want in Claude Code or Codex. With GitHub, label an issue `kitchen` instead (see [Configuration](configuration.md)).
+Plain words are enough. The intake lane rates it (kind, risk), lists the files it expects to touch and writes one to five criteria, each tagged with how QA checks it: `page` (a real browser), `http`, `test` or `cmd`. If it can't tell what done looks like, it asks you one question (`kitchen status` shows it; answer with `kitchen feedback`).
 
-## 4. Run it
+## 4. Run the queue
 
-```sh
-kitchen run --detach             # works the queue in the background; log in .kitchen/run.log
-kitchen status                   # one row per job: stage, round, PR, report
-kitchen dashboard                # every job in your browser: http://127.0.0.1:7357
-```
+In Claude Code: `/kitchen run` (or `/kitchen:kitchen run` from the plugin). In a terminal: `kitchen run` (add `--detach` to put it in the background; `kitchen run --print` shows the exact command).
 
-For the first second after `run --detach`, `kitchen status` may still say `runner: not running`; run it again. `status` doesn't wait: run it whenever you want to look (or keep the dashboard open, it refreshes itself). Without GitHub every job shows `no PR`; that is normal.
+The session is the orchestrator. It loops:
 
-A ticket goes through intake (is it clear, how risky), spec (acceptance criteria, each with a proof), build, gate (your checks), verify (Kitchen runs every proof), review, and report. A small ticket takes a few minutes and costs cents to a few tens of cents.
+1. `kitchen job next`: the next wave. Downstream first (review, QA, build, intake), at most `parallel` lanes at once. Jobs that touch the same files build side by side: git merges each into `staging`, and one that conflicts goes back to Build. Only a job that names an unfinished one on its `AFTER:` line waits for it.
+2. For each lane, `kitchen job start <id> <lane>` makes the job's worktree (`.worktrees/<id>`, branch `kitchen/<id>` from staging), writes the lane's brief and hands over your unread messages; the session starts one agent with the prompt and model it returns.
+3. When the agent returns, `kitchen job finish <id>`: Kitchen reads what the lane left and moves the job, or refuses and says why.
 
-Until Kitchen can drive your app (step 6), a job is proven by your checks and by tests (`test <file>` and `cmd` proofs), and its Report says so. A ticket whose criteria need the running app pauses with `paused(no-toolkit)`: build the Toolkit (step 6) and it goes on, or `kitchen resume <id>` to go on without it, with those criteria marked "not proven (no Toolkit)". A high-risk ticket (auth, payments, migrations) waits for the Toolkit.
-
-If a job needs you, `kitchen status` says `needs-info` or `needs-human` with the reason. Answer with `kitchen feedback <id> "<your answer>"`, or drop it with `kitchen reject <id>`. You can also talk to a job while it runs (`kitchen steer <id> "keep the diff small"`), or park it (`kitchen pause`, `kitchen stop`, `kitchen resume`): see [Commands](guide.md#commands). The dashboard does all of this from the browser.
-
-## 5. Read the Report and merge
-
-When the job is `done`, `kitchen status` prints the path of its Report (`.kitchen/jobs/<id>/report.html`; the dashboard links it). It opens with what a person must check, then each requirement, the criteria that prove it, who decided each verdict, and the evidence (screenshots, command output), then the review findings and the cost.
-
-- Local (no GitHub): the work is on the branch `kitchen/<id>`, where `<id>` is the full job id from `kitchen status` (for example `kitchen/001-add-a-version-flag`). Review it and merge it: `git merge kitchen/001-add-a-version-flag`. The Report and its evidence are also committed, one folder per job, on a local branch `kitchen-evidence` (you never merge that one).
-- GitHub: the pull request is marked ready for review, with a comment listing each criterion's verdict and a link to the Report on the `kitchen-evidence` branch. Merge it on GitHub as usual. Kitchen never merges.
-
-A review comment on the PR from a trusted person sends the job back to build with your comment.
-
-Cleaning up: Kitchen removes nothing you might still want. After merging, you may delete the job branch (`git branch -d kitchen/<id>`) and `kitchen/setup`; `.worktrees/` holds Kitchen's working copies (ignored by git) and can be removed when no `kitchen run` is going (`git worktree prune` afterwards). Keep `kitchen-evidence`: it is where the Reports live.
-
-## 6. Make Kitchen drive your app: `kitchen toolkit build`
-
-Kitchen's point is proof in your real, running app. For that it needs a **Toolkit**: the commands that start, drive and observe your app (see [Concepts](../README.md#concepts)). An agent writes it once, and Kitchen proves it end to end. It takes 3 to 15 minutes and costs about $0.50 to $1 on Claude with sonnet.
-
-```sh
-kitchen toolkit build            # or: kitchen init --toolkit, to do steps 2 and 6 in one go
-```
-
-It prints one line per phase:
-
-```
-Teaching Kitchen to run your-repo…
-  ✓ Read the repo          api · no questions                                31s · $0.12
-  ✓ Wrote the Toolkit      api · features: books, loans                      2m 50s · $0.71
-  ✓ Proved it              4 drives × 2 (after a reset) · 2 copies at once   25s
-Done in 3m 46s · $0.83 · on branch kitchen/setup
-Next: review it (git log -p main..kitchen/setup), then git merge kitchen/setup
-```
-
-While it works it shows where it is, `✓ Read the repo · ▸ Writing the Toolkit · Prove it`, and a heartbeat from the setup agent's live activity (`… writing .kitchen/toolkit/features/loans.md · 1m 20s`, `… running toolkit check (step 4): drive books.list ✓`). In a terminal that is one status line rewritten in place; in a log or CI, a line at most every 10 seconds. It is never silent for longer.
-
-Its questions work like init's: the recommended answer first, Enter takes it, `--yes` takes them all; each answer is saved as you give it, so a stop halfway asks only the rest. Run it again to continue where it stopped; `--start-over` begins again (the old state goes to `.bak`, the branch to `kitchen/setup-bak`, or `kitchen/setup-bak-<UTC time>` when that exists; if git can't rename it, nothing moves and it stops). A `kitchen/setup` you pushed, and its pull request, stay on GitHub.
-
-Every detail (each drive, the evidence, the sandbox notes) goes to `.kitchen/init/init.log`; `--verbose` shows it on the terminal too. A failure prints the failing step in full, and `kitchen toolkit build` again resumes from there.
-
-If it has questions (at most three, often none) it asks them right there. Without a terminal (a script, CI, an agent's shell) it writes them to `.kitchen/setup-questions.json` and exits with code 3: answer them in a file `{ "answers": { "q1": "…" } }` and run `kitchen toolkit build --answers <file>`. You can also run it in the background, `kitchen toolkit build --detach`, and follow it with `kitchen toolkit build --status --wait 90` (repeat until it ends). From Claude Code or Codex, `/kitchen` does all of this; approve these once:
-
-| tool | approve | why |
+| lane | the agent | Kitchen, at `finish` |
 |---|---|---|
-| Claude Code | the Bash command `kitchen toolkit build --detach` (once), and `kitchen run --detach`. If you use Claude Code's sandbox mode, these two must run **with the sandbox off** | They start Kitchen in the background. Kitchen starts its own agents, Docker and network calls, which a sandboxed command can't |
-| Claude Code | `kitchen init`, `kitchen toolkit build --status --wait 90`, `kitchen status`, `kitchen ticket …` | Quick, read-only, or files under the repo. Safe to allow always |
-| Codex | the escalation for `kitchen toolkit build --detach` and for `kitchen run --detach` ("run outside the sandbox"), once each | Same reason: inside Codex's sandbox Kitchen can't write `.git`, reach Docker or start its agents |
-| Codex | nothing else | `kitchen init`, `kitchen toolkit build --status`, `kitchen status` and `kitchen ticket` run inside the sandbox |
+| intake | writes `intake.md`: decision, kind, risk, files, criteria | accepts it into Build, or asks you, or rejects |
+| build | changes the code in the worktree and commits | refuses uncommitted work or no commits; runs your checks itself; red checks: Build again |
+| qa | `kitchen qa up`, then each criterion against the running app (`kitchen qa page` for pages, `kitchen qa http` for APIs; `kitchen qa reset` before one that needs fresh seed data), `verdict.json` citing its evidence files | refuses a verdict with a missing row or missing evidence (a page PASS needs a screenshot); FAIL: Build again, next round |
+| review | reads the diff and QA's evidence, writes `review.json` | refuses a review whose branch moved; a blocking finding: Build again; else the merge |
 
-Then review and merge the Toolkit. Run these on your default branch (`main` below; use yours). The branch `kitchen/setup` is checked out in Kitchen's own worktree (`.worktrees/_setup`), so read it with `git log`/`git diff` rather than checking it out:
+A lane refused three times, or a job out of rounds (`round_limit`), goes to you (`needs-human`).
 
-```sh
-git log -p main..kitchen/setup   # what the setup agent wrote: .kitchen/toolkit/
-git merge kitchen/setup
-```
+**The merge.** Review passed: under a lock, Kitchen merges the reviewed head onto `staging` as it is now in a scratch worktree, runs your checks there, and moves `staging` only if they pass (on GitHub: it pushes the job branch, opens its PR into `staging` and merges it with `--match-head-commit`). A conflict or red checks: Build again, and that round starts by merging `staging` as it is now into the job branch (a clean merge is committed by Kitchen; a conflicting one is left for the builder to resolve and commit, and Kitchen refuses a build whose branch doesn't contain `staging`'s tip). High risk, a change to a `high_paths` file, more than `staging.max_lines` changed lines, or `staging` checked out somewhere: the job stops at **Ready** for you, with the reason.
 
-Jobs use the Toolkit that is on your main branch, so this merge is what lets them drive the app. A job paused `no-toolkit` goes on by itself at the next `kitchen run` (or `kitchen resume <id>`).
+## 5. Read the Report
+
+Every job that merged, stopped at Ready or needs you has `.kitchen/jobs/<id>/report.html`: what you must check first (why it is held, review notes), each criterion with QA's result and its evidence (screenshots inline, transcripts quoted), the review, the checks and the diff stat. `kitchen status` prints its path; the dashboard opens it.
+
+Merge `staging` into your base when you are happy with it. Kitchen never does.
 
 ## Commands
 
-| command | what it does |
-|---|---|
-| `kitchen ticket "<what you want>"` | files a ticket; `kitchen run` takes it in |
-| `kitchen run [--detach] [--once] [<job>]` | works the queue (`--detach`: in the background, log in `.kitchen/run.log`) |
-| `kitchen status [--json]` | one row per job |
-| `kitchen dashboard [--port 7357]` | the jobs in your browser (see [Dashboard](guide.md#dashboard)) |
-| `kitchen feedback <id> ["<text>"] [--to <stage>]` | answers a job that needs you; on a done job, a follow-up: another Build round |
-| `kitchen steer <id> "<text>"` | a message for a running job: add context, redirect it, ask what it is doing. A Claude agent reads it after the tool call it is in, without stopping. Codex, a step with no agent (Gate, Verify's engine part, Ready) and a paused job get it at the start of the next agent role, quoted as operator notes |
-| `kitchen pause <id>` | lets the current step finish, then parks the job (`paused(by-you)`) |
-| `kitchen stop <id>` | kills the job's agent (and the checks it started) now, then parks it; resume runs that stage again |
-| `kitchen resume <id>` | wakes a paused job where it stopped; it reads the messages sent while it was paused. A job you paused keeps no `kitchen run` waiting for it (like one that needs you), so start `kitchen run --detach` again if it has ended: `kitchen status` and the dashboard say when it isn't running |
-| `kitchen reject <id>` | closes a job without a PR |
-| `kitchen dismiss <job> [<finding>] [--reason "…"]` | lists a job's review findings, or says one was not useful |
-| `kitchen report [--json]` | the measures from the ledger |
-| `kitchen skills` | which role skills are installed for your agent tool, where, and how to install a missing one (see [Role skills](../README.md#role-skills)) |
-| `kitchen init …`, `kitchen toolkit …`, `kitchen migrate`, `kitchen retro …` | setup and maintenance: `kitchen --help` |
+```
+kitchen init [--tool claude|codex] [--yes] | init --skill
+kitchen ticket "<text>"
+kitchen run [--detach] [--max-usd n] | run --stop | run --print
+kitchen status [--json] · kitchen report [--json] · kitchen dashboard [--port 7357] · kitchen skills
+kitchen feedback <id> ["<text>"] [--to intake|build|qa|review]
+kitchen steer <id> "<text>" · pause <id> · stop <id> · resume <id> · reject <id>
+kitchen job next|start|finish|show …     the orchestrator's verbs
+kitchen qa up|down|reset|page|http <id> …   the QA lane's tools
+```
 
-A job's steering thread is `.kitchen/jobs/<id>/messages.jsonl`: each message with who sent it, when, and its status (`sent`, then `read` by a role, `mid-run` or `next-role`). Only Kitchen writes it. Message text has the trust of `kitchen feedback`: it is your request about the work, quoted to agents, never an instruction to Kitchen itself; it is capped at 4,000 characters.
+- Run them in the repo, or inside a job's worktree (`.worktrees/<id>`, where lane agents work): there they act on the main checkout's jobs, so QA's `kitchen qa up <id>` works from its worktree. A git worktree of your own elsewhere is its own repo.
+- `steer`: a message for the job's next agent; it is quoted into that lane's brief as operator notes and marked read by it.
+- `pause`: the job parks when its current lane finishes. `stop`: it parks now, and the working agent's result is dropped (its `finish` is refused). `resume`: back where it paused.
+- `feedback`: answers `needs-info` (back to intake, with your answer in the clarifications) or `needs-human` (back to the stage it stopped in, or `--to`); on a ready or merged job it starts a follow-up round.
 
 ## Dashboard
 
-`kitchen dashboard` serves every job on http://127.0.0.1:7357 (this machine only), and refreshes itself while jobs run:
-
-- **List** (the default) groups the jobs into Needs you, Running and Done; **Board** puts the running ones in stage columns. The page remembers which you chose.
-- Each running job shows a live line (the call its agent is making right now, with a shimmer while it runs), the time in its current stage (frozen while paused; a job that needs you shows how long it has waited; the job's total age is in its panel), its changed files and a six-step stage track: Intake, Build, Gate, Verify, Review, Report.
-- Click a job for its panel: the stage track, then **Activity** (every stage with what its agents did: their reasoning lines, each tool call with its time, file edits with +/− counts, your messages and whether they were read), **Checks** (each criterion and its last verdict) and **Changes** (files and line counts from the base). The Report link is there once it exists.
-- **One composer per job**, in its panel or under its row: answer a job that needs you, steer a running one, leave a note on a paused one, follow up on a done one (another Build round). Pause, Resume, Stop and Reject sit beside it. **New ticket** files a ticket.
-- **Setup** shows `kitchen toolkit build`'s steps (after a quick `kitchen init` only: "Toolkit not built"); its questions can be answered right there (the same as `kitchen toolkit build --answers <file> --detach`). A job paused `no-toolkit` shows as needing you, with its reason, a copy of `kitchen toolkit build` and Resume.
-- Keys: `J`/`K` move, `Enter` opens, `R` messages the selected job, `Esc` closes, `⌘K` (or Ctrl-K) opens the command palette. Light and dark follow your system; the Theme button switches. It works down to a phone's width.
-
-Every button is a CLI verb: the page sends `POST /api/<verb>` and the server calls the same engine function as the command, so the browser can do nothing `kitchen` can't. Jobs move only while `kitchen run` works the queue; the page says so when it isn't running.
-
-Safety: the server listens on 127.0.0.1 and refuses any other `Host` (DNS rebinding). It makes a random 32-byte token when it starts and puts it in the page it serves; every POST must carry it in an `x-kitchen-token` header, as `application/json`, and from the page's own origin. A cross-site page can send neither that header nor that content type, and can't read the token. The page loads nothing from elsewhere (it uses the system's own fonts) under a strict Content-Security-Policy. Another program running as you could read the token from the page, but it could run `kitchen` itself anyway.
-
-## Learning: report, dashboard, retro
-
-- `kitchen report` prints the measures Kitchen keeps from its first run: merge-ready rate over tickets taken in, first-pass verdict rate, rounds per job, escalation reasons, Toolkit gaps per job, INCONCLUSIVE and flake rate per drive, time (agent time and wall clock) and cost per job and per risk path, findings dismissed per review lens, primitive PRs per job. `--json` for the numbers.
-- `kitchen dashboard` serves the jobs in your browser; see [Dashboard](guide.md#dashboard).
-- **Retro.** Every 5 finished jobs (`retro.every_jobs`), Kitchen looks back. A review finding you dismiss (`kitchen dismiss <job> <finding> --reason "…"`, or a "not useful" reply naming the finding on the PR, in the same sentence) counts against its lens and its category (each finding has one: security, correctness, performance, naming, style, types, tests, docs, ux, ui); after 3 (`retro.mute_after`) that category stops blocking for that lens (it is still shown as a note). Security findings are never muted, in any lens: neither one in the `security` category nor one that mentions auth, a token, a session, permissions, ownership, injection, SQL, XSS, CSRF, a leak, a secret, a password, a credential or access. A security finding is dismissed only with a reason ("security-1-2 is not useful because …", or `--reason`). The rest of a PR comment that dismisses something is still feedback; a comment that only dismisses is not. PR replies are read for jobs done in the last 30 days (`retro.lookback_days`). `kitchen retro status` lists mutes; `kitchen retro unmute <lens>/<category>` lifts one. The retro also proposes up to 3 lesson tickets (a lint rule, a check, a Toolkit fix, or an AGENTS.md note) as **drafts**: Kitchen never works on its own proposal until you approve it (`kitchen retro approve <n>`, or on GitHub, add the `kitchen` label to the issue). It never edits Kitchen's own prompts.
+`kitchen dashboard` serves the jobs on 127.0.0.1: a List and a Board with lanes Needs you, Intake, Build, QA, Review, Ready and Merged. A job's panel shows each stage with the lane agent's live activity (written by the activity hook), the criteria with QA's results, and the changed files. From it you answer, steer, pause, resume, stop, reject and follow up, through the same functions as the CLI. When no orchestrator is working the queue, **Start Kitchen** runs `kitchen run --detach`; an action that gives the queue work starts one too.
 
 ## A worked example
 
-From Kitchen's own dogfood repo. The ticket, as filed:
+A fresh copy of `fixtures/e-library` (a small lending library API), two tickets that both touch `server.js`, and one steer:
 
-> kitchen status should end with one summary line after the job rows: how many jobs, how many are done, and how many need a person (needs-info or needs-human), e.g. '4 jobs: 2 done, 1 needs you'. With no jobs it keeps printing 'no jobs' and no summary.
+```
+kitchen ticket "Add GET /stats returning how many books and members the library has"
+kitchen ticket "Add a /catalog HTML page listing every book"
+kitchen steer 1 "keep the diff small"
+kitchen run
+```
 
-What Kitchen did, in about 3 minutes and $0.51:
+What the orchestrator did (the free stand-in session from the proof run, which plays each lane the way the skill tells a real session to):
 
-| step | what happened |
-|---|---|
-| Intake | rated it a low-risk feature; six requirements (R1–R6), one of them a negative (no summary with no jobs), and three criteria, each with a proof. Its first criteria failed Kitchen's own lint, so it asked; one line of feedback and it went on |
-| Build, round 2 | the builder added the summary line and a test |
-| Verify | C2 and C3 failed: the test file sat outside the folders vitest looked in. Back to build, with the failure |
-| Build, round 3 | the builder fixed the test include; gate, drives and verify passed: C1, C2, C3 PASS, proven by Kitchen running the real command |
-| Review, Report | no blocking findings; the Report below |
+```
+Wave 1: 001 intake, 002 intake
+001 intake: the brief carries the operator's note: keep the diff small
+Wave 2: 001 build; held: 002 (waits for 001 (build): both touch server.js)
+001 build: guard-worktree refused a write to the main checkout
+001 build: guard-protected-push refused `git push origin HEAD:main`
+001 build agent: READY → built (1 commit), checks pass → qa
+001 qa agent: QA FAIL → QA FAIL C1 → build (round 2)
+001 build agent: READY → built (2 commits), checks pass → qa
+001 qa agent: QA PASS → review
+001 review agent: REVIEW PASS (1 note) → merged into staging (53408c4)
+Wave 7: 002 build
+002 qa agent: QA PASS (a Playwright screenshot of /catalog) → review
+002 review agent: REVIEW PASS (1 note) → merged into staging (2195add)
+Queue drained.
+```
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="img/report-dark.webp">
-  <img alt="The job's Report: verdict PASS and REVIEW PASS, a summary, what changed with evidence links, and what a human must check" src="img/report-light.webp">
-</picture>
-
-The Report opens with what a person must still check (here: "1 jobs" reads oddly, and corrupt jobs count in the total), then the requirements, the criteria and who decided each verdict, the evidence, the review notes and the cost. Click a job in the dashboard for the same story live:
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="img/dashboard-panel-dark.webp">
-  <img alt="The dashboard with job 005's panel open: each stage with who ran it, its time and what its agent did" src="img/dashboard-panel-light.webp">
-</picture>
+`git log staging` has both merges; `main` is untouched; each job has its Report. (That run predates side-by-side builds: today 001 and 002 build in the same wave, and if 002 then conflicts with 001 in `staging` it goes back to Build on top of `staging`.)
 
 ## Developing Kitchen
 
-`npm test`, `npm run typecheck` and `npm run lint` (Biome). The scripts under `spikes/` prove whole paths against copies of the fixtures; each one's README says what it needs. On macOS with Docker Desktop, give a Docker-using spike a scratch folder under `$HOME` (the default `spikes/<wave>/.work/` is), not `/tmp` or `/private/tmp`: Docker Desktop shares only some host folders with its VM, and a bind mount from elsewhere can fail or come up empty in the container.
+```sh
+npm install
+npm test            # vitest
+npm run typecheck
+npm run lint        # biome
+```
+
+Run the CLI from source with `node src/cli.ts …` (Node 22.6+ runs TypeScript directly). `npm run skills:readme` regenerates the README's skills table; `npm run plugin:sync` the plugin's copy of the skill.

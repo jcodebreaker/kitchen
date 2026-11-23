@@ -1,20 +1,47 @@
 # Safety model and known limitations
 
-## Safety model
+Kitchen lite (ADR 0016) traded the OS sandbox for speed and simplicity. This page says plainly what protects you
+now and what doesn't.
 
-- **Agents hold no push rights and no GitHub token.** Kitchen runs them with a scrubbed environment: no `GH_TOKEN`, an empty gh config, git credential helpers off, push URLs rewritten to nothing. Kitchen itself commits, pushes and opens PRs, with your credentials, through one git helper that never trusts a worktree's own git config or hooks.
-- **Agents can't write job state or evidence.** Each agent writes one file in its worktree; Kitchen copies it. The evidence manifest is hash-chained and signed with a key in `~/.kitchen` that agents can't read; an edited, dropped or rolled-back entry is refused.
-- **Your app and your tests run with a scrubbed environment too**: no agent login, no git or GitHub credentials, plus only the fake values in `.env.kitchen` (made at setup; never your real `.env`). `cmd` and `test` proofs also run in a macOS sandbox: no network but localhost, your home folder unreadable except the worktree and toolchains.
-- **Ticket text is data.** It is quoted to agents, never followed as instructions to Kitchen. On GitHub only a labelled issue becomes work, and only the issue's author (or listed operators) can answer its questions.
-- **A human merges.** Kitchen never merges a pull request. High-risk paths are labelled `kitchen:review-required` and the Report opens with what a person must check.
-- **Screenshots can't be scanned for secrets**, so a Toolkit seeds only fake data. Text evidence is redacted before it is stored.
+## What protects you
 
-## Known limitations (v0.1)
+- **Guard hooks on every tool call.** `kitchen init` installs Claude Code hooks into `.claude/settings.json`. They
+  run for the orchestrator session and for every lane agent it starts (project hooks run inside subagents too):
+  - `guard-secrets`: no reading or piping `.env*` files (the example files stay readable), SSH keys, `.npmrc`,
+    credentials files, `.pem`.
+  - `guard-key-literals`: no live-looking API key written into a file (refused before it lands, by line number,
+    never echoing the value).
+  - `guard-protected-push`: no `git push` that updates or deletes `main`, `master` or `staging.base`, and no
+    `gh pr merge --admin`.
+  - `guard-delete-outside`: no `rm`, `find -delete` or `git clean` outside the project, never `/` or your home.
+  - `guard-worktree`: worktrees only under `.worktrees/`; a lane agent writes files (Edit, Write) only in its job's
+    worktree and job folder, never the main checkout or another job.
+  Adapted from super-board's hooks (MIT, see NOTICE).
+- **Kitchen moves the jobs, not the agents.** A job changes stage only through `kitchen job` verbs, which refuse
+  any move the stage table doesn't list. An agent's say-so decides nothing: Kitchen runs your checks itself after
+  Build and again on staging before a merge, refuses a QA verdict whose evidence files are missing, and refuses a
+  review of a branch that moved while it was reviewed.
+- **Staging, never main.** Kitchen merges only into `staging.branch`, which may never be the base, `main` or
+  `master` (refused in config and in code), and only the commit the review passed (`--match-head-commit` on
+  GitHub). High risk, high-risk paths and big diffs stop at Ready for you.
+- **No GitHub token in the session.** `kitchen run` starts the session without `GH_TOKEN`/`GITHUB_TOKEN`; Kitchen's
+  own push and merge use `gh`'s stored login.
+- **Ticket text and your messages are data.** They are quoted to agents, fenced, never followed as instructions to
+  Kitchen.
 
-- **Linux runs unsandboxed.** On macOS, Toolkit code the setup agent just wrote (and any Toolkit not yet merged) and every `cmd`/`test` proof run under `sandbox-exec`, away from your SSH keys, cloud and GitHub credentials, agent logins and Kitchen's key. Linux has no sandbox yet: those run as you, and Kitchen logs `UNSANDBOXED` when they start. Review `kitchen/setup` before you merge it either way. Details: `docs/adr/0008-setup-bridge.md` in the source repository.
-- **Your app and a merged Toolkit run unsandboxed.** They get no credentials through the environment, but they run as you, like `npm run dev` would. App code from a job branch is code an agent wrote; it is reviewed only after it ran.
-- **Docker is guarded only for an unmerged Toolkit, on macOS.** Toolkit code not yet merged talks to Docker through Kitchen's guard: no bind mounts outside the repo and temp, no privileged or host-namespace containers, and no requests on containers it didn't create (another project's database can't be exec'd into or stopped). A merged Toolkit, and Linux, talk to Docker directly.
-- **Ports are shared per machine.** Every Kitchen on the machine (each with its own `KITCHEN_HOME`) hands out slots from one registry, `~/.kitchen-slots/slots.json`, and skips ports something else listens on or a container publishes.
-- **Codex parity is owed.** Every part of Kitchen was built and proven on Claude Code first. Codex runs the same roles and passed setup on three of four fixtures, but its full proof runs (end to end, review, the benchmark subset) are still to do.
-- One machine, one repo per `kitchen run`. No hosted runner, no GitLab or Linear, no Windows, no mobile apps.
-- The real-GitHub path (PRs, evidence branch, issue tickets) is built and tested against a `gh` stand-in; its first run on a real repository is still owed.
+## What doesn't
+
+- **Hooks stop accidents, not a determined or injected agent.** Lane agents run as you, with your shell, in your
+  Claude Code session. A Bash command can write anywhere you can (the write guard sees Edit and Write, not every
+  shell redirect), reach the network, and run `gh` with your stored login. There is no OS sandbox and no container.
+  Keep secrets out of the repo, and don't run Kitchen on a machine whose credentials you can't risk.
+- **Merges into staging happen without a person.** Read the Reports before you merge staging onward.
+- **Evidence is plain files.** The hash chain and signing key are gone; the evidence's integrity rests on QA running
+  in its own lane and Kitchen checking the files exist. An agent that wanted to fake a screenshot could.
+- **Your app runs as you** when QA starts it, with your environment, like `npm start` would.
+- **Hooks need Claude Code and Python 3.** Codex can file tickets and read status, but running the queue needs Claude
+  Code (its Agent tool and hooks).
+- **`kitchen stop` can't kill an in-session agent.** It parks the job at once and drops the agent's result; the
+  agent itself finishes its current work.
+- The real-GitHub merge path is built and tested against a `gh` stand-in and a local bare repository; its first run
+  on a real GitHub repository is still owed.

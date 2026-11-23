@@ -1,137 +1,13 @@
-// The `kitchen` commands of PLAN §4 that W1 brings. One line of output per action.
-import { execFileSync, spawn } from "node:child_process";
+// `kitchen status` and `kitchen report`: read-only views of the job folders and the ledger.
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
-import { type RunResult, section02Lines } from "../bench/run.ts";
-import { checksPrepareOf } from "../checks/run-checks.ts";
-import { loadConfig } from "../config.ts";
-import { takeTicket } from "../engine/base.ts";
-import { dropAnswer, readRounds, recordAnswers } from "../engine/clarify.ts";
-import { contractOf, specArgsOf } from "../engine/contract.ts";
-import { cancelControl, readControl } from "../engine/control.ts";
-import { ensureUp, freshUp } from "../engine/instance.ts";
-import { ensureJobToolkit } from "../engine/job-toolkit.ts";
-import { readRunLock, staleReason } from "../engine/lock.ts";
-import { feedbackTarget, isActive, type Job, roundsUsed, STAGES, type Stage } from "../engine/machine.ts";
-import { addMessage } from "../engine/messages.ts";
-import { needsToolkitToGoOn, wakeWithToolkit } from "../engine/no-toolkit.ts";
-import { moveJob, runKitchen } from "../engine/runner.ts";
-import { findingById, findingsOf } from "../engine/stages/context.ts";
-import { findJob, jobDirOf, kitchenDir, scanJobs, writeAtomic } from "../engine/store.ts";
-import { runView } from "../engine/views.ts";
-import { changedFiles, headOf } from "../engine/worktree.ts";
-import { appendLedger, readLedger } from "../ledger/append.ts";
-import { formatMeasures, measures } from "../ledger/measures.ts";
-import { formatCounts, summarize } from "../ledger/report.ts";
-import { prove } from "../proof/prove.ts";
-import { needsReason } from "../retro/categories.ts";
-import { PromptSource } from "../sources/prompt.ts";
-import { APPROVE_HOW, noToolkitWords, toolkitLabel, toolkitState } from "../toolkit/approve.ts";
-import { queueLine } from "../toolkit/reproof.ts";
-import { acquireSlot, downSlot, listSlots, releaseSlot } from "../toolkit/slots.ts";
+import { heartbeatFile } from "../engine/jobs.ts";
+import { type Job, roundsUsed } from "../engine/machine.ts";
+import { jobDirOf, scanJobs } from "../engine/store.ts";
+import { readLedger } from "../ledger/append.ts";
+import { liveRun } from "../run/orchestrator.ts";
 
 export type Out = (line: string) => void;
-
-export async function ticket(repo: string, text: string, out: Out): Promise<number> {
-  const cfg = loadConfig(repo);
-  const t = PromptSource.ticket(text);
-  const { job, warning } = await takeTicket(repo, cfg, t);
-  if (warning) out(`warning: ${warning}`);
-  out(`ticket ${job.id}  "${job.title}"  → intake`);
-  return 0;
-}
-
-/** Kitchen's own entry point, for the detached runner a dashboard starts. */
-const CLI = path.resolve(import.meta.dirname, "..", `cli${path.extname(import.meta.filename)}`);
-
-/** The live runner's lock, or null when none holds the queue (no lock, or a stale one). */
-export function liveRunner(repo: string) {
-  const l = readRunLock(repo);
-  return l?.info && !staleReason(l.info, Date.now()) ? l.info : null;
-}
-
-/**
- * A runner in the background (`kitchen run --detach`, and the dashboard when an action makes work runnable):
- * `kitchen run` in its own process group, its log .kitchen/run.log. It stays alive when the queue empties
- * (KITCHEN_RUN_STAY), idling until work appears; `kitchen run --stop` ends it. None is started while one runs.
- */
-export function startRunner(repo: string, out: Out, o: { args?: string[]; cli?: string } = {}): number {
-  const live = liveRunner(repo);
-  if (live) {
-    out(`runner: already running (pid ${live.pid}${live.log ? `, log ${live.log}` : ""})`);
-    return 0;
-  }
-  // One this process just started, still before its run lock (a dashboard's two quick actions): not a second one.
-  const s = starting.get(repo);
-  if (s && Date.now() - s.at < 10_000 && alive(s.pid)) {
-    out(`runner: starting (pid ${s.pid})`);
-    return 0;
-  }
-  const log = path.join(kitchenDir(repo), "run.log");
-  fs.mkdirSync(path.dirname(log), { recursive: true });
-  const fd = fs.openSync(log, "a");
-  const args = [o.cli ?? CLI, ...(o.args ?? ["run", "--repo", repo])];
-  const child = spawn(process.execPath, args, {
-    cwd: repo,
-    detached: true,
-    stdio: ["ignore", fd, fd],
-    env: { ...process.env, KITCHEN_LOG_FILE: log, KITCHEN_RUN_STAY: "1" },
-  });
-  child.unref();
-  fs.closeSync(fd);
-  if (child.pid) starting.set(repo, { pid: child.pid, at: Date.now() });
-  out(`run detached: pid ${child.pid}, log ${log}`);
-  return 0;
-}
-const starting = new Map<string, { pid: number; at: number }>();
-const alive = (pid: number) => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-/** `kitchen run --stop`: end the runner that holds the queue (SIGTERM; its jobs resume from their files on the next run). */
-export async function stopRunner(repo: string, out: Out, o: { waitMs?: number } = {}): Promise<number> {
-  const live = liveRunner(repo);
-  if (!live) {
-    out("runner: not running");
-    return 0;
-  }
-  try {
-    process.kill(live.pid, "SIGTERM");
-  } catch (e) {
-    out(`runner: could not stop pid ${live.pid}: ${(e as Error).message}`);
-    return 1;
-  }
-  const end = Date.now() + (o.waitMs ?? 15_000);
-  while (Date.now() < end) {
-    if (readRunLock(repo)?.info?.pid !== live.pid) {
-      out(`runner: stopped (pid ${live.pid})`);
-      return 0;
-    }
-    await new Promise((r) => setTimeout(r, 100));
-  }
-  out(`runner: pid ${live.pid} was asked to stop and still holds the queue`);
-  return 1;
-}
-
-export async function run(
-  repo: string,
-  o: { once: boolean; detach: boolean; stop?: boolean; job?: string; cli: string; argv: string[] },
-  out: Out,
-): Promise<number> {
-  if (o.stop) return stopRunner(repo, out);
-  const id = o.job ? findJob(repo, o.job).id : undefined;
-  if (o.detach) return startRunner(repo, out, { cli: o.cli, args: o.argv.filter((a) => a !== "--detach") });
-  // The detached child (startRunner) stays alive when the queue empties; a foreground run exits then, as scripts expect.
-  const stay = !o.once && process.env.KITCHEN_RUN_STAY === "1";
-  await runKitchen({ repo, once: o.once, stay, job: id, print: out, logFile: process.env.KITCHEN_LOG_FILE });
-  return 0;
-}
 
 const ago = (iso: string) => {
   const s = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000));
@@ -139,385 +15,97 @@ const ago = (iso: string) => {
 };
 
 /** The stage column: why a waiting job waits, beside its stage. Pure. */
-function stageLabel(j: Job): string {
-  if (j.stage === "paused") {
-    const why = !j.waitFor ? (j.pausedReason ?? "?") : `${j.waitFor}${j.until && j.waitFor === "backoff" ? ` until ${j.until.slice(11, 19)}` : ""}`;
-    return `paused(${why}, from ${j.pausedFrom})`;
-  }
-  if (j.pausedReason && ["needs-info", "needs-human", "rejected"].includes(j.stage)) return `${j.stage}(${j.pausedReason})`;
+export function stageLabel(j: Job): string {
+  if (j.stage === "paused") return `paused(${j.pausedReason ?? "?"}, from ${j.pausedFrom})`;
+  if (j.running) return `${j.stage}*`;
+  if (j.stage === "ready" && j.held) return "ready(held)";
+  if (j.pausedReason && ["needs-info", "needs-human", "rejected"].includes(j.stage)) return `${j.stage}(${j.pausedReason.slice(0, 60)})`;
   return j.stage;
 }
 
 export function statusLine(j: Job, jobDir: string): string {
-  const stage = stageLabel(j);
   const report = fs.existsSync(path.join(jobDir, "report.html")) ? `  ${path.join(jobDir, "report.html")}` : "";
-  return `${j.id.padEnd(28)} ${j.title.slice(0, 34).padEnd(34)} ${stage.padEnd(16)} round ${roundsUsed(j)}/${j.roundLimit}  moved ${ago(j.updatedAt)}  ${j.pr ? `PR #${j.pr}` : "no PR"}${report}`;
+  const merged = j.merged ? `merged ${j.merged.sha.slice(0, 7)}` : j.pr ? `PR #${j.pr}` : "";
+  return `${j.id.padEnd(28)} ${j.title.slice(0, 34).padEnd(34)} ${stageLabel(j).padEnd(16)} round ${roundsUsed(j)}/${j.roundLimit}  moved ${ago(j.updatedAt)}${merged ? `  ${merged}` : ""}${report}`;
+}
+
+/** The orchestrator in one line: `kitchen run`'s session, or the last `kitchen job next` of an in-session one. */
+export function orchestratorLine(repo: string): string {
+  const r = liveRun(repo);
+  if (r) return `orchestrator: running (kitchen run, pid ${r.pid}, log ${r.log})`;
+  try {
+    const h = JSON.parse(fs.readFileSync(heartbeatFile(repo), "utf8")) as { at: string };
+    return `orchestrator: last seen ${ago(h.at)} (kitchen run, or /kitchen run in Claude Code, works the queue)`;
+  } catch {
+    return "orchestrator: not running (kitchen run, or /kitchen run in Claude Code)";
+  }
 }
 
 export function status(repo: string, out: Out, opts: { json?: boolean } = {}): number {
-  if (opts.json) {
-    const rows = scanJobs(repo).flatMap((e) => {
-      if (!e.job) return [];
-      const j = e.job;
-      const rp = path.join(jobDirOf(repo, e.id), "report.html");
-      return [
-        {
-          id: j.id,
-          title: j.title,
-          stage: j.stage,
-          round: roundsUsed(j),
-          roundLimit: j.roundLimit,
-          pr: j.pr ?? null,
-          report: fs.existsSync(rp) ? rp : null,
-          updatedAt: j.updatedAt,
-        },
-      ];
-    });
-    out(JSON.stringify(rows, null, 2));
-    return 0;
-  }
-  const l = readRunLock(repo);
-  if (!l) out("runner: not running");
-  else {
-    const why = staleReason(l.info, Date.now());
-    out(
-      why
-        ? `runner: not running (stale lock: ${why})`
-        : `runner: pid ${l.info?.pid}, heartbeat ${ago(l.info?.heartbeat ?? "")}${l.info?.log ? `, log ${l.info.log}` : ""}`,
-    );
-  }
-  const q = queueLine(repo);
-  if (q) out(q);
-  const tk = toolkitState(repo);
-  out(`toolkit: ${toolkitLabel(tk)}${tk.sha ? ` (${tk.sha.slice(0, 12)})` : ""}${tk.state === "waiting" ? `: ${APPROVE_HOW}` : ""}`);
   const jobs = scanJobs(repo);
-  if (!jobs.length) out("Nothing cooking.");
-  for (const e of jobs) {
-    out(e.job ? statusLine(e.job, jobDirOf(repo, e.id)) : `${e.id.padEnd(28)} corrupt(${e.corrupt})`);
-    // What to do about a job waiting for a Toolkit (ADR 0010) is the next step, so it is shown in full.
-    if (e.job?.stage === "paused" && e.job.waitFor === "no-toolkit") out(`  ${noToolkitWords(tk)}`);
-  }
-  if (jobs.length) {
-    const stages = jobs.map((e) => e.job?.stage);
-    const done = stages.filter((s) => s === "done").length;
-    const needs = jobs.filter(
-      (e) => e.job?.stage === "needs-info" || e.job?.stage === "needs-human" || (e.job?.stage === "paused" && e.job.waitFor === "no-toolkit"),
-    ).length;
-    out(`${jobs.length} job${jobs.length === 1 ? "" : "s"}: ${done} done, ${needs} need${needs === 1 ? "s" : ""} you`);
-  }
-  return 0;
-}
-
-async function human(repo: string, ref: string, to: Stage, facts: Parameters<typeof moveJob>[2]["facts"], note: string, out: Out): Promise<number> {
-  const job = findJob(repo, ref);
-  const r = await moveJob(repo, job, { to, facts, note }, out, "human");
-  if (r === "stale") out(`${job.id}  changed while you asked; run it again`);
-  return r === "moved" ? 0 : 1;
-}
-
-/**
- * A job waiting for a Toolkit (ADR 0010): with one on the base now it takes it; without one it goes on
- * with checks and tests only, unless it can't (high risk, a bug whose reproduction drives the app) or a
- * proven Toolkit is only waiting for the person's approval (ADR 0015).
- */
-async function resumeNoToolkit(repo: string, ref: string, job: Job, out: Out): Promise<number> {
-  const w = await wakeWithToolkit(repo, loadConfig(repo), job);
-  const from = job.pausedFrom as Stage;
-  if (w.toolkit)
-    return human(
-      repo,
-      ref,
-      from,
-      { operator: "resume", wake: w.facts },
-      `resumed: ${w.facts.base ? "the Toolkit is on the base now" : "the approved Toolkit"}`,
-      out,
-    );
-  const tk = toolkitState(repo);
-  if (tk.state === "waiting") {
-    out(`${job.id}  still waits: a proven Toolkit (${tk.sha?.slice(0, 12)}) is waiting for you: ${APPROVE_HOW}. The job wakes by itself.`);
-    return 1;
-  }
-  if (tk.state === "building") {
-    out(`${job.id}  still waits: the Toolkit is being built (kitchen toolkit build --status); approve it when it is proven and the job wakes by itself.`);
-    return 1;
-  }
-  const hard = needsToolkitToGoOn(jobDirOf(repo, job.id), job);
-  if (hard) {
-    out(`${job.id}  can't go on without a Toolkit: ${hard}. Run kitchen toolkit build (about 3–15 min), then approve it; the job wakes by itself`);
-    return 1;
-  }
-  out(`${job.id}  goes on without a Toolkit: proven by checks and tests only; criteria that need the app will say "not proven (no Toolkit)"`);
-  // The machine checks it again (a high-risk job, or one checks can't prove, is refused there too).
-  return human(
-    repo,
-    ref,
-    from,
-    { operator: "resume", wake: { checksOnly: true }, noToolkit: { needsApp: [], highRisk: false } },
-    "resumed without a Toolkit: checks and tests only",
-    out,
-  );
-}
-
-export async function resume(repo: string, ref: string, out: Out): Promise<number> {
-  const job = findJob(repo, ref);
-  const c = readControl(jobDirOf(repo, job.id));
-  if (isActive(job.stage) && (c.pause || c.stop)) {
-    await cancelControl(repo, job.id);
-    out(`${job.id}  ${c.stop ? "stop" : "pause"} cancelled: it keeps running ${job.stage}`);
-    return 0;
-  }
-  if (job.stage === "paused" && job.pausedFrom && job.waitFor === "no-toolkit") return resumeNoToolkit(repo, ref, job, out);
-  if (job.stage === "paused" && job.pausedFrom) return human(repo, ref, job.pausedFrom, { operator: "resume" }, "resumed by kitchen resume", out);
-  // An engine error is Kitchen's own trouble, not a question for the person: resume tries the stage it escalated from
-  // again (the same move `kitchen feedback` makes, with nothing to say).
-  if (job.stage === "needs-human" && job.pausedReason?.startsWith("engine-error"))
-    return human(repo, ref, feedbackTarget(job, {}), { operator: "feedback" }, "resumed by kitchen resume after an engine error", out);
-  out(
-    `${job.id}  is ${job.stage}: nothing to resume${job.stage === "needs-info" || job.stage === "needs-human" ? " (answer with kitchen feedback)" : " (kitchen run picks it up)"}`,
-  );
-  return 1;
-}
-
-/**
- * needs-info: the answer goes to the source and the job back to intake.
- * needs-human: back to the stage it escalated from (ADR 0007), or `--to <stage>` at or before it
- * and never past verify (intake, spec, repro, build, drives, verify).
- * done: back to build. The text is kept for the builder only if the move is made.
- */
-export async function feedback(repo: string, ref: string, text: string, out: Out, o: { to?: string } = {}): Promise<number> {
-  if (o.to !== undefined && !(STAGES as readonly string[]).includes(o.to)) throw new Error(`kitchen feedback --to: no stage ${o.to}`);
-  const feedbackTo = o.to as Stage | undefined;
-  const job = findJob(repo, ref);
-  const jobDir = jobDirOf(repo, job.id);
-  if (job.stage === "needs-info") {
-    if (!text.trim()) throw new Error("kitchen feedback on a needs-info job needs the answer text");
-    new PromptSource(repo).reply(job, text);
-    // The answer joins the clarification thread before the move, so intake's next prompt has it (clarify.ts).
-    recordAnswers(jobDir, [text]);
-    const code = await human(repo, ref, "intake", { replied: true }, "the operator replied", out);
-    if (code === 0) await addMessage(jobDir, { kind: "answer", text: text.trim(), stage: job.stage });
-    else dropAnswer(jobDir, text);
-    return code;
-  }
-  const to = job.stage === "needs-human" ? feedbackTarget(job, { feedbackTo }) : (feedbackTo ?? "build");
-  const file = path.join(jobDir, "feedback", `${new Date().toISOString().replace(/[:.]/g, "-")}.md`);
-  if (text.trim()) writeAtomic(file, `${text.trim()}\n`);
-  // Back to intake (it escalated after its questions): the person's answer is an answer to intake's last question.
-  const toIntake = job.stage === "needs-human" && to === "intake" && !!text.trim() && readRounds(jobDir).length > 0;
-  if (toIntake) recordAnswers(jobDir, [text]);
-  const code = await human(repo, ref, to, { operator: "feedback", feedbackTo }, `kitchen feedback${feedbackTo ? ` --to ${feedbackTo}` : ""}`, out);
-  if (code !== 0) {
-    fs.rmSync(file, { force: true }); // refused: no side effect
-    if (toIntake) dropAnswer(jobDir, text);
-  } else if (text.trim()) await addMessage(jobDir, { kind: job.stage === "done" ? "follow-up" : "answer", text: text.trim(), stage: job.stage });
-  return code;
-}
-
-export { pause, steer, stop } from "../engine/control.ts";
-
-export async function reject(repo: string, ref: string, out: Out): Promise<number> {
-  return human(repo, ref, "rejected", { operator: "reject" }, "kitchen reject", out);
-}
-
-/** `kitchen report`: every §0 measure from the ledger (measures.ts), then the raw counts per stage and event. */
-export function report(repo: string, out: Out, o: { json?: boolean } = {}): number {
-  const lines = readLedger(repo);
-  const m = measures(lines);
-  if (o.json) {
-    out(JSON.stringify(m, null, 2));
-    return 0;
-  }
-  for (const l of formatMeasures(m)) out(l);
-  out("");
-  out(formatCounts(summarize(lines)));
-  // PLAN §0.2, judged by code on the latest benchmark run in this ledger (all of them: `kitchen report --bench`).
-  const bench = lines.filter((l) => l.event === "bench");
-  if (bench.length) {
-    const last = (bench.at(-1)?.detail as { runId?: string } | undefined)?.runId;
-    const rs = bench.map((l) => l.detail as unknown as RunResult & { runId?: string }).filter((d) => d.runId === last);
-    out("");
-    out(`Benchmark ${last} (${rs.length} runs):`);
-    for (const l of section02Lines(rs)) out(`  ${l}`);
-  }
-  return 0;
-}
-
-/**
- * `kitchen drive <job> <C> [--repro] [--arg k=v]… [--role r]`: run one criterion's proof
- * the way the stages do (prove.ts), stamped with `role` (default operator, which no
- * Verdict may cite). `--arg` gives concrete feature drive args over the spec's; the
- * difference is logged against the spec. `--repro`: only on a branch whose diff from
- * the base is the repro's own files, on a fresh app, and it reports whether the proof
- * failed as expected. Uses the job's slot, or takes one for the call.
- * Prints one JSON line; exit 0 when the expect holds (with --repro: when it failed as expected).
- */
-export async function drive(
-  repo: string,
-  ref: string,
-  criterion: string,
-  o: { repro: boolean; args: Record<string, string>; role: string },
-  out: Out,
-): Promise<number> {
-  const cfg = loadConfig(repo);
-  const job = await ensureJobToolkit(repo, findJob(repo, ref));
-  const jobDir = jobDirOf(repo, job.id);
-  const c = contractOf(jobDir)?.criteria.find((x) => x.id === criterion);
-  if (!c) throw new Error(`${job.id} has no criterion ${criterion}`);
-  if (!job.worktree) throw new Error(`${job.id} has no worktree yet`);
-  if (o.repro) {
-    const diff = await changedFiles(job, job.base, await headOf(job));
-    const extra = diff.filter((f) => !(job.reproFiles ?? []).includes(f));
-    if (extra.length) throw new Error(`--repro runs on the base: the branch also changes ${extra.join(", ")}`);
-  }
-  let took = false;
-  let slot = listSlots().find((x) => x.id === job.slotId);
-  if (!slot) {
-    slot = (await acquireSlot({ id: job.slotId, toolkitBin: job.toolkitBin, src: job.worktree, pid: process.pid })).slot;
-    took = true;
-  }
-  const inst = { ...job, slot: { n: slot.n, ports: slot.ports } };
-  try {
-    await (o.repro || took ? freshUp : ensureUp)(inst, jobDir, (m) => console.error(`[kitchen drive] ${m}`));
-    const p = await prove({
-      jobDir,
-      criterion: c,
-      role: o.role,
-      testCmd: cfg.test_cmd,
-      checksPrepare: checksPrepareOf(cfg),
-      argsOverride: o.args,
-      ...(o.repro ? { tag: { phase: "repro" } } : {}),
-      log: (m) => console.error(`[kitchen drive] ${m}`),
-    });
-    for (const d of p.driveArgs) {
-      if (JSON.stringify(Object.entries(d.used).sort()) === JSON.stringify(Object.entries(specArgsOf(c, d.drive) ?? {}).sort())) continue;
-      const f = path.join(jobDir, "rounds", String(job.round), "args-deltas.jsonl");
-      fs.mkdirSync(path.dirname(f), { recursive: true });
-      fs.appendFileSync(f, `${JSON.stringify({ criterion, drive: d.drive, spec: d.spec, used: d.used, by: o.role, at: new Date().toISOString() })}\n`);
-    }
-    const holds = p.status === "pass";
-    const failedAsExpected = p.status === "assert-fail";
+  if (opts.json) {
     out(
-      JSON.stringify({
-        job: job.id,
-        criterion,
-        status: p.status,
-        ...(o.repro ? { failedAsExpected } : { holds }),
-        ...(p.why ? { why: p.why } : {}),
-        vars: p.outcome.vars,
-        evidence: p.evidence,
-      }),
+      JSON.stringify(
+        jobs.flatMap((e) =>
+          e.job
+            ? [
+                {
+                  id: e.job.id,
+                  title: e.job.title,
+                  stage: e.job.stage,
+                  running: e.job.running?.lane ?? null,
+                  round: roundsUsed(e.job),
+                  roundLimit: e.job.roundLimit,
+                  held: e.job.held ?? null,
+                  merged: e.job.merged ?? null,
+                  report: fs.existsSync(path.join(jobDirOf(repo, e.id), "report.html")) ? path.join(jobDirOf(repo, e.id), "report.html") : null,
+                  updatedAt: e.job.updatedAt,
+                },
+              ]
+            : [],
+        ),
+        null,
+        2,
+      ),
     );
-    return (o.repro ? failedAsExpected : holds) ? 0 : 1;
-  } finally {
-    if (took) {
-      await downSlot(slot);
-      await releaseSlot(job.slotId);
-    }
-  }
-}
-
-/**
- * `kitchen dismiss <job> <finding-id> [--reason "<why>"]`: a person says a review finding was not
- * useful. Recorded in the job folder (dismissed.jsonl: who, why, the finding's lens and anchor) and in the
- * ledger with its lens, so the dismissals per lens can be counted (W5 retro). It takes effect: the builder's
- * next round is told to ignore it, the next review's lenses are told not to re-raise it, and one raised
- * again by the same lens on the same anchor is kept as a note (checks/findings.ts). An id that no review
- * of the job has is refused.
- */
-export function dismiss(repo: string, ref: string, finding: string | undefined, reason: string | undefined, out: Out): number {
-  const job = findJob(repo, ref);
-  const jobDir = jobDirOf(repo, job.id);
-  if (!finding) {
-    // No finding id: list the job's review findings (dogfood job 003).
-    const rows = findingsOf(jobDir).flatMap((r) => r.findings);
-    if (!rows.length) out(`${job.id}  has no review findings yet`);
-    for (const x of rows) out(`${x.id}  ${x.lens}  ${x.blocks ? "blocks" : "note"}  ${x.title}`);
     return 0;
   }
-  const f = findingById(jobDir, finding);
-  if (!f) {
-    const all = findingsOf(jobDir).flatMap((r) => r.findings.flatMap((x) => [x.id, ...x.also]));
-    throw new Error(`${job.id} has no review finding ${finding}${all.length ? ` (it has ${all.join(", ")})` : ""}`);
-  }
-  if (needsReason(f) && !reason?.trim())
-    throw new Error(`${finding} is a security finding: dismiss it only with a reason (--reason "<why it is not a problem>")`);
-  const file = path.join(jobDir, "dismissed.jsonl");
-  const had =
-    fs.existsSync(file) &&
-    fs
-      .readFileSync(file, "utf8")
-      .split("\n")
-      .some((l) => l && (JSON.parse(l) as { finding: string }).finding === finding);
-  if (had) {
-    out(`${job.id}  ${finding} was already dismissed`);
-    return 0;
-  }
-  const by = whoAmI(repo);
-  const anchor = { ...(f.at ? { at: f.at } : {}), ...(f.requirement ? { requirement: f.requirement } : {}) };
-  const said = { ...(f.why ? { why: f.why } : {}), ...(f.category ? { category: f.category } : {}) };
-  fs.appendFileSync(
-    file,
-    `${JSON.stringify({ finding, lens: f.lens, round: f.round, blocked: f.blocks, by, reason: reason ?? null, title: f.title, ...anchor, when: new Date().toISOString() })}\n`,
-  );
-  appendLedger(repo, {
-    job: job.id,
-    stage: job.stage,
-    round: f.round,
-    event: "finding-dismissed",
-    key: `${job.id}/dismiss/${finding}`,
-    role: `reviewer-${f.lens}`,
-    detail: { finding, lens: f.lens, blocked: f.blocks, by, reason: reason ?? null, title: f.title, ...said, ...anchor },
-  });
-  out(`${job.id}  dismissed ${finding} (${f.lens}${f.blocks ? ", it had blocked" : ""}) by ${by}${reason ? `: ${reason}` : ""}`);
+  out(orchestratorLine(repo));
+  if (!jobs.length) out("Nothing cooking.");
+  for (const e of jobs) out(e.job ? statusLine(e.job, jobDirOf(repo, e.id)) : `${e.id.padEnd(28)} corrupt(${e.corrupt})`);
   return 0;
 }
 
-/** Who runs the command, for the record: git's user.name in the repo, else the OS user. */
-function whoAmI(repo: string): string {
-  try {
-    const n = execFileSync("git", ["-C", repo, "config", "user.name"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-    if (n) return n;
-  } catch {}
-  try {
-    return os.userInfo().username;
-  } catch {
-    return "a person";
+/** `kitchen report`: what the queue did, from the job folders and the ledger. */
+export function report(repo: string, out: Out, opts: { json?: boolean } = {}): number {
+  const jobs = scanJobs(repo).flatMap((e) => (e.job ? [e.job] : []));
+  const lines = readLedger(repo);
+  const by = (s: string) => jobs.filter((j) => j.stage === s).length;
+  const ended = jobs.filter((j) => j.stage === "done" || j.stage === "ready");
+  const firstPass = ended.filter((j) => j.round === 1).length;
+  const secs = ended.map((j) => (Date.parse(j.doneAt ?? j.updatedAt) - Date.parse(j.startedAt)) / 1000).sort((a, b) => a - b);
+  const r = {
+    jobs: jobs.length,
+    merged: by("done"),
+    ready: by("ready"),
+    needsYou: by("needs-info") + by("needs-human"),
+    rejected: by("rejected"),
+    inFlight: jobs.filter((j) => ["intake", "build", "qa", "review"].includes(j.stage)).length,
+    firstPass,
+    roundsMean: ended.length ? ended.reduce((a, j) => a + j.round, 0) / ended.length : 0,
+    medianMinutes: secs.length ? Math.round(secs[Math.floor(secs.length / 2)] / 60) : 0,
+    escalations: lines.filter((l) => l.event === "move" && l.result === "needs-human").length,
+    qaFails: lines.filter((l) => l.event === "move" && l.stage === "qa" && l.result === "build").length,
+    reviewBlocks: lines.filter((l) => l.event === "move" && l.stage === "review" && l.result === "build").length,
+  };
+  if (opts.json) {
+    out(JSON.stringify(r, null, 2));
+    return 0;
   }
-}
-
-/**
- * `kitchen drive <job> --view "<view>" [--role r]`: one extra view (views.ts) in the job's slot, the way
- * a UX/UI lens's `VIEW:` line runs: a page, a feature drive or toolkit segments, then a screenshot.
- * Stamped `criterion: view:<lens>`. Prints one JSON line.
- */
-export async function view(repo: string, ref: string, v: string, role: string, out: Out): Promise<number> {
-  const cfg = loadConfig(repo);
-  const job = findJob(repo, ref);
-  const jobDir = jobDirOf(repo, job.id);
-  if (!job.worktree) throw new Error(`${job.id} has no worktree yet`);
-  let took = false;
-  let slot = listSlots().find((x) => x.id === job.slotId);
-  if (!slot) {
-    slot = (await acquireSlot({ id: job.slotId, toolkitBin: job.toolkitBin, src: job.worktree, pid: process.pid })).slot;
-    took = true;
-  }
-  const lens = role.startsWith("reviewer-") ? role.slice("reviewer-".length) : role;
-  try {
-    const r = await runView({
-      job: { ...job, slot: { n: slot.n, ports: slot.ports } },
-      jobDir,
-      view: v,
-      lens,
-      n: Date.now() % 100000,
-      testCmd: cfg.test_cmd,
-      log: (m) => console.error(`[kitchen drive --view] ${m}`),
-    });
-    out(JSON.stringify({ job: job.id, ...r }));
-    return r.ok ? 0 : 1;
-  } finally {
-    if (took) {
-      await downSlot(slot);
-      await releaseSlot(job.slotId);
-    }
-  }
+  out(
+    `jobs ${r.jobs}: merged into staging ${r.merged} · ready for you ${r.ready} · needs you ${r.needsYou} · rejected ${r.rejected} · in flight ${r.inFlight}`,
+  );
+  out(`first pass ${r.firstPass}/${ended.length} · mean rounds ${r.roundsMean.toFixed(1)} · median ${r.medianMinutes} min from ticket to ready or merged`);
+  out(`sent back: QA ${r.qaFails} · review ${r.reviewBlocks} · to a person ${r.escalations}`);
+  return 0;
 }

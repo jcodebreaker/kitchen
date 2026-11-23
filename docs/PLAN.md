@@ -1,6 +1,8 @@
 # Kitchen build plan (v4)
 
-Kitchen is an open-source software factory: it takes a ticket and hands back a pull request proven by driving the real app. This plan says what gets built, in which order, with which interfaces, and how each step is proven. Design decisions live in `GLOSSARY.md`, `docs/adr/` and `docs/architecture.html`. The **Changes from v1** section at the end lists what review round 1 changed.
+> **Since ADR 0016 (Kitchen lite, 2026-11-22)** most of this plan describes machinery that was removed: the runner loop, the agent adapters, the Toolkit and its smith, the proof runner and signed evidence, the OS sandbox, the retro and the bench runner. The plan is kept as the record of how Kitchen got here; what is built now is in ADR 0016, the README and docs/guide.md, and "Changes from ADR 0016" at the end lists what changed.
+
+Kitchen is an open-source software factory: it takes a ticket and hands back a pull request proven by driving the real app. This plan says what gets built, in which order, with which interfaces, and how each step is proven. Design decisions live in `GLOSSARY.md` and `docs/adr/`. The **Changes from v1** section at the end lists what review round 1 changed.
 
 ## 0. Goal and success measures
 
@@ -949,4 +951,19 @@ History: all of these are now part of §2 and §3, which are the current contrac
 | Setup ran on `strong` (opus) | `models.setup` defaults to `medium` (sonnet); the setup role reads each file once |
 | No background build | Kept so: no auto-build after init (ADR 0010 open question 1, decided no) |
 | (review fixes) quick init ran checks unsandboxed, agent-proposed ones too, gave checks the network, could PASS a job with nothing proven | Quick init's checks run under Gate's sandbox (shared `runSandboxed`) with `CI=1`; agent-proposed checks need the person's OK; frozen installs only, the network for the install alone; a verdict with nothing proven (or a requirement only the app covers) is NO-TOOLKIT and waits for the Toolkit |
+
+## Changes from ADR 0016 (Kitchen lite)
+
+Kitchen and super-board ran the same two tickets on the same app: super-board delivered both unattended in about 12 minutes; Kitchen's heavy machinery broke. The user's call: "use the same and remove all heavy machinery not needed".
+
+| Was | Now |
+|---|---|
+| A plain-code runner loop (`kitchen run`) dispatching `claude -p` / `codex exec` adapters per role | One orchestrator session (`/kitchen run` in Claude Code, or `kitchen run` starting a headless `claude -p "/kitchen:kitchen run"`) plans waves and starts one agent per lane with the Agent tool |
+| The engine moved jobs through a 16-stage table with spec, repro, gate, drives, verify, toolkit, report | `kitchen job next/start/finish/show` are the only writers of job state; stages are intake, build, qa, review, ready, done plus the waiting ones; illegal moves are refused |
+| `sandbox-exec` profiles, a Docker guard and shim, Claude's sandbox forced on, the setup bridge | Guard hooks adapted from super-board: secrets, key literals, protected push, deletes outside the project, writes outside the job's worktree |
+| An up-front Toolkit build, the smith, the contract and double proof, trust records, approve/revoke/commit | QA starts the app from `kitchen.yaml` `app:` (detected by init, one question at most) and checks each criterion with HTTP or Playwright (pinned), leaving plain evidence files; an old `.kitchen/toolkit` still starts the app |
+| A hash-chained, signed evidence manifest and a `kitchen-evidence` branch | Plain files in the job folder; the Report cites them by name |
+| A human merged every PR | Passing jobs merge into `staging` after the checks re-run on the merged result (`--match-head-commit` on GitHub); high risk or over 400 lines stops at Ready; never the base or main |
+| Steering written into a running agent's stdin | Steering quoted into the next lane's brief; pause after the lane; stop drops the lane's result |
+| The retro, `kitchen migrate`, `kitchen dismiss`, `kitchen drive`, the GitHub issue source, the bench runner | Removed. The bench data stays; BUILD-LOG says what a lite bench needs |
 

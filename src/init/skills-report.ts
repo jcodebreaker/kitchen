@@ -1,7 +1,7 @@
 // Role skills at `kitchen init` and `kitchen skills` (ADR 0014): where each registry skill comes
 // from for the repo's agent tool, or how to install it. A report only: init never fails over it.
 import { loadConfig } from "../config.ts";
-import { envOf, hostOf } from "../engine/stages/skills.ts";
+import { envOf, hostOf } from "../skills/forjob.ts";
 import { readinessLines } from "../skills/plan.ts";
 import { loadRegistry } from "../skills/registry.ts";
 
@@ -9,7 +9,7 @@ import { loadRegistry } from "../skills/registry.ts";
 export function skillsReport(repo: string): { summary: string; short: string; lines: string[] } {
   const config = loadConfig(repo);
   const host = hostOf(config);
-  if (!host) return { summary: "off (skills.enabled: false, or the fake tool with no skills.host)", short: "off", lines: [] };
+  if (!host) return { summary: "off (skills.enabled: false)", short: "off", lines: [] };
   const r = readinessLines(loadRegistry(), host, envOf(repo, config));
   const total = r.lines.length;
   const short = `${total - r.missing} of ${total} found`;

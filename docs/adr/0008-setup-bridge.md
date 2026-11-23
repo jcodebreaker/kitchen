@@ -1,5 +1,7 @@
 # The setup bridge runs agent-written bin/dev, confined by an OS sandbox
 
+> **Superseded by [ADR 0016](0016-kitchen-lite.md)** (Kitchen lite, 2026-11-22): what this records was removed. Kept as history.
+
 **Decision.** `kitchen init`'s setup role gets its own engine bridge, `kitchen setup-mcp` (W2). The setup agent runs in its tool's sandbox with no network and no Docker, so it cannot run the Toolkit it is writing; the bridge runs one `bin/dev` command, or the whole `toolkit check`, for it, as the engine, outside the agent's sandbox. That is the only way the agent can prove its own Toolkit before the engine commits it, and it is why setup finishes in one pass on fixtures A–D instead of a blind write followed by engine-side fix rounds.
 
 **Risk.** The code the bridge runs was written moments earlier by the agent, from a repo it read: a prompt injection in a README, an issue or a dependency can make the agent write a `bin/dev` that reads the developer's credentials and sends them out. Without confinement, that `bin/dev` runs as the user with network: it can read `~/.ssh`, `~/.aws`, `~/.config/gh`, the agent tools' own auth (`~/.claude`, `~/.codex`) and `$KITCHEN_HOME` (the engine key that signs evidence). The untrusted env (ADR 0006) keeps credentials out of the *environment*, not off the *disk*. App code started by `toolkit check` has the same residual risk (ADR 0006, "an OS sandbox for app processes is a later hardening item"); the bridge is worse only in timing: it runs before a human has reviewed anything.

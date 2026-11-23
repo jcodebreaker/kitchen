@@ -239,9 +239,13 @@ test("a role's plan: required found or blocking with the places searched; person
     [["humanizer", "the ticket's Kitchen-Skills: line; person-only: its author marked it for people only (disable-model-invocation: true)"]],
     "a required skill whose only copy is person-only halts, never silently dropped",
   );
-  const optional = planRole(reg, "report", facts, "claude", env);
+  const withOptional = {
+    ...reg,
+    roles: { ...reg.roles, report: { required: [], picked: [], optional: ["humanizer"], ticket: false, fallback: "x", degraded: false } },
+  };
+  const optional = planRole(withOptional, "report", facts, "claude", env);
   assert.deepEqual([optional.found, optional.blockers, optional.refused.map((x) => x.name)], [[], [], ["humanizer"]], "an optional one is refused and logged");
-  const r = readinessLines(reg, "claude", env);
+  const r = readinessLines(withOptional, "claude", env);
   assert.ok(r.lines.some((l) => /^ {2}ok {7}security-review +kitchen \(vendored\): /.test(l)));
   assert.ok(r.lines.some((l) => /^ {2}missing {2}tdd /.test(l)));
   assert.ok(r.lines.some((l) => /^ {2}refused {2}humanizer .*disable-model-invocation/.test(l)));

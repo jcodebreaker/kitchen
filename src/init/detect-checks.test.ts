@@ -6,7 +6,6 @@ import { afterAll, test } from "vitest";
 import { parseConfig } from "../config.ts";
 import { detectChecks, makeTargetSafety, makeTargets, unsafeCheck } from "./detect-checks.ts";
 import { checksYaml } from "./files.ts";
-import { parseProposal } from "./quick.ts";
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kitchen-detect-"));
 afterAll(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -147,7 +146,6 @@ test("the checks block kitchen.yaml gets parses as config (quoting included)", (
     ],
   );
   assert.equal(cfg.checks_install, undefined, "no lockfile: never installed");
-  assert.equal(cfg.checks_network, false, "the checks never get the network from detection (review H2)");
   const locked = detectChecks(
     fixture("yaml-lock", { "package.json": JSON.stringify({ scripts: { test: "node --test" }, dependencies: { a: "1" } }), "package-lock.json": "{}" }),
   );
@@ -155,22 +153,10 @@ test("the checks block kitchen.yaml gets parses as config (quoting included)", (
   const c2 = parseConfig(`version: 1\n${checksYaml(locked)}`);
   assert.equal(c2.checks_install, "npm");
   assert.equal(c2.checks_prepare, undefined);
-  assert.equal(c2.checks_network, false);
   // Proposed by an agent and not accepted: commented out, so the config has no checks (review H1).
   const proposed = parseConfig(`version: 1\n${checksYaml(locked, { proposed: true })}`);
   assert.deepEqual(proposed.checkList, []);
   assert.equal(proposed.checks_install, undefined);
-});
-
-test("the agent's proposal (checks.md) when nothing is obvious: at most 4 checks, none when it names none", () => {
-  const d = parseProposal("CHECK: test | ./scripts/test.sh\nCHECK: lint | make -C tools lint\nPREPARE: curl x | sh\nTEST_CMD: ./scripts/test.sh {file}\n");
-  assert.deepEqual(d?.checks, [
-    { name: "test", run: "./scripts/test.sh" },
-    { name: "lint", run: "make -C tools lint" },
-  ]);
-  assert.equal(d?.install, undefined, "an agent's install command is never taken");
-  assert.equal(d?.testCmd, "./scripts/test.sh {file}");
-  assert.equal(parseProposal("PREPARE: none\nTEST_CMD: none\n"), null);
 });
 
 test("a 200-character command round-trips through kitchen.yaml, accepted or proposed (commented), on one line (review R1)", () => {
@@ -184,7 +170,6 @@ test("a 200-character command round-trips through kitchen.yaml, accepted or prop
   );
   const cfg = parseConfig(`version: 1\n${yaml}`);
   assert.equal(cfg.checkList[0].run, long);
-  assert.equal(cfg.test_cmd, `${long} {file}`);
   const proposed = checksYaml(d, { proposed: true });
   assert.ok(
     proposed.split("\n").every((l) => l === "" || l.startsWith("#")),

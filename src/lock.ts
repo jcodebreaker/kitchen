@@ -89,16 +89,3 @@ export async function withFileLock<T>(file: string, fn: () => Promise<T>, o: { t
     if (readOwner(file)?.raw === me) fs.rmSync(file, { force: true });
   }
 }
-
-/** In-process queue per key, so concurrent calls in one process (the MCP server) run in order. */
-const queues = new Map<string, Promise<unknown>>();
-export function serialize<T>(key: string, fn: () => Promise<T>): Promise<T> {
-  const prev = queues.get(key) ?? Promise.resolve();
-  const next = prev.then(fn, fn);
-  const tail = next.catch(() => {});
-  queues.set(key, tail);
-  tail.then(() => {
-    if (queues.get(key) === tail) queues.delete(key);
-  });
-  return next;
-}

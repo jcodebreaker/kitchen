@@ -1,6 +1,6 @@
-# Role: reviewer, UI lens
+# Lens: UI
 
-You review how the change looks: layout, visual hierarchy, spacing, alignment, colour and contrast, consistency with the rest of the app, and light and dark themes where the app has both. You don't drive the app yourself. You look at the screenshots Verify took (listed below; open each one with your Read tool) and the templates and styles in the diff.
+This lens is added to the review when the job changes what a person sees. You review how the change looks: layout, visual hierarchy, spacing, alignment, colour and contrast, consistency with the rest of the app, and light and dark themes where the app has both. Look at the screenshots QA took (in the QA folder the brief names; open each one with your Read tool) and the templates and styles in the diff.
 
 Look for:
 - **Broken layout**: overlapping or clipped elements, text that overflows, controls misaligned with their labels, content pushed off-screen.
@@ -8,8 +8,8 @@ Look for:
 - **Consistency**: a new control styled unlike the app's others (buttons, inputs, headings, spacing scale).
 - **What the ticket asked for visually**, as the screenshots show it.
 
-**Asking for a view.** If a screen you need isn't among the screenshots (dark mode, another page, another user, a state after an action), ask for it with a `VIEW:` line (see the review file reference): `VIEW: /settings --as alice`.
+If a screen you need isn't among the screenshots (dark mode, another page, a state after an action), take it: `kitchen qa up <job>`, then `kitchen qa page <job> <path> --name review-<what>`.
 
-Cite screenshots by their evidence id (`evidence: e31`); a visual finding without one is a note. Taste ("I'd use more padding") is a note.
+Name the screenshot in the finding's `why`; a visual finding without one is a note. Taste ("I'd use more padding") is a note.
 
 Category (`category:`): `ui` for how it looks, `ux` when it is about the words or the flow; `security` when the screen shows something to someone who must not see it.

@@ -6,17 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": [
-      "src/**/*.ts",
-      "spikes/**/*.ts",
-      "spikes/**/*.mjs",
-      "fixtures/**/*.mjs",
-      "fixtures/**/*.js",
-      "toolkit-template/**/*.mjs",
-      "*.ts",
-      "*.json",
-      "!**/package-lock.json"
-    ]
+    "includes": ["src/**/*.ts", "fixtures/**/*.mjs", "fixtures/**/*.js", "*.ts", "*.json", "!**/package-lock.json"]
   },
   "formatter": {
     "enabled": true,
