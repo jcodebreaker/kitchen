@@ -16,6 +16,8 @@
     "longDescription": "Kitchen turns tickets into pull requests proven by driving your real app, with Claude Code or Codex doing the judgment.",
     "developerName": "Kitchen contributors",
     "category": "Coding",
+    "logo": "./assets/icon.png",
+    "composerIcon": "./assets/icon.png",
     "websiteURL": "https://github.com/jcodebreaker/kitchen"
   }
 }

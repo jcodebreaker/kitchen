@@ -106,6 +106,7 @@ export function pluginFiles(
       author,
       ...(homepage ? { homepage, repository: homepage } : {}),
       license: "Apache-2.0",
+      icon: "./assets/icon.png",
       keywords: KEYWORDS,
     }),
     // Codex: `codex plugin marketplace add <owner>/kitchen`, then `codex plugin install kitchen@kitchen`.
@@ -127,6 +128,8 @@ export function pluginFiles(
         longDescription: DESCRIPTION,
         developerName: "Kitchen contributors",
         category: "Coding",
+        logo: "./assets/icon.png",
+        composerIcon: "./assets/icon.png",
         ...(homepage ? { websiteURL: homepage } : {}),
       },
     }),

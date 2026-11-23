@@ -6,6 +6,7 @@
 <meta name="kitchen-token" content="__KITCHEN_TOKEN__">
 <meta name="kitchen-launch" content="__KITCHEN_LAUNCH__">
 <title>Kitchen</title>
+<!-- favicon:start --><link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByb2xlPSJpbWciIGFyaWEtbGFiZWw9IktpdGNoZW46IHRoZSBjb29rLCBzbWFsbCBzaXplcyI+PHRpdGxlPktpdGNoZW46IHRoZSBjb29rLCBzbWFsbCBzaXplczwvdGl0bGU+PHN0eWxlPi5pbmt7ZmlsbDp2YXIoLS1rLWluaywjMTgxODFiKX0uaW5rc3tmaWxsOm5vbmU7c3Ryb2tlOnZhcigtLWstaW5rLCMxODE4MWIpO3N0cm9rZS1saW5lY2FwOnJvdW5kO3N0cm9rZS1saW5lam9pbjpyb3VuZH0uYWNje2ZpbGw6dmFyKC0tay1hY2MsI2Q5NDgwZil9LmFjY3N7ZmlsbDpub25lO3N0cm9rZTp2YXIoLS1rLWFjYywjZDk0ODBmKTtzdHJva2UtbGluZWNhcDpyb3VuZDtzdHJva2UtbGluZWpvaW46cm91bmR9LnBhcHtmaWxsOnZhcigtLWstcGFwZXIsI2ZmZil9LnBhcHN7ZmlsbDpub25lO3N0cm9rZTp2YXIoLS1rLXBhcGVyLCNmZmYpO3N0cm9rZS1saW5lY2FwOnJvdW5kO3N0cm9rZS1saW5lam9pbjpyb3VuZH0uYWNjdHtmaWxsOm5vbmU7c3Ryb2tlOnZhcigtLWstYWNjLXRpbGUsI2ZmOGEzZCk7c3Ryb2tlLWxpbmVjYXA6cm91bmQ7c3Ryb2tlLWxpbmVqb2luOnJvdW5kfUBtZWRpYSAocHJlZmVycy1jb2xvci1zY2hlbWU6ZGFyayl7Lmlua3tmaWxsOnZhcigtLWstaW5rLCNlZGVkZjApfS5pbmtze3N0cm9rZTp2YXIoLS1rLWluaywjZWRlZGYwKX0uYWNje2ZpbGw6dmFyKC0tay1hY2MsI2ZmOGEzZCl9LmFjY3N7c3Ryb2tlOnZhcigtLWstYWNjLCNmZjhhM2QpfS5wYXB7ZmlsbDp2YXIoLS1rLXBhcGVyLCMwZjEwMTEpfS5wYXBze3N0cm9rZTp2YXIoLS1rLXBhcGVyLCMwZjEwMTEpfS5hY2N0e3N0cm9rZTp2YXIoLS1rLWFjYy10aWxlLCNkOTQ4MGYpfX08L3N0eWxlPjxjaXJjbGUgY2xhc3M9ImluayIgY3g9IjMyIiBjeT0iOC41MDAiIHI9IjQiLz48cGF0aCBjbGFzcz0iaW5rcyIgc3Ryb2tlLXdpZHRoPSI3IiBkPSJNOSwxOC41MDBINTVNNC41MDAsMzVIN001NywzNUg1OS41MDAiLz48cGF0aCBjbGFzcz0iaW5rIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiIGQ9Ik0xNCwyNkg1MEEzLDMgMCAwIDEgNTMsMjlWNDRBMTUsMTUgMCAwIDEgMzgsNTlIMjZBMTUsMTUgMCAwIDEgMTEsNDRWMjlBMywzIDAgMCAxIDE0LDI2Wk0yMy41MDAsMzUuNTAwYTUsNSAwIDEgMCAwLjAxMCwwWk00MC41MDAsMzUuNTAwYTUsNSAwIDEgMCAwLjAxMCwwWiIvPjwvc3ZnPg=="><!-- favicon:end -->
 <style>
 /* The system San Francisco stack (ADR 0013): nothing to load, nothing from elsewhere. */
 :root{
@@ -50,7 +51,7 @@ kbd{font:500 11px var(--sans);color:var(--mute);border:1px solid var(--line2);bo
 /* ── sidebar ── */
 .side{width:216px;flex:none;padding:12px 10px;display:flex;flex-direction:column;gap:1px}
 .ws{display:flex;align-items:center;gap:9px;padding:6px 8px 16px;font-weight:600;letter-spacing:-.01em}
-.logo{width:20px;height:20px;border-radius:5px;background:var(--fg);color:var(--bg);display:grid;place-items:center;font-size:11px;font-weight:700}
+.logo{width:22px;height:22px;flex:none;background:var(--logo) center/contain no-repeat}
 .nav{display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:6px;color:var(--mute);width:100%;text-align:left;transition:background .12s}
 .nav:hover{background:var(--hover);color:var(--fg)}
 .nav.on{background:var(--press);color:var(--fg);font-weight:500}
@@ -398,12 +399,17 @@ button.a{font-weight:600}button.a:hover{text-decoration:underline;text-underline
 .tka{display:inline-flex;gap:6px;flex:none;align-items:center}
 .sub.q code,.ev.ask p code,.card .cq code,.card .evl code{font:11.5px var(--mono);background:var(--raise);border:1px solid var(--line2);border-radius:4px;padding:0 4px}
 @container main (max-width:680px){ .rbar{padding:9px 12px 9px 16px} }
+/* logo:start (scripts/brand/gen-icons.mjs writes this block: logo B, the cook, 16px cut) */
+:root{--logo:url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByb2xlPSJpbWciIGFyaWEtbGFiZWw9IktpdGNoZW46IHRoZSBjb29rLCBzbWFsbCBzaXplcyI+PHN0eWxlPi5pbmt7ZmlsbDojMTgxODFifS5pbmtze2ZpbGw6bm9uZTtzdHJva2U6IzE4MTgxYjtzdHJva2UtbGluZWNhcDpyb3VuZDtzdHJva2UtbGluZWpvaW46cm91bmR9LmFjY3N7ZmlsbDpub25lO3N0cm9rZTojZDk0ODBmO3N0cm9rZS1saW5lY2FwOnJvdW5kO3N0cm9rZS1saW5lam9pbjpyb3VuZH08L3N0eWxlPjxjaXJjbGUgY2xhc3M9ImluayIgY3g9IjMyIiBjeT0iOC41MDAiIHI9IjQiLz48cGF0aCBjbGFzcz0iaW5rcyIgc3Ryb2tlLXdpZHRoPSI3IiBkPSJNOSwxOC41MDBINTVNNC41MDAsMzVIN001NywzNUg1OS41MDAiLz48cGF0aCBjbGFzcz0iaW5rIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiIGQ9Ik0xNCwyNkg1MEEzLDMgMCAwIDEgNTMsMjlWNDRBMTUsMTUgMCAwIDEgMzgsNTlIMjZBMTUsMTUgMCAwIDEgMTEsNDRWMjlBMywzIDAgMCAxIDE0LDI2Wk0yMy41MDAsMzUuNTAwYTUsNSAwIDEgMCAwLjAxMCwwWk00MC41MDAsMzUuNTAwYTUsNSAwIDEgMCAwLjAxMCwwWiIvPjwvc3ZnPg==")}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--logo:url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByb2xlPSJpbWciIGFyaWEtbGFiZWw9IktpdGNoZW46IHRoZSBjb29rLCBzbWFsbCBzaXplcyI+PHN0eWxlPi5pbmt7ZmlsbDojZWRlZGYwfS5pbmtze2ZpbGw6bm9uZTtzdHJva2U6I2VkZWRmMDtzdHJva2UtbGluZWNhcDpyb3VuZDtzdHJva2UtbGluZWpvaW46cm91bmR9LmFjY3N7ZmlsbDpub25lO3N0cm9rZTojZmY4YTNkO3N0cm9rZS1saW5lY2FwOnJvdW5kO3N0cm9rZS1saW5lam9pbjpyb3VuZH08L3N0eWxlPjxjaXJjbGUgY2xhc3M9ImluayIgY3g9IjMyIiBjeT0iOC41MDAiIHI9IjQiLz48cGF0aCBjbGFzcz0iaW5rcyIgc3Ryb2tlLXdpZHRoPSI3IiBkPSJNOSwxOC41MDBINTVNNC41MDAsMzVIN001NywzNUg1OS41MDAiLz48cGF0aCBjbGFzcz0iaW5rIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiIGQ9Ik0xNCwyNkg1MEEzLDMgMCAwIDEgNTMsMjlWNDRBMTUsMTUgMCAwIDEgMzgsNTlIMjZBMTUsMTUgMCAwIDEgMTEsNDRWMjlBMywzIDAgMCAxIDE0LDI2Wk0yMy41MDAsMzUuNTAwYTUsNSAwIDEgMCAwLjAxMCwwWk00MC41MDAsMzUuNTAwYTUsNSAwIDEgMCAwLjAxMCwwWiIvPjwvc3ZnPg==")}}
+:root[data-theme="dark"]{--logo:url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByb2xlPSJpbWciIGFyaWEtbGFiZWw9IktpdGNoZW46IHRoZSBjb29rLCBzbWFsbCBzaXplcyI+PHN0eWxlPi5pbmt7ZmlsbDojZWRlZGYwfS5pbmtze2ZpbGw6bm9uZTtzdHJva2U6I2VkZWRmMDtzdHJva2UtbGluZWNhcDpyb3VuZDtzdHJva2UtbGluZWpvaW46cm91bmR9LmFjY3N7ZmlsbDpub25lO3N0cm9rZTojZmY4YTNkO3N0cm9rZS1saW5lY2FwOnJvdW5kO3N0cm9rZS1saW5lam9pbjpyb3VuZH08L3N0eWxlPjxjaXJjbGUgY2xhc3M9ImluayIgY3g9IjMyIiBjeT0iOC41MDAiIHI9IjQiLz48cGF0aCBjbGFzcz0iaW5rcyIgc3Ryb2tlLXdpZHRoPSI3IiBkPSJNOSwxOC41MDBINTVNNC41MDAsMzVIN001NywzNUg1OS41MDAiLz48cGF0aCBjbGFzcz0iaW5rIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiIGQ9Ik0xNCwyNkg1MEEzLDMgMCAwIDEgNTMsMjlWNDRBMTUsMTUgMCAwIDEgMzgsNTlIMjZBMTUsMTUgMCAwIDEgMTEsNDRWMjlBMywzIDAgMCAxIDE0LDI2Wk0yMy41MDAsMzUuNTAwYTUsNSAwIDEgMCAwLjAxMCwwWk00MC41MDAsMzUuNTAwYTUsNSAwIDEgMCAwLjAxMCwwWiIvPjwvc3ZnPg==")}
+/* logo:end */
 </style>
 </head>
 <body>
 <div class="app">
   <nav class="side" aria-label="Project">
-    <div class="ws"><span class="logo">K</span><span id="wsName">kitchen</span></div>
+    <div class="ws"><span class="logo" role="img" aria-label="Kitchen"></span><span id="wsName">kitchen</span></div>
     <button class="nav on" onclick="jump('g-you')"><span id="nJobI"></span>Jobs</button>
     <button class="nav subn" onclick="jump('g-you')"><span id="nYouI"></span>Needs you <span class="c act num" id="sYou"></span></button>
     <button class="nav subn" onclick="jump('g-run')"><span id="nRunI"></span><span id="sRunN">Running</span> <span class="c num" id="sRun"></span></button>
@@ -419,7 +425,7 @@ button.a{font-weight:600}button.a:hover{text-decoration:underline;text-underline
   </nav>
   <main class="main">
     <div class="top">
-      <span class="logo mlogo">K</span>
+      <span class="logo mlogo" role="img" aria-label="Kitchen"></span>
       <h2>Jobs</h2>
       <div class="sumline" id="sum"></div>
       <span class="sp"></span>

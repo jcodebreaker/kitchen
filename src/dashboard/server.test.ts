@@ -101,7 +101,16 @@ test("the page carries this launch's token, under a CSP that loads nothing from 
   assert.ok(r.body.includes(`content="${TOKEN}"`));
   assert.equal(r.headers["content-security-policy"], PAGE_CSP);
   assert.doesNotMatch(r.body, /https?:\/\/(?!127\.0\.0\.1)[a-z]/i, "no URL to another host in the page");
-  assert.doesNotMatch(r.body, /@font-face|url\(/, "system fonts only: nothing for the page to fetch");
+  assert.doesNotMatch(
+    r.body,
+    /@font-face|url\((?!"data:image\/svg\+xml;base64,)/,
+    "system fonts only: nothing for the page to fetch (the logo is inline data)",
+  );
+  // Logo B, the cook: the app icon and the favicon are inline data: URLs (CSP img-src data:), and the K tile is gone.
+  assert.match(r.body, /<link rel="icon" type="image\/svg\+xml" href="data:image\/svg\+xml;base64,[A-Za-z0-9+/=]+">/);
+  assert.match(r.body, /:root\{--logo:url\("data:image\/svg\+xml;base64,/);
+  assert.match(r.body, /:root\[data-theme="dark"\]\{--logo:url\("data:/, "a dark icon for the dark theme");
+  assert.doesNotMatch(r.body, /<span class="logo[^"]*">K<\/span>/);
   assert.equal((await req({ method: "GET", path: "/fonts/Geist-Variable.woff2", headers: { host: `127.0.0.1:${port}` } })).code, 404);
 });
 

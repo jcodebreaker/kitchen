@@ -65,4 +65,10 @@ test("the marketplaces name the plugin kitchen at ./plugins/kitchen, for Claude 
   const v = JSON.parse(f["plugins/kitchen/.claude-plugin/plugin.json"]).version;
   assert.equal(JSON.parse(f["plugins/kitchen/.codex-plugin/plugin.json"]).version, v);
   assert.equal(claude.plugins[0].version, v);
+  // Logo B, the cook (scripts/brand/gen-icons.mjs): a 1024 px PNG both manifests name.
+  assert.equal(JSON.parse(f["plugins/kitchen/.claude-plugin/plugin.json"]).icon, "./assets/icon.png");
+  assert.equal(JSON.parse(f["plugins/kitchen/.codex-plugin/plugin.json"]).interface.logo, "./assets/icon.png");
+  const png = fs.readFileSync(path.join(ROOT, "plugins", "kitchen", "assets", "icon.png"));
+  assert.equal(png.readUInt32BE(16), 1024, "width");
+  assert.equal(png.readUInt32BE(20), 1024, "height");
 });

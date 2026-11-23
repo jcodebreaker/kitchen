@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 112 96" width="112" height="96" role="img" aria-label="Kitchen: the cook, with whisk and spatula"><title>Kitchen: the cook, with whisk and spatula</title><style>
+.ink{fill:var(--k-ink,#18181b)}.inks{fill:none;stroke:var(--k-ink,#18181b);stroke-linecap:round;stroke-linejoin:round}
+.acc{fill:var(--k-acc,#d9480f)}.accs{fill:none;stroke:var(--k-acc,#d9480f);stroke-linecap:round;stroke-linejoin:round}
+.pap{fill:var(--k-paper,#fff)}.paps{fill:none;stroke:var(--k-paper,#fff);stroke-linecap:round;stroke-linejoin:round}
+.acct{fill:none;stroke:var(--k-acc-tile,#ff8a3d);stroke-linecap:round;stroke-linejoin:round}
+@media (prefers-color-scheme:dark){.ink{fill:var(--k-ink,#ededf0)}.inks{stroke:var(--k-ink,#ededf0)}.acc{fill:var(--k-acc,#ff8a3d)}.accs{stroke:var(--k-acc,#ff8a3d)}.pap{fill:var(--k-paper,#0f1011)}.paps{stroke:var(--k-paper,#0f1011)}.acct{stroke:var(--k-acc-tile,#d9480f)}}
+</style><g transform="translate(24,26)"><g transform="translate(0,3)"><g class="accs" stroke-width="3.4"><path transform="translate(19.2,1.6)" d="M5.5,0C2.6,0 2.6,1.6 2.6,3.6V5.2C2.6,6.8 1.6,7.6 0,7.6C1.6,7.6 2.6,8.4 2.6,10V11.6C2.6,13.6 2.6,15.2 5.5,15.2"/><path transform="translate(44.8,1.6) scale(-1,1)" d="M5.5,0C2.6,0 2.6,1.6 2.6,3.6V5.2C2.6,6.8 1.6,7.6 0,7.6C1.6,7.6 2.6,8.4 2.6,10V11.6C2.6,13.6 2.6,15.2 5.5,15.2"/></g><circle class="ink" cx="32" cy="17.4" r="3"/><path class="inks" stroke-width="5.2" d="M13,24.6H51M6.6,37.4H10.6M53.4,37.4H57.4"/><path class="ink" fill-rule="evenodd" d="M16.5,29.6H47.5A2.5,2.5 0 0 1 50,32.1V44A12,12 0 0 1 38,56H26A12,12 0 0 1 14,44V32.1A2.5,2.5 0 0 1 16.5,29.6ZM25.4,37.6a3.5,3.5 0 1 0 0.01,0ZM38.6,37.6a3.5,3.5 0 1 0 0.01,0Z"/></g></g>
+<path class="inks" stroke-width="5.2" d="M31,66.4H22Q13,66.4 13,57.4V52M81,66.4H90Q99,66.4 99,57.4V52"/>
+<path class="inks" stroke-width="3.6" d="M13,52V40M99,52V38"/>
+<path class="inks" stroke-width="2.6" d="M13,40C3.5,31 6,12 13,12C20,12 22.500,31 13,40ZM13,40V13"/>
+<path class="ink" fill-rule="evenodd" d="M95,10H103A3.500,3.500 0 0 1 106.500,13.500V34.500A3.500,3.500 0 0 1 103,38H95A3.500,3.500 0 0 1 91.500,34.500V13.500A3.500,3.500 0 0 1 95,10ZM95.400,15.500V28.500H97.400V15.500ZM100.600,15.500V28.500H102.600V15.500Z"/></svg>
