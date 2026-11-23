@@ -479,7 +479,8 @@ export async function checkAtRef(
   }
   if (r.prepareSecs !== undefined && r.steps.some((s) => s.step === "prepare" && s.ok)) markPrepared(repo, co.sha, src, r.prepareSecs);
   if (r.ok && !o.src && !o.feature) {
-    await recordPassed(repo, co.sha);
+    // A check of a branch that isn't the base (kitchen/setup) offers that sha for approval (ADR 0015).
+    await recordPassed(repo, co.sha, o.branch);
     const proven: Proven = {
       sha: co.sha,
       at: new Date().toISOString(),

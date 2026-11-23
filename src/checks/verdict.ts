@@ -189,11 +189,12 @@ export function decideVerdict(o: {
 }
 
 /** verdict.md: the engine's table, for people and the report. */
-export function renderVerdict(v: Verdict, head: string, round: number): string {
+export function renderVerdict(v: Verdict, head: string, round: number, toolkitRef?: string): string {
   return [
     `VERDICT: ${v.verdict}`,
     `HEAD: ${head}`,
     `ROUND: ${round}`,
+    ...(toolkitRef !== undefined ? [`TOOLKIT: ${toolkitRef || "none"}`] : []),
     `MANIFEST: ${v.manifestOk ? "verified" : "REFUSED"}`,
     ...(v.unproven ? [`UNPROVEN: ${v.unproven} (no Toolkit)`] : []),
     ...(v.gap ? [`GAP: ${v.gap}`] : []),

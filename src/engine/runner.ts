@@ -36,7 +36,7 @@ import { honorControl, stopRequested } from "./control.ts";
 import { ensureJobToolkit } from "./job-toolkit.ts";
 import { acquireRunLock } from "./lock.ts";
 import { type Facts, isActive, type Job, move, pausedByYou, type Stage } from "./machine.ts";
-import { baseTipThrottled, wakeWithToolkit } from "./no-toolkit.ts";
+import { baseTipThrottled, toolkitDropped, wakeWithToolkit } from "./no-toolkit.ts";
 import { HANDLERS } from "./stages/index.ts";
 import { hasToolkit } from "./stages/toolkit-info.ts";
 import { LockLost, type Proposal, RoleFailure, type StageContext } from "./stages/types.ts";
@@ -413,10 +413,21 @@ async function step(repo: string, start: Job, d: Deps, print: (l: string) => voi
   const jobDir = jobDirOf(repo, job.id);
   const log = (m: string) => print(`${short(job)}  ${job.stage}: ${m}`);
   // The job's Toolkit: the engine-owned checkout at its toolkitRef (job-toolkit.ts).
+  const had = job.toolkitRef;
   try {
     job = await ensureJobToolkit(repo, job, log);
   } catch (e) {
     log(`Toolkit checkout at ${job.toolkitRef.slice(0, 12)} failed: ${(e as Error).message}`);
+  }
+  // Its Toolkit was dropped (the approval revoked): a job that needs the app waits for one, never finishing on what's left (review H3).
+  const dropped = had && !job.toolkitRef ? toolkitDropped(jobDir, job) : null;
+  if (dropped) {
+    await moveJob(repo, job, { to: "paused", facts: { toolkitDropped: dropped }, note: "its Toolkit was revoked: waits for one" }, print);
+    await updateJob(repo, job.id, (j) => {
+      if (j.running?.pid === me.pid) j.running = null;
+      return j;
+    });
+    return;
   }
   // Also when job.json still names a slot: a runner killed mid-stage leaves it there while its
   // registry entry was reclaimed at start-up, and this runner must own the slot to free it on exit.

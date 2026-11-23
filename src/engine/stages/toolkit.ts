@@ -23,6 +23,7 @@ import { setupBridgeServer } from "../../init/bridge.ts";
 import { describeToolkit } from "../../proof/drive.ts";
 import { runToolkitCheck } from "../../toolkit/check.ts";
 import { toolkitCheckout } from "../../toolkit/checkout.ts";
+import { recordPassed } from "../../toolkit/trust.ts";
 import { kitchenDir, once, roundDir, writeAtomic } from "../store.ts";
 import { commitWith, ensureSmithWorktree, removeSmithWorktree } from "../worktree.ts";
 import { contractBlock, fileBlock } from "./context.ts";
@@ -200,6 +201,18 @@ export const toolkit: StageHandler = async (ctx) => {
   const failedSteps = report.steps.filter((s) => !s.ok);
   if (!report.ok) return fail(`toolkit check: ${report.failed ?? "failed"}`, { failed: report.failed, known, steps: failedSteps, secs: report.secs });
   write({ ok: true, known, steps: failedSteps, secs: report.secs });
+  // The job's Toolkit came from the person's approval, not the base (ADR 0015 review M5): a PR would force a merge on a
+  // repo that runs Kitchen locally. The proven commit is offered for approval instead and Ready waits on no merge.
+  // With the GitHub forge the PR path stays: there the team takes Toolkit changes in through review.
+  if (job.toolkitFrom === "approved" && ctx.forge.kind !== "github") {
+    await recordPassed(ctx.repo, c.head, `the smith (${gap}, job ${job.id})`);
+    await removeSmithWorktree(ctx.repo, job, n).catch(() => {});
+    if (retry) await removeSmithWorktree(ctx.repo, job, n - 1).catch(() => {});
+    ctx.log(
+      `Toolkit with ${gap} proven at ${c.head.slice(0, 12)} (${smith.branch}): it waits for your approval (kitchen toolkit approve --sha ${c.head.slice(0, 12)}); this job runs it sandboxed until then`,
+    );
+    return { to: job.returnTo ?? "drives", facts: { toolkit: { checkPassed: true, sha: c.head, pr: null, approvable: true } } };
+  }
   const pr = await once(ctx.repo, job.id, `toolkit-pr/${n}`, () =>
     ctx.forge.openToolkitPr({
       key: `${job.id}/toolkit-pr/${n}`,

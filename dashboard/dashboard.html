@@ -607,17 +607,18 @@ function finLabel(j){if(j.kind==="setup"&&j.setup.state==="quick")return "Toolki
 const md=t=>esc(t).replace(/`([^`]+)`/g,"<code>$1</code>");
 /* Where the Toolkit stands (data.ts snapshot.toolkit, ADR 0015): waiting = proven, waiting for the person's approval. */
 const tkState=()=>snap&&snap.toolkit?snap.toolkit.state:"none";
-const approveBtn=`<button type="button" class="btn act sm" data-act="approve-tk" title="Use the proven Toolkit for every job (kitchen toolkit approve). Nothing is merged or committed">Approve Toolkit</button>`;
+const tkSha=()=>snap&&snap.toolkit&&snap.toolkit.sha?snap.toolkit.sha:"";
+const approveBtn=()=>`<button type="button" class="btn act sm" data-act="approve-tk" title="Use Toolkit ${esc(tkSha().slice(0,12))} for every job (kitchen toolkit approve). Nothing is merged or committed">Approve Toolkit <span class="mono">${esc(tkSha().slice(0,7))}</span></button>`;
 /* A job waiting for a Toolkit: one action in a List row (the title and reason keep the room), the rest on the card and in the panel. */
 function tkActs(j,where){
-  const primary=j.tkApprove?approveBtn:tkState()==="building"?"":`<button type="button" class="btn act sm" data-act="copy-build" title="Copy kitchen toolkit build. Approve it when it is proven; the job wakes by itself">${where==="panel"?"Copy kitchen toolkit build":"Copy command"}</button>`;
+  const primary=j.tkApprove?approveBtn():tkState()==="building"?"":`<button type="button" class="btn act sm" data-act="copy-build" title="Copy kitchen toolkit build. Approve it when it is proven; the job wakes by itself">${where==="panel"?"Copy kitchen toolkit build":"Copy command"}</button>`;
   if(where==="row")return primary;
   return primary+`<button type="button" class="btn ghost sm" data-act="resume" data-id="${esc(j.id)}" title="Go on with checks and tests only, if it can">${I.play}Resume</button>`}
 /* A pause only the person can end (data.ts waitYouOf): a Toolkit to build or approve, the agent's login to fix, a Toolkit PR to merge. */
 function waitActs(j,where){return j.waitYou==="no-toolkit"?tkActs(j,where):`<button type="button" class="btn act sm" data-act="resume" data-id="${esc(j.id)}" title="${j.waitYou==="auth"?"After you log the agent in again":"Try now, without waiting for the merge"}">${I.play}Resume</button>`}
 const WAIT_HINT={auth:"Log the agent's CLI in again, then Resume.","toolkit-pr":"Merge the Toolkit PR and it goes on by itself, or Resume to try now."};
 function waitHint(j){if(j.waitYou!=="no-toolkit")return WAIT_HINT[j.waitYou]||"";
-  return j.tkApprove?"Approve the Toolkit; it goes on by itself.":tkState()==="building"?"The Toolkit is being built.":"Build the Toolkit, then approve it."}
+  return j.tkApprove?`Approve Toolkit ${esc(tkSha().slice(0,12))}; it goes on by itself.`:tkState()==="building"?"The Toolkit is being built.":"Build the Toolkit, then approve it."}
 function icon(j){if(j.kind==="setup"&&j.setup.state==="quick")return S.wait;return S[j.state==="done"?"ok":j.state==="rejected"?"skip":j.state==="run"&&!j.runnerOn?"paused":j.state]}
 function rowHTML(j){
   const g=group(j),ex=expanded===j.id;
@@ -814,7 +815,7 @@ function segHTML(j,s,i,n){
 }
 function setupBody(j){
   const s=j.setup, evs=s.evs;
-  return `${setupWaits(j)?`<div class="rbar tkbar" role="status">${S.you}<span><b>Proven · waiting for your approval.</b> Approve it and every job runs your app with it. Nothing is merged or committed; share it later with <code>kitchen toolkit commit</code>.</span>${approveBtn}</div>`:""}${s.state==="quick"?`<div class="rbar" role="status">${S.wait}<span>Toolkit not built — Kitchen proves jobs with your checks and tests until it can drive the app.</span><code>kitchen toolkit build</code><button type="button" class="btn sm" data-act="copy-build">Copy</button></div>`:""}${s.questions.length?`<div class="evs" style="border:0;padding-left:0;margin-left:0">${s.questions.map(q=>`<div class="ev ask"><span class="whoo">The setup agent asks · ${esc(q.id)}</span><p>${esc(q.question)}</p>${q.why?`<p style="color:var(--mute);margin-top:4px">${esc(q.why)}</p>`:""}</div>`).join("")}</div>`:""}
+  return `${setupWaits(j)?`<div class="rbar tkbar" role="status">${S.you}<span><b>Proven · waiting for your approval:</b> <code>${esc((j.setup.sha||"").slice(0,12))}</code>. Approve it and every job runs your app with it. Nothing is merged or committed; share it later with <code>kitchen toolkit commit</code>.</span>${approveBtn()}</div>`:""}${s.state==="quick"?`<div class="rbar" role="status">${S.wait}<span>Toolkit not built — Kitchen proves jobs with your checks and tests until it can drive the app.</span><code>kitchen toolkit build</code><button type="button" class="btn sm" data-act="copy-build">Copy</button></div>`:""}${s.questions.length?`<div class="evs" style="border:0;padding-left:0;margin-left:0">${s.questions.map(q=>`<div class="ev ask"><span class="whoo">The setup agent asks · ${esc(q.id)}</span><p>${esc(q.question)}</p>${q.why?`<p style="color:var(--mute);margin-top:4px">${esc(q.why)}</p>`:""}</div>`).join("")}</div>`:""}
     ${s.steps.map((x,k)=>`<button class="sg" tabindex="-1">${S[x.st==="wait"?"wait":x.st==="run"?"run":x.st]||S.wait}<b>${esc(x.nm)}</b><span class="who">${x.k==="answers"?"you":x.k==="survey"||x.k==="build"?"setup agent":"Kitchen"}</span><span class="du mono num"></span></button>
       ${k===s.idx&&evs.length&&s.state!=="done"?`<div class="evs" id="evs">${evs.map(e=>evHTML(e)).join("")}</div>`:""}`).join("")}
     ${s.last.length?`<div class="sgsum" style="margin:10px 0 0;font-family:var(--mono);font-size:11.5px;white-space:pre-wrap">${esc(s.last.slice(-6).join("\n"))}</div>`:""}`;
@@ -881,7 +882,7 @@ let toastT;function toast(msg,label,fn){const t=$("#toast");t.innerHTML=`<span>$
 function newTicket(){palette(true,"ticket")}
 async function copyBuild(){try{await navigator.clipboard.writeText("kitchen toolkit build");toast("Copied: kitchen toolkit build. Run it in the repo, then approve the Toolkit")}catch(e){toast("Run this in the repo: kitchen toolkit build")}}
 /* The person approves the proven Toolkit (POST /api/toolkit-approve = kitchen toolkit approve); waiting jobs wake. */
-async function approveTk(){const r=await post("toolkit-approve",{});toast(r.ok?said(r.lines).replace(/\. Undo:.*/,"")||"Toolkit approved":said(r.lines)||"Not approved");refreshSoon()}
+async function approveTk(){const r=await post("toolkit-approve",{expect:tkSha()});toast(r.ok?said(r.lines).replace(/\. Undo:.*/,"")||"Toolkit approved":said(r.lines)||"Not approved");refreshSoon()}
 async function copyRun(){try{await navigator.clipboard.writeText("kitchen run --detach");toast("Copied: kitchen run --detach. Run it in the repo")}catch(e){toast("Run this in the repo: kitchen run --detach")}}
 function jump(id){const n=$("#"+id);if(n)n.scrollIntoView({behavior:RM?"auto":"smooth",block:"start"})}
 function toggleTheme(){const r=document.documentElement,dark=r.dataset.theme?r.dataset.theme==="dark":matchMedia("(prefers-color-scheme: dark)").matches;r.dataset.theme=dark?"light":"dark";try{localStorage.setItem("kitchen.theme",r.dataset.theme)}catch(e){}}

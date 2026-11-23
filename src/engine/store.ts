@@ -104,6 +104,7 @@ export const JobSchema = z.looseObject({
   pr: z.number().int().nullable(),
   slot: z.object({ n: Count, ports: z.array(z.number().int()) }).nullable(),
   toolkitRef: z.string(),
+  toolkitFrom: z.enum(["base", "approved", "pr"]).optional(),
   returnTo: Stage.nullable(),
   gap: z.string().nullable(),
   attempts: z.object({
@@ -200,6 +201,8 @@ export type NewJob = {
   base: string;
   /** The base sha when the base has a Toolkit: the job's proofs run with that sha's engine-owned checkout. Else "". */
   toolkitRef?: string;
+  /** Where toolkitRef came from: the base, the person's approval, or a Toolkit PR (ADR 0015). */
+  toolkitFrom?: "base" | "approved" | "pr";
   now?: Date;
 };
 
@@ -240,6 +243,7 @@ export async function createJob(repo: string, o: NewJob): Promise<{ job: Job; cr
       pr: null,
       slot: null,
       toolkitRef: o.toolkitRef ?? "",
+      ...(o.toolkitRef && o.toolkitFrom ? { toolkitFrom: o.toolkitFrom } : {}),
       returnTo: null,
       gap: null,
       attempts: { drives: 0, render: 0, toolkitTicket: 0, repro: 0, inconclusive: 0, backoff: 0, errors: 0, refused: 0 },

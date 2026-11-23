@@ -19,7 +19,7 @@ import { baseTip, toolkitAt } from "./base.ts";
 import { contractOf, needsApp, reproCriterion } from "./contract.ts";
 import { openGit } from "./git.ts";
 import { approvedToolkit } from "./job-toolkit.ts";
-import { effectiveRisk, type Facts, type Job } from "./machine.ts";
+import { effectiveRisk, type Facts, isActive, type Job } from "./machine.ts";
 
 export type Wake = { toolkit: true; facts: NonNullable<Facts["wake"]> } | { toolkit: false };
 
@@ -33,7 +33,7 @@ export async function wakeWithToolkit(repo: string, cfg: Config, job: Job, tip?:
   tip ??= await baseTip(repo, cfg);
   if (!tip || !(await toolkitAt(repo, tip))) {
     const approved = await approvedToolkit(repo);
-    return approved ? { toolkit: true, facts: { toolkitRef: approved } } : { toolkit: false };
+    return approved ? { toolkit: true, facts: { toolkitRef: approved, toolkitFrom: "approved" } } : { toolkit: false };
   }
   if (!job.worktree) return { toolkit: true, facts: { base: tip, toolkitRef: tip } };
   const wt = await openGit({ gitDir: job.gitDir, workTree: job.worktree });
@@ -74,6 +74,19 @@ export function unprovableWithoutToolkit(criteria: Criterion[], kind: string | n
   const reqs = [...new Set(criteria.flatMap((c) => c.covers))];
   const only = reqs.filter((r) => !ok.some((c) => c.covers.includes(r)));
   return only.length ? `${only.join(", ")} ${only.length === 1 ? "is" : "are"} proven only by driving the app` : null;
+}
+
+/**
+ * A job whose Toolkit was dropped while it ran (its approval revoked, ADR 0015 review H3): what it can no longer
+ * prove, when that makes it wait (a criterion drives the app, or it is high risk), else null. Past intake only (intake
+ * decides that itself); a job the person resumed into checks only goes on.
+ */
+export function toolkitDropped(jobDir: string, job: Job): { needsApp: string[]; highRisk: boolean } | null {
+  if (job.stage === "intake" || !isActive(job.stage)) return null;
+  const highRisk = effectiveRisk(job) === "high";
+  const needs = (contractOf(jobDir)?.criteria ?? []).filter(needsApp).map((c) => c.id);
+  if (highRisk) return { needsApp: needs, highRisk };
+  return needs.length && !job.checksOnly ? { needsApp: needs, highRisk } : null;
 }
 
 /** Why the job can't go on without a Toolkit (high risk, or what checks and tests can't prove), or null. */

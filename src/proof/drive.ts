@@ -166,6 +166,8 @@ async function runLocked(o: DriveOpts): Promise<DriveResult> {
         drive: drive.name,
         step: label,
         line: step.line,
+        // Which Toolkit ran it (ADR 0015 review M4): a verdict never mixes proofs from two Toolkit shas unknowingly.
+        ...(job.toolkitRef ? { toolkitRef: job.toolkitRef } : {}),
         files,
         ...fields,
       } as never,

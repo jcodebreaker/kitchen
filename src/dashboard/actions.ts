@@ -62,8 +62,10 @@ export const ACTIONS: Record<string, (repo: string, b: Body, out: Out) => Promis
    * sha (kitchen/setup's proven tip) only, so the page can't name another. Waiting jobs wake.
    */
   "toolkit-approve": (repo, b, out) => {
-    if (Object.keys(b).length) throw new BadRequest("toolkit-approve takes no fields: it approves the proven Toolkit on kitchen/setup");
-    return approveToolkit(repo, {}, out);
+    // `expect`: the sha the page showed. It only guards (refused when the Toolkit waiting is another by now), never names one.
+    if (Object.keys(b).some((k) => k !== "expect") || typeof b.expect !== "string" || !/^[0-9a-f]{12,40}$/.test(b.expect))
+      throw new BadRequest('toolkit-approve takes { "expect": "<the sha you were shown>" } only');
+    return approveToolkit(repo, { expect: b.expect }, out);
   },
   "setup-answers": (repo, b, out) => {
     if (!b.answers || typeof b.answers !== "object" || Array.isArray(b.answers)) throw new BadRequest('answers: { "<question id>": "<answer>" }');

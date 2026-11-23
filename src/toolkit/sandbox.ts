@@ -49,6 +49,41 @@ const DENIED_IN_HOME = [
   ".orbstack",
 ];
 
+/**
+ * What an untrusted bin/dev may not write in its repo (ADR 0015): the files that make a Toolkit trusted
+ * (`.kitchen/toolkit.approved`, `toolkit.passed`, `toolkit.proven`), git (`.git`: refs, HEAD, worktrees, config)
+ * and every other Toolkit checkout (`.worktrees/_toolkit@*`, where an approved sha runs unsandboxed), with the engine's notes on them (`.kitchen/toolkit-checkouts/`). Its own
+ * checkout stays writable (its `prepare` installs there; a trusted run first checks a checkout is clean), but not
+ * its `.git` pointer.
+ */
+export type RepoWrites = { literals: string[]; subpaths: string[]; regexes: string[]; allowWrite: string[]; ownGit: string[] };
+
+const reEsc = (s: string) => s.replace(/[.*+?^${}()|[\]\\"]/g, "\\$&");
+
+/** Pure but for resolving paths: the repo's write denials for a bin/dev of `own` (its Toolkit checkout, or null). */
+export function repoWrites(repo: string, own: string | null): RepoWrites {
+  const both = (p: string) => {
+    const out = new Set([p]);
+    try {
+      out.add(fs.realpathSync(p));
+    } catch {
+      try {
+        out.add(path.join(fs.realpathSync(path.dirname(p)), path.basename(p)));
+      } catch {}
+    }
+    return [...out];
+  };
+  const roots = both(repo);
+  const ownDirs = own ? both(own) : [];
+  return {
+    literals: roots.flatMap((r) => ["toolkit.approved", "toolkit.passed", "toolkit.proven"].map((f) => path.join(r, ".kitchen", f))),
+    subpaths: roots.flatMap((r) => [path.join(r, ".git"), path.join(r, ".kitchen", "toolkit-checkouts")]),
+    regexes: roots.map((r) => `^${reEsc(path.join(r, ".worktrees"))}/_toolkit@[^/]+(/|$)`),
+    allowWrite: ownDirs,
+    ownGit: ownDirs.map((d) => path.join(d, ".git")),
+  };
+}
+
 /** Pure: the denied paths, given home and KITCHEN_HOME (both as given and resolved: the profile matches real paths). */
 export function deniedPaths(home: string, kHome: string, extra: string[] = []): string[] {
   const out = new Set<string>();
@@ -71,15 +106,25 @@ const q = (s: string) => `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
  * folder ending in `/` whose every socket is denied): Docker goes through the
  * guard's proxy. In SBPL the last matching rule wins.
  */
-export function profileText(denied: string[], allowRead: string[], dockerSockets: string[] = []): string {
+export function profileText(denied: string[], allowRead: string[], dockerSockets: string[] = [], repoWrites?: RepoWrites): string {
   const sub = (p: string) => `(subpath ${q(p)})`;
   const sock = (p: string) => `(remote unix-socket ${p.endsWith("/") ? `(subpath ${q(p.slice(0, -1))})` : `(path-literal ${q(p)})`})`;
+  const rw = repoWrites;
+  const writeDeny = rw ? [...rw.literals.map((p) => `(literal ${q(p)})`), ...rw.subpaths.map(sub), ...rw.regexes.map((r) => `(regex #"${r}")`)] : [];
   return [
     "(version 1)",
     ";; Kitchen setup bridge: bin/dev written by the setup agent (ADR 0008).",
     "(allow default)",
     `(deny file-read* file-write* ${denied.map(sub).join(" ")})`,
     ...(allowRead.length ? [`(allow file-read* ${allowRead.map(sub).join(" ")})`] : []),
+    ...(writeDeny.length
+      ? [
+          ";; What makes a Toolkit trusted is not its to write (ADR 0015): the approval and proof records, git, other Toolkit checkouts.",
+          `(deny file-write* ${writeDeny.join(" ")})`,
+          ...(rw?.allowWrite.length ? [`(allow file-write* ${rw.allowWrite.map(sub).join(" ")})`] : []),
+          ...(rw?.ownGit.length ? [`(deny file-write* ${rw.ownGit.map((p) => `(literal ${q(p)})`).join(" ")})`] : []),
+        ]
+      : []),
     ...(dockerSockets.length
       ? [
           ";; Docker goes through Kitchen's guard (docker-proxy.ts), never the daemon's own socket.",
@@ -203,14 +248,15 @@ export function wrapperText(real: string, profile: string, guard: DockerGuard | 
  * where there is no sandbox-exec (Linux: unhandled, ADR 0008).
  */
 export function sandboxedBin(bin: string, o: { home?: string; kHome?: string } = {}): { bin: string; sandboxed: boolean } {
-  const profile = setupSandboxProfile(o);
-  if (!profile) return { bin, sandboxed: false };
   let real = path.resolve(bin);
   try {
     real = fs.realpathSync(bin);
   } catch {}
-  const upstream = dockerSocket();
   const repo = repoOfBin(real);
+  const own = toolkitRootOfBin(real);
+  const profile = setupSandboxProfile({ ...o, repo, own: own && path.basename(path.dirname(own)) === ".worktrees" ? own : null });
+  if (!profile) return { bin, sandboxed: false };
+  const upstream = dockerSocket();
   const owned = path.join(path.dirname(profile), `docker-owned-${createHash("sha256").update(repo).digest("hex").slice(0, 12)}.jsonl`);
   const guard = upstream ? { node: process.execPath, proxy: PROXY, upstream, docker: onPath("docker"), roots: guardRoots(repo), owned } : null;
   const wrapper = path.join(path.dirname(profile), `dev-${createHash("sha256").update(real).digest("hex").slice(0, 12)}`);
@@ -250,7 +296,7 @@ const sh = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
  * The profile file for this machine, written into $KITCHEN_HOME/sandbox/, or
  * null where there is no sandbox-exec (Linux: unhandled, see ADR 0008).
  */
-export function setupSandboxProfile(o: { home?: string; kHome?: string } = {}): string | null {
+export function setupSandboxProfile(o: { home?: string; kHome?: string; repo?: string; own?: string | null } = {}): string | null {
   if (process.platform !== "darwin" || !fs.existsSync(SANDBOX_EXEC)) return null;
   const kHome = ensureHome(o.kHome ?? kitchenHome());
   const home = o.home ?? os.homedir();
@@ -260,8 +306,19 @@ export function setupSandboxProfile(o: { home?: string; kHome?: string } = {}): 
   try {
     allow.push(fs.realpathSync(scrub));
   } catch {}
-  const file = path.join(kHome, "sandbox", "setup-bridge.sb");
+  // One profile per repo and checkout: what it may not write is the repo's (ADR 0015).
+  const tag = o.repo
+    ? `-${createHash("sha256")
+        .update(`${o.repo}\0${o.own ?? ""}`)
+        .digest("hex")
+        .slice(0, 12)}`
+    : "";
+  const file = path.join(kHome, "sandbox", `setup-bridge${tag}.sb`);
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  fs.writeFileSync(file, profileText(deniedPaths(home, kHome), allow, dockerSockets(home, dockerSocket())), { mode: 0o600 });
+  fs.writeFileSync(
+    file,
+    profileText(deniedPaths(home, kHome), allow, dockerSockets(home, dockerSocket()), o.repo ? repoWrites(o.repo, o.own ?? null) : undefined),
+    { mode: 0o600 },
+  );
   return file;
 }

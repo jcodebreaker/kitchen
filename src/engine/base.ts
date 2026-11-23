@@ -50,7 +50,7 @@ export async function takeTicket(repo: string, cfg: Config, t: IncomingTicket): 
   } catch (e) {
     warning = `no base commit (${(e as Error).message}); the job can't get a worktree until there is one`;
   }
-  const toolkitRef = await resolveToolkitRef(repo, base);
-  const r = await createJob(repo, { title: t.title, ticket: t.ref, body: t.body, roundLimit: cfg.round_limit, base, toolkitRef });
+  const tk = await resolveToolkitRef(repo, base);
+  const r = await createJob(repo, { title: t.title, ticket: t.ref, body: t.body, roundLimit: cfg.round_limit, base, toolkitRef: tk.ref, toolkitFrom: tk.from });
   return { ...r, warning };
 }

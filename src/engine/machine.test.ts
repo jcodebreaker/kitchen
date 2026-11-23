@@ -862,6 +862,22 @@ const cases: Case[] = [
   },
   { row: "*>paused", job: { stage: "build" }, to: "paused", facts: f({ adapter: { error: "boom" } }), refused: /no rate limit/ },
   { row: "*>paused", job: { stage: "needs-human" }, to: "paused", facts: f({ adapter: { rateLimited: true, until: NOW } }), refused: /runs no agent/ },
+  // ADR 0015 review H3: the approval a running job used was revoked; it waits rather than finishing on checks alone
+  {
+    row: "*>paused(no-toolkit)",
+    job: { stage: "verify" },
+    to: "paused",
+    facts: f({ toolkitDropped: { needsApp: ["C1"], highRisk: false } }),
+    expect: (j) => assert.deepEqual([j.pausedFrom, j.waitFor], ["verify", "no-toolkit"]),
+  },
+  {
+    row: "*>paused(no-toolkit)",
+    job: { stage: "verify", checksOnly: true },
+    to: "paused",
+    facts: f({ toolkitDropped: { needsApp: ["C1"], highRisk: false } }),
+    refused: /checks and tests only/,
+  },
+  { row: "*>paused(no-toolkit)", job: { stage: "verify", checksOnly: true }, to: "paused", facts: f({ toolkitDropped: { needsApp: [], highRisk: true } }) },
   // ADR 0009: a person pauses or stops a job; only kitchen resume wakes it
   {
     row: "*>paused(by-you)",

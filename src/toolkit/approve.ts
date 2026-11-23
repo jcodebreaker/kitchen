@@ -15,7 +15,7 @@ import { listJobs } from "../engine/store.ts";
 import type { Forge } from "../forge/forge.ts";
 import { readInitState } from "../init/build.ts";
 import { runningInit } from "../init/status.ts";
-import { clearApproval, ensureIgnored, hasPassed, mergedIntoBase, readApproval, writeApproval } from "./trust.ts";
+import { clearApproval, ensureIgnored, hasPassed, latestOffer, mergedIntoBase, readApproval, writeApproval } from "./trust.ts";
 
 type Out = (l: string) => void;
 export const SETUP_REF = "refs/heads/kitchen/setup";
@@ -32,19 +32,20 @@ export const APPROVE_HOW = "approve it (kitchen toolkit approve), or commit it t
  * Where the Toolkit stands, for the words people see. Sync (status and the dashboard read it per row):
  * the build's state (.kitchen/init), the approval file and the passed record, no git.
  * - building: `kitchen toolkit build` is running;
- * - waiting: the build proved a sha on kitchen/setup that is not approved yet (a rebuild of an approved one too);
+ * - waiting: the newest sha offered for approval (a build of kitchen/setup, a `toolkit maintain` fix, the smith's
+ *   proven gap fix: trust.ts latestOffer) is not the approved one; `offer` says which;
  * - approved: jobs use the approved sha;
  * - base: the base had a Toolkit when it was built (`existing`), so jobs take it from there;
  * - none: nothing built.
  */
-export type ToolkitState = { state: "building" | "waiting" | "approved" | "base" | "none"; sha?: string; approved?: string };
+export type ToolkitState = { state: "building" | "waiting" | "approved" | "base" | "none"; sha?: string; approved?: string; offer?: string };
 export function toolkitState(repo: string): ToolkitState {
   const approved = readApproval(repo)?.sha;
   if (runningInit(repo)) return { state: "building", ...(approved ? { approved } : {}) };
   const st = readInitState(repo);
   const check = st?.steps.check;
-  if (check?.ok && !check.static && !st?.steps.template?.existing && check.sha !== approved && hasPassed(repo, check.sha))
-    return { state: "waiting", sha: check.sha, ...(approved ? { approved } : {}) };
+  const offer = latestOffer(repo);
+  if (offer && offer.sha !== approved) return { state: "waiting", sha: offer.sha, offer: offer.offer, ...(approved ? { approved } : {}) };
   if (approved) return { state: "approved", sha: approved, approved };
   if (check?.ok && st?.steps.template?.existing) return { state: "base", sha: check.sha };
   return { state: "none" };
@@ -53,7 +54,7 @@ export function toolkitState(repo: string): ToolkitState {
 /** Pure: what a job paused no-toolkit says, from the Toolkit's state now (computed when it is shown). */
 export function noToolkitWords(t: ToolkitState): string {
   if (t.state === "waiting")
-    return `This ticket needs Kitchen to drive the app, and a proven Toolkit is waiting for you: ${APPROVE_HOW}. The job wakes by itself.`;
+    return `This ticket needs Kitchen to drive the app, and a proven Toolkit${t.sha ? ` (${t.sha.slice(0, 12)}${t.offer ? `, from ${t.offer}` : ""})` : ""} is waiting for you: ${APPROVE_HOW}. The job wakes by itself.`;
   if (t.state === "building")
     return "This ticket needs Kitchen to drive the app; the Toolkit is being built (kitchen toolkit build --status). Approve it when it is proven and the job wakes by itself.";
   if (t.state === "approved" || t.state === "base")
@@ -102,15 +103,23 @@ export async function wakeWaiting(repo: string): Promise<number> {
 }
 
 /**
- * `kitchen toolkit approve [--sha]`: the default is kitchen/setup's tip. Refused unless that sha passed a
- * full `toolkit check` and has a Toolkit. Prints one line and wakes the jobs waiting for a Toolkit.
+ * `kitchen toolkit approve [--sha]`: the default is the newest sha offered for approval (a build, a maintain fix, the
+ * smith's), else kitchen/setup's tip. Refused unless that sha passed a full `toolkit check` and has a Toolkit.
+ * `expect` (the dashboard): the sha the person was shown; refused when the default is another one by now (a guard,
+ * not a way to name a sha). Prints one line and wakes the jobs waiting for a Toolkit.
  */
-export async function approveToolkit(repo: string, o: { sha?: string } = {}, out: Out = () => {}): Promise<number> {
+export async function approveToolkit(repo: string, o: { sha?: string; expect?: string } = {}, out: Out = () => {}): Promise<number> {
   repo = plainCheckout(repo).workTree;
-  const rev = o.sha ?? SETUP_REF;
+  const rev = o.sha ?? latestOffer(repo)?.sha ?? SETUP_REF;
   const sha = await resolve(repo, rev);
   if (!sha) {
     out(o.sha ? `toolkit approve: no commit ${o.sha}` : "toolkit approve: no Toolkit to approve yet: run kitchen toolkit build first");
+    return 1;
+  }
+  if (o.expect !== undefined && !(o.expect.length >= 12 && sha.startsWith(o.expect))) {
+    out(
+      `toolkit approve: the Toolkit waiting for approval is ${sha.slice(0, 12)} now, not the ${o.expect.slice(0, 12)} you were shown: look again, then approve`,
+    );
     return 1;
   }
   if (!(await toolkitAt(repo, sha))) {

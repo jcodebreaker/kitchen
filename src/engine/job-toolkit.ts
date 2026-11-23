@@ -4,9 +4,14 @@
 // branch). Primitives resolve from it; feature drives from `--src <worktree>`.
 // A toolkitRef neither on the base nor approved (a job pinned to an open
 // Toolkit PR) gets the sandbox-exec wrapper (ADR 0008, 0015).
-// A job that took the approved Toolkit (ADR 0015) follows the approval: approve
-// another sha and it takes that one; revoke it and the job has no Toolkit (it
-// waits no-toolkit again where it needs the app).
+// Where toolkitRef came from is recorded (job.toolkitFrom). Only a job that took
+// the approved Toolkit (ADR 0015) follows the approval: revoke it and the job has
+// no Toolkit at once (the runner then pauses it no-toolkit where it needs the
+// app); approve another sha and it takes that one only when it next enters
+// intake, spec, repro, build or drives, so one stage's proofs never mix two
+// Toolkits (verify starts its proofs over when the sha changed). A base-derived
+// ref is never cleared (the main checkout switching branches doesn't touch it),
+// nor a Toolkit PR's.
 //
 // The checkout is created on demand and its bin recorded in job.toolkitBin, so
 // the bridge and `kitchen drive` run the same one. GC keeps a checkout any active
@@ -14,25 +19,35 @@
 import fs from "node:fs";
 import { toolkitCheckout } from "../toolkit/checkout.ts";
 import { runToolkit } from "../toolkit/run.ts";
-import { readApproval, trustOf, untrustedNote } from "../toolkit/trust.ts";
+import { readApproval, untrustedNote } from "../toolkit/trust.ts";
 import { toolkitAt } from "./base.ts";
 import type { Job } from "./machine.ts";
 import { updateJob } from "./store.ts";
 
+/** The stages a job may change Toolkit on entering (review M4): none of their proofs feed a verdict yet. */
+export const TOOLKIT_SWITCH_AT: readonly Job["stage"][] = ["intake", "spec", "repro", "build", "drives"];
+
 /** The job with toolkitBin pointing at its toolkitRef's checkout. No toolkitRef: no Toolkit (toolkitBin ""). */
 export async function ensureJobToolkit(repo: string, job: Job, log: (m: string) => void = () => {}): Promise<Job> {
-  // Not a Toolkit PR's sha, and no longer trusted: the approval moved on (or was revoked).
-  if (job.toolkitRef && job.smith.toolkitPr === null && !(await trustOf(repo, job.toolkitRef))) {
-    const next = await approvedToolkit(repo);
-    log(
-      next
-        ? `Toolkit ${job.toolkitRef.slice(0, 12)} is no longer approved: taking the approved ${next.slice(0, 12)}`
-        : `Toolkit ${job.toolkitRef.slice(0, 12)} is no longer approved: the job has no Toolkit until you approve one`,
-    );
-    job = await updateJob(repo, job.id, (j) => {
-      j.toolkitRef = next ?? "";
-      return j;
-    });
+  if (job.toolkitRef && job.toolkitFrom === "approved") {
+    const approved = await approvedToolkit(repo);
+    if (!approved) {
+      log(`Toolkit ${job.toolkitRef.slice(0, 12)} is no longer approved (revoked): the job has no Toolkit until you approve one`);
+      job = await updateJob(repo, job.id, (j) => {
+        j.toolkitRef = "";
+        j.toolkitFrom = undefined;
+        return j;
+      });
+    } else if (approved !== job.toolkitRef) {
+      if (TOOLKIT_SWITCH_AT.includes(job.stage)) {
+        log(`Toolkit ${job.toolkitRef.slice(0, 12)} is no longer approved: taking the approved ${approved.slice(0, 12)}`);
+        job = await updateJob(repo, job.id, (j) => {
+          j.toolkitRef = approved;
+          return j;
+        });
+      } else
+        log(`keeps Toolkit ${job.toolkitRef.slice(0, 12)} through ${job.stage}; it takes the approved ${approved.slice(0, 12)} at its next build or drives`);
+    }
   }
   if (!job.toolkitRef) {
     if (!job.toolkitBin) return job;
@@ -62,8 +77,9 @@ export async function approvedToolkit(repo: string): Promise<string | null> {
   return a && (await toolkitAt(repo, a.sha)) ? a.sha : null;
 }
 
-/** Which Toolkit a job on `base` uses: the base's own when it has one, else the approved sha, else none (""). */
-export async function resolveToolkitRef(repo: string, base: string): Promise<string> {
-  if (base && (await toolkitAt(repo, base))) return base;
-  return (await approvedToolkit(repo)) ?? "";
+/** Which Toolkit a job on `base` uses, and where it came from: the base's own when it has one, else the approved sha, else none (""). */
+export async function resolveToolkitRef(repo: string, base: string): Promise<{ ref: string; from?: "base" | "approved" }> {
+  if (base && (await toolkitAt(repo, base))) return { ref: base, from: "base" };
+  const a = await approvedToolkit(repo);
+  return a ? { ref: a, from: "approved" } : { ref: "" };
 }

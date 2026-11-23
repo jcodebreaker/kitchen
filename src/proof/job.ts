@@ -19,6 +19,8 @@ export type ProofJob = {
   gitDir: string;
   /** bin/dev of the engine-owned Toolkit checkout. */
   toolkitBin: string;
+  /** The Toolkit sha that bin/dev is (stamped on every drive's evidence). */
+  toolkitRef?: string;
   /** The id `up` was given for this job's slot. */
   slotId: string;
   round: number;

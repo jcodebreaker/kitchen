@@ -42,7 +42,12 @@ export function clearApproval(repo: string): string | null {
   return a?.sha ?? null;
 }
 
-type Passed = { sha: string; at: string }[];
+/**
+ * `offer`: a new Toolkit sha offered to the person for approval, and what made it: `kitchen/setup` (a build),
+ * `toolkit maintain`, or the smith filling a gap. A re-proof of the base is no offer.
+ */
+export type PassedEntry = { sha: string; at: string; offer?: string };
+type Passed = PassedEntry[];
 function readPassed(repo: string): Passed {
   try {
     const v = JSON.parse(fs.readFileSync(passedFile(repo), "utf8")) as Passed;
@@ -52,13 +57,20 @@ function readPassed(repo: string): Passed {
   }
 }
 /** A full `toolkit check` of `sha` passed (the last 50 kept); the file stays out of git status (ensureIgnored). */
-export async function recordPassed(repo: string, sha: string): Promise<void> {
+export async function recordPassed(repo: string, sha: string, offer?: string): Promise<void> {
   await ensureIgnored(repo).catch(() => {});
+  const old = readPassed(repo).find((p) => p.sha === sha);
   const list = readPassed(repo).filter((p) => p.sha !== sha);
-  list.push({ sha, at: new Date().toISOString() });
+  const label = offer ?? old?.offer;
+  list.push({ sha, at: new Date().toISOString(), ...(label ? { offer: label } : {}) });
   writeAtomic(passedFile(repo), `${JSON.stringify(list.slice(-50), null, 2)}\n`);
 }
 export const hasPassed = (repo: string, sha: string) => readPassed(repo).some((p) => p.sha === sha);
+/** The newest sha offered for approval (a build, a maintain fix, the smith's), or null. */
+export const latestOffer = (repo: string): PassedEntry | null =>
+  readPassed(repo)
+    .filter((p) => p.offer)
+    .at(-1) ?? null;
 
 /**
  * The ref "on the base" is measured against: the main checkout's HEAD (local and fake forges), or on the
@@ -108,15 +120,19 @@ export const untrustedNote = (sha: string, sandboxed: boolean) =>
  */
 export async function ensureIgnored(repo: string): Promise<void> {
   const g = await openGit(plainCheckout(repo));
-  const missing: string[] = [];
-  for (const rel of [".kitchen/toolkit.approved", ".kitchen/toolkit.passed"])
-    await g.run(["check-ignore", "-q", "--no-index", rel]).catch(() => {
-      missing.push(rel);
-    });
-  if (!missing.length) return;
   const common = (await g.run(["rev-parse", "--git-common-dir"])).stdout.trim();
   const file = path.join(path.isAbsolute(common) ? common : path.join(g.repo.gitDir, common), "info", "exclude");
-  fs.mkdirSync(path.dirname(file), { recursive: true });
   const have = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
+  const listed = new Set(have.split("\n").map((l) => l.trim()));
+  const missing: string[] = [];
+  // Engine git runs with the gitdir as its cwd (inside the work tree of a plain checkout): paths from the top (review L7).
+  for (const rel of [".kitchen/toolkit.approved", ".kitchen/toolkit.passed"]) {
+    if (listed.has(rel)) continue;
+    await g.run(["check-ignore", "-q", "--no-index", `:(top)${rel}`]).catch(() => {
+      missing.push(rel);
+    });
+  }
+  if (!missing.length) return;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.appendFileSync(file, `${have && !have.endsWith("\n") ? "\n" : ""}# Kitchen (ADR 0015)\n${missing.join("\n")}\n`);
 }

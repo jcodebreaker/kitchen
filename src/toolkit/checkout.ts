@@ -84,21 +84,30 @@ export async function toolkitCheckout(repo: string, rev: string): Promise<Checko
   repo = fs.realpathSync(repo);
   const sha = await resolveRev(repo, rev);
   fs.mkdirSync(path.dirname(gcLock(repo)), { recursive: true });
+  const trust = await trustOf(repo, sha);
   const co = await withFileLock(gcLock(repo), async () => {
     const release = takeLease(repo, sha);
     try {
-      return { ...(await checkoutOf(repo, sha)), release };
+      return { ...(await checkoutOf(repo, sha, !!trust)), release };
     } catch (e) {
       release();
       throw e;
     }
   });
-  const trust = await trustOf(repo, sha);
   const run = binFor(co.bin, trust);
   return { ...co, bin: run.bin, trust, sandboxed: run.sandboxed };
 }
 
-async function checkoutOf(repo: string, sha: string): Promise<Omit<Checkout, "release" | "trust" | "sandboxed">> {
+/** The engine's note that a checkout was handed out to run sandboxed (its bin/dev may have written in it). */
+const untrustedMark = (repo: string, sha: string) => path.join(kitchenDir(repo), "toolkit-checkouts", `${short(sha)}.untrusted`);
+
+/**
+ * The checkout of `sha`. `trusted`: it is about to run unsandboxed, so it must be exactly the sha (review L8): HEAD is
+ * the sha, `git status` is clean, and no sandboxed run ever used it (anything an untrusted `prepare` left, ignored
+ * files included); otherwise it is made again. The git calls use the engine's own record of the worktree's gitdir,
+ * never the checkout's `.git` file.
+ */
+async function checkoutOf(repo: string, sha: string, trusted = false): Promise<Omit<Checkout, "release" | "trust" | "sandboxed">> {
   const id = `${PREFIX}${short(sha)}`;
   const dir = path.join(checkoutsRoot(repo), id);
   const main = await openGit(plainCheckout(repo));
@@ -106,13 +115,22 @@ async function checkoutOf(repo: string, sha: string): Promise<Omit<Checkout, "re
   if (fs.existsSync(dir)) {
     try {
       git = linkedWorktree(repo, id, dir);
-      const head = (await (await openGit(git)).run(["rev-parse", "HEAD"])).stdout.trim();
-      if (head !== sha) git = null; // someone moved it: start over
+      const g = await openGit(git);
+      const head = (await g.run(["rev-parse", "HEAD"])).stdout.trim();
+      if (head !== sha)
+        git = null; // someone moved it: start over
+      else if (trusted && (fs.existsSync(untrustedMark(repo, sha)) || (await g.run(["status", "--porcelain", "--untracked-files=all"])).stdout.trim()))
+        git = null; // changed, or used by a sandboxed run: a trusted run starts from the sha itself
     } catch {
       git = null;
     }
-    if (!git) await removeDir(repo, dir);
+    if (!git) {
+      await removeDir(repo, dir);
+      fs.rmSync(untrustedMark(repo, sha), { force: true });
+      fs.rmSync(markerOf(repo, sha), { force: true }); // what was prepared there is gone with it
+    }
   }
+  if (!trusted) writeAtomic(untrustedMark(repo, sha), `${new Date().toISOString()}\n`);
   if (!git) {
     await main.run(["worktree", "prune"]);
     fs.mkdirSync(checkoutsRoot(repo), { recursive: true });

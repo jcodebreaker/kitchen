@@ -99,7 +99,7 @@ test("answering with no questions waiting says so in the build's words", () => {
 test("a job paused no-toolkit needs you, with what to do now (not the reason it stored); a job you paused stays paused", () => {
   const j = { stage: "paused", waitFor: "no-toolkit", pausedReason: "an old stored reason: merge kitchen/setup" } as Job;
   assert.equal(stateOf(j), "you");
-  assert.equal(questionOf(j, repo, { state: "waiting", sha: "a".repeat(40) }), noToolkitWords({ state: "waiting" }));
+  assert.equal(questionOf(j, repo, { state: "waiting", sha: "a".repeat(40) }), noToolkitWords({ state: "waiting", sha: "a".repeat(40) }));
   assert.match(questionOf(j, repo, { state: "none" }) ?? "", /run `kitchen toolkit build`/);
   assert.equal(stateOf({ stage: "paused", waitFor: "backoff" } as Job), "paused");
 });

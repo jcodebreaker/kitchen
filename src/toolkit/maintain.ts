@@ -367,7 +367,8 @@ export async function maintain(o: {
       const again = await checkAtRef(repo, { rev: commit, src: wt, print: (l) => o.print(`  ${l}`) });
       if (again.ok) {
         // Its source was the fixer's worktree at exactly this commit: a passed full check of it, which approval asks for.
-        await recordPassed(repo, commit);
+        await recordPassed(repo, commit, "toolkit maintain");
+        if (approved) say(`the fixed Toolkit ${commit.slice(0, 12)} waits for your approval: kitchen toolkit approve --sha ${commit.slice(0, 12)}`);
         const changed = (await main.run(["diff", "--name-only", tk, commit])).stdout.split("\n").filter(Boolean);
         const pr = await o.forge.openPr({
           key: `maintain/${base}`,
