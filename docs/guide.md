@@ -104,6 +104,7 @@ kitchen job next|start|finish|show …     the orchestrator's verbs
 kitchen qa up|down|reset|page|http <id> …   the QA lane's tools
 ```
 
+- Run them in the repo, or inside a job's worktree (`.worktrees/<id>`, where lane agents work): there they act on the main checkout's jobs, so QA's `kitchen qa up <id>` works from its worktree. A git worktree of your own elsewhere is its own repo.
 - `steer`: a message for the job's next agent; it is quoted into that lane's brief as operator notes and marked read by it.
 - `pause`: the job parks when its current lane finishes. `stop`: it parks now, and the working agent's result is dropped (its `finish` is refused). `resume`: back where it paused.
 - `feedback`: answers `needs-info` (back to intake, with your answer in the clarifications) or `needs-human` (back to the stage it stopped in, or `--to`); on a ready or merged job it starts a follow-up round.

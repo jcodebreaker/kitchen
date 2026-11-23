@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// `kitchen` entry point (ADR 0016). Runs in the repo it is started in (or --repo <dir>).
+// `kitchen` entry point (ADR 0016). Runs in the repo it is started in (or --repo <dir>); started inside one of its
+// job worktrees (.worktrees/<job>), in the main checkout that owns them.
 import fs from "node:fs";
 import path from "node:path";
 import * as cmd from "./cli/commands.ts";
@@ -83,7 +84,10 @@ async function main(argv: string[]): Promise<number> {
   const [name, ...rest] = argv;
   const out = (l: string) => console.log(l);
   if (name === undefined || name === "help" || name === "--help" || name === "-h") {
-    if (name === undefined) console.log(`${(await import("./cli/here.ts")).hereLine(process.cwd())}\n`);
+    if (name === undefined) {
+      const here = await import("./cli/here.ts");
+      console.log(`${here.hereLine(here.kitchenRepo(process.cwd()))}\n`);
+    }
     console.log(HELP);
     return name === undefined ? 2 : 0;
   }
@@ -101,7 +105,8 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
   const f = parse(rest, ["repo", "to", "port", "tool", "max-usd", "name", "script", "header", "data"]);
-  const repo = path.resolve(f.vals.repo?.[0] ?? process.cwd());
+  // Inside a job's worktree (.worktrees/<job>), the main checkout: that is where the jobs live.
+  const repo = f.vals.repo?.[0] ? path.resolve(f.vals.repo[0]) : (await import("./cli/here.ts")).kitchenRepo(process.cwd());
   const v = (k: string) => f.vals[k]?.[0];
   const need = (i: number, what: string) => {
     if (!f.pos[i]) throw new Error(`kitchen ${name} needs ${what}`);
