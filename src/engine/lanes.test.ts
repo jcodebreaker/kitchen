@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, test } from "vitest";
-import { matchPath, parseIntake, qaDir, readQa, readReview, reviewFile } from "./lanes.ts";
+import { leftOutOf, matchPath, parseIntake, qaDir, readQa, readReview, reviewFile } from "./lanes.ts";
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kitchen-lanes-"));
 afterAll(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -94,4 +94,16 @@ test("high_paths globs", () => {
   assert.equal(matchPath("infra/**", "src/infra.ts"), false);
   assert.equal(matchPath("**/*payment*", "lib/payments.js"), true);
   assert.equal(matchPath("**/.env*", ".env.local"), true);
+});
+
+test("intake's LEFT OUT: line is read for the Report; nothing/none means nothing was left out", () => {
+  const job = fs.mkdtempSync(path.join(root, "left-"));
+  const write = (v: string) => fs.writeFileSync(path.join(job, "intake.md"), `DECISION: ACCEPT\nLEFT OUT: ${v}\n## Criteria\n- C1 (page): x\n`);
+  write("the librarian's add-book form (the ticket names no admin tools)");
+  assert.equal(leftOutOf(job), "the librarian's add-book form (the ticket names no admin tools)");
+  write("nothing");
+  assert.equal(leftOutOf(job), "");
+  write("None.");
+  assert.equal(leftOutOf(job), "");
+  assert.equal(leftOutOf(path.join(root, "no-such-job")), "");
 });

@@ -23,6 +23,15 @@ You decide whether Kitchen takes this ticket, what kind of work it is, how risky
 - **FILES**: the files you expect the change to touch (your best reading of the code). Jobs that touch the same file still run side by side: git merges them.
 - **AFTER**: job numbers this ticket must wait for, only when it builds on one of them (it needs that job's code or data to exist: `AFTER: 003`). Sharing a file is no reason. Usually leave it out.
 
+## Scope: the smallest reading of the ticket
+
+The ticket's own words set the scope. When it is vague, choose the smallest change that does what it says, not the biggest one the code makes possible.
+
+- "Connected to this API", "a UI for X" or "support Y" doesn't mean every route or every feature the code has. Cover what a person needs for what the ticket names. If it names nothing more, cover the main read and act flow of what exists.
+- An endpoint, role, screen or form being in the code is no reason to cover it. Leave out admin and librarian tools, extra roles, settings, styling polish and "nice to have" features unless the ticket names them.
+- Anything you considered and left out goes on the `LEFT OUT:` line, so the author can file it as its own ticket.
+- When the smallest reading would not be useful to anyone, ask (`NEEDS-INFO`) instead of guessing bigger.
+
 ## Criteria
 
 Write one to five criteria, each a behaviour QA can check against the running app or the repo, with how:
@@ -32,7 +41,7 @@ Write one to five criteria, each a behaviour QA can check against the running ap
 - `test`: a test in the repo's own test suite proves it (pure logic with no page or route).
 - `cmd`: a command's output proves it (a CLI).
 
-Every requirement of the ticket is covered by a criterion. Keep what the ticket says must **not** happen as its own criterion ("as ben → 403"). Add nothing the ticket doesn't ask. Criteria are fixed once you write them: the builder may not change them.
+Every requirement of the ticket is covered by a criterion, and every criterion traces back to words in the ticket or an answer in the Clarifications. A criterion you can't trace is extra scope: drop it and list it under `LEFT OUT:`. Keep what the ticket says must **not** happen as its own criterion ("as ben → 403"). Regression checks (existing routes still answer, the tests still pass) are fine: they guard the change rather than add to it. Criteria are fixed once you write them: the builder may not change them.
 
 ## `intake.md`
 
@@ -45,6 +54,7 @@ SURFACES: ui, security | ui | security | none
 FILES: server.js, lib/loans.js
 AFTER: <job numbers, only when needed>
 QUESTION: <one question; only with NEEDS-INFO>
+LEFT OUT: <what you considered and didn't include because the ticket doesn't ask for it; or "nothing">
 REASON: <one line: why this decision and rating>
 
 ## Criteria

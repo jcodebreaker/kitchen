@@ -4,7 +4,7 @@
 // the checks and the diff stat. Evidence is plain files in the job folder; the Report cites them by name.
 import fs from "node:fs";
 import path from "node:path";
-import { criteriaOf, qaDir, readQa, readReview } from "./lanes.ts";
+import { criteriaOf, leftOutOf, qaDir, readQa, readReview } from "./lanes.ts";
 import type { Job } from "./machine.ts";
 import { readMessages } from "./messages.ts";
 import { jobDirOf, roundDir, writeAtomic } from "./store.ts";
@@ -42,6 +42,8 @@ export function renderReport(repo: string, job: Job, o: { diff?: { p: string; a:
   if (job.held) check.push(esc(job.held));
   if ("findings" in review)
     for (const f of review.findings.filter((x) => !x.blocks)) check.push(`Review note ${esc(f.id)}${f.at ? ` (${esc(f.at)})` : ""}: ${esc(f.why)}`);
+  const leftOut = leftOutOf(dir);
+  if (leftOut) check.push(`Left out by intake (not in your ticket; file it separately if you want it): ${esc(leftOut)}`);
   if (job.risk === "high") check.push("High risk: read the diff yourself before you merge it anywhere else.");
   const rows = crit
     .map((c) => {
