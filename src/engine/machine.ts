@@ -171,6 +171,8 @@ export type Facts = {
     criteria?: Lint;
     /** How many requirements intake.md lists (`## Requirements`): the spec is checked against them (spec-lint rule 7). */
     requirements?: number;
+    /** intake.md's `TITLE:` (≤ 60 characters): the job's short title from now on (ADR 0011). */
+    title?: string;
   };
   /** needs-info: the source shows an answer from the author or operator. */
   replied?: boolean;
@@ -301,7 +303,12 @@ const intakeIs =
 const hasRequirements: Guard = (_j, f) =>
   (f.intake?.requirements ?? 0) > 0 ? null : "intake.md lists no requirements (`## Requirements`, R1…): the spec has nothing to cover";
 const criteriaLint: Guard = (_j, f) => (f.intake?.criteria?.ok ? null : `inline criteria fail spec-lint: ${f.intake?.criteria?.reason ?? "no criteria"}`);
+/** Intake's short title, whatever it decided: the ticket's full text stays in ticket.md. */
+const setTitle = (j: Job, f: Facts) => {
+  if (f.intake?.title) j.title = f.intake.title;
+};
 const setIntake = (j: Job, f: Facts) => {
+  setTitle(j, f);
   j.kind = f.intake?.kind ?? j.kind;
   j.risk = f.intake?.risk ?? j.risk;
   if (f.intake?.surfaces) j.surfaces = f.intake.surfaces;
@@ -436,6 +443,7 @@ export const TABLE: readonly Row[] = [
     when: "DECISION: NEEDS-INFO",
     guard: intakeIs("NEEDS-INFO"),
     apply: (j, f) => {
+      setTitle(j, f);
       j.pausedReason = f.why ?? "question for the author";
     },
   },
@@ -446,6 +454,7 @@ export const TABLE: readonly Row[] = [
     when: "DECISION: REJECT",
     guard: intakeIs("REJECT"),
     apply: (j, f) => {
+      setTitle(j, f);
       j.pausedReason = f.why;
     },
   },

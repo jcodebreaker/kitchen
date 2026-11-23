@@ -52,14 +52,59 @@ export function nextNumber(ids: string[]): number {
 
 export const jobIdOf = (n: number, title: string) => `${String(n).padStart(3, "0")}-${slugify(title)}`;
 
-/** Pure: the title of a prompt ticket: its first non-empty line, at most 72 characters. */
+export const TITLE_MAX = 60;
+
+/** Pure: `s` cut at a word boundary to about `max` characters, with an ellipsis when cut. */
+function cutAtWord(s: string, max: number): string {
+  if (s.length <= max) return s;
+  const head = s.slice(0, max);
+  const sp = head.lastIndexOf(" ");
+  return `${(sp > max * 0.6 ? head.slice(0, sp) : head).replace(/[\s,;:.\-–—]+$/, "")}…`;
+}
+
+/** "add a feature:", "Bug:", "feature request -" and the like: what the ticket is, not what it asks. */
+const KIND_PREFIX =
+  /^(?:please\s+)?(?:(?:add|file|create|open|new)\s+)?(?:an?\s+|the\s+)?(?:new\s+)?(?:feature(?:\s+request)?|bug(?:\s*fix|\s+report)?|fix|chore|task|ticket|story|request|issue|improvement|enhancement)\s*[:\-–—]\s*/i;
+
+/** Control and format characters (bidi overrides, zero-width joiners…): never in a title, where they could reorder what a person reads. */
+const INVISIBLE = /[\p{Cc}\p{Cf}]/gu;
+/** Shorter than this, a "sentence" is an abbreviation ("e.g.", "No.") or a fragment: keep reading. */
+const MIN_SENTENCE = 12;
+
+/** Pure: the first sentence of `s`: it ends at `.`, `!` or `?` followed by a space and a capital letter, at least MIN_SENTENCE in. */
+function firstSentence(s: string): string {
+  const end = /[.!?](?=\s+\p{Lu})/gu;
+  for (let m = end.exec(s); m; m = end.exec(s)) if (m.index + 1 >= MIN_SENTENCE) return s.slice(0, m.index + 1);
+  return s;
+}
+
+/**
+ * Pure: the short title of a prompt ticket until intake gives one (ADR 0011): its first sentence, without a kind
+ * prefix ("add a feature:"), cut at a word boundary at about 60 characters. The full text stays in ticket.md.
+ */
 export function titleOf(text: string): string {
   const first =
     text
       .split("\n")
-      .map((l) => l.trim())
-      .find(Boolean) ?? "untitled";
-  return first.length > 72 ? `${first.slice(0, 71)}…` : first;
+      .map((l) => l.replace(INVISIBLE, "").trim())
+      .find(Boolean) ?? "";
+  const bare = first.replace(KIND_PREFIX, "").trim() || first;
+  const sentence = firstSentence(bare).replace(/[.!]$/, "").trim();
+  const t = cutAtWord(sentence, TITLE_MAX);
+  return t ? t[0].toUpperCase() + t.slice(1) : "untitled";
+}
+
+/**
+ * Pure: intake's `TITLE:` made safe to show: one line, no control or format characters, no backticks, `#` or angle
+ * brackets (`_` and `*` stay: `snake_case` names and `a*b` are real titles), at most 60 characters; null when none.
+ */
+export function shortTitle(raw: string | undefined): string | null {
+  const t = (raw ?? "")
+    .replace(INVISIBLE, " ")
+    .replace(/[`#<>]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return t ? cutAtWord(t, TITLE_MAX) : null;
 }
 
 export function writeAtomic(file: string, data: string) {

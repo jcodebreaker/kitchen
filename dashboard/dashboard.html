@@ -4,7 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="kitchen-token" content="__KITCHEN_TOKEN__">
+<meta name="kitchen-launch" content="__KITCHEN_LAUNCH__">
 <title>Kitchen</title>
+<!-- favicon:start --><link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByb2xlPSJpbWciIGFyaWEtbGFiZWw9IktpdGNoZW46IHRoZSBjb29rLCBzbWFsbCBzaXplcyI+PHRpdGxlPktpdGNoZW46IHRoZSBjb29rLCBzbWFsbCBzaXplczwvdGl0bGU+PHN0eWxlPi5pbmt7ZmlsbDp2YXIoLS1rLWluaywjMTgxODFiKX0uaW5rc3tmaWxsOm5vbmU7c3Ryb2tlOnZhcigtLWstaW5rLCMxODE4MWIpO3N0cm9rZS1saW5lY2FwOnJvdW5kO3N0cm9rZS1saW5lam9pbjpyb3VuZH0uYWNje2ZpbGw6dmFyKC0tay1hY2MsI2Q5NDgwZil9LmFjY3N7ZmlsbDpub25lO3N0cm9rZTp2YXIoLS1rLWFjYywjZDk0ODBmKTtzdHJva2UtbGluZWNhcDpyb3VuZDtzdHJva2UtbGluZWpvaW46cm91bmR9LnBhcHtmaWxsOnZhcigtLWstcGFwZXIsI2ZmZil9LnBhcHN7ZmlsbDpub25lO3N0cm9rZTp2YXIoLS1rLXBhcGVyLCNmZmYpO3N0cm9rZS1saW5lY2FwOnJvdW5kO3N0cm9rZS1saW5lam9pbjpyb3VuZH0uYWNjdHtmaWxsOm5vbmU7c3Ryb2tlOnZhcigtLWstYWNjLXRpbGUsI2ZmOGEzZCk7c3Ryb2tlLWxpbmVjYXA6cm91bmQ7c3Ryb2tlLWxpbmVqb2luOnJvdW5kfUBtZWRpYSAocHJlZmVycy1jb2xvci1zY2hlbWU6ZGFyayl7Lmlua3tmaWxsOnZhcigtLWstaW5rLCNlZGVkZjApfS5pbmtze3N0cm9rZTp2YXIoLS1rLWluaywjZWRlZGYwKX0uYWNje2ZpbGw6dmFyKC0tay1hY2MsI2ZmOGEzZCl9LmFjY3N7c3Ryb2tlOnZhcigtLWstYWNjLCNmZjhhM2QpfS5wYXB7ZmlsbDp2YXIoLS1rLXBhcGVyLCMwZjEwMTEpfS5wYXBze3N0cm9rZTp2YXIoLS1rLXBhcGVyLCMwZjEwMTEpfS5hY2N0e3N0cm9rZTp2YXIoLS1rLWFjYy10aWxlLCNkOTQ4MGYpfX08L3N0eWxlPjxjaXJjbGUgY2xhc3M9ImluayIgY3g9IjMyIiBjeT0iOC41MDAiIHI9IjQiLz48cGF0aCBjbGFzcz0iaW5rcyIgc3Ryb2tlLXdpZHRoPSI3IiBkPSJNOSwxOC41MDBINTVNNC41MDAsMzVIN001NywzNUg1OS41MDAiLz48cGF0aCBjbGFzcz0iaW5rIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiIGQ9Ik0xNCwyNkg1MEEzLDMgMCAwIDEgNTMsMjlWNDRBMTUsMTUgMCAwIDEgMzgsNTlIMjZBMTUsMTUgMCAwIDEgMTEsNDRWMjlBMywzIDAgMCAxIDE0LDI2Wk0yMy41MDAsMzUuNTAwYTUsNSAwIDEgMCAwLjAxMCwwWk00MC41MDAsMzUuNTAwYTUsNSAwIDEgMCAwLjAxMCwwWiIvPjwvc3ZnPg=="><!-- favicon:end -->
 <style>
 /* The system San Francisco stack (ADR 0013): nothing to load, nothing from elsewhere. */
 :root{
@@ -49,7 +51,7 @@ kbd{font:500 11px var(--sans);color:var(--mute);border:1px solid var(--line2);bo
 /* ── sidebar ── */
 .side{width:216px;flex:none;padding:12px 10px;display:flex;flex-direction:column;gap:1px}
 .ws{display:flex;align-items:center;gap:9px;padding:6px 8px 16px;font-weight:600;letter-spacing:-.01em}
-.logo{width:20px;height:20px;border-radius:5px;background:var(--fg);color:var(--bg);display:grid;place-items:center;font-size:11px;font-weight:700}
+.logo{width:22px;height:22px;flex:none;background:var(--logo) center/contain no-repeat}
 .nav{display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:6px;color:var(--mute);width:100%;text-align:left;transition:background .12s}
 .nav:hover{background:var(--hover);color:var(--fg)}
 .nav.on{background:var(--press);color:var(--fg);font-weight:500}
@@ -271,6 +273,7 @@ button.a{font-weight:600}button.a:hover{text-decoration:underline;text-underline
 .sg .who{color:var(--faint);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sg .du{color:var(--faint);font-size:11.5px}
 .sgsum{margin:-5px 0 6px 26px;color:var(--mute);font-size:12.5px}
+.tkt{margin:-4px 0 12px;color:var(--mute);font-size:13px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;max-height:9em;overflow:auto}
 .sgsum.bad{color:var(--fail)}
 .sgsk{margin:-5px 0 6px 26px;display:flex;flex-wrap:wrap;gap:4px}
 .sgsk span{font-size:10.5px;line-height:16px;padding:0 6px;border-radius:999px;border:1px solid var(--line2);color:var(--faint)}
@@ -341,6 +344,14 @@ button.a{font-weight:600}button.a:hover{text-decoration:underline;text-underline
   .evl{height:auto;min-height:16px}
 }
 @container main (max-width:780px){ .top .cost,.top .kb{display:none} }
+/* the header keeps its counts on one line, by the main column's width (not the window's: the panel takes room):
+   the view labels go first, then "ready", the title and New ticket's label, the queue count, then the words */
+@container main (max-width:620px){ .segc span{display:none} }
+@container main (max-width:520px){ #sum .rdy{display:none} }
+@container main (max-width:480px){ .top{padding:0 12px 0 16px;gap:8px} .top h2,.top .pri .lg{display:none} }
+@container main (max-width:420px){ #sum .qn{display:none} }
+#sum .zero{display:none}
+@container main (max-width:380px){ #sum .none{display:none} #sum .zero{display:inline} }
 @container main (max-width:680px){
   .row{grid-template-columns:18px minmax(0,1fr) auto;row-gap:8px;padding:12px 12px 12px 16px;align-items:start}
   .row .id{display:none} .ttl .idn{display:inline}
@@ -360,9 +371,6 @@ button.a{font-weight:600}button.a:hover{text-decoration:underline;text-underline
   .panel.on{width:100%;transform:none;border:0}
   .pin{width:100%}
   .ph{padding-left:8px} .ph .back{display:grid}
-  .top{padding:0 12px 0 16px}
-  .top h2,.top .cost,.top .kb,.segc span,.sumline .rdy,.top .pri .lg{display:none}
-  .top{gap:8px}
   .cbar .hint{display:none}
   .chips{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;margin:0 -16px;padding:0 16px}.chips::-webkit-scrollbar{display:none}.chip{white-space:nowrap;flex:none}
   .pscroll{padding:16px 16px 12px}
@@ -392,15 +400,20 @@ button.a{font-weight:600}button.a:hover{text-decoration:underline;text-underline
 .tka{display:inline-flex;gap:6px;flex:none;align-items:center}
 .sub.q code,.ev.ask p code,.card .cq code,.card .evl code{font:11.5px var(--mono);background:var(--raise);border:1px solid var(--line2);border-radius:4px;padding:0 4px}
 @container main (max-width:680px){ .rbar{padding:9px 12px 9px 16px} }
+/* logo:start (scripts/brand/gen-icons.mjs writes this block: logo B, the cook, 16px cut) */
+:root{--logo:url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByb2xlPSJpbWciIGFyaWEtbGFiZWw9IktpdGNoZW46IHRoZSBjb29rLCBzbWFsbCBzaXplcyI+PHN0eWxlPi5pbmt7ZmlsbDojMTgxODFifS5pbmtze2ZpbGw6bm9uZTtzdHJva2U6IzE4MTgxYjtzdHJva2UtbGluZWNhcDpyb3VuZDtzdHJva2UtbGluZWpvaW46cm91bmR9LmFjY3N7ZmlsbDpub25lO3N0cm9rZTojZDk0ODBmO3N0cm9rZS1saW5lY2FwOnJvdW5kO3N0cm9rZS1saW5lam9pbjpyb3VuZH08L3N0eWxlPjxjaXJjbGUgY2xhc3M9ImluayIgY3g9IjMyIiBjeT0iOC41MDAiIHI9IjQiLz48cGF0aCBjbGFzcz0iaW5rcyIgc3Ryb2tlLXdpZHRoPSI3IiBkPSJNOSwxOC41MDBINTVNNC41MDAsMzVIN001NywzNUg1OS41MDAiLz48cGF0aCBjbGFzcz0iaW5rIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiIGQ9Ik0xNCwyNkg1MEEzLDMgMCAwIDEgNTMsMjlWNDRBMTUsMTUgMCAwIDEgMzgsNTlIMjZBMTUsMTUgMCAwIDEgMTEsNDRWMjlBMywzIDAgMCAxIDE0LDI2Wk0yMy41MDAsMzUuNTAwYTUsNSAwIDEgMCAwLjAxMCwwWk00MC41MDAsMzUuNTAwYTUsNSAwIDEgMCAwLjAxMCwwWiIvPjwvc3ZnPg==")}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--logo:url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByb2xlPSJpbWciIGFyaWEtbGFiZWw9IktpdGNoZW46IHRoZSBjb29rLCBzbWFsbCBzaXplcyI+PHN0eWxlPi5pbmt7ZmlsbDojZWRlZGYwfS5pbmtze2ZpbGw6bm9uZTtzdHJva2U6I2VkZWRmMDtzdHJva2UtbGluZWNhcDpyb3VuZDtzdHJva2UtbGluZWpvaW46cm91bmR9LmFjY3N7ZmlsbDpub25lO3N0cm9rZTojZmY4YTNkO3N0cm9rZS1saW5lY2FwOnJvdW5kO3N0cm9rZS1saW5lam9pbjpyb3VuZH08L3N0eWxlPjxjaXJjbGUgY2xhc3M9ImluayIgY3g9IjMyIiBjeT0iOC41MDAiIHI9IjQiLz48cGF0aCBjbGFzcz0iaW5rcyIgc3Ryb2tlLXdpZHRoPSI3IiBkPSJNOSwxOC41MDBINTVNNC41MDAsMzVIN001NywzNUg1OS41MDAiLz48cGF0aCBjbGFzcz0iaW5rIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiIGQ9Ik0xNCwyNkg1MEEzLDMgMCAwIDEgNTMsMjlWNDRBMTUsMTUgMCAwIDEgMzgsNTlIMjZBMTUsMTUgMCAwIDEgMTEsNDRWMjlBMywzIDAgMCAxIDE0LDI2Wk0yMy41MDAsMzUuNTAwYTUsNSAwIDEgMCAwLjAxMCwwWk00MC41MDAsMzUuNTAwYTUsNSAwIDEgMCAwLjAxMCwwWiIvPjwvc3ZnPg==")}}
+:root[data-theme="dark"]{--logo:url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByb2xlPSJpbWciIGFyaWEtbGFiZWw9IktpdGNoZW46IHRoZSBjb29rLCBzbWFsbCBzaXplcyI+PHN0eWxlPi5pbmt7ZmlsbDojZWRlZGYwfS5pbmtze2ZpbGw6bm9uZTtzdHJva2U6I2VkZWRmMDtzdHJva2UtbGluZWNhcDpyb3VuZDtzdHJva2UtbGluZWpvaW46cm91bmR9LmFjY3N7ZmlsbDpub25lO3N0cm9rZTojZmY4YTNkO3N0cm9rZS1saW5lY2FwOnJvdW5kO3N0cm9rZS1saW5lam9pbjpyb3VuZH08L3N0eWxlPjxjaXJjbGUgY2xhc3M9ImluayIgY3g9IjMyIiBjeT0iOC41MDAiIHI9IjQiLz48cGF0aCBjbGFzcz0iaW5rcyIgc3Ryb2tlLXdpZHRoPSI3IiBkPSJNOSwxOC41MDBINTVNNC41MDAsMzVIN001NywzNUg1OS41MDAiLz48cGF0aCBjbGFzcz0iaW5rIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiIGQ9Ik0xNCwyNkg1MEEzLDMgMCAwIDEgNTMsMjlWNDRBMTUsMTUgMCAwIDEgMzgsNTlIMjZBMTUsMTUgMCAwIDEgMTEsNDRWMjlBMywzIDAgMCAxIDE0LDI2Wk0yMy41MDAsMzUuNTAwYTUsNSAwIDEgMCAwLjAxMCwwWk00MC41MDAsMzUuNTAwYTUsNSAwIDEgMCAwLjAxMCwwWiIvPjwvc3ZnPg==")}
+/* logo:end */
 </style>
 </head>
 <body>
 <div class="app">
   <nav class="side" aria-label="Project">
-    <div class="ws"><span class="logo">K</span><span id="wsName">kitchen</span></div>
+    <div class="ws"><span class="logo" role="img" aria-label="Kitchen"></span><span id="wsName">kitchen</span></div>
     <button class="nav on" onclick="jump('g-you')"><span id="nJobI"></span>Jobs</button>
     <button class="nav subn" onclick="jump('g-you')"><span id="nYouI"></span>Needs you <span class="c act num" id="sYou"></span></button>
-    <button class="nav subn" onclick="jump('g-run')"><span id="nRunI"></span>Running <span class="c num" id="sRun"></span></button>
+    <button class="nav subn" onclick="jump('g-run')"><span id="nRunI"></span><span id="sRunN">Running</span> <span class="c num" id="sRun"></span></button>
     <button class="nav subn" onclick="jump('g-done')"><span id="nDoneI"></span>Done <span class="c num" id="sDone"></span></button>
     <div class="lbl">Project</div>
     <button class="nav" onclick="openJob('setup')"><span id="nSetI"></span>Setup <span class="c" id="sSetup"></span></button>
@@ -413,7 +426,7 @@ button.a{font-weight:600}button.a:hover{text-decoration:underline;text-underline
   </nav>
   <main class="main">
     <div class="top">
-      <span class="logo mlogo">K</span>
+      <span class="logo mlogo" role="img" aria-label="Kitchen"></span>
       <h2>Jobs</h2>
       <div class="sumline" id="sum"></div>
       <span class="sp"></span>
@@ -437,6 +450,26 @@ button.a{font-weight:600}button.a:hover{text-decoration:underline;text-underline
    this server (/data.json, /jobs/<id>/detail.json, /setup.json) and every action is a POST to /api/<verb>,
    the same engine code as the kitchen CLI verbs. Nothing loads from elsewhere. */
 const TOKEN=document.querySelector('meta[name="kitchen-token"]').content;
+const LAUNCH=document.querySelector('meta[name="kitchen-launch"]').content;
+/* reconnect:start (src/dashboard/server.test.ts runs this block) */
+/* A tab left open from an earlier `kitchen dashboard` holds that launch's token. When the server says it
+   restarted (another launch id, or a POST refused for its token), reload once; a second time in a row,
+   say so and stop: never a reload loop. */
+const RELOADED="kitchen-dashboard-reloaded";
+function onRestart(store,reload,say){
+  let tried=null;try{tried=store.getItem(RELOADED)}catch(e){tried="no storage"}
+  if(tried){say("Couldn't reconnect; reload the page",true);return "stuck"}
+  try{store.setItem(RELOADED,String(Date.now()))}catch(e){say("Couldn't reconnect; reload the page",true);return "stuck"}
+  say("The dashboard restarted — reloading…",false);setTimeout(reload,700);return "reloading"
+}
+function onConnected(store){try{store.removeItem(RELOADED)}catch(e){}}
+/* reconnect:end */
+let restarting=false;
+function restarted(){
+  if(restarting)return;restarting=true;
+  let store;try{store=window.sessionStorage}catch(e){store={getItem(){throw 0},setItem(){throw 0},removeItem(){}}}
+  onRestart(store,()=>location.reload(),(m,stuck)=>{toast(m,stuck?"Reload":null,()=>location.reload());if(stuck)clearTimeout(toastT)});
+}
 
 /* ───────── icons ───────── */
 const sv=(d,w=16)=>`<svg width="${w}" height="${w}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
@@ -515,6 +548,8 @@ let offline=false;
 async function poll(){
   try{
     const [d,s]=await Promise.all([getJSON("/data.json"),getJSON("/setup.json")]);
+    if(d.launch&&d.launch!==LAUNCH){restarted();return}
+    try{onConnected(window.sessionStorage)}catch(e){}
     if(offline){offline=false;toast("Back in touch with Kitchen")}
     snap=d; setup=s;
     const before=new Map(jobs.map(j=>[j.id,j]));
@@ -678,6 +713,18 @@ function clipVT(){const b=$(".board");if(!b)return;const r=b.getBoundingClientRe
 function setView(v){view=v;try{localStorage.setItem("kitchen.view",v)}catch(e){}expanded=null;structural(()=>{})}
 function order(){if(view==="board")return lanes().flatMap(l=>inLane(l.k));
   return [...jobs.filter(j=>group(j)==="you"),...jobs.filter(j=>group(j)==="run"),...jobs.filter(j=>group(j)==="done").sort((a,b)=>doneT(b)-doneT(a))]}
+/* queue-words:start (src/dashboard/server.test.ts runs this block) */
+/* Jobs in an active stage are running only while a runner holds the queue; with none they are queued, waiting
+   for kitchen run. A Toolkit build (the setup row) runs on its own, runner or not: it counts as running, never as
+   waiting. The header, the sidebar and the list (or Board) all take their words from here.
+   `run`: the jobs in the running group, each {kind, state}. */
+function queueWords(runnerRunning,run){
+  const setupOn=run.some(j=>j.kind==="setup"&&j.state==="run"),jobs=run.filter(j=>j.kind!=="setup").length;
+  if(runnerRunning)return {count:`<b>${run.length}</b> running`,group:"Running",hint:"Message any agent while it works",empty:"Nothing running. Start one with New ticket.",busy:run.length>0};
+  if(!jobs&&setupOn)return {count:"<b>1</b> running",group:"Running",hint:"The Toolkit build works on its own",empty:"",busy:true};
+  return {count:`<b>${jobs}</b> waiting${setupOn?" · <b>1</b> running":""}`,group:"Queued",hint:"Waiting for kitchen run: start it and they move",empty:"Nothing queued. Start one with New ticket.",busy:setupOn};
+}
+/* queue-words:end */
 function renderList(){
   keepFocus(()=>{
     const o=order(),you=o.filter(j=>group(j)==="you"),run=o.filter(j=>group(j)==="run"),done=o.filter(j=>group(j)==="done");
@@ -685,7 +732,7 @@ function renderList(){
     $("#scroll").classList.toggle("bd",view==="board");
     $("#list").innerHTML=(idle?`<div class="rbar" role="status">${S.paused}<span>Kitchen isn't working the queue: jobs move only while it runs.</span><code>kitchen run --detach</code><button type="button" class="btn sm" data-act="copy">Copy</button></div>`:"")+
      (view==="board"?boardHTML():`<section id="g-you"><div class="ghead ${you.length?"act":""}">${you.length?S.you:S.wait} Needs you <span class="n num">${you.length}</span></div>${you.map(rowHTML).join("")||'<div class="empty">Nothing needs you.</div>'}</section>
-      <section id="g-run"><div class="ghead">${run.length?S.run:S.wait} Running <span class="n num">${run.length}</span><span class="hint">Message any agent while it works</span></div>${run.map(rowHTML).join("")||'<div class="empty">Nothing running. Start one with New ticket.</div>'}</section>
+      ${(()=>{const q=queueWords(!!(snap&&snap.runner.running),run);return `<section id="g-run"><div class="ghead">${q.busy?S.run:S.wait} ${q.group} <span class="n num">${run.length}</span><span class="hint">${q.hint}</span></div>${run.map(rowHTML).join("")||`<div class="empty">${q.empty}</div>`}</section>`})()}
       <section id="g-done"><div class="ghead">${S.ok} Done <span class="n num">${done.length}</span></div>${done.map(rowHTML).join("")||'<div class="empty">Nothing done yet.</div>'}</section>`);
     $("#vList").classList.toggle("on",view==="list");$("#vBoard").classList.toggle("on",view==="board");
     renderCounts(); just.clear(); grow();
@@ -696,8 +743,8 @@ function renderCounts(){
   if(!snap)return;
   const you=jobs.filter(j=>group(j)==="you"),run=jobs.filter(j=>group(j)==="run"),done=jobs.filter(j=>group(j)==="done");
   const nyou=`${you.length} need${you.length===1?"s":""} you`;
-  $("#sum").innerHTML=(you.length?(view==="board"?`<button class="a" onclick="jump('g-you')">${nyou}</button>`:`<span class="a">${nyou}</span>`):`<span>Nothing needs you</span>`)+`<i>·</i><span><b>${run.length}</b> running</span><i class="rdy">·</i><span class="rdy"><b>${done.filter(j=>j.state==="done"&&j.kind!=="setup").length}</b> ready</span>`;
-  $("#sYou").textContent=you.length||"";$("#sRun").textContent=run.length;$("#sDone").textContent=done.length;
+  $("#sum").innerHTML=(you.length?(view==="board"?`<button class="a" onclick="jump('g-you')">${nyou}</button>`:`<span class="a">${nyou}</span>`):`<span class="none">Nothing needs you</span><span class="zero">0 need you</span>`)+`<i class="qn">·</i><span class="qn">${queueWords(!!snap.runner.running,run).count}</span><i class="rdy">·</i><span class="rdy"><b>${done.filter(j=>j.state==="done"&&j.kind!=="setup").length}</b> ready</span>`;
+  $("#sYou").textContent=you.length||"";$("#sRun").textContent=run.length;$("#sRunN").textContent=queueWords(!!snap.runner.running,run).group;$("#sDone").textContent=done.length;
   $("#wsName").textContent=snap.repo;document.title=(you.length?`(${you.length}) `:"")+"Kitchen · "+snap.repo;
   $("#sSetup").textContent=!setup||setup.state==="none"?"not run":setup.state==="quick"?"Toolkit not built":setup.state==="done"?"proven":setup.state==="failed"?"failed":"step "+(setup.idx+1)+"/"+setup.steps.length;
   $("#sTk").textContent=snap.toolkitProven?"proven":"not proven";
@@ -749,6 +796,7 @@ async function post(verb,body){
   try{
     const r=await fetch("/api/"+verb,{method:"POST",headers:{"content-type":"application/json","x-kitchen-token":TOKEN},body:JSON.stringify(body)});
     const d=await r.json().catch(()=>({ok:false,lines:["HTTP "+r.status]}));
+    if(r.status===403&&(d.lines||[]).some(l=>/no token, or the wrong one/.test(l)))restarted();
     return {ok:r.ok&&d.ok,lines:d.lines||[]};
   }catch(e){return {ok:false,lines:["Kitchen's dashboard server is not answering"]}}
 }
@@ -839,7 +887,7 @@ function renderPanel(scrollEnd){
   const sub=j.kind==="setup"?(snap?snap.repo:"setup"):[j.kind,j.risk?j.risk+" risk":""].filter(Boolean).join(" · ");
   keepFocus(()=>{$("#pin").innerHTML=`
     <div class="ph"><button class="ib back" onclick="closePanel()" aria-label="Back">${I.back}</button><span class="mono">${esc(j.num)}</span><span>·</span><span>${esc(sub)}</span><span class="sp"></span>${ctl}<button class="ib" onclick="closePanel()" aria-label="Close" title="Close (Esc)">${I.x}</button></div>
-    <div class="pscroll" id="pscroll"><h1>${esc(j.title)}</h1>
+    <div class="pscroll" id="pscroll"><h1>${esc(j.title)}</h1>${(t=>t&&t!==j.title?`<p class="tkt" title="The ticket, as it was filed">${esc(t)}</p>`:"")(details[j.id]&&details[j.id].ticket)}
       <div class="meta"><span class="st ${j.state==="you"?"you":""}" id="pst">${icon(j)}${esc(statusOf(j))}</span><span class="mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span><span class="age" title="Since the ticket came in">age <span class="mono num" id="pt">${clock(secsOf(j))}</span></span><span class="mono num" id="pc">$${j.cost.toFixed(2)}</span>${j.report?`<a href="/${esc(j.report)}" target="_blank" rel="noopener">Open report</a>`:""}${j.pr?`<span>PR #${j.pr}</span>`:""}</div>
       <div class="ptrk ${ss.length>6?"many":""}">${trackHTML(j)}<div class="lbls">${ss.length>6?`<span class="cur ${j.state==="you"?"you":""}">${j.kind==="setup"&&j.setup.state==="quick"?"Step 2 of "+ss.length+" · run kitchen toolkit build":ended(j)&&j.state==="done"?"All "+ss.length+" steps done":"Step "+(i+1)+" of "+ss.length+" · "+esc(ss[i]?ss[i].nm:"")}</span>`:ss.map((s,k)=>`<span class="${k===i&&!ended(j)?"cur "+(j.state==="you"?"you":""):""}">${esc(s.nm)}</span>`).join("")}</div></div>
       <div class="tabs" id="tabs">${tabsHTML(j)}</div><div id="tabbody">${tabBody(j)}</div></div>

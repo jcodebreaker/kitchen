@@ -5,16 +5,19 @@
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import readline from "node:readline/promises";
 import { loadConfig } from "../config.ts";
 import { plainCheckout } from "../engine/git.ts";
 import { MAX_MESSAGE } from "../engine/messages.ts";
 import { writeAtomic } from "../engine/store.ts";
 import { forgeFor } from "../forge/forge.ts";
+import { type Ask, askFor, Halt } from "../init/ask.ts";
 import { serveSetupBridge } from "../init/bridge.ts";
 import { type Question, questionsFile, toolkitBuild } from "../init/build.ts";
-import { installSkill } from "../init/files.ts";
-import { quickInit, readQuickRecord } from "../init/quick.ts";
+import { installSkill, toolFor } from "../init/files.ts";
+import { StatusLine } from "../init/heartbeat.ts";
+import { type Agent, preflight, preflightLines } from "../init/preflight.ts";
+import { checksRecord, INIT_STEPS, quickInit, readQuickRecord } from "../init/quick.ts";
+import { markStep, readResume, saveAnswer, startOver, stoppedAt } from "../init/resume.ts";
 import { detachInit, initLog, readStatus, statusReport, tracked } from "../init/status.ts";
 import { ownerAlive } from "../lock.ts";
 
@@ -53,25 +56,113 @@ export function parseFlags(argv: string[], valued: string[]): Flags {
 const str = (v: string | true | undefined) => (typeof v === "string" ? v : undefined);
 
 const BUILD_ONLY = ["answers", "model", "effort", "max-fix", "generate-only", "detach"];
-const BUILD_FLAGS = ["repo", "tool", "verbose", "status", "wait", ...BUILD_ONLY];
+const BUILD_FLAGS = ["repo", "tool", "verbose", "status", "wait", "yes", "start-over", ...BUILD_ONLY];
 const INIT_FLAGS = [...BUILD_FLAGS, "skill", "toolkit"];
 
 /** Pure: only an explicit yes is yes; Enter is no (review R8). */
 export const terminalAnswer = (a: string): boolean => /^(y|yes)$/i.test(a.trim());
 
-/** A yes/no question in a terminal (Enter = no); none without one: proposed checks are then written commented out. */
-function terminalConfirm(): ((q: string) => Promise<boolean>) | undefined {
-  if (!process.stdin.isTTY || !process.stdout.isTTY) return undefined;
-  return async (q) => {
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    try {
-      return terminalAnswer(await rl.question(q));
-    } catch {
-      return false; // Ctrl-D: no answer is not a yes
-    } finally {
-      rl.close();
+/**
+ * The question about checks an agent proposed: `[y/N]`, Enter is no, and --yes never says yes (untrusted text,
+ * review R8). Nobody to ask: none, so they are written commented out.
+ */
+function proposedChecksConfirm(ask: Ask): ((q: string) => Promise<boolean>) | undefined {
+  if (!ask.canAnswer) return undefined;
+  return async (q) => (await ask.yesNo(q.replace(/\s*\[y\/N\]\s*$/, ""), { recommended: false, untrusted: true })) ?? false;
+}
+
+/** `kitchen init` as typed again: the one command that resumes it (ADR 0011). */
+export function initCommand(flags: Record<string, string | true>): string {
+  const parts = ["kitchen init"];
+  if (str(flags.tool)) parts.push(`--tool ${str(flags.tool)}`);
+  if (str(flags.repo)) parts.push(`--repo ${str(flags.repo)}`);
+  if (flags.toolkit === true) parts.push("--toolkit");
+  if (flags.yes === true) parts.push("--yes");
+  return parts.join(" ");
+}
+
+/**
+ * Before quick init writes anything (ADR 0011): the preflight, then the agent tool. A missing required tool stops
+ * init with exit 2 and the fix lines; in a terminal the person can fix it and say so, and it is judged by checking
+ * again. Returns the tool (undefined: kitchen.yaml's own, not checked) and whether the person was asked for it, or an
+ * exit code.
+ */
+async function beforeInit(
+  repo: string,
+  flags: Record<string, string | true>,
+  ask: Ask,
+  out: (l: string) => void,
+): Promise<{ tool: Agent | undefined; asked: boolean } | number> {
+  const resume = initCommand(flags);
+  const flagTool = str(flags.tool) as Agent | undefined;
+  if (flagTool && flagTool !== "claude" && flagTool !== "codex") throw new Error("--tool is claude or codex");
+  const cfg = fs.existsSync(path.join(repo, "kitchen.yaml")) ? loadConfig(repo) : null;
+  const yamlTool = cfg ? (cfg.agent.command?.length || (cfg.agent.tool !== "claude" && cfg.agent.tool !== "codex") ? "other" : cfg.agent.tool) : undefined;
+  const tool = flagTool ?? yamlTool;
+  for (;;) {
+    const p = await preflight({ repo, tool, ghRequired: cfg?.forge.kind === "github" });
+    for (const l of preflightLines(p, resume)) out(l);
+    if (p.ok) {
+      out("");
+      if (tool === "other") return { tool: undefined, asked: false };
+      if (tool) return { tool, asked: false };
+      // Neither --tool nor kitchen.yaml says: the one that is ready, or, with both, the person's choice.
+      const saved = readResume(repo).init?.answers.tool as Agent | undefined;
+      if (saved && p.ready.includes(saved)) return { tool: saved, asked: false };
+      if (p.ready.length === 1) return { tool: p.ready[0], asked: false };
+      const rec = toolFor(repo) === "codex" ? 1 : 0;
+      markStep(repo, "init", "agent");
+      const pick =
+        (await ask.choose(
+          "Which agent should Kitchen use?",
+          [
+            { value: "claude", label: "claude  (Claude Code)" },
+            { value: "codex", label: "codex   (Codex)" },
+          ],
+          rec,
+        )) ?? (rec ? "codex" : "claude");
+      saveAnswer(repo, "init", "tool", pick);
+      return { tool: pick as Agent, asked: true };
     }
+    // Only a person at a terminal can fix it and come back; --yes and scripts stop here.
+    if (ask.yes || !ask.canAnswer) return 2;
+    if (!(await ask.yesNo("Fixed it (in another terminal)? Check again", { recommended: true }))) return 2;
+    out("");
+  }
+}
+
+/**
+ * A re-run of an init that stopped: say where, and continue there (or start over). `at` is where the LAST run
+ * stopped, read before this run recorded anything. `keep`: answers this run already gave, kept over a start over.
+ */
+async function resumeInit(
+  repo: string,
+  flags: Record<string, string | true>,
+  ask: Ask,
+  out: (l: string) => void,
+  at: string | null,
+  keep: Record<string, string>,
+) {
+  const own = [checksRecord(repo)];
+  const over = () => {
+    const moved = startOver(repo, "init", own);
+    for (const [k, v] of Object.entries(keep)) saveAnswer(repo, "init", k, v);
+    out(moved.length ? `Starting over: ${moved.map((f) => `${f} → ${f}.bak`).join(", ")}` : "Starting over: nothing to move");
   };
+  if (flags["start-over"] === true) return over();
+  if (!at) return;
+  const label = INIT_STEPS[at] ?? at;
+  out(`kitchen init stopped last time at: ${label}.`);
+  const pick = await ask.choose(
+    "Continue there, or start over?",
+    [
+      { value: "continue", label: `Continue at ${label}, with your answers so far` },
+      { value: "over", label: "Start over (the old state goes to .bak)" },
+    ],
+    0,
+  );
+  if (pick === "over") over();
+  else if (pick === undefined) out(`Continuing at ${label} (kitchen init --start-over begins again).`);
 }
 
 /** `--status [--wait <secs>]`: how a detached build is doing; blocks up to `--wait` (at most 110 s, so one agent tool call stays short) while it runs. */
@@ -98,12 +189,14 @@ async function buildStatus(repo: string, flags: Record<string, string | true>, o
  * .kitchen/init/init.log, the terminal quiet unless --verbose) or detached (`--detach`: its own
  * process, whose stdout is init.log, so it logs everything there).
  */
-async function runBuild(repo: string, flags: Record<string, string | true>, out: (l: string) => void): Promise<number> {
+async function runBuild(repo: string, flags: Record<string, string | true>, out: (l: string) => void, ask?: Ask): Promise<number> {
   if (flags.detach === true) {
     const args = ["--repo", repo];
     for (const k of ["tool", "model", "effort", "max-fix"]) if (str(flags[k])) args.push(`--${k}`, str(flags[k]) as string);
     if (str(flags.answers)) args.push("--answers", path.resolve(str(flags.answers) as string));
     if (flags["generate-only"] === true) args.push("--generate-only");
+    if (flags.yes === true) args.push("--yes");
+    if (flags["start-over"] === true) args.push("--start-over");
     return detachInit(repo, CLI, args, out);
   }
   const intoLog = process.env.KITCHEN_INIT_LOG; // a detached child: stdout already is the log
@@ -113,33 +206,61 @@ async function runBuild(repo: string, flags: Record<string, string | true>, out:
   const append = (l: string) => {
     if (!intoLog) fs.appendFileSync(log, `${l}\n`);
   };
-  return tracked(
-    repo,
-    (tee) =>
-      toolkitBuild(
-        {
-          repo,
-          answers: str(flags.answers),
-          tool: str(flags.tool) as "claude" | "codex" | undefined,
-          model: str(flags.model),
-          effort: str(flags.effort),
-          maxFix: flags["max-fix"] ? Number(flags["max-fix"]) : undefined,
-          generateOnly: flags["generate-only"] === true,
-        },
-        {
-          phase: (l) => {
-            tee(l);
-            append(l);
+  // The heartbeat (ADR 0011): one status line rewritten in place on a terminal; without one, a line at most every 10 s.
+  const tty = process.stdout.isTTY === true && !intoLog;
+  const sl = new StatusLine({
+    tty,
+    write: (s) => (tty ? process.stdout.write(s) : out(s.replace(/\n$/, ""))),
+    cols: process.stdout.columns,
+  });
+  const timer = setInterval(() => sl.tick(), 1000);
+  const resume = ["kitchen toolkit build", ...(str(flags.repo) ? [`--repo ${str(flags.repo)}`] : [])].join(" ");
+  try {
+    return await tracked(
+      repo,
+      (tee) =>
+        toolkitBuild(
+          {
+            repo,
+            answers: str(flags.answers),
+            tool: str(flags.tool) as "claude" | "codex" | undefined,
+            model: str(flags.model),
+            effort: str(flags.effort),
+            maxFix: flags["max-fix"] ? Number(flags["max-fix"]) : undefined,
+            generateOnly: flags["generate-only"] === true,
+            ask: ask ?? askFor({ yes: flags.yes === true, out: (l) => sl.line(l), tty }),
+            startOver: flags["start-over"] === true,
+            resume,
           },
-          log: (l) => {
-            append(l);
-            if (verbose) tee(l);
+          {
+            phase: (l) => {
+              tee(l);
+              append(l);
+            },
+            log: (l) => {
+              append(l);
+              if (verbose) tee(l);
+            },
+            agenda: (l) => {
+              sl.restart();
+              tee(l);
+              append(l);
+            },
+            beat: (t) => sl.beat(t),
           },
-        },
-      ),
-    out,
-    intoLog,
-  );
+        ),
+      (l) => sl.line(l),
+      intoLog,
+    );
+  } catch (e) {
+    if (!(e instanceof Halt)) throw e;
+    sl.line("");
+    sl.line(`Stopped. Resume: ${resume}`);
+    return 130;
+  } finally {
+    clearInterval(timer);
+    sl.stop();
+  }
 }
 
 export async function w2(name: string, argv: string[]): Promise<number> {
@@ -170,13 +291,28 @@ export async function w2(name: string, argv: string[]): Promise<number> {
     const implied = BUILD_ONLY.some((k) => k in flags);
     const toolkit = flags.toolkit === true || implied;
     if (flags.verbose === true && !toolkit) throw new Error("kitchen init: --verbose goes with --toolkit (quick init has nothing more to show)");
-    // An old skill's `init --detach` / `--answers` on a repo quick init already set up: straight to the build, so it returns at once.
-    if (!(implied && readQuickRecord(repo))) {
-      const code = await quickInit({ repo, tool: str(flags.tool) as "claude" | "codex" | undefined, confirm: terminalConfirm() }, out);
-      if (!toolkit || code !== 0) return code;
+    const ask = askFor({ yes: flags.yes === true, out });
+    try {
+      // An old skill's `init --detach` / `--answers` on a repo quick init already set up: straight to the build, so it returns at once.
+      if (!(implied && readQuickRecord(repo))) {
+        // Where the last run stopped, read before this run records any step of its own.
+        const at = stoppedAt(repo, "init");
+        const before = await beforeInit(repo, flags, ask, out);
+        if (typeof before === "number") return before;
+        const tool = before.tool;
+        await resumeInit(repo, flags, ask, out, at, before.asked && tool ? { tool } : {});
+        const code = await quickInit({ repo, tool, confirm: proposedChecksConfirm(ask), resume: initCommand(flags) }, out);
+        if (!toolkit || code !== 0) return code;
+        out("");
+      }
+      const { "start-over": _, ...buildFlags } = flags; // init's --start-over was init's own
+      return await runBuild(repo, buildFlags, out, ask);
+    } catch (e) {
+      if (!(e instanceof Halt)) throw e;
       out("");
+      out(`Stopped. Resume: ${initCommand(flags)}`);
+      return 130;
     }
-    return runBuild(repo, flags, out);
   }
   if (name === "toolkit" && argv[0] === "build") {
     const { flags, pos } = parseFlags(argv.slice(1), ["repo", "answers", "tool", "model", "effort", "max-fix", "wait"]);

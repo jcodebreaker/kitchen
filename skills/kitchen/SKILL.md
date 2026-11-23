@@ -7,8 +7,12 @@ description: "Drive Kitchen, the software factory in this repo: set it up (init)
 
 Kitchen turns tickets into proven pull requests. You don't do the work
 yourself: you map what the user says onto `kitchen` commands, run them, and
-relay their one-line outputs. Run commands from the repo root. If `kitchen` is
-not on PATH, use `npx devkitchen` in its place.
+relay their one-line outputs.
+
+<!-- kitchen-run:start (the plugin's copy replaces this block: npm run plugin:sync) -->
+Run commands from the repo root. If `kitchen` is not on PATH, use
+`npx devkitchen` in its place.
+<!-- kitchen-run:end -->
 
 | the user says | run |
 |---|---|
@@ -45,8 +49,19 @@ poll in a loop.
 
 ## Setup
 
-"Set up Kitchen" means `kitchen init`. It takes seconds, like `git init`: it
-writes `kitchen.yaml` with the project's checks (lint, tests…, read from
+"Set up Kitchen" means `kitchen init`. It takes seconds, like `git init`.
+
+First it checks what Kitchen needs and prints one line per tool, ✓ or ✗:
+node 20.11+, git and a commit, `claude` or `codex` signed in, and `gh`
+(optional). If a required one is ✗ it stops with exit 2, and under each ✗ is
+the exact command that fixes it on this machine. Show the user those lines.
+Kitchen never installs anything or signs anyone in: offer to run an install
+command for them (their approval of the Bash command is the consent), but a
+sign-in (`claude` then `/login`, `codex login`, `gh auth login`) is theirs to
+do in their own terminal. Then run `kitchen init` again: the re-check, not an
+installer's exit code, says whether it is fixed.
+
+Then it writes `kitchen.yaml` with the project's checks (lint, tests…, read from
 `package.json`, `Makefile`, `pyproject.toml`, `go.mod` or `Cargo.toml`),
 installs this skill, adds Kitchen's `.gitignore` entries and runs the checks
 once. No agent of its own when the checks are obvious, no app start, no Docker.
@@ -101,7 +116,9 @@ questions` it has written `.kitchen/setup-questions.json`:
 ```
 
 Ask the user each question (show `why` and the default) and wait for their
-answers: never answer for them. Write the answers to
+answers: never answer for them. In Claude Code use `AskUserQuestion`, with the
+recommended answer (the question's `default`) as the first option, marked
+"(recommended)". Write the answers to
 `.kitchen/setup-answers.json` as `{ "answers": { "q1": "…" } }` (an empty
 answer means "use the default"), then start `kitchen toolkit build --answers
 .kitchen/setup-answers.json --detach` the same way as step 1 and poll again.

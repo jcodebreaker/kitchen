@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Kitchen: the cook, small sizes"><title>Kitchen: the cook, small sizes</title><style>
+.ink{fill:var(--k-ink,#18181b)}.inks{fill:none;stroke:var(--k-ink,#18181b);stroke-linecap:round;stroke-linejoin:round}
+.acc{fill:var(--k-acc,#d9480f)}.accs{fill:none;stroke:var(--k-acc,#d9480f);stroke-linecap:round;stroke-linejoin:round}
+.pap{fill:var(--k-paper,#fff)}.paps{fill:none;stroke:var(--k-paper,#fff);stroke-linecap:round;stroke-linejoin:round}
+.acct{fill:none;stroke:var(--k-acc-tile,#ff8a3d);stroke-linecap:round;stroke-linejoin:round}
+@media (prefers-color-scheme:dark){.ink{fill:var(--k-ink,#ededf0)}.inks{stroke:var(--k-ink,#ededf0)}.acc{fill:var(--k-acc,#ff8a3d)}.accs{stroke:var(--k-acc,#ff8a3d)}.pap{fill:var(--k-paper,#0f1011)}.paps{stroke:var(--k-paper,#0f1011)}.acct{stroke:var(--k-acc-tile,#d9480f)}}
+</style><circle class="ink" cx="32" cy="8.500" r="4"/><path class="inks" stroke-width="7" d="M9,18.500H55M4.500,35H7M57,35H59.500"/><path class="ink" fill-rule="evenodd" d="M14,26H50A3,3 0 0 1 53,29V44A15,15 0 0 1 38,59H26A15,15 0 0 1 11,44V29A3,3 0 0 1 14,26ZM23.500,35.500a5,5 0 1 0 0.010,0ZM40.500,35.500a5,5 0 1 0 0.010,0Z"/></svg>

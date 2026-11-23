@@ -8,7 +8,7 @@ import { guardCriteria, lintSpec, parseRequirements } from "../../checks/spec-li
 import { testLayout } from "../../checks/test-layout.ts";
 import type { Kind, Risk } from "../machine.ts";
 import { unprovableWithoutToolkit } from "../no-toolkit.ts";
-import { writeAtomic } from "../store.ts";
+import { shortTitle, writeAtomic } from "../store.ts";
 import { ensureWorktree } from "../worktree.ts";
 import { baseNegativeProblems, guardBaseProblems, runBaseCheck } from "./base-check.ts";
 import { fileBlock, testLayoutBlock, toolkitBlock } from "./context.ts";
@@ -102,7 +102,15 @@ export const intake: StageHandler = async (ctx) => {
   return {
     to,
     facts: {
-      intake: { decision, kind, risk, surfaces, requirements: requirements.length, criteria: criteria && { ok: criteria.ok, reason: criteria.reason } },
+      intake: {
+        decision,
+        kind,
+        risk,
+        surfaces,
+        requirements: requirements.length,
+        criteria: criteria && { ok: criteria.ok, reason: criteria.reason },
+        ...(shortTitle(h.TITLE) ? { title: shortTitle(h.TITLE) ?? undefined } : {}),
+      },
       why: h.QUESTION ?? h.REASON,
       ...(noToolkit ? { noToolkit: { needsApp, highRisk: false, ...(unprovable ? { unprovable } : {}) } } : {}),
     },

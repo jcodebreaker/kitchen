@@ -1,6 +1,7 @@
 // `kitchen dashboard [--port n]`: the page (dashboard/dashboard.html) and its data, on 127.0.0.1 only.
 //   GET  /                         the page, with this launch's token in it (no CDN, nothing from elsewhere; system fonts)
-//   GET  /data.json                snapshot(repo): every job, read from .kitchen/ on each request
+//   GET  /data.json                snapshot(repo): every job, read from .kitchen/ on each request, and this launch's
+//                                  id (not the token): a tab from an earlier launch sees it changed and reloads once
 //   GET  /jobs/<id>/detail.json    one job: stage history with its agents' activity, thread, criteria
 //   GET  /jobs/<id>/report.html    a job's rendered Report
 //   GET  /setup.json               the Setup run
@@ -51,8 +52,10 @@ export function refusePost(h: http.IncomingHttpHeaders, token: string, port: num
   return null;
 }
 
-export function dashboardServer(repo: string, o: { token?: string } = {}): http.Server & { token: string } {
+export function dashboardServer(repo: string, o: { token?: string } = {}): http.Server & { token: string; launch: string } {
   const token = o.token ?? randomBytes(32).toString("hex");
+  // Not a secret: it only tells a tab from an earlier launch (holding that launch's token) that the server restarted.
+  const launch = randomBytes(8).toString("hex");
   let page: string | null = null;
   const s = http.createServer((req, res) => {
     const send = (code: number, type: string, body: string | Buffer, extra: Record<string, string> = {}) => {
@@ -102,10 +105,10 @@ export function dashboardServer(repo: string, o: { token?: string } = {}): http.
       }
       if (req.method !== "GET" && req.method !== "HEAD") return send(405, "text/plain", "GET, HEAD or POST\n", { allow: "GET, HEAD, POST" });
       if (url.pathname === "/" || url.pathname === "/index.html") {
-        page ??= fs.readFileSync(DASHBOARD_HTML, "utf8").replace("__KITCHEN_TOKEN__", token);
+        page ??= fs.readFileSync(DASHBOARD_HTML, "utf8").replace("__KITCHEN_TOKEN__", token).replace("__KITCHEN_LAUNCH__", launch);
         return send(200, "text/html; charset=utf-8", page, { "content-security-policy": PAGE_CSP });
       }
-      if (url.pathname === "/data.json") return json(200, await snapshot(repo));
+      if (url.pathname === "/data.json") return json(200, { ...(await snapshot(repo)), launch });
       if (url.pathname === "/setup.json") return json(200, setupView(repo));
       const m = /^\/jobs\/([^/]+)\/(report\.html|detail\.json)$/.exec(url.pathname);
       if (m) {
@@ -129,7 +132,7 @@ export function dashboardServer(repo: string, o: { token?: string } = {}): http.
       else res.end();
     });
   });
-  return Object.assign(s, { token });
+  return Object.assign(s, { token, launch });
 }
 
 export async function serveDashboard(repo: string, port: number, print: (l: string) => void): Promise<http.Server> {

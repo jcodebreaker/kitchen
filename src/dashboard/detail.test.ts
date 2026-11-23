@@ -9,7 +9,7 @@ import { addMessage } from "../engine/messages.ts";
 import { createJob, jobDirOf, updateJob } from "../engine/store.ts";
 import { appendLedger } from "../ledger/append.ts";
 import { snapshot } from "./data.ts";
-import { detail } from "./detail.ts";
+import { detail, ticketText } from "./detail.ts";
 
 let repo = "";
 const saved = process.env.KITCHEN_HOME;
@@ -136,4 +136,18 @@ test("a message no agent has read yet is marked so the panel keeps its segment o
   const build = d.tl.find((x) => x.stage === "build");
   const m = build?.evs.find((e) => e.c === "you");
   assert.ok(m && "sent" in m && m.sent, "in the closed Build segment, flagged unread");
+});
+
+test("the panel gets the ticket's full text, without its title line (the title is short, ADR 0011)", async () => {
+  const text = "add a feature: members can renew a loan once, for another 14 days. POST /loans/:id/renew answers 200.";
+  const { job } = await createJob(repo, {
+    title: "Members can renew a loan once, for another 14 days",
+    ticket: { source: "prompt", id: "t" },
+    body: text,
+    roundLimit: 3,
+    base: "",
+  });
+  assert.equal(ticketText(jobDirOf(repo, job.id)), text);
+  assert.equal((await detail(repo, job.id)).ticket, text);
+  assert.equal(ticketText(path.join(repo, "nowhere")), "");
 });
