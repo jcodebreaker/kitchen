@@ -90,7 +90,7 @@ export function report(repo: string, out: Out, opts: { json?: boolean } = {}): n
     ready: by("ready"),
     needsYou: by("needs-info") + by("needs-human"),
     rejected: by("rejected"),
-    inFlight: jobs.filter((j) => ["intake", "build", "qa", "review"].includes(j.stage)).length,
+    inFlight: jobs.filter((j) => ["intake", "build", "qa", "review", "regress"].includes(j.stage)).length,
     firstPass,
     roundsMean: ended.length ? ended.reduce((a, j) => a + j.round, 0) / ended.length : 0,
     medianMinutes: secs.length ? Math.round(secs[Math.floor(secs.length / 2)] / 60) : 0,

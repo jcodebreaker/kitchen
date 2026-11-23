@@ -16,10 +16,15 @@ import { branchExists, git, gitOut, revParse, worktrees } from "./git.ts";
 import type { Job } from "./machine.ts";
 import { kitchenDir } from "./store.ts";
 
+/** A trial merge kept for its touched features to be driven before it lands (ADR 0017 §3). */
+export type Drive = { onto: string; sha: string; wt: string; features: string[] };
+
 export type MergeOutcome =
   | { ok: true; sha: string; via: "local" | "github"; pr?: number }
   /** `back`: the work needs another Build round (a conflict, checks red on staging); else it stops at Ready. */
-  | { ok: false; why: string; back: boolean; log?: string };
+  | { ok: false; why: string; back: boolean; log?: string; drive?: undefined }
+  /** Not merged yet: these features must be driven on the trial merge first (its worktree is kept). */
+  | { ok: false; why: string; back: false; drive: Drive };
 
 const IDENTITY = ["-c", "user.name=Kitchen", "-c", "user.email=kitchen@localhost"];
 
@@ -101,6 +106,14 @@ export async function catchUpWithStaging(repo: string, cfg: Config, wt: string, 
   return { tip, merged: "conflict", conflicts };
 }
 
+export const trialWorktree = (repo: string, id: string) => path.join(kitchenDir(repo), "merge", id);
+
+/** Remove a trial merge's worktree. */
+export async function dropTrial(repo: string, wt: string) {
+  await git(repo, ["worktree", "remove", "--force", wt], { allowFail: true });
+  fs.rmSync(wt, { recursive: true, force: true });
+}
+
 /** Merge `head` (the reviewed commit of the job branch) onto `onto` in a scratch worktree, then run the checks there. */
 async function trialMerge(
   repo: string,
@@ -110,9 +123,8 @@ async function trialMerge(
   head: string,
   log: string,
 ): Promise<{ ok: true; sha: string; wt: string } | { ok: false; why: string; back: boolean; wt: string }> {
-  const wt = path.join(kitchenDir(repo), "merge", job.id);
-  await git(repo, ["worktree", "remove", "--force", wt], { allowFail: true });
-  fs.rmSync(wt, { recursive: true, force: true });
+  const wt = trialWorktree(repo, job.id);
+  await dropTrial(repo, wt);
   await git(repo, ["worktree", "add", "-q", "--detach", wt, onto]);
   const m = await git(wt, [...IDENTITY, "merge", "--no-ff", "--no-edit", "-m", `Merge ${job.branch}: ${job.title}`, head], { allowFail: true });
   if (m.code) {
@@ -136,8 +148,18 @@ async function trialMerge(
 /**
  * Merge the job's reviewed head into staging. The checks re-run on the merged result first; staging moves only if
  * they pass and staging didn't move meanwhile (local: update-ref with the old tip; GitHub: --match-head-commit).
+ *
+ * ADR 0017 §3: `gate` names the features the merged result touches; when it names any, nothing lands yet: the
+ * outcome is a `drive` and the trial worktree stays for the regress lane. `drove`: the trial merge whose features
+ * were driven and passed; when staging is still where it was, that exact commit lands without another trial.
  */
-export async function mergeToStaging(repo: string, cfg: Config, job: Job, reviewedHead: string, o: { log: string; gh?: Gh }): Promise<MergeOutcome> {
+export async function mergeToStaging(
+  repo: string,
+  cfg: Config,
+  job: Job,
+  reviewedHead: string,
+  o: { log: string; gh?: Gh; gate?: (t: { onto: string; sha: string; wt: string }) => Promise<string[]>; drove?: { onto: string; sha: string } },
+): Promise<MergeOutcome> {
   const name = cfg.staging.branch;
   assertNotProtected(cfg, name);
   const gh = o.gh ?? realGh;
@@ -154,13 +176,24 @@ export async function mergeToStaging(repo: string, cfg: Config, job: Job, review
         if (holder) return { ok: false, why: `${name} is checked out in ${holder.path}: Kitchen won't move a branch under a checkout`, back: false };
       }
       let t: Awaited<ReturnType<typeof trialMerge>> | undefined;
+      let keep = false;
       try {
-        t = await trialMerge(repo, cfg, job, onto, reviewedHead, o.log);
-        if (!t.ok) return { ok: false, why: t.why, back: t.back, log: o.log };
+        let sha: string;
+        if (o.drove && o.drove.onto === onto) sha = o.drove.sha;
+        else {
+          t = await trialMerge(repo, cfg, job, onto, reviewedHead, o.log);
+          if (!t.ok) return { ok: false, why: t.why, back: t.back, log: o.log };
+          sha = t.sha;
+          const features = o.gate ? await o.gate({ onto, sha, wt: t.wt }) : [];
+          if (features.length) {
+            keep = true;
+            return { ok: false, why: `drive ${features.join(", ")} first`, back: false, drive: { onto, sha, wt: t.wt, features } };
+          }
+        }
         if (cfg.forge.kind === "local") {
-          const r = await git(repo, ["update-ref", "-m", `kitchen: merge ${job.branch}`, `refs/heads/${name}`, t.sha, onto], { allowFail: true });
+          const r = await git(repo, ["update-ref", "-m", `kitchen: merge ${job.branch}`, `refs/heads/${name}`, sha, onto], { allowFail: true });
           if (r.code) return { ok: false, why: `${name} moved while the checks ran; the next pass tries again`, back: false };
-          return { ok: true, sha: t.sha, via: "local" };
+          return { ok: true, sha, via: "local" };
         }
         // GitHub: the job branch goes up (Kitchen pushes, never an agent), its PR into staging merges pinned to the reviewed head.
         const push = await git(repo, ["push", "-q", "origin", `${reviewedHead}:refs/heads/${job.branch}`], { allowFail: true });
@@ -193,13 +226,10 @@ export async function mergeToStaging(repo: string, cfg: Config, job: Job, review
         const merged = await gh(["pr", "merge", String(pr), "--merge", "--match-head-commit", reviewedHead], repo);
         if (merged.code) return { ok: false, why: `gh pr merge #${pr} refused: ${merged.stderr.trim().split("\n").pop()}`, back: false };
         await git(repo, ["fetch", "-q", "origin", name], { allowFail: true });
-        const sha = (await revParse(repo, `refs/remotes/origin/${name}`)) ?? t.sha;
-        return { ok: true, sha, via: "github", pr };
+        const landed = (await revParse(repo, `refs/remotes/origin/${name}`)) ?? sha;
+        return { ok: true, sha: landed, via: "github", pr };
       } finally {
-        if (t?.wt) {
-          await git(repo, ["worktree", "remove", "--force", t.wt], { allowFail: true });
-          fs.rmSync(t.wt, { recursive: true, force: true });
-        }
+        if (t?.wt && !keep) await dropTrial(repo, t.wt);
       }
     },
     { timeoutMs: 30 * 60_000 },

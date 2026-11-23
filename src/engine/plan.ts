@@ -5,7 +5,7 @@
 // - Intake is never held for room: every job in intake starts in the first wave it can, even past `parallel`. It is a
 //   short, read-only lane, and a run where three builders took every slot left the fourth ticket without an intake
 //   for minutes. Intake lanes do take room, so the rest of the wave gets what `parallel` leaves after them.
-// - Then downstream first: review, then QA, then build, so finished work lands before new work starts.
+// - Then downstream first: regress, review, then QA, then build, so finished work lands before new work starts.
 // - Dependencies: a job does not start its first Build while a job named on its AFTER: line is unfinished. Finished
 //   is done or rejected: a job held at Ready still blocks, since staging doesn't have its change yet.
 // - Jobs that touch the same files run side by side: git merges each into staging, and a conflict sends the later one
@@ -27,7 +27,7 @@ export type Plan = {
   drained: boolean;
 };
 
-const ORDER: Lane[] = ["intake", "review", "qa", "build"];
+const ORDER: Lane[] = ["intake", "regress", "review", "qa", "build"];
 const num = (id: string) => Number(id.split("-")[0]);
 const finished = (j: Job) => j.stage === "done" || j.stage === "rejected";
 

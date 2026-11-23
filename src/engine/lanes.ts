@@ -6,6 +6,7 @@
 //   build   → commits on kitchen/<id> (Kitchen runs the checks itself)
 //   qa      → .kitchen/jobs/<id>/rounds/<n>/qa/verdict.json, plus the evidence files it cites (same folder)
 //   review  → .kitchen/jobs/<id>/rounds/<n>/review.json
+//   regress → .kitchen/jobs/<id>/rounds/<n>/regress/verdict.json (one row per feature driven), plus its evidence
 import fs from "node:fs";
 import path from "node:path";
 import type { Kind, Risk } from "./machine.ts";
@@ -24,6 +25,8 @@ export type Intake =
       surfaces: ("ui" | "security")[];
       files: string[];
       after: string[];
+      /** Behaviour this ticket changes on purpose, as `<feature>/<sub-feature>` of the verify map (ADR 0017 §4). */
+      changes: string[];
       criteria: Criterion[];
     }
   | { decision: "NEEDS-INFO"; question: string; title: string | null }
@@ -65,7 +68,8 @@ export function parseIntake(text: string): Intake | { refused: string } {
   const criteria = parseCriteria(text);
   if (!criteria.length) return { refused: "ACCEPT needs at least one criterion: `- C1 (page|http|test|cmd): what must be true`" };
   const after = list(header(text, "AFTER")).flatMap((x) => (/^\d{1,6}$/.test(x) ? [x.padStart(3, "0")] : /^\d{3,}-/.test(x) ? [x.split("-")[0]] : []));
-  return { decision: "ACCEPT", title, kind: kind as Kind, risk: risk as Risk, surfaces, files: list(header(text, "FILES")), after, criteria };
+  const changes = list(header(text, "CHANGES")).filter((x) => /^[\w.-]+\/[\w.-]+$/.test(x));
+  return { decision: "ACCEPT", title, kind: kind as Kind, risk: risk as Risk, surfaces, files: list(header(text, "FILES")), after, changes, criteria };
 }
 
 export const intakeFile = (jobDir: string) => path.join(jobDir, "intake.md");
@@ -76,6 +80,15 @@ export function leftOutOf(jobDir: string): string {
     return /^(nothing|none|-|n\/a)?\.?$/i.test(v) ? "" : v;
   } catch {
     return "";
+  }
+}
+/** The accepted intake's CHANGES: entries (`feature/sub-feature`), or []. */
+export function changesOf(jobDir: string): string[] {
+  try {
+    const i = parseIntake(fs.readFileSync(intakeFile(jobDir), "utf8"));
+    return "decision" in i && i.decision === "ACCEPT" ? i.changes : [];
+  } catch {
+    return [];
   }
 }
 /** The accepted intake's criteria, or [] before intake accepted it. */
@@ -133,6 +146,49 @@ export function readQa(jobDir: string, round: number, criteria: Criterion[]): Qa
   const said = String(v.verdict ?? "").toUpperCase();
   if (said === "PASS" && !allPass) return { refused: "verdict PASS, but a criterion's row is FAIL" };
   return { verdict: allPass ? "PASS" : "FAIL", criteria: rows };
+}
+
+export const regressDir = (jobDir: string, round: number) => path.join(roundDir(jobDir, round), "regress");
+export type FeatureRow = { id: string; result: "PASS" | "FAIL"; evidence: string[]; note: string };
+export type FeatureVerdict = { verdict: "PASS" | "FAIL"; features: FeatureRow[] };
+
+/**
+ * Pure apart from reading the folder: a drive of features (the regress lane, a sweep), from `<folder>/verdict.json`:
+ * `{ verdict, features: [{ id, result, evidence, note }] }`. Every feature in `ids` has a row citing evidence files
+ * that exist in the folder and aren't empty; the verdict is PASS only when every row is.
+ */
+export function readFeatureVerdict(folder: string, ids: string[]): FeatureVerdict | { refused: string } {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(fs.readFileSync(path.join(folder, "verdict.json"), "utf8"));
+  } catch (e) {
+    return { refused: `no readable verdict.json in ${path.basename(folder)}/: ${(e as Error).message.split("\n")[0]}` };
+  }
+  const v = raw as { verdict?: unknown; features?: unknown };
+  if (!Array.isArray(v.features)) return { refused: "verdict.json needs a features array" };
+  const rows: FeatureRow[] = (v.features as Record<string, unknown>[]).map((r) => ({
+    id: String(r?.id ?? ""),
+    result: String(r?.result ?? "").toUpperCase() === "PASS" ? "PASS" : "FAIL",
+    evidence: Array.isArray(r?.evidence) ? (r.evidence as unknown[]).map(String) : [],
+    note: String(r?.note ?? ""),
+  }));
+  for (const r of v.features as Record<string, unknown>[]) {
+    const res = String(r?.result ?? "").toUpperCase();
+    if (res !== "PASS" && res !== "FAIL") return { refused: `${String(r?.id)}: result is PASS or FAIL` };
+  }
+  for (const id of ids) {
+    const row = rows.find((r) => r.id === id);
+    if (!row) return { refused: `no row for feature ${id}` };
+    if (!row.evidence.length) return { refused: `${id} cites no evidence file` };
+    for (const f of row.evidence) {
+      const p = path.resolve(folder, f);
+      if (!p.startsWith(`${folder}${path.sep}`)) return { refused: `${id}: evidence ${f} is outside the folder` };
+      if (!fs.existsSync(p) || !fs.statSync(p).isFile() || fs.statSync(p).size === 0) return { refused: `${id}: evidence ${f} is missing or empty` };
+    }
+  }
+  const allPass = ids.every((id) => rows.find((r) => r.id === id)?.result === "PASS");
+  if (String(v.verdict ?? "").toUpperCase() === "PASS" && !allPass) return { refused: "verdict PASS, but a feature's row is FAIL" };
+  return { verdict: allPass ? "PASS" : "FAIL", features: rows.filter((r) => ids.includes(r.id)) };
 }
 
 export const reviewFile = (jobDir: string, round: number) => path.join(roundDir(jobDir, round), "review.json");

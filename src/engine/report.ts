@@ -4,7 +4,8 @@
 // the checks and the diff stat. Evidence is plain files in the job folder; the Report cites them by name.
 import fs from "node:fs";
 import path from "node:path";
-import { criteriaOf, leftOutOf, qaDir, readQa, readReview } from "./lanes.ts";
+import { readMapChanges } from "../verify/admit.ts";
+import { criteriaOf, leftOutOf, qaDir, readQa, readReview, regressDir } from "./lanes.ts";
 import type { Job } from "./machine.ts";
 import { readMessages } from "./messages.ts";
 import { jobDirOf, roundDir, writeAtomic } from "./store.ts";
@@ -44,6 +45,9 @@ export function renderReport(repo: string, job: Job, o: { diff?: { p: string; a:
     for (const f of review.findings.filter((x) => !x.blocks)) check.push(`Review note ${esc(f.id)}${f.at ? ` (${esc(f.at)})` : ""}: ${esc(f.why)}`);
   const leftOut = leftOutOf(dir);
   if (leftOut) check.push(`Left out by intake (not in your ticket; file it separately if you want it): ${esc(leftOut)}`);
+  // ADR 0017 §4: every earlier check this job changed on purpose (its CHANGES: line), as it was and as it is now.
+  for (const c of readMapChanges(dir))
+    check.push(`Changed earlier check (${esc(c.by)}): ${esc(c.item)}: was “${esc(c.was)}”, now ${c.now === "(removed)" ? "removed" : `“${esc(c.now)}”`}`);
   if (job.risk === "high") check.push("High risk: read the diff yourself before you merge it anywhere else.");
   const rows = crit
     .map((c) => {
@@ -81,6 +85,7 @@ pre{background:var(--card);padding:8px;border-radius:6px;overflow:auto;font-size
 <h2>Criteria, checked against the running app</h2>
 <table>${rows || "<tr><td>No criteria.</td></tr>"}</table>
 ${"refused" in qa ? `<p class="bad">QA: ${esc(qa.refused)}</p>` : ""}
+${drives(dir, job.round)}
 <h2>Review</h2>${"summary" in review && review.summary ? `<p>${esc(review.summary)}</p>` : ""}${findings}
 <h2>Checks</h2><pre>${esc(o.checks ?? readChecks(dir, job.round))}</pre>
 <h2>What changed</h2>${diff}
@@ -88,6 +93,27 @@ ${thread.length ? `<h2>Your messages</h2><ul>${thread.map((m) => `<li>${esc(m.at
 <p class="st">Evidence files: ${esc(path.relative(repo, qd))}/</p>
 </main></body></html>
 `;
+}
+
+/** ADR 0017 §3: the touched features driven on the trial merge before it landed, newest round first. */
+function drives(dir: string, round: number): string {
+  for (let r = round; r >= 1; r--) {
+    const f = path.join(regressDir(dir, r), "verdict.json");
+    if (!fs.existsSync(f)) continue;
+    try {
+      const v = JSON.parse(fs.readFileSync(f, "utf8")) as { features?: { id: string; result: string; note?: string; evidence?: string[] }[] };
+      const rows = (v.features ?? [])
+        .map(
+          (x) =>
+            `<tr><td>${esc(String(x.id))}</td><td class="${String(x.result).toUpperCase() === "PASS" ? "ok" : "bad"}">${esc(String(x.result))}</td><td>${esc(String(x.note ?? ""))}${(x.evidence ?? []).map((e) => evidenceHtml(regressDir(dir, r), String(e))).join("")}</td></tr>`,
+        )
+        .join("");
+      return `<h2>Features driven before the merge (round ${r})</h2><p class="st">Kitchen chose them from the verify map: their <code>Code:</code> covers files this merge changed.</p><table>${rows}</table>`;
+    } catch {
+      return "";
+    }
+  }
+  return "";
 }
 
 function readChecks(dir: string, round: number): string {

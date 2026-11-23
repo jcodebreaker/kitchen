@@ -16,11 +16,12 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { prepareOf, runShell } from "../checks/run-checks.ts";
 import { type Config, loadConfig } from "../config.ts";
-import { qaDir } from "../engine/lanes.ts";
+import { qaDir, regressDir } from "../engine/lanes.ts";
 import { findJob, jobDirOf, worktreeOf, writeAtomic } from "../engine/store.ts";
+import { isRunId, runDir, runEvidence, runWorktree } from "../verify/paths.ts";
 
 type AppState = { pid?: number; port?: number; url: string; at: string; legacy?: { id: string; dev: string; wt: string } };
-const stateFile = (repo: string, id: string) => path.join(jobDirOf(repo, id), "app.json");
+const stateFile = (repo: string, id: string) => path.join(isRunId(id) ? runDir(repo, id) : jobDirOf(repo, id), "app.json");
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$/;
 
 function readState(repo: string, id: string): AppState | null {
@@ -62,19 +63,30 @@ async function healthy(url: string): Promise<boolean> {
 const join = (base: string, p: string) => (/^https?:\/\//.test(p) ? p : `${base.replace(/\/$/, "")}/${p.replace(/^\//, "")}`);
 const LOOPBACK = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?(\/|$)/;
 
-function jobPaths(repo: string, ref: string) {
+/**
+ * What `kitchen qa … <ref>` works on: a job (its worktree; its QA folder, or its regress folder while the job is in
+ * regress) or a verify run (`sweep-…`, `maintain-…`: its checkout and evidence folder under .kitchen/verify/).
+ */
+function jobPaths(repo: string, ref: string): { id: string; wt: string; out: string } {
+  if (isRunId(ref)) {
+    if (!fs.existsSync(runDir(repo, ref))) throw new Error(`no verify run ${ref}`);
+    const out = runEvidence(repo, ref);
+    fs.mkdirSync(out, { recursive: true });
+    return { id: ref, wt: runWorktree(repo, ref), out };
+  }
   const job = findJob(repo, ref);
   const wt = job.worktree && fs.existsSync(job.worktree) ? job.worktree : worktreeOf(repo, job.id);
-  const out = qaDir(jobDirOf(repo, job.id), job.round);
+  const dir = jobDirOf(repo, job.id);
+  const out = job.stage === "regress" ? regressDir(dir, job.round) : qaDir(dir, job.round);
   fs.mkdirSync(out, { recursive: true });
-  return { job, wt: fs.existsSync(wt) ? wt : repo, out };
+  return { id: job.id, wt: fs.existsSync(wt) ? wt : repo, out };
 }
 
 const legacyDev = (wt: string, repo: string) => [wt, repo].map((d) => path.join(d, ".kitchen", "toolkit", "bin", "dev")).find((f) => fs.existsSync(f));
 
 export async function appUp(repo: string, ref: string, out: (l: string) => void, cfg: Config = loadConfig(repo)): Promise<number> {
-  const { job, wt, out: dir } = jobPaths(repo, ref);
-  const had = readState(repo, job.id);
+  const { id: jid, wt, out: dir } = jobPaths(repo, ref);
+  const had = readState(repo, jid);
   if (had && (had.legacy || (had.pid && alive(had.pid))) && (await healthy(join(had.url, cfg.app.health)))) {
     out(`app: up at ${had.url}`);
     return 0;
@@ -94,7 +106,7 @@ export async function appUp(repo: string, ref: string, out: (l: string) => void,
       out("app: kitchen.yaml has no app.start (nothing to run): check with tests and commands instead");
       return 1;
     }
-    const id = `kq${job.id.split("-")[0]}`;
+    const id = `kq${jid.split("-")[0]}`;
     await runShell(`"${dev}" prepare --src "${wt}"`, { cwd: wt, timeoutSec: 1800, log });
     const r = await runShell(`"${dev}" up --id ${id} --src "${wt}"`, { cwd: wt, timeoutSec: 600, log });
     const line = r.all
@@ -107,7 +119,7 @@ export async function appUp(repo: string, ref: string, out: (l: string) => void,
       out(`app: the Toolkit's bin/dev up failed; see ${log}`);
       return 1;
     }
-    writeAtomic(stateFile(repo, job.id), JSON.stringify({ url, at: new Date().toISOString(), legacy: { id, dev, wt } }));
+    writeAtomic(stateFile(repo, jid), JSON.stringify({ url, at: new Date().toISOString(), legacy: { id, dev, wt } }));
     out(`app: up at ${url} (the repo's Toolkit, bin/dev up)`);
     return 0;
   }
@@ -126,7 +138,7 @@ export async function appUp(repo: string, ref: string, out: (l: string) => void,
   child.unref();
   fs.closeSync(fd);
   const url = fill(cfg.app.url ?? "http://127.0.0.1:{port}");
-  writeAtomic(stateFile(repo, job.id), JSON.stringify({ pid: child.pid, port, url, at: new Date().toISOString() }));
+  writeAtomic(stateFile(repo, jid), JSON.stringify({ pid: child.pid, port, url, at: new Date().toISOString() }));
   const end = Date.now() + cfg.app.ready_timeout_sec * 1000;
   while (Date.now() < end) {
     if (await healthy(join(url, cfg.app.health))) {
@@ -136,13 +148,13 @@ export async function appUp(repo: string, ref: string, out: (l: string) => void,
     if (child.pid && !alive(child.pid)) break;
     await new Promise((r) => setTimeout(r, 300));
   }
-  await appDown(repo, job.id);
+  await appDown(repo, jid);
   out(`app: not healthy at ${join(url, cfg.app.health)} within ${cfg.app.ready_timeout_sec}s; see ${path.relative(repo, log)}`);
   return 1;
 }
 
 export async function appDown(repo: string, ref: string, out: (l: string) => void = () => {}): Promise<number> {
-  const id = findJob(repo, ref).id;
+  const id = isRunId(ref) ? ref : findJob(repo, ref).id;
   const s = readState(repo, id);
   if (!s) {
     out("app: not running");
@@ -201,10 +213,10 @@ type Browser = { newContext(o: object): Promise<{ newPage(): Promise<Page> }>; c
 
 export async function page(repo: string, ref: string, target: string, o: { name: string; script?: string }, out: (l: string) => void): Promise<number> {
   if (!NAME.test(o.name)) throw new Error("--name: letters, digits, . _ - (a file name without a folder)");
-  const { job, out: dir } = jobPaths(repo, ref);
-  const base = baseUrl(repo, job.id);
+  const { id: jid, out: dir } = jobPaths(repo, ref);
+  const base = baseUrl(repo, jid);
   if (!base && !/^https?:/.test(target)) {
-    out(`page: the app is not up: kitchen qa up ${job.id} first`);
+    out(`page: the app is not up: kitchen qa up ${jid} first`);
     return 1;
   }
   const url = join(base ?? "", target);
@@ -226,7 +238,7 @@ export async function page(repo: string, ref: string, target: string, o: { name:
     if (o.script) {
       const mod = (await import(pathToFileURL(path.resolve(o.script)).href)) as { default?: (page: Page, ctx: object) => Promise<unknown> };
       if (typeof mod.default !== "function") throw new Error(`${o.script} must export a default async function (page, ctx)`);
-      await mod.default(p, { url: base ?? url, job: job.id, dir });
+      await mod.default(p, { url: base ?? url, job: jid, dir });
     }
     await p.screenshot({ path: path.join(dir, `${o.name}.png`), fullPage: true });
     const text = (await p.innerText("body").catch(() => "")).slice(0, 6000);
@@ -269,10 +281,10 @@ export async function http(
   out: (l: string) => void,
 ): Promise<number> {
   if (!NAME.test(o.name)) throw new Error("--name: letters, digits, . _ - (a file name without a folder)");
-  const { job, out: dir } = jobPaths(repo, ref);
-  const base = baseUrl(repo, job.id);
+  const { id: jid, out: dir } = jobPaths(repo, ref);
+  const base = baseUrl(repo, jid);
   if (!base && !/^https?:/.test(target)) {
-    out(`http: the app is not up: kitchen qa up ${job.id} first`);
+    out(`http: the app is not up: kitchen qa up ${jid} first`);
     return 1;
   }
   const url = join(base ?? "", target);

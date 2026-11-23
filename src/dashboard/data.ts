@@ -21,6 +21,7 @@ export const STAGE_NAMES: Record<Stage, string> = {
   build: "Build",
   qa: "QA",
   review: "Review",
+  regress: "Merge check",
   ready: "Ready",
   done: "Merged",
   "needs-human": "Needs you",
@@ -32,11 +33,17 @@ export const PHASES = [
   { k: "intake", nm: "Intake", stages: ["intake", "needs-info"] },
   { k: "build", nm: "Build", stages: ["build"] },
   { k: "qa", nm: "QA", stages: ["qa"] },
-  { k: "review", nm: "Review", stages: ["review"] },
+  { k: "review", nm: "Review", stages: ["review", "regress"] },
   { k: "merge", nm: "Merge", stages: ["ready", "done"] },
 ] as const satisfies readonly { k: string; nm: string; stages: readonly Stage[] }[];
 export type Phase = (typeof PHASES)[number]["k"];
-const AGENT: Partial<Record<Stage, string>> = { intake: "Intake agent", build: "Build agent", qa: "QA agent", review: "Review agent" };
+const AGENT: Partial<Record<Stage, string>> = {
+  intake: "Intake agent",
+  build: "Build agent",
+  qa: "QA agent",
+  review: "Review agent",
+  regress: "Merge-check agent",
+};
 
 /** The stage a job's track and agent are read from: where it paused or escalated from, else where it is. */
 export function workStage(j: Pick<Job, "stage" | "pausedFrom" | "escalatedFrom">): Stage {
@@ -72,7 +79,7 @@ export function laneOf(j: Pick<Job, "stage" | "pausedFrom" | "escalatedFrom" | "
   if (j.stage === "rejected" || j.stage === "done" || (pausedByYou(j) && j.pausedReason === BY_YOU_STOPPED)) return "done";
   if (j.stage === "ready") return "ready";
   const s = workStage(j);
-  return s === "build" || s === "qa" || s === "review" ? s : "intake";
+  return s === "build" || s === "qa" || s === "review" ? s : s === "regress" ? "review" : "intake";
 }
 /** Who works in each lane, as its header says. */
 export function laneWho(cfg: Config | null): Record<Lane, string> {

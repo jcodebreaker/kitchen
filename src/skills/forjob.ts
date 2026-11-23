@@ -28,6 +28,7 @@ export const envOf = (repo: string, config: Config): Env => ({
 /** The registry roles a lane runs as: the review lane is one agent with the lenses this job needs. */
 export function rolesFor(lane: string, job: Pick<Job, "risk" | "surfaces">): string[] {
   if (lane === "build") return ["builder"];
+  if (lane === "regress") return ["qa"];
   if (lane === "review") {
     const r = ["reviewer-code"];
     if (job.risk === "high" || job.surfaces.includes("security")) r.push("reviewer-security");

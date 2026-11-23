@@ -2,13 +2,14 @@
 //
 // One table, as data: each stage lists the stages it may move to. `kitchen job` verbs are the only writers of
 // job state and they move a job only through `move()`, which refuses any move the table doesn't list.
-// Lanes (where an agent works): intake, build, qa, review. Ready waits for a person; done is merged into staging.
+// Lanes (where an agent works): intake, build, qa, review, regress (ADR 0017: the touched features driven on the
+// trial merge before it lands). Ready waits for a person; done is merged into staging.
 
-export const STAGES = ["intake", "needs-info", "build", "qa", "review", "ready", "done", "needs-human", "paused", "rejected"] as const;
+export const STAGES = ["intake", "needs-info", "build", "qa", "review", "regress", "ready", "done", "needs-human", "paused", "rejected"] as const;
 export type Stage = (typeof STAGES)[number];
 
 /** The stages an agent works in, in order. */
-export const LANES = ["intake", "build", "qa", "review"] as const;
+export const LANES = ["intake", "build", "qa", "review", "regress"] as const;
 export type Lane = (typeof LANES)[number];
 export const isLane = (s: string): s is Lane => (LANES as readonly string[]).includes(s);
 export const isActive = (s: Stage) => isLane(s);
@@ -73,6 +74,13 @@ export type Job = {
   moves: number;
   /** Why a job that passed stopped at Ready (high risk, a large diff, auto-merge off). */
   held?: string;
+  /**
+   * The trial merge waiting for its features to be driven (ADR 0017 §3): staging's tip it merged onto, the merged
+   * commit (kept under refs/kitchen/drive/<id>), its worktree, and the features Kitchen chose from `Code:` lines.
+   */
+  drive?: { onto: string; sha: string; head: string; wt: string; features: string[] };
+  /** Kitchen's own commits on the job branch (QA's map updates): a builder's edit to verify-*\/ is anything else. */
+  mapCommits?: string[];
   /** Where it was merged: staging's new tip, how (local or the PR). */
   merged?: { into: string; sha: string; at: string; via: "local" | "github" };
   /** Side effects done once (a PR opened): keys. */
@@ -88,16 +96,17 @@ export const MOVES: Record<Stage, readonly Stage[]> = {
   "needs-info": ["intake", "rejected"],
   build: ["qa", "needs-human", "rejected", "paused"],
   qa: ["review", "build", "needs-human", "rejected", "paused"],
-  review: ["build", "ready", "done", "needs-human", "rejected", "paused"],
+  review: ["build", "regress", "ready", "done", "needs-human", "rejected", "paused"],
+  regress: ["build", "ready", "done", "needs-human", "rejected", "paused"],
   ready: ["build", "done", "rejected"],
   done: ["build"],
-  "needs-human": ["intake", "build", "qa", "review", "rejected"],
-  paused: ["intake", "build", "qa", "review", "rejected"],
+  "needs-human": ["intake", "build", "qa", "review", "regress", "rejected"],
+  paused: ["intake", "build", "qa", "review", "regress", "rejected"],
   rejected: [],
 };
 
 /** Moves that start another round (the work goes back to Build). */
-const BACK_TO_BUILD: readonly Stage[] = ["qa", "review", "ready", "done"];
+const BACK_TO_BUILD: readonly Stage[] = ["qa", "review", "regress", "ready", "done"];
 
 /** Rounds used in the current budget. */
 export const roundsUsed = (j: Pick<Job, "round" | "roundStart">) => j.round - j.roundStart + 1;
