@@ -8,22 +8,22 @@
 <g><rect x="248" y="26" width="196" height="84" rx="12" fill="#ffffff" stroke="#dcdce0" stroke-width="1"/>
 <text x="264" y="56" class="t">Front desk</text><text x="264" y="77" class="s">Claude Code or Codex</text><text x="264" y="94" class="s">files it as a ticket</text></g>
 <g><rect x="476" y="26" width="196" height="84" rx="12" fill="#ffffff" stroke="#dcdce0" stroke-width="1"/>
-<text x="492" y="56" class="t">Runner</text><text x="492" y="77" class="s">plain code: moves the job,</text><text x="492" y="94" class="s">decides pass or fail</text></g>
+<text x="492" y="56" class="t">Orchestrator</text><text x="492" y="77" class="s">/kitchen run: plans waves,</text><text x="492" y="94" class="s">moves jobs by kitchen job</text></g>
 <g><rect x="704" y="26" width="196" height="84" rx="12" fill="#ffffff" stroke="#dcdce0" stroke-width="1"/>
-<text x="720" y="56" class="t">Workers</text><text x="720" y="77" class="s">one fresh agent per step:</text><text x="720" y="94" class="s">build, review, report</text></g>
+<text x="720" y="56" class="t">Lane agents</text><text x="720" y="77" class="s">one fresh agent per lane:</text><text x="720" y="94" class="s">intake, build, QA, review</text></g>
 <g><rect x="20" y="196" width="196" height="84" rx="12" fill="#ffffff" stroke="#d9480f" stroke-width="1.5"/>
-<text x="36" y="226" class="t">Report</text><text x="36" y="247" class="s">what changed and the proof.</text><text x="36" y="264" class="s">You merge.</text></g>
+<text x="36" y="226" class="t">Report</text><text x="36" y="247" class="s">what changed and the proof.</text><text x="36" y="264" class="s">Merged into staging.</text></g>
 <g><rect x="248" y="196" width="196" height="84" rx="12" fill="#f7f7f8" stroke="#dcdce0" stroke-width="1"/>
 <text x="264" y="226" class="t">Your app</text><text x="264" y="247" class="s">the real thing, running</text><text x="264" y="264" class="s">on your machine</text></g>
 <g><rect x="476" y="196" width="196" height="84" rx="12" fill="#ffffff" stroke="#dcdce0" stroke-width="1"/>
-<text x="492" y="226" class="t">Toolkit</text><text x="492" y="247" class="s">starts your app, clicks,</text><text x="492" y="264" class="s">reads, takes screenshots</text></g>
+<text x="492" y="226" class="t">Playwright</text><text x="492" y="247" class="s">starts your app, clicks,</text><text x="492" y="264" class="s">reads, takes screenshots</text></g>
 <g><rect x="704" y="196" width="196" height="84" rx="12" fill="#ffffff" stroke="#dcdce0" stroke-width="1"/>
-<text x="720" y="226" class="t">Job folder</text><text x="720" y="247" class="m">.kitchen/jobs/&lt;id&gt;/</text><text x="720" y="264" class="s">state and signed evidence</text></g>
+<text x="720" y="226" class="t">Job folder</text><text x="720" y="247" class="m">.kitchen/jobs/&lt;id&gt;/</text><text x="720" y="264" class="s">state and plain evidence</text></g>
 <path d="M221,68H242" fill="none" stroke="#6b6b74" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#hm)"/><path d="M449,68H470" fill="none" stroke="#6b6b74" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#hm)"/><path d="M677,68H698" fill="none" stroke="#6b6b74" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#hm)"/>
-<path d="M574,116V189" fill="none" stroke="#d9480f" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ha)"/><text x="584" y="157" class="la">runs every proof</text>
+<path d="M574,116V189" fill="none" stroke="#d9480f" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ha)"/><text x="584" y="157" class="la">QA checks it</text>
 <path d="M471,238H450" fill="none" stroke="#d9480f" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ha)"/>
 <path d="M677,238H698" fill="none" stroke="#6b6b74" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#hm)"/>
 <path d="M802,116V189" fill="none" stroke="#6b6b74" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#hm)"/><text x="812" y="157" class="l">one file each</text>
 <path d="M802,286V312Q802,320 794,320H126Q118,320 118,312V287" fill="none" stroke="#6b6b74" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#hm)"/><text x="460" y="336" text-anchor="middle" class="l">the evidence becomes the Report</text>
-<path d="M118,190V117" fill="none" stroke="#6b6b74" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#hm)"/><text x="128" y="157" class="l">you read it, you merge</text>
+<path d="M118,190V117" fill="none" stroke="#6b6b74" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#hm)"/><text x="128" y="157" class="l">you merge staging onward</text>
 </svg>

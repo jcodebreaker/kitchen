@@ -1,5 +1,7 @@
 # Agent adapters: exact flags, writable roots, and what W0 proved
 
+> **Superseded by [ADR 0016](0016-kitchen-lite.md)** (Kitchen lite, 2026-11-22): what this records was removed. Kept as history.
+
 Kitchen runs every role headless through one interface (`src/agents/adapter.ts`), with two real adapters (`claude.ts`, `codex.ts`) and a scripted one (`fake.ts`). Every agent gets a scrubbed environment built from an allowlist (`env.ts`). The writable root is enforced by each tool's own OS sandbox (Seatbelt on macOS), not by prompt. Docker is **not** reachable from inside either sandbox, so the Toolkit always runs in the engine, outside the agent (the PLAN §3 fallback). Measured on 2026-11-21 with Claude Code 2.1.330 and Codex CLI 0.171.0 (`npx -y @openai/codex@0.171.0`) on macOS; rerun with `spikes/w0/README.md`.
 
 ## Invocation

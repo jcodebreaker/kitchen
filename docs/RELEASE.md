@@ -21,11 +21,10 @@ git switch main && git pull --ff-only
 git status --short                     # must print nothing
 npm ci
 npm run typecheck && npm run lint && npm test
-node spikes/w5/pack.ts                 # tarball contents, no secrets, npx and install smoke from a temp dir
 npm run plugin:sync                    # the plugin files match package.json's version: must print "every file is current"
 claude plugin validate .               # the marketplace and the plugin manifest (Claude Code's own check; installs nothing)
 claude plugin validate plugins/kitchen
-npm pack --dry-run                     # read the file list one last time: dist/*.js, roles/, skills/, toolkit-template/, dashboard/dashboard.html, README.md, LICENSE, NOTICE
+npm pack --dry-run                     # read the file list one last time: dist/*.js, roles/, skills/, hooks/*.py, dashboard/dashboard.html, README.md, LICENSE, NOTICE
 ```
 
 ## The first release (0.1.0)
@@ -60,7 +59,7 @@ cd "$(mktemp -d)" && npx devkitchen@0.1.0 --version     # 0.1.0 (the version you
 
 ## What the package contains (and doesn't)
 
-`package.json` `files` is an allowlist: the compiled `dist/**/*.js` (no source maps, no tests), the role prompts (`roles/`), the `/kitchen` skill (`skills/`), the Toolkit template (`toolkit-template/`; npm drops its `.gitignore`, so `kitchen init` writes one), the dashboard page, `README.md`, `LICENSE` and `NOTICE` (third-party notices: pstack's MIT notice; zazencodes credited for ideas only). Fixtures, spikes, the benchmark (`bench/`, `kitchen bench` runs only from a clone), `src/` and docs are not shipped. `spikes/w5/pack.ts` asserts all of this and scans the unpacked tarball for secret-shaped strings.
+`package.json` `files` is an allowlist: the compiled `dist/**/*.js` (no source maps, no tests), the role prompts (`roles/`), the `/kitchen` skill (`skills/`), the guard hooks (`hooks/*.py`), the dashboard page, `README.md`, `LICENSE` and `NOTICE` (third-party notices: super-board's MIT notice for the hooks; Anthropic's for the vendored security review). Playwright is a pinned dependency (`playwright` 1.65.0); its Chromium is installed once per machine (`npx playwright install chromium`). Fixtures, the benchmark data (`bench/`), `src/` and docs are not shipped. The tarball check that lived in spikes/w5 went with the spikes: read the `npm pack --dry-run` list by hand.
 
 ## If something is wrong after publishing
 
