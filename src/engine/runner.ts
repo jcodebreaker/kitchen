@@ -30,6 +30,7 @@ import { effectiveConcurrency, readProven } from "../toolkit/check.ts";
 import { maintain, maintainDue } from "../toolkit/maintain.ts";
 import { beforeNewWork } from "../toolkit/reproof.ts";
 import { acquireSlot, downSlot, listSlots, reclaimStaleSlots, releaseSlot } from "../toolkit/slots.ts";
+import { readApproval } from "../toolkit/trust.ts";
 import { takeTicket } from "./base.ts";
 import { honorControl, stopRequested } from "./control.ts";
 import { ensureJobToolkit } from "./job-toolkit.ts";
@@ -290,9 +291,9 @@ async function checkWaits(repo: string, d: Deps, print: (l: string) => void, wan
         const waiting = !!job.until && Date.now() < Date.parse(job.until);
         cleared = ci !== "pending" && (!waiting || ci === "pass" || ci === "fail");
       } else if (job.waitFor === "toolkit-ticket") cleared = !!job.toolkitTicketRef && (await d.forge.ticketClosed(job.toolkitTicketRef));
-      // The Toolkit reached the base (kitchen/setup merged): the job takes it and goes on (no-toolkit.ts).
-      else if (job.waitFor === "no-toolkit" && tip) {
-        const w = await wakeWithToolkit(repo, d.config, job, tip).catch((e) => {
+      // The Toolkit reached the base, or the person approved one (a local file, cheap to read each pass): the job takes it and goes on (no-toolkit.ts).
+      else if (job.waitFor === "no-toolkit" && (tip || readApproval(repo))) {
+        const w = await wakeWithToolkit(repo, d.config, job, tip ?? "").catch((e) => {
           print(`${job.id}  no-toolkit: ${(e as Error).message}`);
           return { toolkit: false } as const;
         });

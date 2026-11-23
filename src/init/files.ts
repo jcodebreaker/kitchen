@@ -28,6 +28,8 @@ export const GITIGNORE = [
   ".kitchen/run.lock",
   ".kitchen/run.log",
   ".kitchen/toolkit.proven",
+  ".kitchen/toolkit.approved",
+  ".kitchen/toolkit.passed",
   ".kitchen/toolkit-checkouts/",
   ".kitchen/queue.json",
   ".kitchen/tickets.jsonl",

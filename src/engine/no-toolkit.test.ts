@@ -12,7 +12,6 @@ import { prComment, type ReportFacts, renderReport } from "../checks/report-rend
 import { lintSpec } from "../checks/spec-lint.ts";
 import { decideVerdict, renderVerdict } from "../checks/verdict.ts";
 import { parseConfig } from "../config.ts";
-import { mergeSetupHow } from "../init/build.ts";
 import { type Job, move } from "./machine.ts";
 import { baseTipThrottled, needsToolkitToGoOn, wakeWithToolkit } from "./no-toolkit.ts";
 import { runKitchen } from "./runner.ts";
@@ -107,7 +106,7 @@ test("no Toolkit: intake pauses a ticket whose criteria drive the app (no-toolki
   assert.equal(r.job.pausedFrom, "intake");
   assert.equal(
     r.job.pausedReason,
-    `This ticket needs Kitchen to drive the app; run \`kitchen toolkit build\` (about 3–15 min), then \`kitchen resume ${job.id}\`.`,
+    "This ticket needs Kitchen to drive the app; run `kitchen toolkit build` (about 3–15 min), then approve it. The job wakes by itself.",
   );
   assert.equal(fs.existsSync(path.join(dir, ".worktrees")), false, "nothing was checked out");
 });
@@ -338,9 +337,4 @@ test("waking is idempotent: a worktree already at the Toolkit commit still moves
   // The move was refused or raced: the job still names the old base, its worktree is at the tip.
   const second = await wakeWithToolkit(dir, cfg, job);
   assert.deepEqual(second, { toolkit: true, facts: { base: tip, toolkitRef: tip } });
-});
-
-test("with GitHub, getting the Toolkit onto the base means merge into the base branch and push (review M8)", () => {
-  assert.equal(mergeSetupHow(parseConfig("")), "git merge kitchen/setup");
-  assert.equal(mergeSetupHow(parseConfig("forge: { kind: github, repo: a/b, base: develop }\n")), "merge kitchen/setup into develop and push");
 });

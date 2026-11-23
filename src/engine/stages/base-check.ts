@@ -31,7 +31,7 @@ import type { Job } from "../machine.ts";
 import { writeAtomic } from "../store.ts";
 import { changedFiles, headOf } from "../worktree.ts";
 import { jobRequirements } from "./context.ts";
-import { FEATURES_DIR, featureDrives, hasToolkit } from "./toolkit-info.ts";
+import { FEATURES_DIR, featureDrives, hasToolkit, toolkitDirOf } from "./toolkit-info.ts";
 import type { StageContext } from "./types.ts";
 
 export type BaseResult = { criterion: string; status: string; why?: string; evidence: string[]; clauses?: ClauseResult[] };
@@ -131,8 +131,8 @@ export function nonDiscriminating(jobDir: string, criteria: Criterion[]): string
 }
 
 /** Criteria whose proof needs a feature drive or a test file `base` doesn't have. Pure but for reading `base`. */
-function needsNew(criteria: Criterion[], base: string): Criterion[] {
-  const have = featureDrives(base).drives;
+function needsNew(criteria: Criterion[], base: string, toolkitDir: string | null): Criterion[] {
+  const have = featureDrives(base, toolkitDir).drives;
   return criteria.filter(
     (c) => !isJudged(c.expect) && ([...namedDrives([c]).keys()].some((d) => !have[d]) || testFilesOf(c).some((t) => !fs.existsSync(path.join(base, t)))),
   );
@@ -184,7 +184,7 @@ export async function runBaseCheckAfterDrives(ctx: StageContext, job: Job, crite
   const out: NonNullable<BaseCheck["afterDrives"]> = { head, files, results: [], passing: [] };
   const guards = guardsOf(ctx.jobDir, criteria);
   await onBaseCheckout(ctx, job, async (dir, source) => {
-    const todo = needsNew(criteria, dir); // before the new files are copied in
+    const todo = needsNew(criteria, dir, toolkitDirOf(job)); // before the new files are copied in
     for (const f of files) {
       fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true });
       fs.copyFileSync(path.join(job.worktree, f), path.join(dir, f));
@@ -237,7 +237,7 @@ export async function runBaseCheck(ctx: StageContext, job: Job, criteria: Criter
   const out: BaseCheck = { head: job.base, key, results: [], skipped: [], passing: [] };
   const guards = guardsOf(ctx.jobDir, criteria);
   const run = async (dir: string, source: { workTree: string; gitDir: string } | null) => {
-    const have = toolkit ? featureDrives(dir).drives : {};
+    const have = toolkit ? featureDrives(dir, toolkitDirOf(job)).drives : {};
     const todo: Criterion[] = [];
     for (const c of criteria) {
       if (isJudged(c.expect)) continue;

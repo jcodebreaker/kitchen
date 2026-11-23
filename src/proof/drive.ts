@@ -10,6 +10,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { runToolkit, type ToolkitCall } from "../toolkit/run.ts";
+import { toolkitRootOfBin } from "../toolkit/sandbox.ts";
 import {
   checkPrimArgs,
   type Drive,
@@ -75,20 +76,24 @@ export async function describeToolkit(toolkitBin: string, src: string): Promise<
   return { primitives: json.primitives.map((p) => (typeof p === "string" ? p : p.name)), raw: json as Record<string, unknown> };
 }
 
-/** The feature file in the worktree that holds drive `name`. */
-export function findFeature(worktree: string, name: string): string {
-  const dir = path.join(worktree, ".kitchen/toolkit/features");
-  for (const f of fs.existsSync(dir)
-    ? fs
-        .readdirSync(dir)
-        .filter((x) => x.endsWith(".md"))
-        .sort()
-    : []) {
-    const file = path.join(dir, f);
-    const blocks = extractDriveBlocks(fs.readFileSync(file, "utf8"));
-    if (blocks.some((b) => parseDrive(b.body, b.line).name === name)) return file;
-  }
-  throw new DriveFormatError(`no feature drive named ${name} in ${dir}`);
+/**
+ * The feature file that holds drive `name`: the worktree's first, then (`toolkitDir`) the Toolkit checkout's own,
+ * for a job whose Toolkit is approved but not in its worktree (ADR 0015).
+ */
+export function findFeature(worktree: string, name: string, toolkitDir?: string | null): string {
+  const dirs = [worktree, ...(toolkitDir && toolkitDir !== worktree ? [toolkitDir] : [])].map((d) => path.join(d, ".kitchen/toolkit/features"));
+  for (const dir of dirs)
+    for (const f of fs.existsSync(dir)
+      ? fs
+          .readdirSync(dir)
+          .filter((x) => x.endsWith(".md"))
+          .sort()
+      : []) {
+      const file = path.join(dir, f);
+      const blocks = extractDriveBlocks(fs.readFileSync(file, "utf8"));
+      if (blocks.some((b) => parseDrive(b.body, b.line).name === name)) return file;
+    }
+  throw new DriveFormatError(`no feature drive named ${name} in ${dirs.join(" or ")}`);
 }
 
 function buildDrive(job: ProofJob, req: DriveRequest): { drive: Drive; args: Record<string, string> } {
@@ -98,7 +103,7 @@ function buildDrive(job: ProofJob, req: DriveRequest): { drive: Drive; args: Rec
     const step: PrimStep = { kind: "prim", name: req.primitive, args, line: 0 };
     return { drive: { name: `primitive:${req.primitive}`, args: [], steps: [step] }, args: {} };
   }
-  const file = req.file ?? findFeature(job.worktree, req.feature);
+  const file = req.file ?? findFeature(job.worktree, req.feature, toolkitRootOfBin(job.toolkitBin));
   return { drive: loadDrive(fs.readFileSync(file, "utf8"), req.feature || undefined), args: req.args ?? {} };
 }
 

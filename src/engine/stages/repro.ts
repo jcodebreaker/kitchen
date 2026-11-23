@@ -24,7 +24,7 @@ import { contractBlock, testLayoutBlock, toolkitBlock } from "./context.ts";
 import { featureFilesAt } from "./drives.ts";
 import { prompt } from "./prompts.ts";
 import { headers, named, runRole } from "./role.ts";
-import { described, featureDrives, hasToolkit } from "./toolkit-info.ts";
+import { described, featureDrives, hasToolkit, toolkitDirOf } from "./toolkit-info.ts";
 import type { StageHandler } from "./types.ts";
 
 const FEATURE_FILE = /^\.kitchen\/toolkit\/features\/[^/]+\.md$/;
@@ -37,7 +37,7 @@ export const repro: StageHandler = async (ctx) => {
   const record = path.join(ctx.jobDir, `repro-${n}.json`);
   if (!crit) return { to: "repro", facts: { repro: { failedAsExpected: false, onBase: false, committed: false } }, note: "no repro: true criterion" };
   const missing = () => {
-    const have = featureDrives(job.worktree).drives;
+    const have = featureDrives(job.worktree, toolkitDirOf(job)).drives;
     return [
       ...[...namedDrives([crit]).keys()].filter((d) => !have[d]).map((d) => `feature drive ${d}`),
       ...testFilesOf(crit)
@@ -91,7 +91,7 @@ export const repro: StageHandler = async (ctx) => {
   });
   for (const x of c.refused) ctx.log(`kept off the job branch: ${x}`);
   // What the builder may not edit: what this stage added, plus the drives and test files the repro proof runs.
-  const used = featureDrives(job.worktree).files;
+  const used = featureDrives(job.worktree, toolkitDirOf(job)).files;
   const reproFiles = [
     ...new Set([
       ...(job.reproFiles ?? []),

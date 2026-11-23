@@ -182,7 +182,9 @@ export const toolkit: StageHandler = async (ctx) => {
   try {
     const listed = (await describeToolkit(co.bin, co.dir)).primitives;
     if (!listed.includes(gap)) return fail(`describe at ${c.head.slice(0, 12)} does not list ${gap}`);
-    ctx.log(`toolkit check of ${c.head.slice(0, 12)} (${co.merged ? "merged" : co.sandboxed ? "unmerged: sandboxed" : "unmerged: UNSANDBOXED"})`);
+    ctx.log(
+      `toolkit check of ${c.head.slice(0, 12)} (${co.trust ? co.trust : co.sandboxed ? "not on the base, not approved: sandboxed" : "not on the base, not approved: UNSANDBOXED"})`,
+    );
     report = await runToolkitCheck({
       repo: ctx.repo,
       toolkitBin: co.bin,

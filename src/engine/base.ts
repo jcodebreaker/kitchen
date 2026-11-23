@@ -5,6 +5,7 @@
 import type { Config } from "../config.ts";
 import type { IncomingTicket } from "../sources/source.ts";
 import { fetchFrom, openGit, plainCheckout } from "./git.ts";
+import { resolveToolkitRef } from "./job-toolkit.ts";
 import type { Job } from "./machine.ts";
 import { createJob } from "./store.ts";
 
@@ -40,7 +41,7 @@ export async function toolkitAt(repo: string, sha: string): Promise<boolean> {
   }
 }
 
-/** A new job from a ticket: base = the base tip, toolkitRef = that sha when it has a Toolkit. Idempotent for sources with stable ids. */
+/** A new job from a ticket: base = the base tip, toolkitRef = that sha when it has a Toolkit, else the approved one (ADR 0015). Idempotent for sources with stable ids. */
 export async function takeTicket(repo: string, cfg: Config, t: IncomingTicket): Promise<{ job: Job; created: boolean; warning?: string }> {
   let base = "";
   let warning: string | undefined;
@@ -49,7 +50,7 @@ export async function takeTicket(repo: string, cfg: Config, t: IncomingTicket): 
   } catch (e) {
     warning = `no base commit (${(e as Error).message}); the job can't get a worktree until there is one`;
   }
-  const toolkitRef = base && (await toolkitAt(repo, base)) ? base : "";
+  const toolkitRef = await resolveToolkitRef(repo, base);
   const r = await createJob(repo, { title: t.title, ticket: t.ref, body: t.body, roundLimit: cfg.round_limit, base, toolkitRef });
   return { ...r, warning };
 }

@@ -13,16 +13,15 @@
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { loadConfig } from "../config.ts";
-import { BASE_REF } from "../engine/base.ts";
 import { type GitRepo, linkedWorktree, openGit, plainCheckout } from "../engine/git.ts";
 import { isActive } from "../engine/machine.ts";
 import { kitchenDir, listJobs, writeAtomic } from "../engine/store.ts";
 import { ownerAlive, processStart, withFileLock } from "../lock.ts";
 import { validate } from "./contract.ts";
 import { runToolkit } from "./run.ts";
-import { sandboxedBin, wrappedBin } from "./sandbox.ts";
+import { wrappedBin } from "./sandbox.ts";
 import { listSlots } from "./slots.ts";
+import { binFor, readApproval, type Trust, trustOf } from "./trust.ts";
 
 export const TOOLKIT_BIN = path.join(".kitchen", "toolkit", "bin", "dev");
 const PREFIX = "_toolkit@";
@@ -30,11 +29,11 @@ export const short = (sha: string) => sha.slice(0, 12);
 
 /**
  * `release` drops this process's lease; until then (or until the process dies) GC leaves the checkout alone.
- * `bin` is what to run: for a sha not merged into the base (`merged: false`, agent-written code no human
- * has reviewed: init's check of kitchen/setup, `toolkit check --rev …`) it is the sandbox-exec wrapper
- * (ADR 0008; `sandboxed: false` where the OS has none), else the checkout's own bin/dev.
+ * `bin` is what to run: for a sha neither on the base nor approved (`trust: null`, agent-written code no
+ * human has accepted: init's check of kitchen/setup, `toolkit check --rev …`) it is the sandbox-exec wrapper
+ * (ADR 0008, 0015; `sandboxed: false` where the OS has none), else the checkout's own bin/dev.
  */
-export type Checkout = { sha: string; dir: string; bin: string; git: GitRepo; merged: boolean; sandboxed: boolean; release: () => void };
+export type Checkout = { sha: string; dir: string; bin: string; git: GitRepo; trust: Trust | null; sandboxed: boolean; release: () => void };
 
 const checkoutsRoot = (repo: string) => path.join(repo, ".worktrees");
 const markerOf = (repo: string, sha: string) => path.join(kitchenDir(repo), "toolkit-checkouts", `${short(sha)}.json`);
@@ -75,37 +74,11 @@ export async function resolveRev(repo: string, rev: string): Promise<string> {
   return (await git.run(["rev-parse", "--verify", `${rev}^{commit}`])).stdout.trim();
 }
 
-/**
- * The ref "merged" is measured against: the main checkout's HEAD (local and fake forges), or on the
- * GitHub forge only the remote base the engine last fetched, `refs/kitchen/base`, never the local
- * HEAD: a branch merged in someone's local checkout but not on the remote has not been taken in.
- * A kitchen.yaml that doesn't parse counts as the GitHub case (the stricter one). Pure but for the file read.
- */
-export function mergeBaseRef(repo: string): string {
-  try {
-    return loadConfig(repo).forge.kind === "github" ? BASE_REF : "HEAD";
-  } catch {
-    return BASE_REF;
-  }
-}
-
-/**
- * Whether `sha` is merged: an ancestor of the base (`mergeBaseRef`), so a human has taken it in.
- * No such ref (the base never fetched): not merged.
- */
-export async function mergedIntoBase(repo: string, sha: string): Promise<boolean> {
-  const git = await openGit(plainCheckout(repo));
-  try {
-    await git.run(["merge-base", "--is-ancestor", sha, mergeBaseRef(repo)]);
-    return true;
-  } catch {
-    return false; // exit 1 (not an ancestor), or no such ref
-  }
-}
+export { mergeBaseRef, mergedIntoBase } from "./trust.ts";
 
 /**
  * The checkout of `sha`, created if missing, leased to this process (call `release` when done).
- * Throws if the base has no Toolkit at that sha. A sha not merged into the base runs sandboxed (ADR 0008).
+ * Throws if there is no Toolkit at that sha. A sha neither on the base nor approved runs sandboxed (trust.ts).
  */
 export async function toolkitCheckout(repo: string, rev: string): Promise<Checkout> {
   repo = fs.realpathSync(repo);
@@ -120,12 +93,12 @@ export async function toolkitCheckout(repo: string, rev: string): Promise<Checko
       throw e;
     }
   });
-  if (await mergedIntoBase(repo, sha)) return { ...co, merged: true, sandboxed: false };
-  const sb = sandboxedBin(co.bin);
-  return { ...co, bin: sb.bin, merged: false, sandboxed: sb.sandboxed };
+  const trust = await trustOf(repo, sha);
+  const run = binFor(co.bin, trust);
+  return { ...co, bin: run.bin, trust, sandboxed: run.sandboxed };
 }
 
-async function checkoutOf(repo: string, sha: string): Promise<Omit<Checkout, "release" | "merged" | "sandboxed">> {
+async function checkoutOf(repo: string, sha: string): Promise<Omit<Checkout, "release" | "trust" | "sandboxed">> {
   const id = `${PREFIX}${short(sha)}`;
   const dir = path.join(checkoutsRoot(repo), id);
   const main = await openGit(plainCheckout(repo));
@@ -257,10 +230,12 @@ async function removeDir(repo: string, dir: string) {
   await main.run(["worktree", "prune"]);
 }
 
-/** The sha12s some job or the proven record still needs. */
+/** The sha12s some job, the proven record or the approval still needs. */
 export function referencedShas(repo: string, proven: string | null): Set<string> {
   const keep = new Set<string>();
   if (proven) keep.add(short(proven));
+  const approved = readApproval(repo)?.sha;
+  if (approved) keep.add(short(approved));
   for (const j of listJobs(repo)) if (j.toolkitRef && (isActive(j.stage) || j.stage === "paused")) keep.add(short(j.toolkitRef));
   return keep;
 }

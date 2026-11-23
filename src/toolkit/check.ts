@@ -32,6 +32,7 @@ import {
 } from "./contract.ts";
 import { runToolkit, type ToolkitCall } from "./run.ts";
 import { acquireSlot, releaseSlot, type Slot } from "./slots.ts";
+import { ensureIgnored, recordPassed, untrustedNote } from "./trust.ts";
 
 /** `known`: a drive that failed but was tolerated (`CheckOpts.tolerate`: it fails on the base too). */
 export type CheckStep = { step: string; ok: boolean; secs: number; detail?: string; tail?: string; known?: boolean };
@@ -467,12 +468,8 @@ export async function checkAtRef(
   repo = plainCheckout(repo).workTree;
   const co = await toolkitCheckout(repo, o.rev ?? "HEAD");
   o.print?.(`toolkit check: Toolkit ${co.sha.slice(0, 12)} (${path.relative(repo, co.dir)}), source ${o.src ? path.resolve(o.src) : "the same checkout"}`);
-  if (!co.merged)
-    o.print?.(
-      `toolkit check: ${co.sha.slice(0, 12)} is not merged into the base: bin/dev runs ${
-        co.sandboxed ? "under sandbox-exec (ADR 0008)" : "UNSANDBOXED: no OS sandbox on this platform (ADR 0008)"
-      }`,
-    );
+  if (!co.trust) o.print?.(`toolkit check: ${untrustedNote(co.sha, co.sandboxed)}`);
+  else if (co.trust === "approved") o.print?.(`toolkit check: ${co.sha.slice(0, 12)} is the Toolkit you approved: bin/dev runs unsandboxed`);
   const src = o.src ?? co.dir;
   let r: CheckReport;
   try {
@@ -482,6 +479,8 @@ export async function checkAtRef(
   }
   if (r.prepareSecs !== undefined && r.steps.some((s) => s.step === "prepare" && s.ok)) markPrepared(repo, co.sha, src, r.prepareSecs);
   if (r.ok && !o.src && !o.feature) {
+    await ensureIgnored(repo).catch(() => {});
+    recordPassed(repo, co.sha);
     const proven: Proven = {
       sha: co.sha,
       at: new Date().toISOString(),

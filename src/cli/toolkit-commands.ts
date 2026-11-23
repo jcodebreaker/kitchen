@@ -12,7 +12,7 @@ import { MAX_MESSAGE } from "../engine/messages.ts";
 import { writeAtomic } from "../engine/store.ts";
 import { forgeFor } from "../forge/forge.ts";
 import { serveSetupBridge } from "../init/bridge.ts";
-import { type Question, questionsFile, toolkitBuild } from "../init/build.ts";
+import { askApproval, type Question, questionsFile, toolkitBuild } from "../init/build.ts";
 import { installSkill } from "../init/files.ts";
 import { quickInit, readQuickRecord } from "../init/quick.ts";
 import { detachInit, initLog, readStatus, statusReport, tracked } from "../init/status.ts";
@@ -20,10 +20,12 @@ import { ownerAlive } from "../lock.ts";
 
 const CLI = path.resolve(import.meta.dirname, "..", `cli${path.extname(import.meta.filename)}`);
 
+import { APPROVE_HOW, approveToolkit, commitToolkit, revokeToolkit, toolkitState } from "../toolkit/approve.ts";
 import { checkAtRef } from "../toolkit/check.ts";
 import { ensurePrepared, toolkitCheckout } from "../toolkit/checkout.ts";
 import { runToolkit } from "../toolkit/run.ts";
 import { acquireSlot, downSlot, listSlots, releaseSlot } from "../toolkit/slots.ts";
+import { untrustedNote } from "../toolkit/trust.ts";
 
 export type Flags = { flags: Record<string, string | true>; pos: string[] };
 
@@ -52,20 +54,23 @@ export function parseFlags(argv: string[], valued: string[]): Flags {
 
 const str = (v: string | true | undefined) => (typeof v === "string" ? v : undefined);
 
-const BUILD_ONLY = ["answers", "model", "effort", "max-fix", "generate-only", "detach"];
+const BUILD_ONLY = ["answers", "model", "effort", "max-fix", "generate-only", "detach", "yes"];
 const BUILD_FLAGS = ["repo", "tool", "verbose", "status", "wait", ...BUILD_ONLY];
 const INIT_FLAGS = [...BUILD_FLAGS, "skill", "toolkit"];
 
 /** Pure: only an explicit yes is yes; Enter is no (review R8). */
 export const terminalAnswer = (a: string): boolean => /^(y|yes)$/i.test(a.trim());
+/** Pure: a [Y/n] question: Enter is yes, only an explicit no is no (ADR 0015's approval). */
+export const terminalAnswerYes = (a: string): boolean => !/^(n|no)$/i.test(a.trim());
 
-/** A yes/no question in a terminal (Enter = no); none without one: proposed checks are then written commented out. */
-function terminalConfirm(): ((q: string) => Promise<boolean>) | undefined {
+/** A yes/no question in a terminal (Enter = no, or yes with `enterIsYes`); none without one: proposed checks are then written commented out. */
+function terminalConfirm(enterIsYes = false): ((q: string) => Promise<boolean>) | undefined {
   if (!process.stdin.isTTY || !process.stdout.isTTY) return undefined;
   return async (q) => {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
     try {
-      return terminalAnswer(await rl.question(q));
+      const a = await rl.question(q);
+      return enterIsYes ? terminalAnswerYes(a) : terminalAnswer(a);
     } catch {
       return false; // Ctrl-D: no answer is not a yes
     } finally {
@@ -89,6 +94,10 @@ async function buildStatus(repo: string, flags: Record<string, string | true>, o
     cur = live();
   }
   const r = statusReport(cur.s, cur.alive, Date.now(), who);
+  // Done and proven, but no one approved it yet (ADR 0015): that is the next step, so the first line says it.
+  const tk = toolkitState(repo);
+  if (cur.s?.state === "done" && tk.state === "waiting")
+    r.lines[0] = `${who}: done: proven, waiting for your approval (${tk.sha?.slice(0, 12)}): ${APPROVE_HOW}`;
   for (const l of r.lines) out(l);
   return r.code;
 }
@@ -104,6 +113,7 @@ async function runBuild(repo: string, flags: Record<string, string | true>, out:
     for (const k of ["tool", "model", "effort", "max-fix"]) if (str(flags[k])) args.push(`--${k}`, str(flags[k]) as string);
     if (str(flags.answers)) args.push("--answers", path.resolve(str(flags.answers) as string));
     if (flags["generate-only"] === true) args.push("--generate-only");
+    if (flags.yes === true) args.push("--yes");
     return detachInit(repo, CLI, args, out);
   }
   const intoLog = process.env.KITCHEN_INIT_LOG; // a detached child: stdout already is the log
@@ -125,6 +135,8 @@ async function runBuild(repo: string, flags: Record<string, string | true>, out:
           effort: str(flags.effort),
           maxFix: flags["max-fix"] ? Number(flags["max-fix"]) : undefined,
           generateOnly: flags["generate-only"] === true,
+          yes: flags.yes === true,
+          ask: intoLog ? undefined : terminalConfirm(true),
         },
         {
           phase: (l) => {
@@ -186,9 +198,25 @@ export async function w2(name: string, argv: string[]): Promise<number> {
     if (flags.status === true) return buildStatus(repo, flags, out);
     return runBuild(repo, flags, out);
   }
-  // toolkit check [--feature x] [--src dir] [--rev r] · toolkit up [--rev r] [--src dir] · toolkit down --id <id>
+  // toolkit approve [--sha s] · revoke · commit [--sha s] [--yes]: the person's say (ADR 0015)
+  if (name === "toolkit" && ["approve", "revoke", "commit"].includes(argv[0])) {
+    const { flags, pos } = parseFlags(argv.slice(1), ["repo", "sha"]);
+    const allowed = argv[0] === "revoke" ? ["repo"] : argv[0] === "approve" ? ["repo", "sha"] : ["repo", "sha", "yes"];
+    for (const k of Object.keys(flags)) if (!allowed.includes(k)) throw new Error(`kitchen toolkit ${argv[0]}: unknown flag --${k}`);
+    if (pos.length) throw new Error(`kitchen toolkit ${argv[0]}: unexpected ${pos[0]}`);
+    const repo = plainCheckout(path.resolve(str(flags.repo) ?? process.cwd())).workTree;
+    if (argv[0] === "approve") return approveToolkit(repo, { sha: str(flags.sha) }, out);
+    if (argv[0] === "revoke") return revokeToolkit(repo, out);
+    const ask = flags.yes === true ? async () => true : terminalConfirm();
+    if (!ask) {
+      out("toolkit commit: it asks before committing; without a terminal, run it again with --yes");
+      return 1;
+    }
+    return commitToolkit(repo, { sha: str(flags.sha), confirm: ask, forge: forgeFor(repo, loadConfig(repo)) }, out);
+  }
+  // toolkit check [--feature x] [--src dir] [--rev r] · toolkit up [--rev r] [--src dir] · toolkit down --id <id> · maintain [--yes]
   const { flags, pos } = parseFlags(argv, ["repo", "feature", "src", "rev", "id"]);
-  for (const k of Object.keys(flags)) if (!["repo", "feature", "src", "rev", "id"].includes(k)) throw new Error(`kitchen toolkit: unknown flag --${k}`);
+  for (const k of Object.keys(flags)) if (!["repo", "feature", "src", "rev", "id", "yes"].includes(k)) throw new Error(`kitchen toolkit: unknown flag --${k}`);
   const repo = path.resolve(str(flags.repo) ?? process.cwd());
   if (pos[0] === "up") return toolkitUp(repo, { rev: str(flags.rev), src: str(flags.src) }, out);
   if (pos[0] === "down") {
@@ -202,11 +230,14 @@ export async function w2(name: string, argv: string[]): Promise<number> {
       forge: forgeFor(plainCheckout(repo).workTree, loadConfig(plainCheckout(repo).workTree)),
       print: out,
     });
+    // A changed Toolkit is a new sha: jobs keep the approved one until the person approves this (ADR 0015).
+    if (r.outcome === "changed" && r.commit && r.approvable)
+      await askApproval(plainCheckout(repo).workTree, r.commit, { yes: flags.yes === true, ask: terminalConfirm(true) }, out);
     return r.outcome === "blocked" ? 1 : 0;
   }
   if (pos[0] !== "check") {
     console.error(
-      "usage: kitchen toolkit build [--detach] [--status] [--answers <file>] [--verbose] | check [--feature <drive|feature>] [--src <worktree>] | up [--rev <ref>] [--src <dir>] | down --id <id> | maintain",
+      "usage: kitchen toolkit build [--detach] [--status] [--answers <file>] [--verbose] [--yes] | approve [--sha <sha>] | revoke | commit [--sha <sha>] [--yes] | check [--feature <drive|feature>] [--src <worktree>] [--rev <ref>] | up [--rev <ref>] [--src <dir>] | down --id <id> | maintain [--yes]",
     );
     return 2;
   }
@@ -224,8 +255,7 @@ export async function w2(name: string, argv: string[]): Promise<number> {
 async function toolkitUp(repo: string, o: { rev?: string; src?: string }, out: (l: string) => void): Promise<number> {
   repo = plainCheckout(repo).workTree;
   const co = await toolkitCheckout(repo, o.rev ?? "HEAD");
-  if (!co.merged)
-    out(`toolkit up: ${co.sha.slice(0, 12)} is not merged into the base: bin/dev runs ${co.sandboxed ? "under sandbox-exec" : "UNSANDBOXED"} (ADR 0008)`);
+  if (!co.trust) out(`toolkit up: ${untrustedNote(co.sha, co.sandboxed)}`);
   const src = path.resolve(o.src ?? co.dir);
   let slotId: string | null = null;
   // Ctrl-C from the first moment: a stop that comes during prepare or up still brings the slot down.

@@ -330,9 +330,12 @@ const synced = (j: Job, f: Facts) => {
 const readyPr = (j: Job, f: Facts) => {
   if (f.ready?.pr !== undefined && f.ready.pr !== null) j.pr = f.ready.pr;
 };
-/** The pause a job takes when it needs the running app and there is no Toolkit (ADR 0010). */
-export const noToolkitReason = (id: string) =>
-  `This ticket needs Kitchen to drive the app; run \`kitchen toolkit build\` (about 3–15 min), then \`kitchen resume ${id}\`.`;
+/**
+ * The pause a job takes when it needs the running app and there is no Toolkit (ADR 0010). What it says is
+ * computed again when it is shown, from where the Toolkit stands (toolkit/approve.ts noToolkitWords).
+ */
+export const noToolkitReason = (_id: string) =>
+  "This ticket needs Kitchen to drive the app; run `kitchen toolkit build` (about 3–15 min), then approve it. The job wakes by itself.";
 const needsToolkit: Guard = (j, f) =>
   !f.noToolkit
     ? "the job has a Toolkit"

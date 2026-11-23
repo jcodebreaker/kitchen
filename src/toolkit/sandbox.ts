@@ -232,6 +232,18 @@ export function wrappedBin(bin: string): string | null {
   }
 }
 
+/**
+ * The checkout a bin/dev (or the sandbox wrapper of one) belongs to: the folder holding `.kitchen/toolkit/bin/dev`,
+ * or null. A job reads the Toolkit's own feature files from there when its worktree lacks them (an approved
+ * Toolkit is never required to be in the job worktree, ADR 0015).
+ */
+export function toolkitRootOfBin(bin: string): string | null {
+  if (!bin) return null;
+  const real = wrappedBin(bin) ?? bin;
+  const tail = path.join(".kitchen", "toolkit", "bin", "dev");
+  return real.endsWith(path.sep + tail) ? real.slice(0, -(tail.length + 1)) : null;
+}
+
 const sh = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
 
 /**

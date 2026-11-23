@@ -31,6 +31,8 @@ const IGNORE = [
   ".kitchen/*.lock",
   ".kitchen/*.log",
   ".kitchen/toolkit.proven",
+  ".kitchen/toolkit.approved",
+  ".kitchen/toolkit.passed",
   ".worktrees/",
   "node_modules/",
   "__pycache__/",
