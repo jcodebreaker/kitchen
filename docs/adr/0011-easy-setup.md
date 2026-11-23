@@ -1,6 +1,6 @@
 # Easy setup: first ticket running in under five minutes
 
-**Status.** Proposed, 2026-11-22. Builds on ADR 0010 (quick `kitchen init`, `kitchen toolkit build` on demand) and does not change it. Ideas taken from super-board (EricTechPro/super-board v3.3.0, MIT © 2026 Eric Tech); no code was copied.
+**Status.** Accepted and built, 2026-11-22 (branch `feat/easy-setup`; docs/BUILD-LOG.md "ADR 0011" has the measurements and what differs from the text below). Builds on ADR 0010 (quick `kitchen init`, `kitchen toolkit build` on demand) and does not change it. Ideas taken from super-board (EricTechPro/super-board v3.3.0, MIT © 2026 Eric Tech); no code was copied.
 
 **Goal.** Someone new goes from nothing to a first ticket running in under 5 minutes, after reading almost nothing. We measure it from a clean clone of fixture e-library: wall-clock time and number of commands until the first job is done, before and after this change.
 
