@@ -625,7 +625,9 @@ function liveEv(j){
   if(e.c==="res"||e.c==="bad") return `<span class="mono ${e.c}${car}" data-lv="${j.id}">${shown}</span>`;
   return `<span class="${car}" data-lv="${j.id}">${shown}</span>`;
 }
-function patchLive(j){const el=$("#lv-"+CSS.escape(j.id));if(el)el.innerHTML=view==="board"?evLine(j):liveHTML(j);const p=$("#pl-"+CSS.escape(j.id));if(p)p.innerHTML=pillsHTML(j);const c=$("#c-"+CSS.escape(j.id));if(c)c.textContent="$"+j.cost.toFixed(2)}
+function patchLive(j){const el=$("#lv-"+CSS.escape(j.id));if(el)el.innerHTML=view==="board"?evLine(j):liveHTML(j);const p=$("#pl-"+CSS.escape(j.id));if(p)p.innerHTML=pillsHTML(j);const c=$("#c-"+CSS.escape(j.id));if(c)c.textContent=costTxt(j)}
+/* A job's own spend is known only when an orchestrator reports it per job; the session total is in the header. */
+const costTxt=j=>j.cost?"$"+j.cost.toFixed(2):"";
 
 /* ───────── list ───────── */
 function trackHTML(j){
@@ -648,7 +650,7 @@ function rowHTML(j){
   if(g==="you"){sub=`<div class="sub q">${md(j.q)}</div>`;mid=`<button class="btn act sm rep" data-act="message" data-id="${esc(j.id)}">${ex?"Close":"Reply"}</button>`;tm=`<span class="tm mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`}
   else if(g==="run"){sub=`<div class="sub" id="lv-${esc(j.id)}">${liveHTML(j)}</div>`;mid=chgHTML(j)+trackHTML(j);tm=`<span class="tm mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`;
     acts=`<span class="acts"><button class="ib" title="Message ${esc(agent(j))} (R)" aria-label="Message agent" data-act="message" data-id="${esc(j.id)}">${I.msg}</button></span>`}
-  else{mid=`<span class="fin ${fresh.has(j.id)?"new":""}">${fresh.has(j.id)?"Just finished · ":""}${finLabel(j)}</span>`;tm=`<span class="tm mono num">$${j.cost.toFixed(2)}</span>`;
+  else{mid=`<span class="fin ${fresh.has(j.id)?"new":""}">${fresh.has(j.id)?"Just finished · ":""}${finLabel(j)}</span>`;tm=`<span class="tm mono num">${costTxt(j)}</span>`;
     if(j.state==="done")acts=`<span class="acts"><button class="ib" title="Report, branch, ask for changes (R)" aria-label="Report, branch, ask for changes" data-act="message" data-id="${esc(j.id)}">${I.msg}</button></span>`;
     else if(stopped(j))acts=`<span class="acts"><button class="ib" title="Leave a note or resume (R)" aria-label="Leave a note" data-act="message" data-id="${esc(j.id)}">${I.msg}</button></span>`}
   return `<div class="rw ${g} ${g==="done"?"end":""} ${j.state==="rejected"?"gone":""} ${open===j.id?"open":""} ${sel===j.id?"sel":""} ${just.has(j.id)?"flash":""}" id="rw-${esc(j.id)}" style="view-transition-name:r-${esc(j.id)}">
@@ -695,7 +697,7 @@ function cardHTML(j){
     :`<div class="cbot"><div class="evl" id="lv-${esc(j.id)}">${evLine(j)}</div>${j.state==="rejected"?"":`<button class="ib" title="${j.state==="done"?"Follow up":"Message "+esc(agent(j))} (R)" aria-label="${j.state==="done"?"Follow up":"Message agent"}" data-act="message" data-id="${esc(j.id)}">${I.msg}</button>`}</div>`;
   return `<div class="rw card ${cls}" id="rw-${esc(j.id)}" style="view-transition-name:r-${esc(j.id)}" tabindex="0" role="button" data-row="${esc(j.id)}">
     <div class="ctop"><span class="id">${esc(idt)}</span>${j.round>1?`<span class="rnd">round ${j.round}</span>`:""}<span class="sp"></span>${j.state==="run"&&j.runnerOn?'<i class="pulse" title="Working now"></i>':""}${end?"":`<span class="mt num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`}</div>
-    <div class="ctt">${esc(j.title)}</div><div class="prow"><div class="pills" id="pl-${esc(j.id)}">${pillsHTML(j)}</div><span class="cst num" id="c-${esc(j.id)}">$${j.cost.toFixed(2)}</span></div>${bot}</div>`;
+    <div class="ctt">${esc(j.title)}</div><div class="prow"><div class="pills" id="pl-${esc(j.id)}">${pillsHTML(j)}</div><span class="cst num" id="c-${esc(j.id)}">${costTxt(j)}</span></div>${bot}</div>`;
 }
 function boardHTML(){
   if(!snap)return ""; /* the lanes come with the first snapshot */
@@ -872,7 +874,7 @@ function renderPanel(scrollEnd){
   keepFocus(()=>{$("#pin").innerHTML=`
     <div class="ph"><button class="ib back" onclick="closePanel()" aria-label="Back">${I.back}</button><span class="mono">${esc(j.num)}</span><span>·</span><span>${esc(sub)}</span><span class="sp"></span>${ctl}<button class="ib" onclick="closePanel()" aria-label="Close" title="Close (Esc)">${I.x}</button></div>
     <div class="pscroll" id="pscroll"><h1>${esc(j.title)}</h1>${(t=>t&&t!==j.title?`<p class="tkt" title="The ticket, as it was filed">${esc(t)}</p>`:"")(details[j.id]&&details[j.id].ticket)}
-      <div class="meta"><span class="st ${j.state==="you"?"you":""}" id="pst">${icon(j)}${esc(statusOf(j))}</span><span class="mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span><span class="age" title="Since the ticket came in">age <span class="mono num" id="pt">${clock(secsOf(j))}</span></span><span class="mono num" id="pc">$${j.cost.toFixed(2)}</span>${j.report?`<a href="/${esc(j.report)}" target="_blank" rel="noopener">Open report</a>`:""}${j.pr?`<span>PR #${j.pr}</span>`:""}</div>
+      <div class="meta"><span class="st ${j.state==="you"?"you":""}" id="pst">${icon(j)}${esc(statusOf(j))}</span><span class="mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span><span class="age" title="Since the ticket came in">age <span class="mono num" id="pt">${clock(secsOf(j))}</span></span><span class="mono num" id="pc">${costTxt(j)}</span>${j.report?`<a href="/${esc(j.report)}" target="_blank" rel="noopener">Open report</a>`:""}${j.pr?`<span>PR #${j.pr}</span>`:""}</div>
       <div class="ptrk ${ss.length>6?"many":""}">${trackHTML(j)}<div class="lbls">${ss.length>6?`<span class="cur ${j.state==="you"?"you":""}">${ended(j)&&j.state==="done"?"All "+ss.length+" steps done":"Step "+(i+1)+" of "+ss.length+" · "+esc(ss[i]?ss[i].nm:"")}</span>`:ss.map((s,k)=>`<span class="${k===i&&!ended(j)?"cur "+(j.state==="you"?"you":""):""}">${esc(s.nm)}</span>`).join("")}</div></div>
       <div class="tabs" id="tabs">${tabsHTML(j)}</div><div id="tabbody">${tabBody(j)}</div></div>
     <div class="pcmp" ${composerHTML(j,"panel")?"":'style="display:none"'}>${composerHTML(j,"panel")}</div>`});

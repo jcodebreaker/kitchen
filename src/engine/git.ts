@@ -1,8 +1,6 @@
 // Kitchen's git: plain `git -C <dir>` calls. Agents never push; Kitchen pushes only job branches (and, on GitHub,
 // merges into staging through the PR). Nothing here ever pushes to or updates the base branch or main.
 import { execFile } from "node:child_process";
-import fs from "node:fs";
-import path from "node:path";
 
 export class GitError extends Error {
   readonly exitCode: number;
@@ -70,10 +68,4 @@ export async function diffSize(dir: string, from: string, to: string): Promise<{
       return { p, a: a === "-" ? 0 : Number(a), d: d === "-" ? 0 : Number(d) };
     });
   return { lines: files.reduce((s, f) => s + f.a + f.d, 0), files };
-}
-
-/** The main checkout of the repo at `dir` (the common dir's parent), so a call from a worktree finds the same repo. */
-export async function mainCheckout(dir: string): Promise<string> {
-  const common = await gitOut(dir, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
-  return path.basename(common) === ".git" ? path.dirname(common) : fs.realpathSync(dir);
 }
