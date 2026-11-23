@@ -45,7 +45,8 @@ type Os = "mac" | "linux" | "windows";
 const osOf = (p: NodeJS.Platform): Os => (p === "darwin" ? "mac" : p === "win32" ? "windows" : "linux");
 
 /** How to install each tool, per OS. The person runs these; Kitchen only prints them. */
-const INSTALL: Record<"node" | "git" | Agent | "gh", Record<Os, string>> = {
+const INSTALL: Record<"node" | "git" | "python3" | Agent | "gh", Record<Os, string>> = {
+  python3: { mac: "xcode-select --install", linux: "sudo apt-get install -y python3", windows: "winget install Python.Python.3.12" },
   node: {
     mac: "brew install node",
     linux: "curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs",
@@ -149,7 +150,7 @@ export async function preflight(o: PreflightOpts): Promise<Preflight> {
   const ghBin = findBin(os === "windows" ? "gh.exe" : "gh", env.PATH, o.tmp);
   const ghCheck = async (): Promise<Check> => {
     const required = !!o.ghRequired;
-    const why = required ? "" : " (optional: for GitHub pull requests)";
+    const why = required ? "" : " (optional: to merge into staging on GitHub)";
     if (!found(ghBin)) return { name: "gh", ok: false, required, detail: `not found${why}`, fix: [INSTALL.gh[os]] };
     // `gh auth token` reads the stored token, locally (`gh auth status` asks GitHub: offline would read as signed out).
     const r = await run(ghBin, ["auth", "token"]);
@@ -158,8 +159,17 @@ export async function preflight(o: PreflightOpts): Promise<Preflight> {
       : { name: "gh", ok: false, required, detail: `not signed in${why}`, fix: SIGN_IN.gh };
   };
 
-  const [g, gh, ...agents] = await Promise.all([gitCheck(), ghCheck(), ...tools.map((t) => agentCheck(t, binOf(t), run, os, true))]);
-  checks.push(g);
+  // Kitchen's guard hooks are Python 3 scripts (standard library only), as super-board's are.
+  const py = findBin(os === "windows" ? "python3.exe" : "python3", env.PATH, o.tmp);
+  const pyCheck = async (): Promise<Check> => {
+    if (!found(py)) return { name: "python3", ok: false, required: true, detail: "not found (the guard hooks run on it)", fix: [INSTALL.python3[os]] };
+    const v = /(\d+\.\d+(\.\d+)?)/.exec((await run(py, ["--version"])).stdout)?.[1];
+    return v
+      ? { name: "python3", ok: true, required: true, detail: `${v} · for the guard hooks`, fix: [] }
+      : { name: "python3", ok: false, required: true, detail: "does not run", fix: [INSTALL.python3[os]] };
+  };
+  const [g, p3, gh, ...agents] = await Promise.all([gitCheck(), pyCheck(), ghCheck(), ...tools.map((t) => agentCheck(t, binOf(t), run, os, true))]);
+  checks.push(g, p3);
   const ready = agents.filter((c) => c.ok).map((c) => c.name as Agent);
   if (tools.length > 1 && ready.length) {
     // Either tool will do: one ready is enough, and the other is shown without a fix to run.

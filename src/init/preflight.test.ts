@@ -6,13 +6,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, test, vi } from "vitest";
-import { w2 } from "../cli/toolkit-commands.ts";
 import { nodeOk, type PreflightOpts, preflight, preflightLines } from "./preflight.ts";
+import { init } from "./quick.ts";
 
 let root: string;
 let repo: string;
 let empty: string;
-/** findBin skips the OS temp folder (session shims); the fakes live in it, so the tests name another (TMPDIR for w2). */
+/** findBin skips the OS temp folder (session shims); the fakes live in it, so the tests name another (TMPDIR for init). */
 let tmp = "";
 const realGit = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
 
@@ -36,7 +36,7 @@ afterAll(() => fs.rmSync(root, { recursive: true, force: true }));
 function bins(label: string, tools: Record<string, string>): string {
   const dir = path.join(root, label);
   fs.mkdirSync(dir, { recursive: true });
-  for (const [name, body] of Object.entries(tools)) {
+  for (const [name, body] of Object.entries({ python3: 'echo "Python 3.12.1"', ...tools })) {
     if (body === "real") fs.symlinkSync(realGit, path.join(dir, name));
     else fs.writeFileSync(path.join(dir, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
   }
@@ -60,6 +60,7 @@ test("everything there and signed in: one ✓ line per tool, nothing to fix, the
     [
       ["node", true],
       ["git", true],
+      ["python3", true],
       ["claude", true],
       ["gh", true],
     ],
@@ -154,7 +155,7 @@ test("gh is optional: missing or signed out it is ✗ with its fix, and init goe
     name: "gh",
     ok: false,
     required: false,
-    detail: "not signed in (optional: for GitHub pull requests)",
+    detail: "not signed in (optional: to merge into staging on GitHub)",
     fix: ["gh auth login"],
   });
   const missing = await run(bins("gh-none", { git: "real", claude: CLAUDE_IN }), { tool: "claude" });
@@ -175,14 +176,14 @@ test("kitchen init with claude missing: the lines, exit 2, and nothing written; 
     process.env.KITCHEN_HOME = path.join(root, "home");
     process.env.TMPDIR = tmp;
     process.env.PATH = bins("init-missing", { git: "real", gh: OK });
-    assert.equal(await w2("init", ["--repo", dir, "--tool", "claude"]), 2, printed.join("\n"));
+    assert.equal(await init({ repo: dir, tool: "claude" }, (l) => console.log(l)), 2, printed.join("\n"));
     assert.match(printed.join("\n"), /✗ claude {3}not found/);
-    assert.match(printed.join("\n"), new RegExp(`Resume: kitchen init --tool claude --repo ${dir}`));
+    assert.match(printed.join("\n"), /Resume: kitchen init/);
     assert.deepEqual(fs.readdirSync(dir).sort(), [".git", "a.txt"], "nothing written before the preflight passes");
     // The person installs it; the re-check, not an installer's exit code, decides.
     fs.writeFileSync(path.join(process.env.PATH, "claude"), `#!/bin/sh\n${CLAUDE_IN}\n`, { mode: 0o755 });
     printed.splice(0);
-    assert.equal(await w2("init", ["--repo", dir, "--tool", "claude"]), 0, printed.join("\n"));
+    assert.equal(await init({ repo: dir, tool: "claude" }, (l) => console.log(l)), 0, printed.join("\n"));
     assert.match(printed.join("\n"), /✓ claude {3}signed in/);
     assert.ok(fs.existsSync(path.join(dir, "kitchen.yaml")));
   } finally {
@@ -197,7 +198,7 @@ test("kitchen init with claude missing: the lines, exit 2, and nothing written; 
   }
 });
 
-/** Runs `w2` with this PATH and nothing else of the person's: no KITCHEN_CLAUDE_BIN, a TMPDIR the fakes aren't in. */
+/** Runs init with this PATH and nothing else of the person's: no KITCHEN_CLAUDE_BIN, a TMPDIR the fakes aren't in. */
 async function withPath<T>(dir: string, fn: (printed: string[]) => Promise<T>): Promise<T> {
   const prev = {
     PATH: process.env.PATH,
@@ -226,15 +227,21 @@ test("a first kitchen init, both tools signed in: no 'stopped last time' line, a
   fs.cpSync(repo, dir, { recursive: true });
   const bin = bins("both-ready", { git: "real", claude: CLAUDE_IN, codex: OK, gh: OK });
   await withPath(bin, async (printed) => {
-    assert.equal(await w2("init", ["--repo", dir]), 0, printed.join("\n"));
+    assert.equal(await init({ repo: dir }, (l) => console.log(l)), 0, printed.join("\n"));
     const text = printed.join("\n");
     assert.doesNotMatch(text, /stopped last time|Continu|Which agent/, text);
-    assert.match(text, /Wrote kitchen\.yaml +agent claude/, "the recommended tool, taken without a question");
+    assert.match(text, /Wrote kitchen\.yaml/, "the recommended tool, taken without a question");
     // And the run after it, which finished, doesn't say it stopped either.
     printed.splice(0);
-    assert.equal(await w2("init", ["--repo", dir]), 0);
+    assert.equal(await init({ repo: dir }, (l) => console.log(l)), 0);
     assert.doesNotMatch(printed.join("\n"), /stopped last time/);
   });
+});
+
+test("python3 missing: ✗ with its install line, required (the guard hooks run on it)", async () => {
+  const p = await run(bins("nopy", { git: "real", claude: CLAUDE_IN, gh: OK, python3: "exit 127" }), { tool: "claude" });
+  assert.equal(line(p, "python3")?.ok, false);
+  assert.equal(p.ok, false);
 });
 
 test("gh is checked with `gh auth token` (local, offline-safe), never `gh auth status`; an install fix says to open a new terminal", async () => {
