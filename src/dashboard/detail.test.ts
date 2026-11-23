@@ -8,6 +8,7 @@ import type { Stage } from "../engine/machine.ts";
 import { addMessage } from "../engine/messages.ts";
 import { createJob, jobDirOf, updateJob } from "../engine/store.ts";
 import { appendLedger } from "../ledger/append.ts";
+import { recordPassed } from "../toolkit/trust.ts";
 import { snapshot } from "./data.ts";
 import { detail, ticketText } from "./detail.ts";
 
@@ -116,9 +117,89 @@ test("a repro that can't reproduce asks as the Repro agent; a drives that goes b
       ["Intake", "ok"],
       ["Build", "ok"],
       ["Gate", "ok"],
-      ["Drives", "bad"],
+      ["Drives", "back"],
       ["Gate", "run"],
     ],
+    "drives sending the job back to gate (the verifier wrote a test file) is the normal path: neutral, not red",
+  );
+  assert.equal(tl[3].sum, "↻ back to gate");
+  // A real failure stays red: Verify's FAIL sends the job back to build.
+  const failed = await walked(
+    [
+      ["intake", "build"],
+      ["build", "gate"],
+      ["gate", "drives"],
+      ["drives", "verify"],
+      ["verify", "build"],
+    ],
+    { stage: "build" },
+  );
+  assert.equal((await detail(repo, failed)).tl.find((x) => x.stage === "verify")?.st, "bad");
+});
+
+test("the Toolkit step is its own segment, named for its gap, on the track and in the activity; a proven offer shows Approve there", async () => {
+  const id = await walked(
+    [
+      ["intake", "build"],
+      ["build", "gate"],
+      ["gate", "drives"],
+      ["drives", "toolkit"],
+    ],
+    { stage: "toolkit", extra: { gap: "open", returnTo: "drives", smith: { attempts: 1, toolkitPr: null } } },
+  );
+  const s = await snapshot(repo, T0);
+  const card = s.jobs.find((j) => j.id === id);
+  assert.equal(card?.phase, "toolkit");
+  assert.equal(card?.agent, "Toolkit smith");
+  assert.deepEqual(
+    card?.phases.map((p) => p.nm),
+    ["Intake", "Build", "Gate", "Toolkit · teaching Kitchen to use a browser", "Verify", "Review", "Report"],
+  );
+  assert.deepEqual(
+    s.phases.map((p) => p.k),
+    ["intake", "build", "gate", "verify", "review", "report"],
+    "jobs that never ran the smith keep the six steps",
+  );
+  let tl = (await detail(repo, id)).tl;
+  assert.deepEqual(tl.at(-1) && [tl.at(-1)?.nm, tl.at(-1)?.st], ["Toolkit · teaching Kitchen to use a browser", "run"]);
+  // It ends with the smith's proven commit offered for approval: the Approve action sits on that step.
+  const sha = "a".repeat(40);
+  await recordPassed(repo, sha, `the smith (open, job ${id})`);
+  appendLedger(repo, { t: at(50), job: id, stage: "toolkit", round: 1, event: "move", result: "drives", key: `${id}/m5/toolkit>drives`, detail: {} });
+  await updateJob(repo, id, (j) => ({ ...j, stage: "drives", moves: 5, toolkitRef: sha, toolkitFrom: "pr" }));
+  tl = (await detail(repo, id)).tl;
+  const step = tl.find((x) => x.stage === "toolkit");
+  assert.equal(step?.st, "ok");
+  assert.equal(step?.approve, sha);
+  assert.equal((await snapshot(repo, T0)).jobs.find((j) => j.id === id)?.phases[3].k, "toolkit", "the step stays on the track after it ran");
+});
+
+test("the Checks count comes with every snapshot, from the job's files now: a Ready job shows 4/4, not a detail fetched before Verify", async () => {
+  const id = await walked(
+    [
+      ["intake", "build"],
+      ["build", "gate"],
+      ["gate", "drives"],
+      ["drives", "verify"],
+      ["verify", "review"],
+      ["review", "ready"],
+    ],
+    { stage: "ready" },
+  );
+  const dir = jobDirOf(repo, id);
+  const crit = [1, 2, 3, 4].map((n) => `- [C${n}] criterion ${n}\n  proof: test test/c${n}.test.js\n  expect: exit 0`).join("\n");
+  fs.writeFileSync(path.join(dir, "spec.md"), `# Spec\n\n## Criteria\n${crit}\n`);
+  assert.deepEqual((await snapshot(repo, T0)).jobs[0].checks, { ok: 0, total: 4 }, "before Verify: none proven");
+  fs.mkdirSync(path.join(dir, "rounds", "1"), { recursive: true });
+  const rows = [1, 2, 3, 4].map((n) => `| C${n} | engine | PASS | e${n} |  |`).join("\n");
+  fs.writeFileSync(
+    path.join(dir, "rounds", "1", "verdict-m4.md"),
+    `VERDICT: PASS\n\n| criterion | decided by | result | evidence | why |\n|---|---|---|---|---|\n${rows}\n`,
+  );
+  assert.deepEqual((await snapshot(repo, T0)).jobs[0].checks, { ok: 4, total: 4 });
+  assert.deepEqual(
+    (await detail(repo, id)).crit.map((c) => c.st),
+    ["ok", "ok", "ok", "ok"],
   );
 });
 

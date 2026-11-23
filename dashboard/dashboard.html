@@ -508,6 +508,8 @@ const S={
   bad:`<svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="var(--fail)"/><path d="M5.6 5.6l4.8 4.8M10.4 5.6l-4.8 4.8" stroke="var(--bg)" stroke-width="1.6" stroke-linecap="round"/></svg>`,
   skip:`<svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="var(--faint)"/><path d="M5.6 5.6l4.8 4.8M10.4 5.6l-4.8 4.8" stroke="var(--bg)" stroke-width="1.6" stroke-linecap="round"/></svg>`,
   wait:`<svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" fill="none" stroke="var(--line2)" stroke-width="1.5" stroke-dasharray="2.2 2.2"/></svg>`,
+  /* A normal retry (drives sent it back to gate): neutral, never red. */
+  back:`<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="7" fill="var(--line)"/><path d="M11.2 8a3.2 3.2 0 1 1-1-2.33" stroke="var(--mute)" stroke-width="1.5" stroke-linecap="round"/><path d="M10.6 3.9v2.1h-2.1" stroke="var(--mute)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
 };
 S.rejected=S.skip; S.done=S.ok;
 
@@ -521,7 +523,8 @@ const clock=s=>{s=Math.max(0,Math.floor(s));return s>=3600?Math.floor(s/3600)+":
 const fmtL=s=>{s=Math.round(s);return s>=3600?Math.floor(s/3600)+"h "+String(Math.floor(s%3600/60)).padStart(2,"0")+"m":s>=60?Math.floor(s/60)+"m "+String(s%60).padStart(2,"0")+"s":s+"s"};
 const hhmm=iso=>iso?new Date(iso).toTimeString().slice(0,8):"";
 const num=id=>(/^(\d+)-/.exec(id)||[])[1]||id;
-const steps=j=>j.kind==="setup"?(setup?setup.steps:[]):(snap?snap.phases:[]);
+/* A job's own track (data.ts phasesFor: the Toolkit step shows once the smith ran for it), else the six. */
+const steps=j=>j.kind==="setup"?(setup?setup.steps:[]):(j.phases||(snap?snap.phases:[]));
 const sidx=j=>j.kind==="setup"?(setup?setup.idx:0):Math.max(0,steps(j).findIndex(s=>s.k===j.phase));
 const stp=j=>steps(j)[sidx(j)]||{nm:""};
 const stopped=j=>j.pausedBy==="stop";
@@ -545,7 +548,13 @@ let drafts={},answersDraft={},expanded=null,open=null,tab="activity",openSegs=ne
 function fromSnap(c){
   const prev=J(c.id)||{};
   return {...c,kind:c.kind||"feature",num:num(c.id),cost:c.usd,secs0:c.secs,at0:performance.now(),
-    state:c.state==="rejected"?"rejected":c.state,crit:(details[c.id]||{}).crit||prev.crit||[]};
+    state:c.state==="rejected"?"rejected":c.state,crit:freshCrit(c,prev)};
+}
+/* The Checks list from the panel's detail, only while it is from the job's current move: a detail fetched at an
+   earlier stage (the panel was opened then closed) never stands in for the job as it is now. */
+function freshCrit(c,prev){const d=details[c.id];
+  if(d&&d.mv===c.movedAt)return d.crit;
+  return prev.movedAt===c.movedAt&&prev.crit?prev.crit:[];
 }
 function fromSetup(s){
   /* quick: quick init ran and nothing failed; the Toolkit just isn't built (ADR 0010). It sits with the finished rows, not as a failure. */
@@ -580,7 +589,7 @@ async function poll(){
 }
 async function pollDetail(){
   if(open&&open!=="setup"&&J(open)){
-    try{const id=open,d=await getJSON(`/jobs/${encodeURIComponent(id)}/detail.json`);if(open===id){const old=details[id];details[id]=d;const j=J(id);if(j)j.crit=d.crit;panelUpdate(old,d)}}catch(e){}
+    try{const id=open,d=await getJSON(`/jobs/${encodeURIComponent(id)}/detail.json`);if(open===id){const old=details[id],j=J(id);d.mv=j?j.movedAt:null;details[id]=d;if(j)j.crit=d.crit;panelUpdate(old,d)}}catch(e){}
   }
   setTimeout(pollDetail,1500);
 }
@@ -885,6 +894,7 @@ function segHTML(j,s,i,n){
   return `<button class="sg ${can?"exp":""}" ${can?`onclick="togSeg(${i})"`:"tabindex=-1"}>${S[state]||S.wait}<b>${esc(s.nm)}</b><span class="who">${esc(who)}</span><span class="du mono num" ${liveT?`id="segt" data-start="${esc(s.start)}"`:""}>${liveT?clock(elapsed(s.start)):dur}</span></button>
     ${s.sk&&s.sk.length?`<div class="sgsk" title="Skills quoted into this step's prompt">${s.sk.map(n=>`<span class="mono" title="${esc(n)}">${esc(n.split(":").pop())}</span>`).join("")}</div>`:""}
     ${s.sum?`<div class="sgsum ${s.st==="bad"?"bad":""}">${esc(s.sum)}</div>`:""}
+    ${s.approve&&tkState()==="waiting"&&tkSha()===s.approve?`<div class="rbar tkbar" role="status">${S.you}<span><b>Proven · waiting for your approval:</b> the smith's Toolkit <code>${esc(s.approve.slice(0,12))}</code>. This job runs it sandboxed until you approve it.</span>${approveBtn()}</div>`:""}
     ${isOpen&&(s.evs.length||last)?`<div class="evs" ${last?'id="evs"':""}>${s.evs.map(e=>evHTML(e)).join("")}</div>`:""}`;
 }
 function setupBody(j){
@@ -897,13 +907,14 @@ function setupBody(j){
 function tabBody(j){
   if(j.kind==="setup")return setupBody(j);
   const d=details[j.id];
-  if(tab==="checks") return j.crit.length?j.crit.map((c,i)=>`<div class="crit">${S[c.st]||S.wait}<span><span class="mono" style="color:var(--faint);margin-right:6px">${esc(c.id)}</span>${esc(c.text)}</span>${c.e?`<span class="e">${esc(c.e)}</span>`:""}</div>`).join(""):`<div class="none">No checks yet. Intake writes them.</div>`;
+  if(tab==="checks") return !j.crit.length&&j.checks&&j.checks.total?`<div class="none">Loading…</div>`:j.crit.length?j.crit.map((c,i)=>`<div class="crit">${S[c.st]||S.wait}<span><span class="mono" style="color:var(--faint);margin-right:6px">${esc(c.id)}</span>${esc(c.text)}</span>${c.e?`<span class="e">${esc(c.e)}</span>`:""}</div>`).join(""):`<div class="none">No checks yet. Intake writes them.</div>`;
   if(tab==="changes") return j.files.length?j.files.map(f=>`<div class="file"><span class="p">${esc(f.p)}</span>${dfHTML(f.a,f.d)}</div>`).join(""):`<div class="none">No files touched yet.</div>`;
   if(!d)return `<div class="none">Loading…</div>`;
   return d.tl.map((s,i)=>segHTML(j,s,i,d.tl.length)).join("");
 }
-function tabsHTML(j){const okN=j.crit.filter(c=>c.st==="ok").length;
-  return [["activity","Activity",""],["checks","Checks",j.crit.length?okN+"/"+j.crit.length:""],["changes","Changes",j.files.length||""]].filter(([k])=>k==="activity"||j.kind!=="setup").map(([k,n,c])=>`<button class="tab ${tab===k?"on":""}" onclick="setTab('${k}')">${n}${c!==""?`<span class="n num">${c}</span>`:""}</button>`).join("")}
+/* The Checks count comes with every poll (data.ts checks), never from a detail fetched at another stage. */
+function tabsHTML(j){const ck=j.checks||{ok:j.crit.filter(c=>c.st==="ok").length,total:j.crit.length};
+  return [["activity","Activity",""],["checks","Checks",ck.total?ck.ok+"/"+ck.total:""],["changes","Changes",j.files.length||""]].filter(([k])=>k==="activity"||j.kind!=="setup").map(([k,n,c])=>`<button class="tab ${tab===k?"on":""}" onclick="setTab('${k}')">${n}${c!==""?`<span class="n num">${c}</span>`:""}</button>`).join("")}
 function statusOf(j){if(j.kind==="setup"&&j.setup.state==="quick")return "Toolkit not built";if(setupWaits(j))return "Proven · waiting for your approval";return j.state==="you"?"Needs you":j.state==="run"?(j.runnerOn?stp(j).nm+(j.round>1?" · round "+j.round:""):"Waiting · "+stp(j).nm):j.state==="paused"?(j.pausedBy==="stop"?"Stopped in ":"Paused in ")+stp(j).nm:j.state==="done"?(j.kind==="setup"?"Proven":"Ready to merge"):j.kind==="setup"?"Failed":"Rejected"}
 function paintHead(){const j=J(open);if(!j)return;const t=$("#tabs");if(t)t.innerHTML=tabsHTML(j);const st=$("#pst");if(st)st.innerHTML=icon(j)+esc(statusOf(j));if(tab!=="activity"&&j.kind!=="setup"){const b=$("#tabbody");if(b)b.innerHTML=tabBody(j)}}
 function panelUpdate(old,d){

@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { type Config, loadConfig, modelFor } from "../config.ts";
+import { contractOf } from "../engine/contract.ts";
 import { runningNow } from "../engine/control.ts";
 import { readRunLock, staleReason } from "../engine/lock.ts";
 import { BY_YOU_STOPPED, isActive, type Job, maxRisk, pausedByYou, type Risk, type Stage } from "../engine/machine.ts";
@@ -42,11 +43,33 @@ export const PHASES = [
   { k: "intake", nm: "Intake", stages: ["intake", "needs-info", "spec", "repro"] },
   { k: "build", nm: "Build", stages: ["build"] },
   { k: "gate", nm: "Gate", stages: ["gate"] },
-  { k: "verify", nm: "Verify", stages: ["drives", "verify", "toolkit"] },
+  { k: "verify", nm: "Verify", stages: ["drives", "verify"] },
   { k: "review", nm: "Review", stages: ["review"] },
   { k: "report", nm: "Report", stages: ["ready", "report", "done"] },
 ] as const satisfies readonly { k: string; nm: string; stages: readonly Stage[] }[];
-export type Phase = (typeof PHASES)[number]["k"];
+/**
+ * The Toolkit smith's step, shown as its own segment (after Gate, before Verify) on the track of a job that ran it:
+ * Kitchen teaching itself something it can't do yet, not part of Verify.
+ */
+export type Phase = (typeof PHASES)[number]["k"] | "toolkit";
+const BROWSER_GAPS = ["open", "reload", "press", "type", "read", "screenshot", "login"];
+/** Why the smith runs, from the gap it fills, in a person's words. Pure. */
+export function toolkitReason(gap: string | null | undefined): string {
+  if (!gap || gap === "?") return "teaching Kitchen a new step";
+  if (BROWSER_GAPS.includes(gap)) return "teaching Kitchen to use a browser";
+  if (gap === "cli") return "teaching Kitchen to run the command line";
+  return `teaching Kitchen the ${gap} step`;
+}
+/** The Toolkit step's name on the track and in the activity list. Pure. */
+export const toolkitStepName = (gap: string | null | undefined) => `Toolkit · ${toolkitReason(gap)}`;
+/** The track's steps for one job: the six, with the Toolkit step between Gate and Verify once the smith ran for it. Pure. */
+export function phasesFor(j: Pick<Job, "stage" | "gap" | "smith">, stage: Stage = j.stage): { k: Phase; nm: string }[] {
+  const all: { k: Phase; nm: string }[] = PHASES.map((p) => ({ k: p.k, nm: p.nm }));
+  if (stage !== "toolkit" && !(j.smith?.attempts > 0)) return all;
+  const i = all.findIndex((p) => p.k === "verify");
+  all.splice(i, 0, { k: "toolkit", nm: toolkitStepName(j.gap) });
+  return all;
+}
 /** Who works in a stage, as the page names it; null: Kitchen itself (an automatic step, no agent). */
 const AGENT: Partial<Record<Stage, string>> = {
   intake: "Intake agent",
@@ -68,7 +91,7 @@ export function workStage(j: Pick<Job, "stage" | "pausedFrom" | "escalatedFrom">
   if (j.stage === "needs-human" || j.stage === "rejected") return j.escalatedFrom ?? "intake";
   return j.stage;
 }
-export const phaseOf = (s: Stage): Phase => PHASES.find((p) => (p.stages as readonly Stage[]).includes(s))?.k ?? "intake";
+export const phaseOf = (s: Stage): Phase => (s === "toolkit" ? "toolkit" : (PHASES.find((p) => (p.stages as readonly Stage[]).includes(s))?.k ?? "intake"));
 export const agentOf = (s: Stage): string | null => AGENT[s] ?? null;
 export type JobState = "you" | "run" | "paused" | "done" | "rejected";
 /** AUTH_FAILURE: the pause reason machine.ts gives a backoff after the agent's login failed. */
@@ -226,6 +249,13 @@ export type JobCard = {
   // ADR 0009: what the interactive page needs
   state: JobState;
   phase: Phase;
+  /**
+   * The Checks tab's count, from the job's files at this snapshot (critOf): every poll carries it, so the count never
+   * comes from a panel's detail fetched while the job was at an earlier stage.
+   */
+  checks: { ok: number; total: number };
+  /** This job's track: the six steps, and the Toolkit step once the smith ran for it (phasesFor). */
+  phases: { k: Phase; nm: string }[];
   /** Who works in the job's stage (null: an automatic step). */
   agent: string | null;
   /** A job that needs you: what it asks. */
@@ -287,6 +317,42 @@ export type Snapshot = {
     mutes: string[];
   };
 };
+
+/** The latest verdict table of the job: criterion → result, evidence and why. */
+function verdictRows(dir: string): Map<string, { result: string; e: string }> {
+  const out = new Map<string, { result: string; e: string }>();
+  const rounds = path.join(dir, "rounds");
+  if (!fs.existsSync(rounds)) return out;
+  for (const r of fs
+    .readdirSync(rounds)
+    .filter((x) => /^\d+$/.test(x))
+    .sort((a, b) => Number(b) - Number(a))) {
+    const f = fs
+      .readdirSync(path.join(rounds, r))
+      .filter((x) => /^verdict-m\d+\.md$/.test(x))
+      .sort((a, b) => Number(/\d+/.exec(b)?.[0]) - Number(/\d+/.exec(a)?.[0]))[0];
+    if (!f) continue;
+    for (const m of fs.readFileSync(path.join(rounds, r, f), "utf8").matchAll(/^\|\s*(C\d+)\s*\|[^|]*\|\s*([A-Z-]+)\s*\|([^|]*)\|([^|]*)\|/gm))
+      out.set(m[1], { result: m[2], e: [m[3].trim(), m[4].trim()].filter(Boolean).join(" · ") });
+    return out;
+  }
+  return out;
+}
+
+export type Crit = { id: string; text: string; st: "ok" | "bad" | "wait"; e: string };
+/** The job's criteria (its contract) with their latest results: what the Checks tab lists, and its count on every card. */
+export function critOf(dir: string): Crit[] {
+  const rows = verdictRows(dir);
+  return (contractOf(dir)?.criteria ?? []).map((c) => {
+    const r = rows.get(c.id);
+    return {
+      id: c.id,
+      text: c.text,
+      st: (!r ? "wait" : r.result === "PASS" ? "ok" : "bad") as Crit["st"],
+      e: r ? `${r.result}${r.e ? ` · ${r.e}` : ""}` : "",
+    };
+  });
+}
 
 /** The newest verdict-m<N>.md of the job's latest round with one: the verdict and one chip per criterion. Pure over the text. */
 export function parseVerdict(text: string): { verdict: string | null; criteria: Chip[] } {
@@ -392,6 +458,11 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
       branch: j.branch,
       state: stateOf(j),
       phase: phaseOf(stage),
+      phases: phasesFor(j, stage),
+      checks: (() => {
+        const c = critOf(dir);
+        return { ok: c.filter((x) => x.st === "ok").length, total: c.length };
+      })(),
       agent: agentOf(stage),
       q: questionOf(j, dir, tk),
       // A proven Toolkit waits for the person: the row, card and panel offer Approve Toolkit (ADR 0015).
