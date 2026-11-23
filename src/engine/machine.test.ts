@@ -131,6 +131,21 @@ const cases: Case[] = [
     expect: (j) => assert.equal(j.pausedReason, "which page?"),
   },
   { row: "intake>needs-info", job: {}, to: "needs-info", facts: f({ intake: { decision: "ACCEPT" } }), refused: /not NEEDS-INFO/ },
+  {
+    row: "intake>needs-info",
+    job: { attempts: { ...baseJob().attempts, asked: 1 } },
+    to: "needs-info",
+    facts: f({ intake: { decision: "NEEDS-INFO" } }),
+    expect: (j) => assert.equal(j.attempts.asked, 2, "the question is counted"),
+  },
+  // The third question in a row is not asked: the move is refused with info-limit, which escalates to needs-human.
+  {
+    row: "intake>needs-info",
+    job: { attempts: { ...baseJob().attempts, asked: 2 } },
+    to: "needs-info",
+    facts: f({ intake: { decision: "NEEDS-INFO" } }),
+    refused: /already asked 2 questions/,
+  },
   { row: "intake>rejected", job: {}, to: "rejected", facts: f({ intake: { decision: "REJECT" } }) },
   { row: "intake>rejected", job: {}, to: "rejected", facts: f({}), refused: /no intake facts/ },
   // needs-info
@@ -904,6 +919,14 @@ const cases: Case[] = [
   },
   { row: "*>needs-human", job: { stage: "gate" }, to: "needs-human", facts: f({ escalate: "round-limit" }), refused: /round budget left/ },
   { row: "*>needs-human", job: { stage: "spec", smith: { attempts: 2, toolkitPr: null } }, to: "needs-human", facts: f({ escalate: "smith-limit" }) },
+  {
+    row: "*>needs-human",
+    job: { stage: "intake", attempts: { ...baseJob().attempts, asked: 2 } },
+    to: "needs-human",
+    facts: f({ escalate: "info-limit", why: "which screens?" }),
+    expect: (j) => assert.deepEqual([j.escalatedFrom, j.pausedReason], ["intake", "info-limit: which screens?"]),
+  },
+  { row: "*>needs-human", job: { stage: "intake" }, to: "needs-human", facts: f({ escalate: "info-limit" }), refused: /asked 0 of 2 questions/ },
   { row: "*>needs-human", job: { stage: "build", attempts: { ...baseJob().attempts, errors: 1 } }, to: "needs-human", facts: f({ escalate: "adapter-error" }) },
   { row: "*>needs-human", job: { stage: "build" }, to: "needs-human", facts: f({ escalate: "adapter-error" }), refused: /first adapter-error/ },
   {

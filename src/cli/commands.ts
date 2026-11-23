@@ -7,6 +7,7 @@ import { type RunResult, section02Lines } from "../bench/run.ts";
 import { checksPrepareOf } from "../checks/run-checks.ts";
 import { loadConfig } from "../config.ts";
 import { takeTicket } from "../engine/base.ts";
+import { dropAnswer, readRounds, recordAnswers } from "../engine/clarify.ts";
 import { contractOf, specArgsOf } from "../engine/contract.ts";
 import { cancelControl, readControl } from "../engine/control.ts";
 import { ensureUp, freshUp } from "../engine/instance.ts";
@@ -209,20 +210,28 @@ export async function feedback(repo: string, ref: string, text: string, out: Out
   if (o.to !== undefined && !(STAGES as readonly string[]).includes(o.to)) throw new Error(`kitchen feedback --to: no stage ${o.to}`);
   const feedbackTo = o.to as Stage | undefined;
   const job = findJob(repo, ref);
+  const jobDir = jobDirOf(repo, job.id);
   if (job.stage === "needs-info") {
     if (!text.trim()) throw new Error("kitchen feedback on a needs-info job needs the answer text");
     new PromptSource(repo).reply(job, text);
+    // The answer joins the clarification thread before the move, so intake's next prompt has it (clarify.ts).
+    recordAnswers(jobDir, [text]);
     const code = await human(repo, ref, "intake", { replied: true }, "the operator replied", out);
-    if (code === 0) await addMessage(jobDirOf(repo, job.id), { kind: "answer", text: text.trim(), stage: job.stage });
+    if (code === 0) await addMessage(jobDir, { kind: "answer", text: text.trim(), stage: job.stage });
+    else dropAnswer(jobDir, text);
     return code;
   }
   const to = job.stage === "needs-human" ? feedbackTarget(job, { feedbackTo }) : (feedbackTo ?? "build");
-  const file = path.join(jobDirOf(repo, job.id), "feedback", `${new Date().toISOString().replace(/[:.]/g, "-")}.md`);
+  const file = path.join(jobDir, "feedback", `${new Date().toISOString().replace(/[:.]/g, "-")}.md`);
   if (text.trim()) writeAtomic(file, `${text.trim()}\n`);
+  // Back to intake (it escalated after its questions): the person's answer is an answer to intake's last question.
+  const toIntake = job.stage === "needs-human" && to === "intake" && !!text.trim() && readRounds(jobDir).length > 0;
+  if (toIntake) recordAnswers(jobDir, [text]);
   const code = await human(repo, ref, to, { operator: "feedback", feedbackTo }, `kitchen feedback${feedbackTo ? ` --to ${feedbackTo}` : ""}`, out);
-  if (code !== 0)
+  if (code !== 0) {
     fs.rmSync(file, { force: true }); // refused: no side effect
-  else if (text.trim()) await addMessage(jobDirOf(repo, job.id), { kind: job.stage === "done" ? "follow-up" : "answer", text: text.trim(), stage: job.stage });
+    if (toIntake) dropAnswer(jobDir, text);
+  } else if (text.trim()) await addMessage(jobDir, { kind: job.stage === "done" ? "follow-up" : "answer", text: text.trim(), stage: job.stage });
   return code;
 }
 

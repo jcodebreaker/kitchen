@@ -32,6 +32,7 @@ import { beforeNewWork } from "../toolkit/reproof.ts";
 import { acquireSlot, downSlot, listSlots, reclaimStaleSlots, releaseSlot } from "../toolkit/slots.ts";
 import { readApproval } from "../toolkit/trust.ts";
 import { takeTicket } from "./base.ts";
+import { recordAnswers } from "./clarify.ts";
 import { honorControl, stopRequested } from "./control.ts";
 import { ensureJobToolkit } from "./job-toolkit.ts";
 import { acquireRunLock } from "./lock.ts";
@@ -263,8 +264,8 @@ async function takeNew(repo: string, d: Deps, print: (l: string) => void) {
 }
 
 let lastTipError = "";
-/** Paused jobs whose condition cleared go back to pausedFrom; needs-info jobs with a reply go back to intake. */
-async function checkWaits(repo: string, d: Deps, print: (l: string) => void, wanted: (j: Job) => boolean) {
+/** Paused jobs whose condition cleared go back to pausedFrom; needs-info jobs with a reply go back to intake, the reply in the clarification thread. */
+export async function checkWaits(repo: string, d: Pick<Deps, "source" | "forge" | "config">, print: (l: string) => void, wanted: (j: Job) => boolean) {
   const jobs = listJobs(repo).filter(wanted);
   // The base tip, once per pass and at most once a minute, only when a job waits for a Toolkit (review M4).
   let tip: string | null = null;
@@ -304,7 +305,11 @@ async function checkWaits(repo: string, d: Deps, print: (l: string) => void, wan
       }
       if (cleared)
         await moveJob(repo, job, { to: job.pausedFrom, facts: { waitCleared: true, ...(wake ? { wake } : {}) }, note: `${job.waitFor} cleared` }, print);
-    } else if (job.stage === "needs-info" && (await d.source.replies(job)).length) {
+    } else if (job.stage === "needs-info") {
+      const replies = await d.source.replies(job);
+      if (!replies.length) continue;
+      // Every reply since the question (an issue's comments), so the thread records them once however often it is read.
+      recordAnswers(jobDirOf(repo, job.id), replies, { replace: true });
       await moveJob(repo, job, { to: "intake", facts: { replied: true }, note: "the author replied" }, print);
     } else if (job.stage === "done" && job.pr !== null) {
       await prCommentsBack(repo, job, d, print);
@@ -322,7 +327,7 @@ async function checkWaits(repo: string, d: Deps, print: (l: string) => void, wan
  * is logged and ignored. Each comment is handled once (`pr-comment/<id>` in `filed`),
  * recorded in the same job.json write as the move, so a crash can't replay one.
  */
-async function prCommentsBack(repo: string, job: Job, d: Deps, print: (l: string) => void) {
+async function prCommentsBack(repo: string, job: Job, d: Pick<Deps, "source" | "forge" | "config">, print: (l: string) => void) {
   // A "not useful" reply dismisses findings (read by the retro, src/retro/signals.ts). A comment that is only that is not
   // feedback; one that says more is, without its dismissal sentences.
   const unseen = (await d.forge.reviewComments(job.pr)).flatMap((c) => {
