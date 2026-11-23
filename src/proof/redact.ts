@@ -70,8 +70,6 @@ export function redact(text: string): string {
   for (const p of PATTERNS) out = out.replace(p, MASK);
   out = out.replace(BEARER, (_m, kind: string) => `${kind} ${MASK}`);
   out = out.replace(URL_CREDS, (_m, a: string, _pw: string, at: string) => `${a}${MASK}${at}`);
-  out = out.replace(NAMED, (m, name: string, sep: string, value: string) =>
-    value.length >= 6 && secretName(name) ? `${name}${sep}${MASK}` : m,
-  );
+  out = out.replace(NAMED, (m, name: string, sep: string, value: string) => (value.length >= 6 && secretName(name) ? `${name}${sep}${MASK}` : m));
   return out;
 }
