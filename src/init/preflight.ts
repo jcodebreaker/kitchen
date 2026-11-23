@@ -5,8 +5,8 @@
 // again, never by an installer's exit code.
 //
 // The sign-in checks are local and free: `claude auth status --json` reads the stored login,
-// `codex login status` the stored credentials; `gh auth status` (optional) asks GitHub once.
-// Never a model call.
+// `codex login status` the stored credentials, `gh auth token` (optional) the stored token (its
+// output is never printed or kept). No network, so offline is not "signed out"; never a model call.
 import { execFile } from "node:child_process";
 import path from "node:path";
 import { claudeBin, codexBin, findBin } from "../agents/find-bin.ts";
@@ -151,7 +151,8 @@ export async function preflight(o: PreflightOpts): Promise<Preflight> {
     const required = !!o.ghRequired;
     const why = required ? "" : " (optional: for GitHub pull requests)";
     if (!found(ghBin)) return { name: "gh", ok: false, required, detail: `not found${why}`, fix: [INSTALL.gh[os]] };
-    const r = await run(ghBin, ["auth", "status"]);
+    // `gh auth token` reads the stored token, locally (`gh auth status` asks GitHub: offline would read as signed out).
+    const r = await run(ghBin, ["auth", "token"]);
     return r.code === 0
       ? { name: "gh", ok: true, required, detail: `signed in${why}`, fix: [] }
       : { name: "gh", ok: false, required, detail: `not signed in${why}`, fix: SIGN_IN.gh };
@@ -181,6 +182,9 @@ export function preflightLines(p: Preflight, resume: string): string[] {
     out.push(`  ${c.ok ? "✓" : "✗"} ${c.name.padEnd(8)} ${c.detail}`);
     for (const f of c.fix) out.push(`      ${f}`);
   }
+  // An install that worked can still look missing in this shell: its PATH was read before the install.
+  if (p.checks.some((c) => !c.ok && /not found/.test(c.detail) && c.fix.length))
+    out.push("  After an install, open a new terminal if the command still isn't found (its PATH is read when a terminal starts).");
   if (!p.ok) {
     out.push("");
     out.push("Kitchen needs the ✗ lines not marked optional fixed first. Run the command under each one yourself");

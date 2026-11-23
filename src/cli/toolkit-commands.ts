@@ -84,9 +84,15 @@ export function initCommand(flags: Record<string, string | true>): string {
 /**
  * Before quick init writes anything (ADR 0011): the preflight, then the agent tool. A missing required tool stops
  * init with exit 2 and the fix lines; in a terminal the person can fix it and say so, and it is judged by checking
- * again. Returns the tool (undefined: kitchen.yaml's own, not checked), or an exit code.
+ * again. Returns the tool (undefined: kitchen.yaml's own, not checked) and whether the person was asked for it, or an
+ * exit code.
  */
-async function beforeInit(repo: string, flags: Record<string, string | true>, ask: Ask, out: (l: string) => void): Promise<Agent | undefined | number> {
+async function beforeInit(
+  repo: string,
+  flags: Record<string, string | true>,
+  ask: Ask,
+  out: (l: string) => void,
+): Promise<{ tool: Agent | undefined; asked: boolean } | number> {
   const resume = initCommand(flags);
   const flagTool = str(flags.tool) as Agent | undefined;
   if (flagTool && flagTool !== "claude" && flagTool !== "codex") throw new Error("--tool is claude or codex");
@@ -98,12 +104,12 @@ async function beforeInit(repo: string, flags: Record<string, string | true>, as
     for (const l of preflightLines(p, resume)) out(l);
     if (p.ok) {
       out("");
-      if (tool === "other") return undefined;
-      if (tool) return tool;
+      if (tool === "other") return { tool: undefined, asked: false };
+      if (tool) return { tool, asked: false };
       // Neither --tool nor kitchen.yaml says: the one that is ready, or, with both, the person's choice.
       const saved = readResume(repo).init?.answers.tool as Agent | undefined;
-      if (saved && p.ready.includes(saved)) return saved;
-      if (p.ready.length === 1) return p.ready[0];
+      if (saved && p.ready.includes(saved)) return { tool: saved, asked: false };
+      if (p.ready.length === 1) return { tool: p.ready[0], asked: false };
       const rec = toolFor(repo) === "codex" ? 1 : 0;
       markStep(repo, "init", "agent");
       const pick =
@@ -116,7 +122,7 @@ async function beforeInit(repo: string, flags: Record<string, string | true>, as
           rec,
         )) ?? (rec ? "codex" : "claude");
       saveAnswer(repo, "init", "tool", pick);
-      return pick as Agent;
+      return { tool: pick as Agent, asked: true };
     }
     // Only a person at a terminal can fix it and come back; --yes and scripts stop here.
     if (ask.yes || !ask.canAnswer) return 2;
@@ -125,15 +131,25 @@ async function beforeInit(repo: string, flags: Record<string, string | true>, as
   }
 }
 
-/** A re-run of an init that stopped: say where, and continue there (or start over). */
-async function resumeInit(repo: string, flags: Record<string, string | true>, ask: Ask, out: (l: string) => void) {
+/**
+ * A re-run of an init that stopped: say where, and continue there (or start over). `at` is where the LAST run
+ * stopped, read before this run recorded anything. `keep`: answers this run already gave, kept over a start over.
+ */
+async function resumeInit(
+  repo: string,
+  flags: Record<string, string | true>,
+  ask: Ask,
+  out: (l: string) => void,
+  at: string | null,
+  keep: Record<string, string>,
+) {
   const own = [checksRecord(repo)];
-  if (flags["start-over"] === true) {
+  const over = () => {
     const moved = startOver(repo, "init", own);
+    for (const [k, v] of Object.entries(keep)) saveAnswer(repo, "init", k, v);
     out(moved.length ? `Starting over: ${moved.map((f) => `${f} → ${f}.bak`).join(", ")}` : "Starting over: nothing to move");
-    return;
-  }
-  const at = stoppedAt(repo, "init");
+  };
+  if (flags["start-over"] === true) return over();
   if (!at) return;
   const label = INIT_STEPS[at] ?? at;
   out(`kitchen init stopped last time at: ${label}.`);
@@ -145,10 +161,8 @@ async function resumeInit(repo: string, flags: Record<string, string | true>, as
     ],
     0,
   );
-  if (pick === "over") {
-    const moved = startOver(repo, "init", own);
-    out(`Starting over: ${moved.map((f) => `${f} → ${f}.bak`).join(", ")}`);
-  } else if (pick === undefined) out(`Continuing at ${label} (kitchen init --start-over begins again).`);
+  if (pick === "over") over();
+  else if (pick === undefined) out(`Continuing at ${label} (kitchen init --start-over begins again).`);
 }
 
 /** `--status [--wait <secs>]`: how a detached build is doing; blocks up to `--wait` (at most 110 s, so one agent tool call stays short) while it runs. */
@@ -281,9 +295,12 @@ export async function w2(name: string, argv: string[]): Promise<number> {
     try {
       // An old skill's `init --detach` / `--answers` on a repo quick init already set up: straight to the build, so it returns at once.
       if (!(implied && readQuickRecord(repo))) {
-        const tool = await beforeInit(repo, flags, ask, out);
-        if (typeof tool === "number") return tool;
-        await resumeInit(repo, flags, ask, out);
+        // Where the last run stopped, read before this run records any step of its own.
+        const at = stoppedAt(repo, "init");
+        const before = await beforeInit(repo, flags, ask, out);
+        if (typeof before === "number") return before;
+        const tool = before.tool;
+        await resumeInit(repo, flags, ask, out, at, before.asked && tool ? { tool } : {});
         const code = await quickInit({ repo, tool, confirm: proposedChecksConfirm(ask), resume: initCommand(flags) }, out);
         if (!toolkit || code !== 0) return code;
         out("");

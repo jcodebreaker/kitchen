@@ -196,3 +196,54 @@ test("kitchen init with claude missing: the lines, exit 2, and nothing written; 
     else process.env.KITCHEN_HOME = prev.home;
   }
 });
+
+/** Runs `w2` with this PATH and nothing else of the person's: no KITCHEN_CLAUDE_BIN, a TMPDIR the fakes aren't in. */
+async function withPath<T>(dir: string, fn: (printed: string[]) => Promise<T>): Promise<T> {
+  const prev = {
+    PATH: process.env.PATH,
+    KITCHEN_CLAUDE_BIN: process.env.KITCHEN_CLAUDE_BIN,
+    KITCHEN_HOME: process.env.KITCHEN_HOME,
+    TMPDIR: process.env.TMPDIR,
+  };
+  const printed: string[] = [];
+  const log = vi.spyOn(console, "log").mockImplementation((l: string) => printed.push(String(l)));
+  try {
+    delete process.env.KITCHEN_CLAUDE_BIN;
+    process.env.KITCHEN_HOME = path.join(root, "home");
+    process.env.TMPDIR = tmp;
+    process.env.PATH = dir;
+    return await fn(printed);
+  } finally {
+    log.mockRestore();
+    for (const [k, v] of Object.entries(prev))
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+  }
+}
+
+test("a first kitchen init, both tools signed in: no 'stopped last time' line, and nobody is asked anything without a terminal", async () => {
+  const dir = path.join(root, "first-init");
+  fs.cpSync(repo, dir, { recursive: true });
+  const bin = bins("both-ready", { git: "real", claude: CLAUDE_IN, codex: OK, gh: OK });
+  await withPath(bin, async (printed) => {
+    assert.equal(await w2("init", ["--repo", dir]), 0, printed.join("\n"));
+    const text = printed.join("\n");
+    assert.doesNotMatch(text, /stopped last time|Continu|Which agent/, text);
+    assert.match(text, /Wrote kitchen\.yaml +agent claude/, "the recommended tool, taken without a question");
+    // And the run after it, which finished, doesn't say it stopped either.
+    printed.splice(0);
+    assert.equal(await w2("init", ["--repo", dir]), 0);
+    assert.doesNotMatch(printed.join("\n"), /stopped last time/);
+  });
+});
+
+test("gh is checked with `gh auth token` (local, offline-safe), never `gh auth status`; an install fix says to open a new terminal", async () => {
+  const onlyToken = bins("gh-token", { git: "real", claude: CLAUDE_IN, gh: '[ "$1 $2" = "auth token" ] && { echo gho_secret; exit 0; }; exit 9' });
+  const p = await run(onlyToken, { tool: "claude" });
+  assert.equal(line(p, "gh")?.ok, true);
+  assert.ok(!preflightLines(p, "kitchen init").join("\n").includes("gho_secret"), "the token is never printed");
+  const missing = preflightLines(await run(bins("hint-missing", { git: "real", gh: OK }), { tool: "claude" }), "kitchen init").join("\n");
+  assert.match(missing, /open a new terminal if the command still isn't found/);
+  const signedOut = preflightLines(await run(bins("hint-out", { git: "real", claude: CLAUDE_OUT, gh: OK }), { tool: "claude" }), "kitchen init").join("\n");
+  assert.doesNotMatch(signedOut, /new terminal/, "a sign-in needs no new terminal");
+});
