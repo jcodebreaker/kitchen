@@ -125,7 +125,9 @@ export function readQa(jobDir: string, round: number, criteria: Criterion[]): Qa
   for (const r of v.criteria as Record<string, unknown>[]) {
     const id = String(r?.id ?? "").toUpperCase();
     const result = String(r?.result ?? "").toUpperCase();
-    if (!/^C\d+$/.test(id)) return { refused: `a row's id is C<n> (got ${JSON.stringify(r?.id)})` };
+    // C<n>: a criterion. R-<feature>[/<sub-feature>]: a map recipe this job broke (a regression the criteria don't cover).
+    if (!/^C\d+$/.test(id) && !/^R-[A-Z0-9][A-Z0-9-]*(\/[A-Z0-9][A-Z0-9-]*)?$/.test(id))
+      return { refused: `a row's id is C<n>, or R-<feature>[/<sub-feature>] for a broken recipe (got ${JSON.stringify(r?.id)})` };
     if (result !== "PASS" && result !== "FAIL") return { refused: `${id}: result is PASS or FAIL` };
     const evidence = Array.isArray(r.evidence) ? r.evidence.map(String) : [];
     rows.push({ id, result, evidence, note: String(r.note ?? "") });
@@ -142,7 +144,16 @@ export function readQa(jobDir: string, round: number, criteria: Criterion[]): Qa
     if (c.check === "page" && row.result === "PASS" && !row.evidence.some((f) => /\.(png|jpe?g)$/i.test(f)))
       return { refused: `${c.id} is a page criterion: its PASS cites a screenshot` };
   }
-  const allPass = criteria.every((c) => rows.find((r) => r.id === c.id)?.result === "PASS");
+  for (const row of rows.filter((r) => r.id.startsWith("R-"))) {
+    if (!row.evidence.length) return { refused: `${row.id} cites no evidence file` };
+    for (const f of row.evidence) {
+      const p = path.resolve(dir, f);
+      if (!p.startsWith(`${dir}${path.sep}`) || !fs.existsSync(p) || !fs.statSync(p).isFile() || fs.statSync(p).size === 0)
+        return { refused: `${row.id}: evidence ${f} is missing, empty or outside the QA folder` };
+    }
+  }
+  const allPass =
+    criteria.every((c) => rows.find((r) => r.id === c.id)?.result === "PASS") && rows.every((r) => !r.id.startsWith("R-") || r.result === "PASS");
   const said = String(v.verdict ?? "").toUpperCase();
   if (said === "PASS" && !allPass) return { refused: "verdict PASS, but a criterion's row is FAIL" };
   return { verdict: allPass ? "PASS" : "FAIL", criteria: rows };
