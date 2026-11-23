@@ -170,6 +170,20 @@ export const ConfigSchema = z
       })
       .strict()
       .prefault({}),
+    /**
+     * Role skills (docs/adr/0014-role-skills.md): each role's SKILL.md guidance from skills/registry.json, found where the
+     * agent tool loads skills and quoted into its prompt. `enabled: false` runs every role on its prompt alone (the bench's
+     * `--no-skills` side). `host` names where to look for the `fake` tool (claude and codex look where they load skills).
+     */
+    skills: z
+      .object({
+        enabled: z.boolean().default(true),
+        host: z.enum(["claude", "codex"]).optional(),
+        /** Skills Kitchen vendors (security-review) to take from your own install instead of Kitchen's pinned copy. */
+        use_installed: z.array(z.string().min(1)).default([]),
+      })
+      .strict()
+      .prefault({}),
     /** Where tickets come from. `prompt`: `kitchen ticket`. `github`: open issues with `label` (the label is the trust boundary). */
     source: z
       .object({

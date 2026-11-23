@@ -44,6 +44,7 @@
     "test": "vitest run",
     "format": "biome check --write .",
     "lint": "biome check .",
+    "skills:readme": "tsx src/skills/readme.ts",
     "prepack": "rm -rf dist && tsc -p tsconfig.json"
   },
   "dependencies": {

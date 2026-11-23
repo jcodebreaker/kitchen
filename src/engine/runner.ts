@@ -38,7 +38,7 @@ import { type Facts, isActive, type Job, move, pausedByYou, type Stage } from ".
 import { baseTipThrottled, wakeWithToolkit } from "./no-toolkit.ts";
 import { HANDLERS } from "./stages/index.ts";
 import { hasToolkit } from "./stages/toolkit-info.ts";
-import { LockLost, type Proposal, RoleFailure, type StageContext } from "./stages/types.ts";
+import { LockLost, type Proposal, RoleFailure, SkillMissing, type StageContext } from "./stages/types.ts";
 import { jobDirOf, listJobs, readJobAt, repairManifest, scanJobs, updateJob, writeAtomic } from "./store.ts";
 import { headTime } from "./worktree.ts";
 
@@ -440,7 +440,10 @@ async function step(repo: string, start: Job, d: Deps, print: (l: string) => voi
       print(`${short(job)}  ${job.stage}: run lock lost, left for the runner that holds it`);
       return;
     }
-    if (e instanceof RoleFailure && (e.rateLimited || e.authFailure)) {
+    if (e instanceof SkillMissing) {
+      // Nothing to retry: a person installs the skill, then answers the job.
+      p = { to: "needs-human", facts: { escalate: "skill-missing", why: msg } };
+    } else if (e instanceof RoleFailure && (e.rateLimited || e.authFailure)) {
       p = { to: "paused", facts: { adapter: { rateLimited: e.rateLimited, authFailure: e.authFailure, until: backoffUntil(d.config, fresh), error: msg } } };
     } else if (fresh.attempts.errors + 1 >= 2) {
       // A role that failed is the adapter's error; anything else (git, worktree, files) is the engine's.

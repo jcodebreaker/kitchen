@@ -97,7 +97,7 @@ export const JobSchema = z.looseObject({
   risk: Risk.nullable(),
   riskFloor: Risk.nullable(),
   surfaces: z.array(z.enum(["ui", "security"])),
-  kind: z.enum(["feature", "bug", "chore"]).nullable(),
+  kind: z.enum(["feature", "bug", "ui", "chore"]).nullable(),
   base: z.string(),
   branch: z.string(),
   worktree: z.string(),
