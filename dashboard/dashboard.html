@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="kitchen-token" content="__KITCHEN_TOKEN__">
+<meta name="kitchen-launch" content="__KITCHEN_LAUNCH__">
 <title>Kitchen</title>
 <style>
 /* The system San Francisco stack (ADR 0013): nothing to load, nothing from elsewhere. */
@@ -437,6 +438,26 @@ button.a{font-weight:600}button.a:hover{text-decoration:underline;text-underline
    this server (/data.json, /jobs/<id>/detail.json, /setup.json) and every action is a POST to /api/<verb>,
    the same engine code as the kitchen CLI verbs. Nothing loads from elsewhere. */
 const TOKEN=document.querySelector('meta[name="kitchen-token"]').content;
+const LAUNCH=document.querySelector('meta[name="kitchen-launch"]').content;
+/* reconnect:start (src/dashboard/server.test.ts runs this block) */
+/* A tab left open from an earlier `kitchen dashboard` holds that launch's token. When the server says it
+   restarted (another launch id, or a POST refused for its token), reload once; a second time in a row,
+   say so and stop: never a reload loop. */
+const RELOADED="kitchen-dashboard-reloaded";
+function onRestart(store,reload,say){
+  let tried=null;try{tried=store.getItem(RELOADED)}catch(e){tried="no storage"}
+  if(tried){say("Couldn't reconnect; reload the page",true);return "stuck"}
+  try{store.setItem(RELOADED,String(Date.now()))}catch(e){say("Couldn't reconnect; reload the page",true);return "stuck"}
+  say("The dashboard restarted — reloading…",false);setTimeout(reload,700);return "reloading"
+}
+function onConnected(store){try{store.removeItem(RELOADED)}catch(e){}}
+/* reconnect:end */
+let restarting=false;
+function restarted(){
+  if(restarting)return;restarting=true;
+  let store;try{store=window.sessionStorage}catch(e){store={getItem(){throw 0},setItem(){throw 0},removeItem(){}}}
+  onRestart(store,()=>location.reload(),(m,stuck)=>{toast(m,stuck?"Reload":null,()=>location.reload());if(stuck)clearTimeout(toastT)});
+}
 
 /* ───────── icons ───────── */
 const sv=(d,w=16)=>`<svg width="${w}" height="${w}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
@@ -515,6 +536,8 @@ let offline=false;
 async function poll(){
   try{
     const [d,s]=await Promise.all([getJSON("/data.json"),getJSON("/setup.json")]);
+    if(d.launch&&d.launch!==LAUNCH){restarted();return}
+    try{onConnected(window.sessionStorage)}catch(e){}
     if(offline){offline=false;toast("Back in touch with Kitchen")}
     snap=d; setup=s;
     const before=new Map(jobs.map(j=>[j.id,j]));
@@ -749,6 +772,7 @@ async function post(verb,body){
   try{
     const r=await fetch("/api/"+verb,{method:"POST",headers:{"content-type":"application/json","x-kitchen-token":TOKEN},body:JSON.stringify(body)});
     const d=await r.json().catch(()=>({ok:false,lines:["HTTP "+r.status]}));
+    if(r.status===403&&(d.lines||[]).some(l=>/no token, or the wrong one/.test(l)))restarted();
     return {ok:r.ok&&d.ok,lines:d.lines||[]};
   }catch(e){return {ok:false,lines:["Kitchen's dashboard server is not answering"]}}
 }
