@@ -20,6 +20,7 @@
 import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { claudeBin } from "../agents/find-bin.ts";
 import type { Job } from "../engine/machine.ts";
 import { readLocalForge } from "../forge/forge.ts";
 import { appendLedger, readLedger } from "../ledger/append.ts";
@@ -204,7 +205,7 @@ async function runOne(o: BenchOpts, t: BenchTicket, n: number, home: string, suf
     run: n,
     expected: t.expect.outcome,
   };
-  const repo = makeBenchRepo(o.kitchenRoot, t, dir, agentYaml(o.tool, o.claudeBin ?? process.env.KITCHEN_CLAUDE_BIN ?? "claude"));
+  const repo = makeBenchRepo(o.kitchenRoot, t, dir, agentYaml(o.tool, o.claudeBin ?? claudeBin()));
   const env = { ...process.env, KITCHEN_HOME: home, KITCHEN_TICK_MS: "200" };
   // the ticket
   await new Promise<void>((res) => {

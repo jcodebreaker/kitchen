@@ -19,6 +19,7 @@ import {
   outDirOf,
   outPathOf,
 } from "./adapter.ts";
+import { claudeBin } from "./find-bin.ts";
 
 /**
  * Sandbox for every Bash call: writes only in the working dirs, no escape hatch,
@@ -120,7 +121,7 @@ type ClaudeJson = {
 export class ClaudeAdapter implements AgentAdapter {
   readonly name = "claude" as const;
   private readonly bin: string;
-  constructor(bin = process.env.KITCHEN_CLAUDE_BIN ?? "claude") {
+  constructor(bin = claudeBin()) {
     this.bin = bin;
   }
 

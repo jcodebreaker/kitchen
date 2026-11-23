@@ -14,6 +14,7 @@ import type { AgentAdapter } from "../agents/adapter.ts";
 import { ClaudeAdapter } from "../agents/claude.ts";
 import { CodexAdapter } from "../agents/codex.ts";
 import { FakeAdapter, type FakeScript } from "../agents/fake.ts";
+import { claudeBin, codexBin } from "../agents/find-bin.ts";
 import { KITCHEN_MARKER } from "../checks/report-render.ts";
 import { type Config, loadConfig } from "../config.ts";
 import { type Forge, forgeFor, isTrusted } from "../forge/forge.ts";
@@ -46,9 +47,9 @@ export async function adapterFor(repo: string, cfg: Config): Promise<AgentAdapte
   const cmd = cfg.agent.command ?? [];
   if (cfg.agent.tool === "claude") {
     if (cmd.length > 1) throw new Error("agent.command for claude is one path");
-    return new ClaudeAdapter(cmd[0] ?? process.env.KITCHEN_CLAUDE_BIN ?? "claude");
+    return new ClaudeAdapter(cmd[0] ?? claudeBin());
   }
-  if (cfg.agent.tool === "codex") return new CodexAdapter(cmd[0] ?? process.env.KITCHEN_CODEX_BIN ?? "codex", cmd.slice(1));
+  if (cfg.agent.tool === "codex") return new CodexAdapter(cmd[0] ?? codexBin(), cmd.slice(1));
   if (!cfg.agent.script) throw new Error("agent.tool fake needs agent.script");
   const mod = (await import(pathToFileURL(path.resolve(repo, cfg.agent.script)).href)) as { default: FakeScript };
   return new FakeAdapter(mod.default);

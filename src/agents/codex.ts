@@ -18,6 +18,7 @@ import {
   outDirOf,
   outPathOf,
 } from "./adapter.ts";
+import { codexBin } from "./find-bin.ts";
 
 /** Codex has no turn flag; these item types count as one turn each and the adapter stops the run past maxTurns. */
 const TURN_ITEMS = new Set(["command_execution", "file_change", "mcp_tool_call", "web_search"]);
@@ -129,7 +130,7 @@ export class CodexAdapter implements AgentAdapter {
   private readonly bin: string;
   private readonly binArgs: string[];
   private readonly rawLog?: string;
-  constructor(bin = process.env.KITCHEN_CODEX_BIN ?? "codex", binArgs: string[] = [], rawLog?: string) {
+  constructor(bin = codexBin(), binArgs: string[] = [], rawLog?: string) {
     this.bin = bin;
     this.binArgs = binArgs;
     this.rawLog = rawLog;
