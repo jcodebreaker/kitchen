@@ -343,6 +343,10 @@ button.a{font-weight:600}button.a:hover{text-decoration:underline;text-underline
   .evl{height:auto;min-height:16px}
 }
 @container main (max-width:780px){ .top .cost,.top .kb{display:none} }
+/* the header keeps its counts on one line: the view labels go first, then "ready" (review: "4 read") */
+@container main (max-width:620px){ .segc span{display:none} }
+@container main (max-width:520px){ #sum .rdy{display:none} }
+@container main (max-width:420px){ #sum .qn{display:none} }
 @container main (max-width:680px){
   .row{grid-template-columns:18px minmax(0,1fr) auto;row-gap:8px;padding:12px 12px 12px 16px;align-items:start}
   .row .id{display:none} .ttl .idn{display:inline}
@@ -704,11 +708,14 @@ function order(){if(view==="board")return lanes().flatMap(l=>inLane(l.k));
   return [...jobs.filter(j=>group(j)==="you"),...jobs.filter(j=>group(j)==="run"),...jobs.filter(j=>group(j)==="done").sort((a,b)=>doneT(b)-doneT(a))]}
 /* queue-words:start (src/dashboard/server.test.ts runs this block) */
 /* Jobs in an active stage are running only while a runner holds the queue; with none they are queued, waiting
-   for kitchen run. The header, the sidebar and the list (or Board) all take their words from here. */
-function queueWords(runnerRunning,n){
-  return runnerRunning
-    ?{count:`${n} running`,group:"Running",hint:"Message any agent while it works",empty:"Nothing running. Start one with New ticket.",busy:n>0}
-    :{count:`${n} waiting`,group:"Queued",hint:"Waiting for kitchen run: start it and they move",empty:"Nothing queued. Start one with New ticket.",busy:false};
+   for kitchen run. A Toolkit build (the setup row) runs on its own, runner or not: it counts as running, never as
+   waiting. The header, the sidebar and the list (or Board) all take their words from here.
+   `run`: the jobs in the running group, each {kind, state}. */
+function queueWords(runnerRunning,run){
+  const setupOn=run.some(j=>j.kind==="setup"&&j.state==="run"),jobs=run.filter(j=>j.kind!=="setup").length;
+  if(runnerRunning)return {count:`<b>${run.length}</b> running`,group:"Running",hint:"Message any agent while it works",empty:"Nothing running. Start one with New ticket.",busy:run.length>0};
+  if(!jobs&&setupOn)return {count:"<b>1</b> running",group:"Running",hint:"The Toolkit build works on its own",empty:"",busy:true};
+  return {count:`<b>${jobs}</b> waiting${setupOn?" · <b>1</b> running":""}`,group:"Queued",hint:"Waiting for kitchen run: start it and they move",empty:"Nothing queued. Start one with New ticket.",busy:setupOn};
 }
 /* queue-words:end */
 function renderList(){
@@ -718,7 +725,7 @@ function renderList(){
     $("#scroll").classList.toggle("bd",view==="board");
     $("#list").innerHTML=(idle?`<div class="rbar" role="status">${S.paused}<span>Kitchen isn't working the queue: jobs move only while it runs.</span><code>kitchen run --detach</code><button type="button" class="btn sm" data-act="copy">Copy</button></div>`:"")+
      (view==="board"?boardHTML():`<section id="g-you"><div class="ghead ${you.length?"act":""}">${you.length?S.you:S.wait} Needs you <span class="n num">${you.length}</span></div>${you.map(rowHTML).join("")||'<div class="empty">Nothing needs you.</div>'}</section>
-      ${(()=>{const q=queueWords(!!(snap&&snap.runner.running),run.length);return `<section id="g-run"><div class="ghead">${q.busy?S.run:S.wait} ${q.group} <span class="n num">${run.length}</span><span class="hint">${q.hint}</span></div>${run.map(rowHTML).join("")||`<div class="empty">${q.empty}</div>`}</section>`})()}
+      ${(()=>{const q=queueWords(!!(snap&&snap.runner.running),run);return `<section id="g-run"><div class="ghead">${q.busy?S.run:S.wait} ${q.group} <span class="n num">${run.length}</span><span class="hint">${q.hint}</span></div>${run.map(rowHTML).join("")||`<div class="empty">${q.empty}</div>`}</section>`})()}
       <section id="g-done"><div class="ghead">${S.ok} Done <span class="n num">${done.length}</span></div>${done.map(rowHTML).join("")||'<div class="empty">Nothing done yet.</div>'}</section>`);
     $("#vList").classList.toggle("on",view==="list");$("#vBoard").classList.toggle("on",view==="board");
     renderCounts(); just.clear(); grow();
@@ -729,8 +736,8 @@ function renderCounts(){
   if(!snap)return;
   const you=jobs.filter(j=>group(j)==="you"),run=jobs.filter(j=>group(j)==="run"),done=jobs.filter(j=>group(j)==="done");
   const nyou=`${you.length} need${you.length===1?"s":""} you`;
-  $("#sum").innerHTML=(you.length?(view==="board"?`<button class="a" onclick="jump('g-you')">${nyou}</button>`:`<span class="a">${nyou}</span>`):`<span>Nothing needs you</span>`)+`<i>·</i><span>${(q=>`<b>${run.length}</b>${q.count.slice(String(run.length).length)}`)(queueWords(!!snap.runner.running,run.length))}</span><i class="rdy">·</i><span class="rdy"><b>${done.filter(j=>j.state==="done"&&j.kind!=="setup").length}</b> ready</span>`;
-  $("#sYou").textContent=you.length||"";$("#sRun").textContent=run.length;$("#sRunN").textContent=queueWords(!!snap.runner.running,run.length).group;$("#sDone").textContent=done.length;
+  $("#sum").innerHTML=(you.length?(view==="board"?`<button class="a" onclick="jump('g-you')">${nyou}</button>`:`<span class="a">${nyou}</span>`):`<span>Nothing needs you</span>`)+`<i class="qn">·</i><span class="qn">${queueWords(!!snap.runner.running,run).count}</span><i class="rdy">·</i><span class="rdy"><b>${done.filter(j=>j.state==="done"&&j.kind!=="setup").length}</b> ready</span>`;
+  $("#sYou").textContent=you.length||"";$("#sRun").textContent=run.length;$("#sRunN").textContent=queueWords(!!snap.runner.running,run).group;$("#sDone").textContent=done.length;
   $("#wsName").textContent=snap.repo;document.title=(you.length?`(${you.length}) `:"")+"Kitchen · "+snap.repo;
   $("#sSetup").textContent=!setup||setup.state==="none"?"not run":setup.state==="quick"?"Toolkit not built":setup.state==="done"?"proven":setup.state==="failed"?"failed":"step "+(setup.idx+1)+"/"+setup.steps.length;
   $("#sTk").textContent=snap.toolkitProven?"proven":"not proven";

@@ -193,16 +193,33 @@ test("refusePost, pure: the order of the checks", () => {
   assert.equal(refusePost({ ...h, origin: "http://localhost:7358" }, TOKEN, 7357)?.code, 403);
 });
 
-test("with no runner, jobs in an active stage are waiting (Queued), not running; the header and the sidebar say the same", () => {
+test("with no runner, jobs in an active stage are waiting (Queued), not running; a Toolkit build counts as running; header and sidebar agree", () => {
   const html = fs.readFileSync(path.resolve(import.meta.dirname, "..", "..", "dashboard", "dashboard.html"), "utf8");
   const block = /\/\* queue-words:start[^*]*\*\/([\s\S]*?)\/\* queue-words:end \*\//.exec(html)?.[1];
   assert.ok(block, "the queue-words block is in the page");
-  const queueWords = new Function(`${block}\nreturn queueWords;`)() as (r: boolean, n: number) => { count: string; group: string; busy: boolean };
-  assert.deepEqual([queueWords(false, 1).count, queueWords(false, 1).group, queueWords(false, 1).busy], ["1 waiting", "Queued", false]);
-  assert.deepEqual([queueWords(true, 2).count, queueWords(true, 2).group, queueWords(true, 2).busy], ["2 running", "Running", true]);
+  type J = { kind: string; state: string };
+  const queueWords = new Function(`${block}\nreturn queueWords;`)() as (r: boolean, run: J[]) => { count: string; group: string; busy: boolean };
+  const job = { kind: "feature", state: "run" };
+  const setup = { kind: "setup", state: "run" };
+  const plain = (q: { count: string; group: string; busy: boolean }) => [q.count.replace(/<\/?b>/g, ""), q.group, q.busy];
+  assert.deepEqual(plain(queueWords(false, [job])), ["1 waiting", "Queued", false]);
+  assert.deepEqual(plain(queueWords(true, [job, job])), ["2 running", "Running", true]);
+  // A Toolkit build runs without kitchen run: never counted as waiting.
+  assert.deepEqual(plain(queueWords(false, [setup])), ["1 running", "Running", true]);
+  assert.deepEqual(plain(queueWords(false, [setup, job])), ["1 waiting · 1 running", "Queued", true]);
+  assert.deepEqual(plain(queueWords(false, [])), ["0 waiting", "Queued", false]);
   // Every place that counts them takes its words from queueWords: the header (#sum), the sidebar (#sRunN), the list group.
-  assert.match(html, /\$\("#sRunN"\)\.textContent=queueWords\(/);
-  assert.match(html, /queueWords\(!!snap\.runner\.running,run\.length\)\)\}<\/span>/);
-  assert.match(html, /const q=queueWords\(!!\(snap&&snap\.runner\.running\),run\.length\)/);
-  assert.doesNotMatch(html, /<b>\$\{run\.length\}<\/b> running/, "no fixed 'running' left in the header");
+  assert.match(html, /\$\("#sRunN"\)\.textContent=queueWords\(!!snap\.runner\.running,run\)\.group/);
+  assert.match(html, /<span class="qn">\$\{queueWords\(!!snap\.runner\.running,run\)\.count\}<\/span>/);
+  assert.match(html, /const q=queueWords\(!!\(snap&&snap\.runner\.running\),run\)/);
+  assert.doesNotMatch(html, /<b>\$\{run\.length\}<\/b> running<\/span>/, "no fixed 'running' left in the header");
+});
+
+test("the header's counts never clip: the view labels go at 620px, 'ready' at 520px, the queue count at 420px; never a ready card", () => {
+  const html = fs.readFileSync(path.resolve(import.meta.dirname, "..", "..", "dashboard", "dashboard.html"), "utf8");
+  // Checked in headless Chromium with the panel open at 1280, 1100 and 900 px: #sum's scrollWidth fits its box.
+  assert.match(html, /@container main \(max-width:620px\)\{ \.segc span\{display:none\} \}/);
+  assert.match(html, /@container main \(max-width:520px\)\{ #sum \.rdy\{display:none\} \}/);
+  assert.match(html, /@container main \(max-width:420px\)\{ #sum \.qn\{display:none\} \}/);
+  assert.doesNotMatch(html, /[{}]\s*\.rdy\{display:none\}/, "`.rdy` is also a ready card's class: only the header's is hidden");
 });
