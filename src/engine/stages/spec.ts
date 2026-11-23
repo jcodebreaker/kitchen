@@ -11,6 +11,8 @@ import { guardCriteria, lintSpec, parseRequirements, remarkProblems, withSpecMar
 import { testLayout } from "../../checks/test-layout.ts";
 import { nothingPolicy } from "../contract.ts";
 import { ensureUp } from "../instance.ts";
+import { effectiveRisk } from "../machine.ts";
+import { unprovableWithoutToolkit } from "../no-toolkit.ts";
 import { writeAtomic } from "../store.ts";
 import { commitWith, ensureWorktree } from "../worktree.ts";
 import { baseNegativeProblems, guardBaseProblems, runBaseCheck } from "./base-check.ts";
@@ -21,6 +23,12 @@ import { hasToolkit, toolkitView } from "./toolkit-info.ts";
 import type { StageHandler } from "./types.ts";
 
 export const spec: StageHandler = async (ctx) => {
+  // A high-risk job never reaches ready without a Toolkit (ADR 0010): it waits for one before any agent runs.
+  const noToolkit = !hasToolkit(ctx.refresh());
+  if (noToolkit && effectiveRisk(ctx.refresh()) === "high") {
+    ctx.log("no Toolkit, and the job is high risk: waiting for kitchen toolkit build");
+    return { to: "paused", facts: { noToolkit: { needsApp: [], highRisk: true } } };
+  }
   let job = await ensureWorktree(ctx.repo, ctx.refresh());
   if (hasToolkit(job) && job.slot) await ensureUp(job, ctx.jobDir, ctx.log).catch((e) => ctx.log(`app not up for the spec role: ${(e as Error).message}`));
   const r = await runRole(ctx, {
@@ -50,7 +58,7 @@ export const spec: StageHandler = async (ctx) => {
   job = ctx.refresh();
   const thrown = await commitWith(job, "unused", nothingPolicy);
   if (thrown.refused.length) ctx.log(`the spec role's worktree edits were thrown away: ${thrown.refused.map((x) => x.split(":")[0]).join(", ")}`);
-  const view = hasToolkit(job) ? await toolkitView(job, job.worktree) : { primitives: [], drives: {} };
+  const view = noToolkit ? { primitives: [], drives: {} } : await toolkitView(job, job.worktree);
   // Rule 7: the criteria must cover the requirements intake read in the ticket.
   // The spec may re-mark a (negative) one as a boundary in its own ## Requirements (withSpecMarks): it stays a
   // negative whose absence may hold on the base; never on a job with a security surface.
@@ -64,6 +72,7 @@ export const spec: StageHandler = async (ctx) => {
     protected: ctx.config.protected,
     requirements,
     testLayout: testLayout(job.worktree, ctx.config.test_cmd),
+    noToolkit,
   });
   const remarks = remarkProblems(intakeReqs, r.text, { security });
   const lint = remarks.length ? { ...linted, ok: false, reason: [...(linted.reason ? [linted.reason] : []), ...remarks].join("\n") } : linted;
@@ -72,7 +81,15 @@ export const spec: StageHandler = async (ctx) => {
     writeAtomic(path.join(ctx.jobDir, "spec-refused.md"), `REASON: ${lint.reason}\n\n${r.text}`);
   }
   let { ok, reason } = lint;
-  const guards = lint.ok ? guardCriteria(lint.criteria, requirements) : [];
+  const needsApp = lint.needsApp ?? [];
+  // No Toolkit (ADR 0010): a criterion that drives the app pauses the job before anything is built, unless the person chose checks only.
+  const unprovable = noToolkit && lint.ok && needsApp.length ? unprovableWithoutToolkit(lint.criteria, job.kind) : null;
+  const noToolkitFacts = noToolkit ? { noToolkit: { needsApp, highRisk: false, ...(unprovable ? { unprovable } : {}) } } : {};
+  if (noToolkit && lint.ok && needsApp.length && (!job.checksOnly || unprovable)) {
+    ctx.log(`no Toolkit, and ${needsApp.join(", ")} drive${needsApp.length === 1 ? "s" : ""} the app: waiting for kitchen toolkit build`);
+    return { to: "paused", facts: { spec: { ok, reason }, ...noToolkitFacts } };
+  }
+  const guards = lint.ok ? guardCriteria(lint.criteria, requirements).filter((g) => !needsApp.includes(g)) : [];
   if (lint.ok && (job.kind !== "bug" || lint.baseNegatives.length || guards.length)) {
     const b = await runBaseCheck(ctx, job, lint.criteria);
     // spec-lint rule 3 (c): a negative no earlier step backs must be false on the base, and a regression guard
@@ -105,5 +122,5 @@ export const spec: StageHandler = async (ctx) => {
     }
   }
   const to = lint.missingPrimitive ? "toolkit" : job.kind === "bug" ? "repro" : "build";
-  return { to, facts: { spec: { ok, reason, missingPrimitive: lint.missingPrimitive } } };
+  return { to, facts: { spec: { ok, reason, missingPrimitive: lint.missingPrimitive }, ...noToolkitFacts } };
 };

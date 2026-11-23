@@ -1,10 +1,11 @@
-// `kitchen init --detach` and `kitchen init --status` (PLAN §5): setup takes
-// minutes (an agent survey and build, a Docker check), longer than an agent
-// tool should hold one Bash call. So, like `kitchen run --detach`, init can run
-// detached, and it keeps .kitchen/init/status.json current:
+// `kitchen toolkit build --detach` and `--status` (PLAN §5, ADR 0010): the
+// Toolkit build takes minutes (an agent survey and build, a Docker check),
+// longer than an agent tool should hold one Bash call. So, like `kitchen run
+// --detach`, it can run detached, and it keeps .kitchen/init/status.json current
+// (the folder keeps its old name: the dashboard reads it):
 //   { state: running|done|questions|failed, pid, pidStart, startedAt, at, exit?, last: [lines], log, questions? }
 // `--status` reads it (a running state whose process is gone reads as failed:
-// "died"). One init per repo at a time: a second is refused while one runs.
+// "died"). One build per repo at a time: a second is refused while one runs.
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -41,20 +42,20 @@ function write(repo: string, s: InitStatus) {
   writeAtomic(statusFile(repo), `${JSON.stringify(s, null, 2)}\n`);
 }
 
-/** The init running for this repo, if its process lives. */
+/** The Toolkit build running for this repo, if its process lives. */
 export function runningInit(repo: string): InitStatus | null {
   const s = readStatus(repo);
   return s?.state === "running" && s.pid !== process.pid && ownerAlive({ pid: s.pid, start: s.pidStart }) ? s : null;
 }
 
 /**
- * Run `fn` (initCmd) with the status file kept current: running with the last
+ * Run `fn` (toolkitBuild) with the status file kept current: running with the last
  * lines while it runs, then done (exit 0), questions (exit 3) or failed.
  */
 export async function tracked(repo: string, fn: (out: (l: string) => void) => Promise<number>, out: (l: string) => void, log?: string): Promise<number> {
   const other = runningInit(repo);
   if (other) {
-    out(`init: already running (pid ${other.pid}, since ${other.startedAt}); see kitchen init --status`);
+    out(`toolkit build: already running (pid ${other.pid}, since ${other.startedAt}); see kitchen toolkit build --status`);
     return 1;
   }
   const s: InitStatus = {
@@ -100,17 +101,17 @@ export async function tracked(repo: string, fn: (out: (l: string) => void) => Pr
   }
 }
 
-/** `kitchen init --detach …`: the same init in its own session, output to .kitchen/init/init.log. */
+/** `kitchen toolkit build --detach …`: the same build in its own session, its whole log (verbose) to .kitchen/init/init.log. */
 export function detachInit(repo: string, cli: string, argv: string[], out: (l: string) => void): number {
   const other = runningInit(repo);
   if (other) {
-    out(`init: already running (pid ${other.pid}, since ${other.startedAt}); see kitchen init --status`);
+    out(`toolkit build: already running (pid ${other.pid}, since ${other.startedAt}); see kitchen toolkit build --status`);
     return 1;
   }
   const log = initLog(repo);
   fs.mkdirSync(path.dirname(log), { recursive: true });
   const fd = fs.openSync(log, "a");
-  const child = spawn(process.execPath, [cli, "init", ...argv.filter((a) => a !== "--detach")], {
+  const child = spawn(process.execPath, [cli, "toolkit", "build", ...argv.filter((a) => a !== "--detach")], {
     cwd: repo,
     detached: true,
     stdio: ["ignore", fd, fd],
@@ -118,7 +119,7 @@ export function detachInit(repo: string, cli: string, argv: string[], out: (l: s
   });
   child.unref();
   fs.closeSync(fd);
-  if (!child.pid) throw new Error("could not start the detached init");
+  if (!child.pid) throw new Error("could not start the detached Toolkit build");
   write(repo, {
     state: "running",
     pid: child.pid,
@@ -128,32 +129,35 @@ export function detachInit(repo: string, cli: string, argv: string[], out: (l: s
     last: [],
     log,
   });
-  out(`init detached: pid ${child.pid}, log ${log}`);
-  out("init: check on it with  kitchen init --status  (it takes minutes; it ends in done, questions or failed)");
+  out(`toolkit build detached: pid ${child.pid}, log ${log}`);
+  out("toolkit build: check on it with  kitchen toolkit build --status --wait 90  (it takes minutes; it ends in done, questions or failed)");
   return 0;
 }
 
 /**
  * Pure: what `--status` prints for a status (and whether its process lives).
  * The exit code is 0 for every state: the state is the first word after
- * `init:`. (A non-zero code for "questions" made agents chain `|| <fallback>`.)
+ * `toolkit build:` (`init:` for `kitchen init --status`, which skills written before ADR 0010 poll). (A non-zero code for "questions" made agents chain `|| <fallback>`.)
  */
-export function statusReport(s: InitStatus | null, alive: boolean, now = Date.now()): { lines: string[]; code: number } {
-  if (!s) return { lines: ["init: not started here (kitchen init --detach)"], code: 0 };
+export function statusReport(s: InitStatus | null, alive: boolean, now = Date.now(), who = "toolkit build"): { lines: string[]; code: number } {
+  if (!s) return { lines: [`${who}: not started here (kitchen toolkit build --detach)`], code: 0 };
   const mins = (iso: string) => `${Math.max(0, Math.round((now - Date.parse(iso)) / 60_000))}m`;
   if (s.state === "running" && !alive)
     return {
-      lines: [`init: failed: the init process (pid ${s.pid}) is gone without a result (killed?); run kitchen init --detach again (it resumes)`, ...tail(s)],
+      lines: [
+        `${who}: failed: its process (pid ${s.pid}) is gone without a result (killed?); run kitchen toolkit build --detach again (it resumes)`,
+        ...tail(s),
+      ],
       code: 0,
     };
   const head =
     s.state === "running"
-      ? `init: running for ${mins(s.startedAt)} (pid ${s.pid}); last line ${mins(s.at)} ago`
+      ? `${who}: running for ${mins(s.startedAt)} (pid ${s.pid}); last line ${mins(s.at)} ago`
       : s.state === "done"
-        ? "init: done"
+        ? `${who}: done`
         : s.state === "questions"
-          ? `init: questions: ${s.questions?.length ?? "?"} question(s) in .kitchen/setup-questions.json; answer them, then kitchen init --answers <file> --detach`
-          : `init: failed (exit ${s.exit ?? "?"})${s.error ? `: ${s.error.split("\n")[0]}` : ""}`;
+          ? `${who}: questions: ${s.questions?.length ?? "?"} question(s) in .kitchen/setup-questions.json; answer them, then kitchen toolkit build --answers <file> --detach`
+          : `${who}: failed (exit ${s.exit ?? "?"})${s.error ? `: ${s.error.split("\n")[0]}` : ""}`;
   return { lines: [head, ...tail(s)], code: 0 };
 }
 const tail = (s: InitStatus) => s.last.map((l) => `  | ${l}`);

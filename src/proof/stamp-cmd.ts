@@ -9,14 +9,12 @@
 // tool and `cmd`/`test` proofs (prove.ts).
 import fs from "node:fs";
 import path from "node:path";
-import { execa } from "execa";
-import { untrustedEnv } from "../agents/env.ts";
 import { appUrlOf } from "../engine/instance.ts";
-import { procsDirOf, trackGroup } from "../procs.ts";
+import { procsDirOf } from "../procs.ts";
 import { evidenceDir, jobGit, readJob, sealOf, storeHead, withJobLock } from "./job.ts";
 import { appendEntry, nextId, verifyManifest } from "./manifest.ts";
 import { redact } from "./redact.ts";
-import { proofSandboxProfile, proofTmpDir, sandboxedShell } from "./sandbox.ts";
+import { runSandboxed } from "./run-sandboxed.ts";
 import { sourceStamp } from "./source-stamp.ts";
 
 export type StampedCmd = {
@@ -61,52 +59,22 @@ export function stampCommand(o: {
     const dir = path.join(ev, id);
     fs.rmSync(dir, { recursive: true, force: true }); // a crashed run may have left files here
     fs.mkdirSync(dir, { recursive: true });
-    const t0 = Date.now();
-    const env = untrustedEnv(src.worktree);
     // The running app's URL (the job's slot, recorded by `up`), so a test can reach it instead of guessing a port.
     const appUrl = appUrlOf(o.jobDir, job.slotId);
-    if (appUrl) env.KITCHEN_APP_URL = appUrl;
     // The job folders (evidence, job.json) and the repo's shared config (a remote URL may hold a token) are denied too.
     const common = src.gitDir ? path.resolve(src.gitDir, "..", "..") : null;
-    // Its own temp dir, the only writable temp under the profile (not /tmp: another job's worktree may live there).
-    const tmp = o.sandbox ? proofTmpDir() : null;
-    if (tmp) env.TMPDIR = tmp;
-    const profile = tmp
-      ? proofSandboxProfile({
-          worktree: src.worktree,
-          tmp,
-          network: !!o.network,
-          pathEnv: env.PATH,
-          deny: [path.dirname(o.jobDir), ...(common ? [path.join(common, "config")] : [])],
-        })
-      : null;
-    let r: Awaited<ReturnType<typeof execa>>;
-    try {
-      const [bin, argv] = sandboxedShell(o.cmd, profile);
-      const sub = execa(bin, argv, {
-        cwd: src.worktree,
-        env,
-        extendEnv: false,
-        reject: false,
-        stdin: "ignore",
-        timeout: o.timeoutSec * 1000,
-        forceKillAfterDelay: 5000,
-        all: true,
-        detached: true, // its own process group, recorded for the job (src/procs.ts)
-      });
-      const untrack = trackGroup(procsDirOf(o.jobDir), sub.pid, `check ${o.name}`);
-      try {
-        r = await sub;
-      } finally {
-        untrack();
-      }
-    } finally {
-      if (tmp) fs.rmSync(tmp, { recursive: true, force: true });
-      if (profile) fs.rmSync(profile, { force: true });
-    }
-    const secs = (Date.now() - t0) / 1000;
-    const exit = r.timedOut ? 124 : (r.exitCode ?? 1);
-    const sandboxed = !!profile;
+    const r = await runSandboxed({
+      cwd: src.worktree,
+      cmd: o.cmd,
+      timeoutSec: o.timeoutSec,
+      sandbox: !!o.sandbox,
+      network: !!o.network,
+      deny: [path.dirname(o.jobDir), ...(common ? [path.join(common, "config")] : [])],
+      env: appUrl ? { KITCHEN_APP_URL: appUrl } : {},
+      procsDir: procsDirOf(o.jobDir),
+      what: `check ${o.name}`,
+    });
+    const { secs, exit, sandboxed } = r;
     // Redacted before it lands on disk: the evidence never holds what the command printed of a secret.
     fs.writeFileSync(path.join(dir, "stdout.txt"), redact(String(r.stdout)));
     fs.writeFileSync(path.join(dir, "stderr.txt"), redact(String(r.stderr)));

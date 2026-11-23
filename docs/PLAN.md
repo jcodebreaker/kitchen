@@ -402,7 +402,8 @@ The exact flags per tool, the writable roots and what W0 proved are in ADR 0006.
 
 | command | does |
 |---|---|
-| `kitchen init` | Writes `kitchen.yaml`, installs the skill(s), runs `setup` (§5), runs `toolkit check`, prints next steps |
+| `kitchen init` | Quick init (ADR 0010): writes `kitchen.yaml` with the checks it finds, installs the skill(s), adds the `.gitignore` entries, runs the checks once, prints next steps. Seconds; no Toolkit. `--toolkit` then runs `toolkit build` |
+| `kitchen toolkit build` | The Toolkit step: runs `setup` (§5) and `toolkit check` on `kitchen/setup`. `--detach`, `--status`, `--answers`, `--verbose` |
 | `kitchen ticket "<text>" [--grill]` | Creates a prompt ticket; `--grill` interviews in the terminal or through the skill |
 | `kitchen run [--detach] [--once] [<job>]` | Takes the lock and drains the queue across `concurrency` slots, resuming everything. `--detach` runs it in the background with a log file |
 | `kitchen status` | One row per job: id, title, stage (and paused reason), round, last moved, PR, report link |
@@ -416,9 +417,11 @@ The exact flags per tool, the writable roots and what W0 proved are in ADR 0006.
 
 ## 5. Setup (adopt or build)
 
+Since ADR 0010 this is `kitchen toolkit build`, not `kitchen init`: init is quick (checks only), and the Toolkit is built when the person asks for it or a ticket needs the running app.
+
 1. **Headless survey.** The `setup` agent reads the repo: package scripts, compose files, Makefile, README, CI, env examples.
 2. **At most 3 questions to the developer,** only what the repo can't answer. For example: "Is `docker compose up` your dev environment?", "Which external services need a mock or sandbox?", "Which fake env values belong in `.env.kitchen`?"
-   - **Without a TTY** (inside Claude Code or Codex), `init` writes `.kitchen/setup-questions.json` and exits with code 3. The `/kitchen` skill asks the user, then reruns `kitchen init --answers <file>`.
+   - **Without a TTY** (inside Claude Code or Codex), `toolkit build` writes `.kitchen/setup-questions.json` and exits with code 3. The `/kitchen` skill asks the user, then reruns `kitchen toolkit build --answers <file>`.
    - **In a terminal,** it asks directly.
 3. **Adopt or build.** Adopt wraps the existing commands into `bin/dev`. Build adds the missing pieces (compose file, seed script, snapshot) as a reviewable commit on a branch.
 4. **Generate.** Produces `bin/dev`, `SKILL.md` and `features/` for the top 3–5 features (pstack shape).
@@ -933,4 +936,17 @@ History: all of these are now part of §2 and §3, which are the current contrac
 | §0 was judged by hand; two flake definitions | `section02()` prints PASS/FAIL per §0.2 line (bench output, results page, `kitchen report [--bench]`), the control set named; the bench's drive tally reads Verify proof lines only, as `measures.ts`; an agent adapter's infrastructure error reruns the ticket once, counted apart |
 | `checks_prepare` cached: the builder could edit the installed node_modules | Gate and Verify forget the cache on entry, so `npm ci` reinstalls before anything is judged |
 | A feature drive's `--expect_status 4xx` escaped the repro pin rule | Refused like a primitive's |
+
+## Changes from ADR 0010 (two-speed init)
+
+| Before | After |
+|---|---|
+| `kitchen init` surveyed the repo, built and proved a Toolkit: about 5 min and $1 on a tiny API, 40 lines of output | `kitchen init` is quick init: kitchen.yaml with the detected checks, the skill, .gitignore, the checks run once on the base. Seconds, no agent when the checks are obvious (package.json, Makefile, pyproject.toml, go.mod, Cargo.toml), else one short read-only call on the `cheap` tier. Failing checks are said plainly; init still finishes |
+| The Toolkit was built by `kitchen init` | `kitchen toolkit build` (unchanged steps, state in `.kitchen/init/`, `--detach`/`--status`/`--answers`); `kitchen init --toolkit` = init, then build. Quiet: one line per phase, details in `.kitchen/init/init.log` (`--verbose` on the terminal). `kitchen toolkit check` by itself keeps its full output (a diagnostic) |
+| A job without a Toolkit: a toolkit proof was a missing primitive for the smith, on no Toolkit | Intake (low risk) or spec (medium) pauses a job whose criteria drive the app: `paused(no-toolkit)`, "run `kitchen toolkit build` (about 3–15 min), then `kitchen resume <id>`". The runner wakes it once a Toolkit is on the base (the job's base and toolkitRef move there when it has no commit yet); `kitchen resume` without one goes on with checks and tests only (`checksOnly`) |
+| Verify could only PASS/FAIL a toolkit proof | Without a Toolkit such a criterion is `NO-TOOLKIT`: "not proven (no Toolkit)", never a pass, never a failure; the Report and PR comment say the job was proven by checks and tests only, with no app driven |
+| High risk had no Toolkit rule | A high-risk job never reaches ready without a Toolkit: it pauses at spec (or after review, when the diff raised it), and resume refuses to go on without one; so does a bug whose repro drives the app |
+| Setup ran on `strong` (opus) | `models.setup` defaults to `medium` (sonnet); the setup role reads each file once |
+| No background build | Kept so: no auto-build after init (ADR 0010 open question 1, decided no) |
+| (review fixes) quick init ran checks unsandboxed, agent-proposed ones too, gave checks the network, could PASS a job with nothing proven | Quick init's checks run under Gate's sandbox (shared `runSandboxed`) with `CI=1`; agent-proposed checks need the person's OK; frozen installs only, the network for the install alone; a verdict with nothing proven (or a requirement only the app covers) is NO-TOOLKIT and waits for the Toolkit |
 

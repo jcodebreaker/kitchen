@@ -26,6 +26,10 @@ _Avoid_: Priority, severity
 The Spec's list of acceptance criteria, each naming how it will be proven; the builder may only tick criteria off, never change them.
 _Avoid_: Spec document, PRD, plan
 
+**Steer**:
+A person's message to a running Job (`kitchen steer`, the dashboard's composer): its agent reads it at its next step without stopping, or the next agent role reads it as operator notes. Kept on the Job's thread, `messages.jsonl`.
+_Avoid_: Chat, prompt, interrupt
+
 **Round**:
 One pass of Build, Gate, Verify and Review; a Job has a limited number before a human is asked.
 _Avoid_: Iteration, attempt

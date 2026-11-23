@@ -77,7 +77,12 @@ export async function toolkitView(job: Job, src: string): Promise<ToolkitView> {
 
 /** The Toolkit as a role sees it: primitives (from describe) and the feature drives in `src`. */
 export async function toolkitBrief(job: Job, src: string): Promise<string> {
-  if (!hasToolkit(job)) return "This repository has no Toolkit: nothing can drive the app.";
+  if (!hasToolkit(job))
+    return [
+      "This repository has no Toolkit yet: nothing can drive the app.",
+      "Prove every criterion you can with `test <file>` (a test the builder writes) or `cmd`.",
+      "A criterion that can only be shown on the running app (a page, a screen, a response from the started server) still gets a `toolkit` proof with the generic primitives (open, read, press, type, screenshot, http, login, cli): Kitchen then pauses the job until the person builds a Toolkit, or reports that criterion as not proven if they choose to go on without one. Never fake the app with a `cmd`.",
+    ].join("\n");
   const d = await describeToolkit(job.toolkitBin, src);
   const prims = (d.raw.primitives as ({ name: string; args?: Record<string, string>; does?: string } | string)[]).map((p) =>
     typeof p === "string"
