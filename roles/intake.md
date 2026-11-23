@@ -26,6 +26,7 @@ Header lines first, exactly these names, one per line:
 
 ```
 DECISION: ACCEPT | NEEDS-INFO | REJECT
+TITLE: <the ticket as a short title, at most 60 characters: what it asks, e.g. "Renew a loan once for 14 more days">
 KIND: feature | bug | ui | chore
 RISK: low | medium | high
 SURFACES: ui, security | ui | security | none

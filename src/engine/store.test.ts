@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
-import { CorruptJob, jobIdOf, nextNumber, parseJob, slugify, titleOf } from "./store.ts";
+import { CorruptJob, jobIdOf, nextNumber, parseJob, shortTitle, slugify, titleOf } from "./store.ts";
 
 test("job ids are NNN-slug, numbered after the highest in use", () => {
   assert.equal(nextNumber([]), 1);
@@ -16,9 +16,30 @@ test("slugs are short, lowercase and never empty", () => {
   assert.ok(long.length <= 40 && !long.endsWith("-"), long);
 });
 
-test("a prompt ticket's title is its first non-empty line", () => {
+test("a prompt ticket's title until intake runs: the first sentence, no kind prefix, cut at a word at about 60 (ADR 0011)", () => {
   assert.equal(titleOf("\n\n  Fix the login bug \nmore detail"), "Fix the login bug");
-  assert.equal(titleOf("x".repeat(100)).length, 72);
+  assert.equal(
+    titleOf("add a feature: members can renew a loan once, for another 14 days. POST /loans/:id/renew answers 200 with the new due date"),
+    "Members can renew a loan once, for another 14 days",
+  );
+  assert.equal(titleOf("Bug: the tasks list shows deleted tasks"), "The tasks list shows deleted tasks");
+  assert.equal(titleOf("Feature request - dark mode in settings!"), "Dark mode in settings");
+  // A long first sentence is cut at a word boundary, never mid-word, at about 60 characters.
+  const long = titleOf("make the dashboard show every job's cost and time per stage in one compact table that sorts by any column");
+  assert.ok(long.length <= 61, long);
+  assert.equal(long, "Make the dashboard show every job's cost and time per stage…");
+  assert.ok(titleOf("x".repeat(100)).length <= 61);
+  // A dot inside a word (a file name) is not the end of a sentence.
+  assert.equal(titleOf("Add lib/stats.js: print the counts. Then more."), "Add lib/stats.js: print the counts");
+  assert.equal(titleOf("   "), "untitled");
+});
+
+test("intake's TITLE is cleaned to one short line, or nothing", () => {
+  assert.equal(shortTitle("Renew a loan once for 14 more days"), "Renew a loan once for 14 more days");
+  assert.equal(shortTitle("  **Renew** a `loan`\n "), "Renew a loan");
+  assert.equal(shortTitle(""), null);
+  assert.equal(shortTitle(undefined), null);
+  assert.ok((shortTitle("word ".repeat(30)) ?? "").length <= 61);
 });
 
 test("job.json is checked against the schema: a bad one is corrupt with a reason", () => {
