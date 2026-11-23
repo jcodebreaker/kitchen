@@ -4,7 +4,7 @@
 //   GET  /jobs/<id>/detail.json    one job: stage history with its agents' activity, thread, criteria
 //   GET  /jobs/<id>/report.html    a job's rendered Report
 //   GET  /setup.json               the Setup run
-//   POST /api/<action>             steer, answer, follow-up, pause, stop, resume, reject, ticket, setup-answers (actions.ts)
+//   POST /api/<action>             steer, answer, follow-up, pause, stop, resume, reject, ticket, setup-answers, toolkit-approve (actions.ts)
 //
 // The page can change state (ADR 0009), so a POST must come from the page this server served:
 // the Host check (DNS rebinding), an Origin, when sent, that is this server's own, the per-launch

@@ -427,7 +427,7 @@ export const review: StageHandler = async (ctx) => {
     if (blocking.length) return { to: "build", facts: { review: { pass: false, blocking: summary, ...facts } } };
     // The diff can raise a job to high risk after spec; a high-risk job never reaches ready without a Toolkit (ADR 0010).
     if (!hasToolkit(job) && effectiveRisk(job) === "high") {
-      ctx.log("no Toolkit, and the job is high risk: waiting for kitchen toolkit build before ready");
+      ctx.log("no Toolkit, and the job is high risk: waiting for a Toolkit before ready (build it, then approve it)");
       return { to: "paused", facts: { review: { pass: true, ...facts }, noToolkit: { needsApp: [], highRisk: true } } };
     }
     return { to: "ready", facts: { review: { pass: true, ...facts } } };

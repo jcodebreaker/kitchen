@@ -26,7 +26,7 @@ export const spec: StageHandler = async (ctx) => {
   // A high-risk job never reaches ready without a Toolkit (ADR 0010): it waits for one before any agent runs.
   const noToolkit = !hasToolkit(ctx.refresh());
   if (noToolkit && effectiveRisk(ctx.refresh()) === "high") {
-    ctx.log("no Toolkit, and the job is high risk: waiting for kitchen toolkit build");
+    ctx.log("no Toolkit, and the job is high risk: waiting for a Toolkit (build it, then approve it)");
     return { to: "paused", facts: { noToolkit: { needsApp: [], highRisk: true } } };
   }
   let job = await ensureWorktree(ctx.repo, ctx.refresh());
@@ -86,7 +86,7 @@ export const spec: StageHandler = async (ctx) => {
   const unprovable = noToolkit && lint.ok && needsApp.length ? unprovableWithoutToolkit(lint.criteria, job.kind) : null;
   const noToolkitFacts = noToolkit ? { noToolkit: { needsApp, highRisk: false, ...(unprovable ? { unprovable } : {}) } } : {};
   if (noToolkit && lint.ok && needsApp.length && (!job.checksOnly || unprovable)) {
-    ctx.log(`no Toolkit, and ${needsApp.join(", ")} drive${needsApp.length === 1 ? "s" : ""} the app: waiting for kitchen toolkit build`);
+    ctx.log(`no Toolkit, and ${needsApp.join(", ")} drive${needsApp.length === 1 ? "s" : ""} the app: waiting for a Toolkit (build it, then approve it)`);
     return { to: "paused", facts: { spec: { ok, reason }, ...noToolkitFacts } };
   }
   const guards = lint.ok ? guardCriteria(lint.criteria, requirements).filter((g) => !needsApp.includes(g)) : [];

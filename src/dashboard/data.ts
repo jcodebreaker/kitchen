@@ -13,6 +13,7 @@ import { liveDiffStat } from "../engine/worktree.ts";
 import { type LedgerLine, readLedger } from "../ledger/append.ts";
 import { measures } from "../ledger/measures.ts";
 import { readRetroState } from "../retro/state.ts";
+import { noToolkitWords, type ToolkitState, toolkitLabel, toolkitState } from "../toolkit/approve.ts";
 import { activityOf, type Ev } from "./activity.ts";
 
 export type Chip = { id: string; result: string };
@@ -147,8 +148,11 @@ export function proofOf(stage: Stage, verdict: string | null): "pass" | "fail" |
   if (stage === "rejected") return null;
   return verdict === "PASS" ? "pass" : verdict === "FAIL" ? "fail" : "not proven";
 }
-/** What a job that needs you asks: intake's question (question.md), or why it escalated. */
-export function questionOf(j: Job, dir: string): string | null {
+/**
+ * What a job that needs you asks: intake's question (question.md), or why it escalated. A no-toolkit wait says
+ * what to do from where the Toolkit stands now (`tk`, read from the repo when not given; ADR 0015).
+ */
+export function questionOf(j: Job, dir: string, tk?: ToolkitState): string | null {
   if (j.stage === "needs-info") {
     try {
       const q = fs
@@ -159,7 +163,7 @@ export function questionOf(j: Job, dir: string): string | null {
     } catch {}
   }
   const w = waitYouOf(j);
-  if (w === "no-toolkit") return j.pausedReason ?? "This ticket needs Kitchen to drive the app; run kitchen toolkit build.";
+  if (w === "no-toolkit") return noToolkitWords(tk ?? toolkitState(path.resolve(dir, "..", "..", "..")));
   if (w === "auth") return "The agent could not log in (auth failure). Log in to its CLI again, then Resume.";
   if (w === "toolkit-pr") return "Waiting for the Toolkit PR to merge. Merge it and the job goes on by itself, or Resume to try now.";
   return j.stage === "needs-info" || j.stage === "needs-human" ? (j.pausedReason ?? "It needs your answer to go on.") : null;
@@ -227,6 +231,8 @@ export type JobCard = {
   pausedBy: "pause" | "stop" | null;
   /** Paused no-toolkit (ADR 0010): the person builds the Toolkit, or resumes it to go on with checks and tests only. */
   needsToolkit: boolean;
+  /** Waiting no-toolkit while a proven Toolkit waits for approval: the Approve Toolkit button (ADR 0015). */
+  tkApprove: boolean;
   /** Paused on something only the person can do (waitYouOf): a Toolkit to build, a login to fix, a Toolkit PR to merge. */
   waitYou: "no-toolkit" | "auth" | "toolkit-pr" | null;
   /** The last thing the agent working on it now did. */
@@ -250,6 +256,8 @@ export type Snapshot = {
   usdTotal: number;
   tool: string | null;
   toolkitProven: boolean;
+  /** Where the Toolkit stands (toolkit/approve.ts): the sidebar's word, and the sha waiting for approval. */
+  toolkit: { state: ToolkitState["state"]; label: string; sha: string | null };
   runner: { running: boolean; text: string };
   phases: { k: Phase; nm: string }[];
   /** The Board's lanes in order, each with who works there. */
@@ -324,6 +332,7 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
     if (l.event === "move") moves.set(l.job, [...(moves.get(l.job) ?? []), l].slice(-2));
   }
   const usdOf = new Map(m.jobs.map((j) => [j.job, j.usd]));
+  const tk = toolkitState(repo);
   const jobs: JobCard[] = [];
   const corrupt: string[] = [];
   for (const e of scanJobs(repo)) {
@@ -380,7 +389,9 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
       state: stateOf(j),
       phase: phaseOf(stage),
       agent: agentOf(stage),
-      q: questionOf(j, dir),
+      q: questionOf(j, dir, tk),
+      // A proven Toolkit waits for the person: the row, card and panel offer Approve Toolkit (ADR 0015).
+      tkApprove: j.stage === "paused" && j.waitFor === "no-toolkit" && tk.state === "waiting",
       pausedBy: pausedByYou(j) ? (j.pausedReason === BY_YOU_STOPPED ? "stop" : "pause") : null,
       needsToolkit: j.stage === "paused" && j.waitFor === "no-toolkit",
       waitYou: waitYouOf(j),
@@ -411,6 +422,7 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
     usdTotal: priced.reduce((a, l) => a + (l.usd as number), 0),
     tool,
     toolkitProven: fs.existsSync(path.join(repo, ".kitchen", "toolkit.proven")),
+    toolkit: { state: tk.state, label: toolkitLabel(tk), sha: tk.sha ?? null },
     runner:
       lock && !stale ? { running: true, text: `running, pid ${lock.info?.pid}` } : { running: false, text: stale ? `not running (${stale})` : "not running" },
     phases: PHASES.map((p) => ({ k: p.k, nm: p.nm })),

@@ -4,6 +4,7 @@ import * as cmd from "../cli/commands.ts";
 import { answerSetup } from "../cli/toolkit-commands.ts";
 import { MAX_MESSAGE } from "../engine/messages.ts";
 import { findJob } from "../engine/store.ts";
+import { approveToolkit } from "../toolkit/approve.ts";
 
 export type ActionResult = { ok: boolean; lines: string[] };
 type Body = Record<string, unknown>;
@@ -55,6 +56,14 @@ export const ACTIONS: Record<string, (repo: string, b: Body, out: Out) => Promis
     const t = textOf(b);
     if (!t.trim()) throw new BadRequest("text: what you want done");
     return cmd.ticket(repo, t, out);
+  },
+  /**
+   * The person approves the proven Toolkit (kitchen toolkit approve, ADR 0015): the same engine function, its default
+   * sha (kitchen/setup's proven tip) only, so the page can't name another. Waiting jobs wake.
+   */
+  "toolkit-approve": (repo, b, out) => {
+    if (Object.keys(b).length) throw new BadRequest("toolkit-approve takes no fields: it approves the proven Toolkit on kitchen/setup");
+    return approveToolkit(repo, {}, out);
   },
   "setup-answers": (repo, b, out) => {
     if (!b.answers || typeof b.answers !== "object" || Array.isArray(b.answers)) throw new BadRequest('answers: { "<question id>": "<answer>" }');
