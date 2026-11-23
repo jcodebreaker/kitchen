@@ -1,0 +1,32 @@
+{
+  "recorded": "2026-11-23T00:10:26.221Z",
+  "note": "Recorded from a real run on a fresh copy of fixtures/e-library. kitchen init ran with the real claude (it makes no model call); the job ran with Kitchen's free stand-in agent (no model): its time is simulated. devkitchen was installed from npm pack, before publishing.",
+  "steps": [
+    {
+      "cmd": "npm i -g devkitchen",
+      "out": "\nadded 21 packages in 368ms",
+      "secs": 0.445
+    },
+    {
+      "cmd": "kitchen init",
+      "out": "Checking what Kitchen needs…\n  ✓ node     26.9.0\n  ✓ git      2.39.5 · the repo has a commit\n  ✓ claude   signed in (claude.ai)\n  ✗ codex    not found (not needed: claude is ready)\n  ✓ gh       signed in (optional: for GitHub pull requests)\n\nSetting up Kitchen in e-library…\n  ✓ Wrote kitchen.yaml     agent claude · 1 check from package.json\n  ✓ Installed the skill    /kitchen for Claude Code and Codex · role skills: 6 of 8 found (kitchen skills)\n  ✓ Updated .gitignore     18 Kitchen entries\n  … Running test (npm test)…\n  ✓ Ran the checks         test passed on main (d23dc73)                     0.3s\nDone in 0.5s · no agent\nNext: kitchen ticket \"<what you want>\"  then  kitchen run --detach\n      commit kitchen.yaml, .gitignore and the skill folders when you like\n      to have Kitchen drive your app as well: kitchen toolkit build (about 3–15 min)",
+      "secs": 1.338
+    },
+    {
+      "cmd": "kitchen ticket \"Add lib/stats.js: node lib/stats.js prints how many books and members seed.json holds\"",
+      "out": "ticket 001-add-lib-stats-js-node-lib-stats-js-print  \"Add lib/stats.js: node lib/stats.js prints how many books…\"  → intake",
+      "secs": 0.193
+    },
+    {
+      "cmd": "kitchen run --detach",
+      "out": "run detached: pid 48213, log ~/code/e-library/.kitchen/run.log",
+      "secs": 0.131
+    },
+    {
+      "cmd": "kitchen status",
+      "out": "runner: not running\n001-add-lib-stats-js-node-lib-stats-js-print Print the book and member counts   done             round 1/3  moved 1s ago  no PR  ~/code/e-library/.kitchen/jobs/001-add-lib-stats-js-node-lib-stats-js-print/report.html\n1 job: 1 done, 0 need you",
+      "secs": 12.775,
+      "wait": true
+    }
+  ]
+}
