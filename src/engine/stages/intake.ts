@@ -87,7 +87,8 @@ export const intake: StageHandler = async (ctx) => {
     writeAtomic(path.join(ctx.jobDir, "intake-refused.md"), `REASON: ${refusal}\n\n${r.text}`);
   }
   if (decision === "NEEDS-INFO") await ctx.source.ask(ctx.job, { key: `ask/m${ctx.job.moves}`, text: h.QUESTION ?? h.REASON ?? r.text });
-  if (waits) ctx.log(`no Toolkit, and ${needsApp.join(", ")} drive${needsApp.length === 1 ? "s" : ""} the app: waiting for kitchen toolkit build`);
+  if (waits)
+    ctx.log(`no Toolkit, and ${needsApp.join(", ")} drive${needsApp.length === 1 ? "s" : ""} the app: waiting for a Toolkit (build it, then approve it)`);
   const to = waits
     ? "paused"
     : decision === "REJECT"

@@ -186,7 +186,7 @@ kbd{font:500 11px var(--sans);color:var(--mute);border:1px solid var(--line2);bo
 .ctop .rnd{font:400 11px var(--sans);color:var(--mute)}
 .ctop .sp{flex:1}
 .ctop .mt{white-space:nowrap;flex:none}
-.ctop .mt i{font:400 11px var(--sans);font-style:normal;margin-right:3px}
+.ctop .mt i{font:400 11px var(--sans);font-style:normal}
 .pulse{width:6px;height:6px;border-radius:3px;background:var(--fg2);flex:none;animation:pulse 1.6s ease-in-out infinite}
 @keyframes pulse{50%{opacity:.2}}
 .ctt{font-size:13.5px;font-weight:600;line-height:1.36;letter-spacing:-.012em;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;text-wrap:pretty}
@@ -232,7 +232,8 @@ button.a{font-weight:600}button.a:hover{text-decoration:underline;text-underline
 .box textarea{display:block;width:100%;border:0;outline:0;background:none;resize:none;padding:10px 12px 4px;min-height:38px;max-height:160px;line-height:1.45}
 .box textarea::placeholder{color:var(--faint)}
 .cbar{display:flex;align-items:center;gap:4px;padding:4px 6px 6px 12px}
-.cbar .hint{font-size:12px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.cbar .hint{font-size:12px;color:var(--faint);line-height:1.35;min-width:0;flex:1 1 140px}
+.cbar .tka,.cbar .btn{flex:none}
 .cbar .sp{flex:1}
 .send{width:26px;height:26px;border-radius:13px;background:var(--fg);color:var(--bg);display:grid;place-items:center;margin-left:4px;transition:transform .08s,opacity .12s;flex:none}
 .cmp.you .send{background:var(--act);color:var(--on-act)}
@@ -393,11 +394,16 @@ button.a{font-weight:600}button.a:hover{text-decoration:underline;text-underline
 .qbox input::placeholder{color:var(--faint)}
 .foot2 .mono{font-size:11.5px}
 .row .tm{white-space:nowrap}
-.tm i{font:400 12px var(--sans);font-style:normal;color:var(--faint);margin-right:3px}
+.tm i{font:400 12px var(--sans);font-style:normal;color:var(--faint)}
+[data-tm] i{font-style:normal}
 .rbar{display:flex;align-items:center;gap:8px 10px;flex-wrap:wrap;padding:9px 16px 9px 20px;border-bottom:1px solid var(--line);background:var(--band);color:var(--fg2);font-size:13px}
 .rbar code{font:12px var(--mono);background:var(--raise);border:1px solid var(--line2);border-radius:6px;padding:1px 8px;color:var(--fg)}
 .meta .age{color:var(--faint)}
 .tka{display:inline-flex;gap:6px;flex:none;align-items:center}
+/* A Needs-you row that waits on you: its one action sits under the reason, so the title and reason keep the row's width. */
+.row .mn .tka{display:flex;margin-top:8px}
+#sTk{text-align:right;line-height:1.3}
+.tkbar>span{flex:1 1 260px}
 .sub.q code,.ev.ask p code,.card .cq code,.card .evl code{font:11.5px var(--mono);background:var(--raise);border:1px solid var(--line2);border-radius:4px;padding:0 4px}
 @container main (max-width:680px){ .rbar{padding:9px 12px 9px 16px} }
 /* logo:start (scripts/brand/gen-icons.mjs writes this block: logo B, the cook, 16px cut) */
@@ -521,7 +527,7 @@ const secsOf=j=>j.secs0+(ended(j)?0:(performance.now()-j.at0)/1000);
 const since=iso=>Math.max(0,(Date.now()-Date.parse(iso))/1000);
 const short=s=>s<60?Math.floor(s)+"s":s<3600?Math.floor(s/60)+"m":s<86400?Math.floor(s/3600)+"h":Math.floor(s/86400)+"d";
 /* Running: time in this stage. Needs you: how long it has waited. Paused: frozen at the time it ran before the pause. */
-function timerHTML(j){if(j.kind==="setup")return clock(secsOf(j));if(j.state==="you")return `<i>waiting</i>${short(since(j.movedAt))}`;if(j.state==="paused")return clock(j.pausedSecs||0);return clock(since(j.movedAt))}
+function timerHTML(j){if(j.kind==="setup")return clock(secsOf(j));if(j.state==="you")return `<i>waiting</i> ${short(since(j.movedAt))}`;if(j.state==="paused")return clock(j.pausedSecs||0);return clock(since(j.movedAt))}
 function timerTitle(j){return j.state==="you"?"Waiting for you since "+hhmm(j.movedAt):j.state==="paused"?"Ran this long in the stage before it was paused":"Time in this stage"}
 let view="list";try{view=localStorage.getItem("kitchen.view")==="board"?"board":"list"}catch(e){}
 try{const t=localStorage.getItem("kitchen.theme");if(t)document.documentElement.dataset.theme=t}catch(e){}
@@ -631,19 +637,30 @@ function trackHTML(j){
 }
 function chgHTML(j,bump){const A=j.files.reduce((a,f)=>a+f.a,0),D=j.files.reduce((a,f)=>a+f.d,0);
   return `<span class="chg${bump?" bump":""}" id="chg-${esc(j.id)}">${j.files.length&&group(j)==="run"?`${j.files.length} file${j.files.length>1?"s":""}${dfHTML(A,D)}`:""}</span>`}
-function finLabel(j){if(j.kind==="setup"&&j.setup.state==="quick")return "Toolkit not built — kitchen toolkit build";if(stopped(j))return "Stopped by you";return j.state==="done"?(j.kind==="setup"?"Proven":"Ready to merge"):j.kind==="setup"?"Failed":"Rejected"}
+const setupWaits=j=>j.kind==="setup"&&j.setup.toolkit==="waiting"&&j.state==="done";
+function finLabel(j){if(j.kind==="setup"&&j.setup.state==="quick")return "Toolkit not built — kitchen toolkit build";if(setupWaits(j))return "Proven · waiting for your approval";if(stopped(j))return "Stopped by you";return j.state==="done"?(j.kind==="setup"?"Proven":"Ready to merge"):j.kind==="setup"?"Failed":"Rejected"}
 /* A job paused no-toolkit (ADR 0010): build the Toolkit in a terminal, or resume (the resume rules decide whether it may go on without one). */
 /* Kitchen's own messages name commands in backticks: shown as code. */
 const md=t=>esc(t).replace(/`([^`]+)`/g,"<code>$1</code>");
-function tkActs(j,card){return `<button type="button" class="btn act sm" data-act="copy-build" title="Copy kitchen toolkit build. Then merge kitchen/setup; the job wakes by itself">${card?"Copy command":"Copy kitchen toolkit build"}</button><button type="button" class="btn ghost sm" data-act="resume" data-id="${esc(j.id)}" title="Go on with checks and tests only, if it can">${I.play}Resume</button>`}
-/* A pause only the person can end (data.ts waitYouOf): a Toolkit to build, the agent's login to fix, a Toolkit PR to merge. */
-function waitActs(j,card){return j.waitYou==="no-toolkit"?tkActs(j,card):`<button type="button" class="btn act sm" data-act="resume" data-id="${esc(j.id)}" title="${j.waitYou==="auth"?"After you log the agent in again":"Try now, without waiting for the merge"}">${I.play}Resume</button>`}
-const WAIT_HINT={"no-toolkit":"Build the Toolkit, then it goes on by itself; or Resume to go on with checks and tests only.",auth:"Log the agent's CLI in again, then Resume.","toolkit-pr":"Merge the Toolkit PR and it goes on by itself, or Resume to try now."};
+/* Where the Toolkit stands (data.ts snapshot.toolkit, ADR 0015): waiting = proven, waiting for the person's approval. */
+const tkState=()=>snap&&snap.toolkit?snap.toolkit.state:"none";
+const tkSha=()=>snap&&snap.toolkit&&snap.toolkit.sha?snap.toolkit.sha:"";
+const approveBtn=()=>`<button type="button" class="btn act sm" data-act="approve-tk" title="Use Toolkit ${esc(tkSha().slice(0,12))} for every job (kitchen toolkit approve). Nothing is merged or committed">Approve Toolkit <span class="mono">${esc(tkSha().slice(0,7))}</span></button>`;
+/* A job waiting for a Toolkit: one action in a List row (the title and reason keep the room), the rest on the card and in the panel. */
+function tkActs(j,where){
+  const primary=j.tkApprove?approveBtn():tkState()==="building"?"":`<button type="button" class="btn act sm" data-act="copy-build" title="Copy kitchen toolkit build. Approve it when it is proven; the job wakes by itself">${where==="panel"?"Copy kitchen toolkit build":"Copy command"}</button>`;
+  if(where==="row")return primary;
+  return primary+`<button type="button" class="btn ghost sm" data-act="resume" data-id="${esc(j.id)}" title="Go on with checks and tests only, if it can">${I.play}Resume</button>`}
+/* A pause only the person can end (data.ts waitYouOf): a Toolkit to build or approve, the agent's login to fix, a Toolkit PR to merge. */
+function waitActs(j,where){return j.waitYou==="no-toolkit"?tkActs(j,where):`<button type="button" class="btn act sm" data-act="resume" data-id="${esc(j.id)}" title="${j.waitYou==="auth"?"After you log the agent in again":"Try now, without waiting for the merge"}">${I.play}Resume</button>`}
+const WAIT_HINT={auth:"Log the agent's CLI in again, then Resume.","toolkit-pr":"Merge the Toolkit PR and it goes on by itself, or Resume to try now."};
+function waitHint(j){if(j.waitYou!=="no-toolkit")return WAIT_HINT[j.waitYou]||"";
+  return j.tkApprove?`Approve Toolkit ${esc(tkSha().slice(0,12))}; it goes on by itself.`:tkState()==="building"?"The Toolkit is being built.":"Build the Toolkit, then approve it."}
 function icon(j){if(j.kind==="setup"&&j.setup.state==="quick")return S.wait;return S[j.state==="done"?"ok":j.state==="rejected"?"skip":j.state==="run"&&!j.runnerOn?"paused":j.state]}
 function rowHTML(j){
   const g=group(j),ex=expanded===j.id;
   let sub="",mid="",tm="",acts="";
-  if(g==="you"){sub=`<div class="sub q">${md(j.q)}</div>`;mid=j.waitYou?`<span class="tka">${waitActs(j)}</span>`:`<button class="btn act sm rep" data-act="message" data-id="${esc(j.id)}">${ex?"Close":"Reply"}</button>`;tm=`<span class="tm mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`}
+  if(g==="you"){const wa=j.waitYou?waitActs(j,"row"):"";sub=`<div class="sub q">${md(j.q)}</div>${wa?`<span class="tka">${wa}</span>`:""}`;mid=j.waitYou?"":`<button class="btn act sm rep" data-act="message" data-id="${esc(j.id)}">${ex?"Close":"Reply"}</button>`;tm=`<span class="tm mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`}
   else if(g==="run"){sub=`<div class="sub" id="lv-${esc(j.id)}">${liveHTML(j)}</div>`;mid=chgHTML(j)+trackHTML(j);tm=`<span class="tm mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`;
     acts=`<span class="acts"><button class="ib" title="Message ${esc(agent(j))} (R)" aria-label="Message agent" data-act="message" data-id="${esc(j.id)}">${I.msg}</button></span>`}
   else{mid=`<span class="fin ${fresh.has(j.id)?"new":""}">${fresh.has(j.id)?"Just finished · ":""}${finLabel(j)}</span>`;tm=`<span class="tm mono num">$${j.cost.toFixed(2)}</span>`;
@@ -662,7 +679,7 @@ const doneT=j=>Date.parse(j.doneAt||j.updatedAt||0)||0;
 function inLane(k){const a=jobs.filter(j=>j.lane===k);return k==="ready"||k==="done"?a.sort((x,y)=>doneT(y)-doneT(x)):a}
 const RISK={low:"low",medium:"med",high:"high"};
 function pillsHTML(j){
-  if(j.kind==="setup"){const s=j.setup;return `<span class="pl">${s.state==="done"?"proven":s.state==="quick"?"Toolkit not built":s.state==="failed"?"failed":"step "+(s.idx+1)+" of "+s.steps.length}</span>`}
+  if(j.kind==="setup"){const s=j.setup;return `<span class="pl ${setupWaits(j)?"high":""}">${setupWaits(j)?"waiting for approval":s.state==="done"?"proven":s.state==="quick"?"Toolkit not built":s.state==="failed"?"failed":"step "+(s.idx+1)+" of "+s.steps.length}</span>`}
   const p=j.proof;
   return (j.risk?`<span class="pl ${j.risk==="high"?"high":""}" title="Risk: ${esc(j.risk)}">${RISK[j.risk]||esc(j.risk)}</span>`:"")
     +(p?`<span class="pl ${p==="pass"?"pass":p==="fail"?"fail":""}" title="${p==="fail"?"Verdict of the last round":p==="pass"?"Verdict: every criterion proven":"No passing verdict yet"}">${p}</span>`:"")
@@ -673,6 +690,7 @@ function evLine(j){
   if(j.kind==="setup"){
     if(j.failed)return `<span class="bad">✗ Failed: ${esc((j.setup.last||[]).at(-1)||"see kitchen toolkit build --status")}</span>`;
     if(j.setup.state==="quick")return "Toolkit not built. Run kitchen toolkit build";
+    if(setupWaits(j))return `<span class="ok">✓ Proven twice</span> · waiting for your approval`;
     if(j.state==="done")return `<span class="ok">✓ Proven twice</span>`;
     return evOf(j);
   }
@@ -696,7 +714,7 @@ function cardHTML(j){
   const l=j.lane,end=ended(j)||l==="done",idt=j.kind==="setup"?"setup":"#"+j.num;
   const cls=`${l==="you"?"ny":""} ${end?"end":""} ${j.state==="done"&&j.kind!=="setup"?"rdy":""} ${j.state==="rejected"||j.pausedBy==="stop"?"gone":""} ${open===j.id?"open":""} ${sel===j.id?"sel":""} ${just.has(j.id)?"flash":""}`;
   const bot=l==="you"
-    ?`<div class="cq">${md(j.q)}</div>${j.waitYou?`<span class="tka">${waitActs(j,true)}<button type="button" class="btn ghost sm" data-act="reject" data-id="${esc(j.id)}">Reject</button></span>`:`<button class="btn act sm" data-act="message" data-id="${esc(j.id)}">Reply</button>`}`
+    ?`<div class="cq">${md(j.q)}</div>${j.waitYou?`<span class="tka">${waitActs(j,"card")}<button type="button" class="btn ghost sm" data-act="reject" data-id="${esc(j.id)}">Reject</button></span>`:`<button class="btn act sm" data-act="message" data-id="${esc(j.id)}">Reply</button>`}`
     :`<div class="cbot"><div class="evl" id="lv-${esc(j.id)}">${evLine(j)}</div>${j.kind==="setup"||j.state==="rejected"?"":`<button class="ib" title="${j.state==="done"?"Follow up":"Message "+esc(agent(j))} (R)" aria-label="${j.state==="done"?"Follow up":"Message agent"}" data-act="message" data-id="${esc(j.id)}">${I.msg}</button>`}</div>`;
   return `<div class="rw card ${cls}" id="rw-${esc(j.id)}" style="view-transition-name:r-${esc(j.id)}" tabindex="0" role="button" data-row="${esc(j.id)}">
     <div class="ctop"><span class="id">${esc(idt)}</span>${j.round>1?`<span class="rnd">round ${j.round}</span>`:""}<span class="sp"></span>${j.state==="run"&&j.runnerOn?'<i class="pulse" title="Working now"></i>':""}${end?"":`<span class="mt num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`}</div>
@@ -747,7 +765,8 @@ function renderCounts(){
   $("#sYou").textContent=you.length||"";$("#sRun").textContent=run.length;$("#sRunN").textContent=queueWords(!!snap.runner.running,run).group;$("#sDone").textContent=done.length;
   $("#wsName").textContent=snap.repo;document.title=(you.length?`(${you.length}) `:"")+"Kitchen · "+snap.repo;
   $("#sSetup").textContent=!setup||setup.state==="none"?"not run":setup.state==="quick"?"Toolkit not built":setup.state==="done"?"proven":setup.state==="failed"?"failed":"step "+(setup.idx+1)+"/"+setup.steps.length;
-  $("#sTk").textContent=snap.toolkitProven?"proven":"not proven";
+  $("#sTk").textContent=snap.toolkit?snap.toolkit.label:snap.toolkitProven?"proven":"not proven";
+  $("#sTk").classList.toggle("act",tkState()==="waiting");
   $("#tCost").textContent="$"+snap.usdToday.toFixed(2)+" today";$("#tCost").title="Spent today on every agent run, setup and retro included";$("#sCost").textContent="$"+snap.usdTotal.toFixed(2);$("#sCost").parentElement.title="Spent in all on every agent run, setup and retro included";
   $("#foot").innerHTML=`Runner: ${esc(snap.runner.text)}${snap.runner.running?"":`. Jobs move only while <span class="mono">kitchen run</span> works the queue.`}${snap.corrupt.length?` · Unreadable job folders: ${esc(snap.corrupt.join(", "))}`:""}`;
 }
@@ -772,7 +791,7 @@ function composerHTML(j,where="row"){
   const ctl=g==="run"&&where==="panel"?"":g==="run"?`<button type="button" class="btn ghost sm" data-act="${j.state==="paused"?"resume":"pause"}" data-id="${esc(j.id)}">${j.state==="paused"?I.play+"Resume":I.pause+"Pause"}</button>${j.state==="paused"?"":`<button type="button" class="btn ghost sm" data-act="stop" data-id="${esc(j.id)}">${I.stop}Stop</button>`}`
     :g==="you"&&j.kind!=="setup"?`<button type="button" class="btn ghost sm" data-act="reject" data-id="${esc(j.id)}">Reject</button>`:"";
   /* A wait only you can end takes no message: nothing would read it. Its two ways on are the actions. */
-  if(j.waitYou)return `<div class="cmp you"><div class="box"><div class="cbar"><span class="hint">${WAIT_HINT[j.waitYou]||""}</span><span class="sp"></span>${waitActs(j)}<button type="button" class="btn ghost sm" data-act="reject" data-id="${esc(j.id)}">Reject</button></div></div></div>`;
+  if(j.waitYou)return `<div class="cmp you"><div class="box"><div class="cbar"><span class="hint">${waitHint(j)}</span><span class="sp"></span>${waitActs(j,"panel")}<button type="button" class="btn ghost sm" data-act="reject" data-id="${esc(j.id)}">Reject</button></div></div></div>`;
   return `<form class="cmp ${g==="you"?"you":""} ${qs.length?"ready":""}" data-cmp="${esc(j.id)}">${ch}
     ${chips.length?`<div class="chips">${chips.map(c=>`<button type="button" class="chip" data-act="chip" data-id="${esc(j.id)}">${esc(c)}</button>`).join("")}</div>`:""}
     <div class="box"><textarea rows="1" data-draft="${esc(j.id)}" data-where="${where}" placeholder="${esc(ph)}" aria-label="${esc(ph)}" maxlength="4000">${esc(drafts[j.id]||"")}</textarea>
@@ -847,7 +866,7 @@ function segHTML(j,s,i,n){
 }
 function setupBody(j){
   const s=j.setup, evs=s.evs;
-  return `${s.state==="quick"?`<div class="rbar" role="status">${S.wait}<span>Toolkit not built — Kitchen proves jobs with your checks and tests until it can drive the app.</span><code>kitchen toolkit build</code><button type="button" class="btn sm" data-act="copy-build">Copy</button></div>`:""}${s.questions.length?`<div class="evs" style="border:0;padding-left:0;margin-left:0">${s.questions.map(q=>`<div class="ev ask"><span class="whoo">The setup agent asks · ${esc(q.id)}</span><p>${esc(q.question)}</p>${q.why?`<p style="color:var(--mute);margin-top:4px">${esc(q.why)}</p>`:""}</div>`).join("")}</div>`:""}
+  return `${setupWaits(j)?`<div class="rbar tkbar" role="status">${S.you}<span><b>Proven · waiting for your approval:</b> <code>${esc((j.setup.sha||"").slice(0,12))}</code>. Approve it and every job runs your app with it. Nothing is merged or committed; share it later with <code>kitchen toolkit commit</code>.</span>${approveBtn()}</div>`:""}${s.state==="quick"?`<div class="rbar" role="status">${S.wait}<span>Toolkit not built — Kitchen proves jobs with your checks and tests until it can drive the app.</span><code>kitchen toolkit build</code><button type="button" class="btn sm" data-act="copy-build">Copy</button></div>`:""}${s.questions.length?`<div class="evs" style="border:0;padding-left:0;margin-left:0">${s.questions.map(q=>`<div class="ev ask"><span class="whoo">The setup agent asks · ${esc(q.id)}</span><p>${esc(q.question)}</p>${q.why?`<p style="color:var(--mute);margin-top:4px">${esc(q.why)}</p>`:""}</div>`).join("")}</div>`:""}
     ${s.steps.map((x,k)=>`<button class="sg" tabindex="-1">${S[x.st==="wait"?"wait":x.st==="run"?"run":x.st]||S.wait}<b>${esc(x.nm)}</b><span class="who">${x.k==="answers"?"you":x.k==="survey"||x.k==="build"?"setup agent":"Kitchen"}</span><span class="du mono num"></span></button>
       ${k===s.idx&&evs.length&&s.state!=="done"?`<div class="evs" id="evs">${evs.map(e=>evHTML(e)).join("")}</div>`:""}`).join("")}
     ${s.last.length?`<div class="sgsum" style="margin:10px 0 0;font-family:var(--mono);font-size:11.5px;white-space:pre-wrap">${esc(s.last.slice(-6).join("\n"))}</div>`:""}`;
@@ -862,7 +881,7 @@ function tabBody(j){
 }
 function tabsHTML(j){const okN=j.crit.filter(c=>c.st==="ok").length;
   return [["activity","Activity",""],["checks","Checks",j.crit.length?okN+"/"+j.crit.length:""],["changes","Changes",j.files.length||""]].filter(([k])=>k==="activity"||j.kind!=="setup").map(([k,n,c])=>`<button class="tab ${tab===k?"on":""}" onclick="setTab('${k}')">${n}${c!==""?`<span class="n num">${c}</span>`:""}</button>`).join("")}
-function statusOf(j){if(j.kind==="setup"&&j.setup.state==="quick")return "Toolkit not built";return j.state==="you"?"Needs you":j.state==="run"?(j.runnerOn?stp(j).nm+(j.round>1?" · round "+j.round:""):"Waiting · "+stp(j).nm):j.state==="paused"?(j.pausedBy==="stop"?"Stopped in ":"Paused in ")+stp(j).nm:j.state==="done"?(j.kind==="setup"?"Proven":"Ready to merge"):j.kind==="setup"?"Failed":"Rejected"}
+function statusOf(j){if(j.kind==="setup"&&j.setup.state==="quick")return "Toolkit not built";if(setupWaits(j))return "Proven · waiting for your approval";return j.state==="you"?"Needs you":j.state==="run"?(j.runnerOn?stp(j).nm+(j.round>1?" · round "+j.round:""):"Waiting · "+stp(j).nm):j.state==="paused"?(j.pausedBy==="stop"?"Stopped in ":"Paused in ")+stp(j).nm:j.state==="done"?(j.kind==="setup"?"Proven":"Ready to merge"):j.kind==="setup"?"Failed":"Rejected"}
 function paintHead(){const j=J(open);if(!j)return;const t=$("#tabs");if(t)t.innerHTML=tabsHTML(j);const st=$("#pst");if(st)st.innerHTML=icon(j)+esc(statusOf(j));if(tab!=="activity"&&j.kind!=="setup"){const b=$("#tabbody");if(b)b.innerHTML=tabBody(j)}}
 function panelUpdate(old,d){
   if(!old||tab!=="activity"){renderPanel();return}
@@ -912,7 +931,9 @@ setInterval(()=>{
 /* ───────── misc ───────── */
 let toastT;function toast(msg,label,fn){const t=$("#toast");t.innerHTML=`<span>${esc(msg)}</span>${label?`<button>${esc(label)}</button>`:""}`;if(label)t.querySelector("button").onclick=()=>{fn();t.classList.remove("on")};t.classList.add("on");clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove("on"),5000)}
 function newTicket(){palette(true,"ticket")}
-async function copyBuild(){try{await navigator.clipboard.writeText("kitchen toolkit build");toast("Copied: kitchen toolkit build. Run it in the repo, then merge kitchen/setup")}catch(e){toast("Run this in the repo: kitchen toolkit build")}}
+async function copyBuild(){try{await navigator.clipboard.writeText("kitchen toolkit build");toast("Copied: kitchen toolkit build. Run it in the repo, then approve the Toolkit")}catch(e){toast("Run this in the repo: kitchen toolkit build")}}
+/* The person approves the proven Toolkit (POST /api/toolkit-approve = kitchen toolkit approve); waiting jobs wake. */
+async function approveTk(){const r=await post("toolkit-approve",{expect:tkSha()});toast(r.ok?said(r.lines).replace(/\. Undo:.*/,"")||"Toolkit approved":said(r.lines)||"Not approved");refreshSoon()}
 async function copyRun(){try{await navigator.clipboard.writeText("kitchen run --detach");toast("Copied: kitchen run --detach. Run it in the repo")}catch(e){toast("Run this in the repo: kitchen run --detach")}}
 function jump(id){const n=$("#"+id);if(n)n.scrollIntoView({behavior:RM?"auto":"smooth",block:"start"})}
 function toggleTheme(){const r=document.documentElement,dark=r.dataset.theme?r.dataset.theme==="dark":matchMedia("(prefers-color-scheme: dark)").matches;r.dataset.theme=dark?"light":"dark";try{localStorage.setItem("kitchen.theme",r.dataset.theme)}catch(e){}}
@@ -956,7 +977,7 @@ document.addEventListener("keydown",e=>{
 document.addEventListener("click",e=>{
   const b=e.target.closest("[data-act]");
   if(b){const id=b.dataset.id,a=b.dataset.act;e.stopPropagation();
-    if(a==="message")message(id);else if(a==="pause")pause(id);else if(a==="resume")resume(id);else if(a==="stop")stopJob(id);else if(a==="reject")reject(id);else if(a==="chip")useChip(id,b);else if(a==="copy")copyRun();else if(a==="copy-build")copyBuild();
+    if(a==="message")message(id);else if(a==="pause")pause(id);else if(a==="resume")resume(id);else if(a==="stop")stopJob(id);else if(a==="reject")reject(id);else if(a==="chip")useChip(id,b);else if(a==="copy")copyRun();else if(a==="copy-build")copyBuild();else if(a==="approve-tk")approveTk();
     return}
   const r=e.target.closest("[data-row]");if(r)openJob(r.dataset.row);
 });

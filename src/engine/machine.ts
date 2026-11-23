@@ -105,6 +105,16 @@ export type Job = {
   pr: number | null;
   slot: { n: number; ports: number[] } | null;
   toolkitRef: string;
+  /**
+   * Where toolkitRef came from (ADR 0015): the base (never cleared by an approval change), the person's approval
+   * (follows it: a newer approval, or none after a revoke), or a Toolkit PR. Unset on jobs from before: treated as base.
+   */
+  toolkitFrom?: "base" | "approved" | "pr";
+  /**
+   * Its approved Toolkit was revoked while it ran (review H3): set where the Toolkit is dropped (job-toolkit.ts, whoever
+   * called it: the runner or `kitchen drive`), so the runner's next step pauses it if it needs the app. Cleared then.
+   */
+  toolkitLost?: boolean;
   returnTo: Stage | null;
   /** The primitive a Toolkit gap named. */
   gap: string | null;
@@ -200,7 +210,8 @@ export type Facts = {
     /** The Toolkit ticket the engine filed for a second INCONCLUSIVE. */
     ticket?: string;
   };
-  toolkit?: { checkPassed: boolean; sha: string; pr: number | null };
+  /** approvable: no PR; the smith's proven commit waits for the person's approval (an approved-only repo, ADR 0015). */
+  toolkit?: { checkPassed: boolean; sha: string; pr: number | null; approvable?: boolean };
   /**
    * pass: no finding blocks (checks/findings.ts: only a demonstrable, confident one can). blocking: the blocking findings, one line.
    * nonDiscriminating: criteria that already held on the base (base-check.json). findings/notes: counts after merging across lenses.
@@ -225,6 +236,7 @@ export type Facts = {
     newBase?: string;
     /** toolkitRef after the sync: the new base when it has a Toolkit and no Toolkit PR is still open. */
     toolkitRef?: string;
+    toolkitFrom?: "base" | "approved" | "pr";
   };
   report?: { rendered: boolean; idsResolved: boolean; evidencePushed: boolean; commented: boolean; localForge: boolean; refusal?: string };
   /** done → build: a review comment on the PR from a trusted person (the runner reads it through the forge). */
@@ -245,7 +257,12 @@ export type Facts = {
    * Waking a no-toolkit pause (runner or `kitchen resume`): the Toolkit now on the base (base, toolkitRef), or the
    * person's choice to go on without one (checksOnly).
    */
-  wake?: { base?: string; toolkitRef?: string; checksOnly?: boolean };
+  wake?: { base?: string; toolkitRef?: string; toolkitFrom?: "base" | "approved"; checksOnly?: boolean };
+  /**
+   * The job's Toolkit was dropped while it ran (the approval it used was revoked, ADR 0015 review H3): what it can no
+   * longer prove. It waits no-toolkit unless the person chose checks only.
+   */
+  toolkitDropped?: { needsApp: string[]; highRisk: boolean };
   adapter?: { rateLimited?: boolean; authFailure?: boolean; until?: string; error?: string };
   escalate?: Escalation;
   why?: string;
@@ -348,15 +365,19 @@ const verdictIs =
 const synced = (j: Job, f: Facts) => {
   if (f.ready?.newBase) j.base = f.ready.newBase;
   if (f.ready?.toolkitRef) j.toolkitRef = f.ready.toolkitRef;
+  if (f.ready?.toolkitFrom) j.toolkitFrom = f.ready.toolkitFrom;
   readyPr(j, f);
 };
 /** The job PR Ready published HEAD to. */
 const readyPr = (j: Job, f: Facts) => {
   if (f.ready?.pr !== undefined && f.ready.pr !== null) j.pr = f.ready.pr;
 };
-/** The pause a job takes when it needs the running app and there is no Toolkit (ADR 0010). */
-export const noToolkitReason = (id: string) =>
-  `This ticket needs Kitchen to drive the app; run \`kitchen toolkit build\` (about 3–15 min), then \`kitchen resume ${id}\`.`;
+/**
+ * The pause a job takes when it needs the running app and there is no Toolkit (ADR 0010). What it says is
+ * computed again when it is shown, from where the Toolkit stands (toolkit/approve.ts noToolkitWords).
+ */
+export const noToolkitReason = (_id: string) =>
+  "This ticket needs Kitchen to drive the app; run `kitchen toolkit build` (about 3–15 min), then approve it. The job wakes by itself.";
 const needsToolkit: Guard = (j, f) =>
   !f.noToolkit
     ? "the job has a Toolkit"
@@ -838,6 +859,7 @@ export const TABLE: readonly Row[] = [
       apply: (j, f) => {
         j.toolkitRef = f.toolkit?.sha ?? j.toolkitRef;
         j.smith.toolkitPr = f.toolkit?.pr ?? j.smith.toolkitPr;
+        if (f.toolkit?.sha) j.toolkitFrom = "pr"; // the smith's proven commit: kept until the job is done, whether a PR or an approval takes it in
         j.returnTo = null;
         j.gap = null;
       },
@@ -982,6 +1004,8 @@ export const TABLE: readonly Row[] = [
         if (f.wake?.base) j.base = f.wake.base;
         if (f.wake?.toolkitRef) {
           j.toolkitRef = f.wake.toolkitRef;
+          j.toolkitLost = undefined;
+          j.toolkitFrom = f.wake.toolkitFrom ?? "base";
           j.checksOnly = undefined;
         } else if (f.wake?.checksOnly) j.checksOnly = true;
       },
@@ -1058,6 +1082,27 @@ export const TABLE: readonly Row[] = [
     apply: (j, f) => {
       pause("backoff", f.adapter?.rateLimited ? "rate limited" : "auth failure")(j, f);
       j.attempts.backoff += 1;
+    },
+  },
+  {
+    id: "*>paused(no-toolkit)",
+    from: "*",
+    to: "paused",
+    when: "the job's Toolkit was dropped (its approval revoked) and it needs the app or is high risk: waits for one, unless the person chose checks only (ADR 0015)",
+    guard: all(
+      check(
+        (j) => isActive(j.stage),
+        (j) => `${j.stage} is not running`,
+      ),
+      check((_j, f) => !!f.toolkitDropped, "no dropped Toolkit"),
+      check(
+        (j, f) => !!f.toolkitDropped?.highRisk || (!!f.toolkitDropped?.needsApp.length && !j.checksOnly),
+        (j) => (j.checksOnly ? "the person chose checks and tests only" : "nothing it proves needs the app"),
+      ),
+    ),
+    apply: (j, f) => {
+      pauseNoToolkit(j, f);
+      j.toolkitLost = undefined;
     },
   },
   {

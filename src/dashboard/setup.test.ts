@@ -8,6 +8,7 @@ import { afterEach, beforeEach, test } from "vitest";
 import { answerSetup } from "../cli/toolkit-commands.ts";
 import type { Job } from "../engine/machine.ts";
 import { processStart } from "../lock.ts";
+import { noToolkitWords } from "../toolkit/approve.ts";
 import { questionOf, stateOf } from "./data.ts";
 import { setupView } from "./setup.ts";
 
@@ -95,10 +96,10 @@ test("answering with no questions waiting says so in the build's words", () => {
   assert.match(lines.join("\n"), /^toolkit build: no questions are waiting/);
 });
 
-test("a job paused no-toolkit needs you, with its reason; a job you paused stays paused", () => {
-  const reason = "This ticket needs Kitchen to drive the app; run `kitchen toolkit build` (about 3–15 min), then `kitchen resume 001-x`.";
-  const j = { stage: "paused", waitFor: "no-toolkit", pausedReason: reason } as Job;
+test("a job paused no-toolkit needs you, with what to do now (not the reason it stored); a job you paused stays paused", () => {
+  const j = { stage: "paused", waitFor: "no-toolkit", pausedReason: "an old stored reason: merge kitchen/setup" } as Job;
   assert.equal(stateOf(j), "you");
-  assert.equal(questionOf(j, repo), reason);
+  assert.equal(questionOf(j, repo, { state: "waiting", sha: "a".repeat(40) }), noToolkitWords({ state: "waiting", sha: "a".repeat(40) }));
+  assert.match(questionOf(j, repo, { state: "none" }) ?? "", /run `kitchen toolkit build`/);
   assert.equal(stateOf({ stage: "paused", waitFor: "backoff" } as Job), "paused");
 });

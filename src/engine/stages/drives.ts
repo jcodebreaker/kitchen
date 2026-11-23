@@ -27,7 +27,7 @@ import { contractBlock, testLayoutBlock, toolkitBlock } from "./context.ts";
 import { gateStillValid } from "./gate.ts";
 import { prompt } from "./prompts.ts";
 import { headers, named as namedHeader, runRole } from "./role.ts";
-import { described, FEATURES_DIR, featureDrives, hasToolkit } from "./toolkit-info.ts";
+import { described, FEATURES_DIR, featureDrives, hasToolkit, toolkitDirOf } from "./toolkit-info.ts";
 import type { StageHandler } from "./types.ts";
 
 type CheckLine = { file: string; drive: string; args: Record<string, string> };
@@ -39,7 +39,7 @@ const SAYS_NONE = /^`?(none|no|n\/?a|null|nil|-+|—|\(none\)|<.*>)`?(\s|$)/i;
 /** What doesn't resolve on the worktree, which changed feature files are refused, and which criteria use a new or changed drive. */
 async function assess(job: Job, criteria: Criterion[], tk: { primitives: string[]; features: string[] }): Promise<Assessment> {
   const named = namedDrives(criteria);
-  const f = featureDrives(job.worktree);
+  const f = featureDrives(job.worktree, toolkitDirOf(job));
   const changedFeatureFiles = (await changedFiles(job, job.base)).filter((p) => p.startsWith(`${FEATURES_DIR}/`) && p.endsWith(".md"));
   const refused: string[] = [];
   const gaps: string[] = [];

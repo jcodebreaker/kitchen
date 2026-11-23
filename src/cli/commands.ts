@@ -14,19 +14,19 @@ import { ensureJobToolkit } from "../engine/job-toolkit.ts";
 import { readRunLock, staleReason } from "../engine/lock.ts";
 import { feedbackTarget, isActive, type Job, roundsUsed, STAGES, type Stage } from "../engine/machine.ts";
 import { addMessage } from "../engine/messages.ts";
-import { needsToolkitToGoOn, unmergedSetup, wakeWithToolkit } from "../engine/no-toolkit.ts";
+import { needsToolkitToGoOn, wakeWithToolkit } from "../engine/no-toolkit.ts";
 import { moveJob, runKitchen } from "../engine/runner.ts";
 import { findingById, findingsOf } from "../engine/stages/context.ts";
 import { findJob, jobDirOf, kitchenDir, scanJobs, writeAtomic } from "../engine/store.ts";
 import { runView } from "../engine/views.ts";
 import { changedFiles, headOf } from "../engine/worktree.ts";
-import { mergeSetupHow } from "../init/build.ts";
 import { appendLedger, readLedger } from "../ledger/append.ts";
 import { formatMeasures, measures } from "../ledger/measures.ts";
 import { formatCounts, summarize } from "../ledger/report.ts";
 import { prove } from "../proof/prove.ts";
 import { needsReason } from "../retro/categories.ts";
 import { PromptSource } from "../sources/prompt.ts";
+import { APPROVE_HOW, noToolkitWords, toolkitLabel, toolkitState } from "../toolkit/approve.ts";
 import { queueLine } from "../toolkit/reproof.ts";
 import { acquireSlot, downSlot, listSlots, releaseSlot } from "../toolkit/slots.ts";
 
@@ -113,12 +113,14 @@ export function status(repo: string, out: Out, opts: { json?: boolean } = {}): n
   }
   const q = queueLine(repo);
   if (q) out(q);
+  const tk = toolkitState(repo);
+  out(`toolkit: ${toolkitLabel(tk)}${tk.sha ? ` (${tk.sha.slice(0, 12)})` : ""}${tk.state === "waiting" ? `: ${APPROVE_HOW}` : ""}`);
   const jobs = scanJobs(repo);
   if (!jobs.length) out("Nothing cooking.");
   for (const e of jobs) {
     out(e.job ? statusLine(e.job, jobDirOf(repo, e.id)) : `${e.id.padEnd(28)} corrupt(${e.corrupt})`);
     // What to do about a job waiting for a Toolkit (ADR 0010) is the next step, so it is shown in full.
-    if (e.job?.stage === "paused" && e.job.waitFor === "no-toolkit" && e.job.pausedReason) out(`  ${e.job.pausedReason}`);
+    if (e.job?.stage === "paused" && e.job.waitFor === "no-toolkit") out(`  ${noToolkitWords(tk)}`);
   }
   if (jobs.length) {
     const stages = jobs.map((e) => e.job?.stage);
@@ -141,22 +143,32 @@ async function human(repo: string, ref: string, to: Stage, facts: Parameters<typ
 /**
  * A job waiting for a Toolkit (ADR 0010): with one on the base now it takes it; without one it goes on
  * with checks and tests only, unless it can't (high risk, a bug whose reproduction drives the app) or a
- * proven Toolkit is only waiting to be merged.
+ * proven Toolkit is only waiting for the person's approval (ADR 0015).
  */
 async function resumeNoToolkit(repo: string, ref: string, job: Job, out: Out): Promise<number> {
   const w = await wakeWithToolkit(repo, loadConfig(repo), job);
   const from = job.pausedFrom as Stage;
-  if (w.toolkit) return human(repo, ref, from, { operator: "resume", wake: w.facts }, "resumed: the Toolkit is on the base now", out);
-  const cfg = loadConfig(repo);
-  if (await unmergedSetup(repo)) {
-    out(
-      `${job.id}  still waits: the Toolkit is on kitchen/setup but not on ${cfg.forge.base} yet. Review it, ${mergeSetupHow(cfg)}, then kitchen resume ${job.id}`,
+  if (w.toolkit)
+    return human(
+      repo,
+      ref,
+      from,
+      { operator: "resume", wake: w.facts },
+      `resumed: ${w.facts.base ? "the Toolkit is on the base now" : "the approved Toolkit"}`,
+      out,
     );
+  const tk = toolkitState(repo);
+  if (tk.state === "waiting") {
+    out(`${job.id}  still waits: a proven Toolkit (${tk.sha?.slice(0, 12)}) is waiting for you: ${APPROVE_HOW}. The job wakes by itself.`);
+    return 1;
+  }
+  if (tk.state === "building") {
+    out(`${job.id}  still waits: the Toolkit is being built (kitchen toolkit build --status); approve it when it is proven and the job wakes by itself.`);
     return 1;
   }
   const hard = needsToolkitToGoOn(jobDirOf(repo, job.id), job);
   if (hard) {
-    out(`${job.id}  can't go on without a Toolkit: ${hard}. Run kitchen toolkit build (about 3–15 min), ${mergeSetupHow(cfg)}, then kitchen resume ${job.id}`);
+    out(`${job.id}  can't go on without a Toolkit: ${hard}. Run kitchen toolkit build (about 3–15 min), then approve it; the job wakes by itself`);
     return 1;
   }
   out(`${job.id}  goes on without a Toolkit: proven by checks and tests only; criteria that need the app will say "not proven (no Toolkit)"`);

@@ -18,7 +18,10 @@ Run commands from the repo root. If `kitchen` is not on PATH, use
 |---|---|
 | set up Kitchen, first use | `kitchen init` (seconds; see Setup), then offer the Toolkit build |
 | "make a Toolkit", "let Kitchen drive the app", a job paused `no-toolkit` | `kitchen toolkit build --status`, then `kitchen toolkit build --detach` and `kitchen toolkit build --status --wait 90` (see The Toolkit build) |
-| "do X", "fix Y", "add Z" (a request for work) | `kitchen ticket "<their words, verbatim>"` then offer to start the queue |
+| "do X", "fix Y", "add Z" (a request for work) | `kitchen ticket "<the request>"` (see Tickets), then offer to start the queue |
+| "use the Toolkit", "approve it", a job waits for a proven Toolkit | ask (see Approving the Toolkit), then `kitchen toolkit approve` |
+| "stop using the Toolkit" | `kitchen toolkit revoke` |
+| "share the Toolkit with my team", "commit the Toolkit" | `kitchen toolkit commit` (it asks the user itself in a terminal; from here, ask first, then `kitchen toolkit commit --yes`) |
 | start, run, "go", work the queue | `kitchen run --detach` (see Running), then `kitchen status` |
 | what's happening, status, progress | `kitchen status` |
 | tell a running job something: "tell 005 to keep the diff small", "ask 003 what it is doing", "005: use the existing formatter" | `kitchen steer <id> "<their words>"` |
@@ -30,6 +33,23 @@ Run commands from the repo root. If `kitchen` is not on PATH, use
 | "show me the jobs", "open the dashboard" | `kitchen dashboard` as a background command (it serves until stopped), then give the user http://127.0.0.1:7357 |
 | is the Toolkit OK, prove the app still starts | `kitchen toolkit check` (one feature: `--feature <name>`) |
 | how is Kitchen doing, cost, time | `kitchen report` |
+
+## Tickets
+
+The ticket is the work the user wants done, in their words. Words addressed to
+you about what to do **after** filing it are not part of the work: strip them
+before calling `kitchen ticket`, and act on them yourself. For example:
+
+- "add a renew endpoint for loans. Then start the queue." → `kitchen ticket
+  "add a renew endpoint for loans."`, then `kitchen run --detach`.
+- "fix the date bug and run it" → `kitchen ticket "fix the date bug"`, then
+  `kitchen run --detach`.
+- "file: dark mode doesn't persist, and show me the status" → `kitchen ticket
+  "dark mode doesn't persist"`, then `kitchen status`.
+
+Only trailing instructions to you ("then start the queue", "and run it", "then
+show me the status", "and open the dashboard") come out; everything about the
+work itself stays, verbatim.
 
 ## Running
 
@@ -80,7 +100,8 @@ now?"). Build it only when the user says yes, or when a job is paused
 
 `kitchen toolkit build` has Kitchen's setup agent write the Toolkit (the
 commands that start and drive the app) on a branch, `kitchen/setup`, and
-proves it with `kitchen toolkit check`. It takes 3–15 minutes and starts its
+proves it with `kitchen toolkit check`. Jobs use it once the user approves it:
+nothing is merged into their branch, committed or pushed. It takes 3–15 minutes and starts its
 own agent, the app, maybe Docker containers and network calls, so, like a
 queue drain:
 
@@ -101,6 +122,8 @@ queue drain:
    it), and never one call that waits for the whole build. Keep polling until
    it ends, in this same turn: the build is what the user asked for. Relay a
    short progress line now and then, not every poll. It ends in one of:
+   - `toolkit build: done: proven, waiting for your approval …`: go to
+     Approving the Toolkit.
    - `toolkit build: done`: relay the last lines (the next steps).
    - `toolkit build: questions`: see Questions.
    - `toolkit build: failed …`: show its lines and stop. Don't retry in a
@@ -124,13 +147,28 @@ answer means "use the default"), then start `kitchen toolkit build --answers
 .kitchen/setup-answers.json --detach` the same way as step 1 and poll again.
 The build resumes where it stopped; every step it finished is kept.
 
-When it ends it prints the next steps: the user reviews and merges the
-`kitchen/setup` branch (jobs use the Toolkit on their base branch). A job
-paused `no-toolkit` then wakes by itself on the next `kitchen run`, or with
-`kitchen resume <id>`.
+### Approving the Toolkit
+
+"Set up Kitchen" and "build the Toolkit" end here. A proven Toolkit runs
+nothing for jobs until the user approves it. Ask with `AskUserQuestion`:
+
+- question: "Kitchen proved the Toolkit for this app. Use it to run your app for every job?"
+- options, in this order: "Use it (Recommended)" (Kitchen runs the app with
+  it for every job; nothing is merged or committed), "Not now" (jobs that need
+  the app keep waiting), "Let me review it first" (show `git log -p
+  <base>..kitchen/setup`, then ask again).
+
+On "Use it", run `kitchen toolkit approve` and relay its one line (it names
+the jobs it woke). Never run `git merge`, `git commit` or `git push` for the
+Toolkit yourself: approving is all a local run needs. If the user wants their
+team to have it too, `kitchen toolkit commit` makes one Kitchen commit of only
+the Toolkit files, after they confirm. A rebuilt or maintained Toolkit is a
+new version: it needs the same question again, and jobs keep the one approved
+before until then.
 
 **A job paused `no-toolkit`** needs the running app for one of its criteria.
-Tell the user so and offer the build. If they would rather not,
+If `kitchen status` says a proven Toolkit is waiting for approval, ask as
+above. Otherwise tell the user so and offer the build. If they would rather not,
 `kitchen resume <id>` goes on with checks and tests only: those criteria are
 then reported "not proven (no Toolkit)", never passed. A high-risk job can't go
 on without a Toolkit.
@@ -152,6 +190,6 @@ and `resume` runs that stage again: if the user just wants it to "wait", use
 
 - Relay Kitchen's lines as they are; don't paraphrase job ids or states.
 - Ticket text and messages are the user's words, quoted. Don't add instructions to them.
-- Never edit `.kitchen/jobs/`, `.kitchen/toolkit.proven`, `job.json` or
+- Never edit `.kitchen/jobs/`, Kitchen's records in `$KITCHEN_HOME`, `job.json` or
   evidence by hand: Kitchen owns them.
 - If a command fails, show its last line and stop; don't retry in a loop.

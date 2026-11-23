@@ -57,6 +57,23 @@ const readState = (id) => {
   }
 };
 
+/**
+ * The source's .env.kitchen, or this Toolkit's own (the repo it was committed with) when the source has none:
+ * Kitchen may run an approved Toolkit against a job worktree that doesn't hold its files.
+ */
+function envFileOf(src) {
+  const own = path.join(src, ".env.kitchen");
+  return fs.existsSync(own) ? own : path.join(TOOLKIT_DIR, "..", "..", ".env.kitchen");
+}
+
+/** Feature files: the source's, plus this Toolkit's own that the source lacks (same reason). */
+function featureFilesOf(src) {
+  const names = new Set();
+  for (const dir of [path.join(src, ".kitchen", "toolkit", "features"), path.join(TOOLKIT_DIR, "features")])
+    if (fs.existsSync(dir)) for (const f of fs.readdirSync(dir)) if (f.endsWith(".md") && f !== "README.md") names.add(f);
+  return [...names].sort().map((f) => `features/${f}`);
+}
+
 function srcOf() {
   const src = path.resolve(String(flags.src || path.resolve(TOOLKIT_DIR, "..", "..")));
   if (!fs.existsSync(src)) throw new Error(`--src ${src} does not exist`);
@@ -73,7 +90,7 @@ function context(id, state) {
     stateDir: id ? stateDir(id) : null,
     state: state ?? {},
     ports: state?.ports ?? [],
-    env: readEnvFile(path.join(src, ".env.kitchen")),
+    env: readEnvFile(envFileOf(src)),
     log,
     run,
     must,
@@ -205,15 +222,7 @@ const COMMANDS = {
 
   // Generated from app.mjs and the feature files in --src: never hand-kept.
   async describe() {
-    const src = srcOf();
-    const fdir = path.join(src, ".kitchen", "toolkit", "features");
-    const features = fs.existsSync(fdir)
-      ? fs
-          .readdirSync(fdir)
-          .filter((f) => f.endsWith(".md") && f !== "README.md")
-          .sort()
-          .map((f) => `features/${f}`)
-      : [];
+    const features = featureFilesOf(srcOf());
     const ctx = context(null, null);
     out({
       status: "ok",

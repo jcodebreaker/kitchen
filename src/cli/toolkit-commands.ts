@@ -12,7 +12,7 @@ import { writeAtomic } from "../engine/store.ts";
 import { forgeFor } from "../forge/forge.ts";
 import { type Ask, askFor, Halt } from "../init/ask.ts";
 import { serveSetupBridge } from "../init/bridge.ts";
-import { type Question, questionsFile, toolkitBuild } from "../init/build.ts";
+import { askApproval, type Question, questionsFile, toolkitBuild } from "../init/build.ts";
 import { installSkill, toolFor } from "../init/files.ts";
 import { StatusLine } from "../init/heartbeat.ts";
 import { type Agent, preflight, preflightLines } from "../init/preflight.ts";
@@ -23,10 +23,12 @@ import { ownerAlive } from "../lock.ts";
 
 const CLI = path.resolve(import.meta.dirname, "..", `cli${path.extname(import.meta.filename)}`);
 
+import { APPROVE_HOW, approveToolkit, commitToolkit, revokeToolkit, toolkitState } from "../toolkit/approve.ts";
 import { checkAtRef } from "../toolkit/check.ts";
 import { ensurePrepared, toolkitCheckout } from "../toolkit/checkout.ts";
 import { runToolkit } from "../toolkit/run.ts";
 import { acquireSlot, downSlot, listSlots, releaseSlot } from "../toolkit/slots.ts";
+import { untrustedNote } from "../toolkit/trust.ts";
 
 export type Flags = { flags: Record<string, string | true>; pos: string[] };
 
@@ -180,6 +182,10 @@ async function buildStatus(repo: string, flags: Record<string, string | true>, o
     cur = live();
   }
   const r = statusReport(cur.s, cur.alive, Date.now(), who);
+  // Done and proven, but no one approved it yet (ADR 0015): that is the next step, so the first line says it.
+  const tk = toolkitState(repo);
+  if (cur.s?.state === "done" && tk.state === "waiting")
+    r.lines[0] = `${who ?? "toolkit build"}: done: proven, waiting for your approval (${tk.sha?.slice(0, 12)}): ${APPROVE_HOW}`;
   for (const l of r.lines) out(l);
   return r.code;
 }
@@ -322,9 +328,32 @@ export async function w2(name: string, argv: string[]): Promise<number> {
     if (flags.status === true) return buildStatus(repo, flags, out);
     return runBuild(repo, flags, out);
   }
-  // toolkit check [--feature x] [--src dir] [--rev r] · toolkit up [--rev r] [--src dir] · toolkit down --id <id>
+  // toolkit approve [--sha s] · revoke · commit [--sha s] [--yes]: the person's say (ADR 0015)
+  if (name === "toolkit" && ["approve", "revoke", "commit"].includes(argv[0])) {
+    const { flags, pos } = parseFlags(argv.slice(1), ["repo", "sha"]);
+    const allowed = argv[0] === "revoke" ? ["repo"] : argv[0] === "approve" ? ["repo", "sha"] : ["repo", "sha", "yes"];
+    for (const k of Object.keys(flags)) if (!allowed.includes(k)) throw new Error(`kitchen toolkit ${argv[0]}: unknown flag --${k}`);
+    if (pos.length) throw new Error(`kitchen toolkit ${argv[0]}: unexpected ${pos[0]}`);
+    const repo = plainCheckout(path.resolve(str(flags.repo) ?? process.cwd())).workTree;
+    if (argv[0] === "approve") return approveToolkit(repo, { sha: str(flags.sha) }, out);
+    if (argv[0] === "revoke") return revokeToolkit(repo, out);
+    // Sharing commits to the person's branch: [y/N], Enter is no; --yes is their explicit yes.
+    const a = askFor({ out });
+    const ask =
+      flags.yes === true
+        ? async () => true
+        : a.canAnswer
+          ? async (q: string) => (await a.yesNo(q.replace(/\s*\[y\/N\]\s*$/, ""), { recommended: false })) ?? false
+          : undefined;
+    if (!ask) {
+      out("toolkit commit: it asks before committing; without a terminal, run it again with --yes");
+      return 1;
+    }
+    return commitToolkit(repo, { sha: str(flags.sha), confirm: ask, forge: forgeFor(repo, loadConfig(repo)) }, out);
+  }
+  // toolkit check [--feature x] [--src dir] [--rev r] · toolkit up [--rev r] [--src dir] · toolkit down --id <id> · maintain [--yes]
   const { flags, pos } = parseFlags(argv, ["repo", "feature", "src", "rev", "id"]);
-  for (const k of Object.keys(flags)) if (!["repo", "feature", "src", "rev", "id"].includes(k)) throw new Error(`kitchen toolkit: unknown flag --${k}`);
+  for (const k of Object.keys(flags)) if (!["repo", "feature", "src", "rev", "id", "yes"].includes(k)) throw new Error(`kitchen toolkit: unknown flag --${k}`);
   const repo = path.resolve(str(flags.repo) ?? process.cwd());
   if (pos[0] === "up") return toolkitUp(repo, { rev: str(flags.rev), src: str(flags.src) }, out);
   if (pos[0] === "down") {
@@ -338,11 +367,14 @@ export async function w2(name: string, argv: string[]): Promise<number> {
       forge: forgeFor(plainCheckout(repo).workTree, loadConfig(plainCheckout(repo).workTree)),
       print: out,
     });
+    // A changed Toolkit is a new sha: jobs keep the approved one until the person approves this (ADR 0015).
+    if (r.outcome === "changed" && r.commit && r.approvable)
+      await askApproval(plainCheckout(repo).workTree, r.commit, { ask: askFor({ yes: flags.yes === true, out }) }, out);
     return r.outcome === "blocked" ? 1 : 0;
   }
   if (pos[0] !== "check") {
     console.error(
-      "usage: kitchen toolkit build [--detach] [--status] [--answers <file>] [--verbose] | check [--feature <drive|feature>] [--src <worktree>] | up [--rev <ref>] [--src <dir>] | down --id <id> | maintain",
+      "usage: kitchen toolkit build [--detach] [--status] [--answers <file>] [--verbose] [--yes] | approve [--sha <sha>] | revoke | commit [--sha <sha>] [--yes] | check [--feature <drive|feature>] [--src <worktree>] [--rev <ref>] | up [--rev <ref>] [--src <dir>] | down --id <id> | maintain [--yes]",
     );
     return 2;
   }
@@ -360,8 +392,7 @@ export async function w2(name: string, argv: string[]): Promise<number> {
 async function toolkitUp(repo: string, o: { rev?: string; src?: string }, out: (l: string) => void): Promise<number> {
   repo = plainCheckout(repo).workTree;
   const co = await toolkitCheckout(repo, o.rev ?? "HEAD");
-  if (!co.merged)
-    out(`toolkit up: ${co.sha.slice(0, 12)} is not merged into the base: bin/dev runs ${co.sandboxed ? "under sandbox-exec" : "UNSANDBOXED"} (ADR 0008)`);
+  if (!co.trust) out(`toolkit up: ${untrustedNote(co.sha, co.sandboxed)}`);
   const src = path.resolve(o.src ?? co.dir);
   let slotId: string | null = null;
   // Ctrl-C from the first moment: a stop that comes during prepare or up still brings the slot down.

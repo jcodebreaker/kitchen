@@ -80,7 +80,7 @@ type ReviewJson = {
 /** Everything the engine says in the report, from the job's files and the ledger, never from the agent. */
 async function factsOf(repoDir: string, jobDir: string, job: Job, head: string, humanMustCheck: boolean): Promise<ReportFacts> {
   const contract = contractOf(jobDir);
-  const weak = contract && job.kind !== "bug" ? nonDiscriminating(jobDir, contract.criteria) : [];
+  const weak = contract && job.kind !== "bug" ? nonDiscriminating(jobDir, contract.criteria, job.toolkitRef) : [];
   const rs = rounds(jobDir);
   const vRound = [...rs].reverse().find((r) => lastVerdictFile(jobDir, r));
   const vText = vRound !== undefined ? fs.readFileSync(lastVerdictFile(jobDir, vRound) as string, "utf8") : "";

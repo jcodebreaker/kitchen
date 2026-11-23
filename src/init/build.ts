@@ -37,9 +37,6 @@ const ROLE = path.join(PKG, "roles", "setup.md");
 
 export const SETUP_BRANCH = "kitchen/setup";
 
-/** How the person gets the Toolkit onto the base jobs start from: locally a merge; with GitHub, the merge pushed (review M8). */
-export const mergeSetupHow = (cfg: Pick<Config, "forge">): string =>
-  cfg.forge.kind === "github" ? `merge ${SETUP_BRANCH} into ${cfg.forge.base} and push` : `git merge ${SETUP_BRANCH}`;
 const WT_ID = "_setup";
 const IDENTITY = { GIT_AUTHOR_NAME: "Kitchen", GIT_AUTHOR_EMAIL: "kitchen@localhost", GIT_COMMITTER_NAME: "Kitchen", GIT_COMMITTER_EMAIL: "kitchen@localhost" };
 /** Never committed from the setup worktree, whatever the repo's .gitignore says. */
@@ -605,11 +602,43 @@ export async function toolkitBuild(o: BuildOpts, out: BuildOut): Promise<number>
   out.phase(
     `Done in ${dur((Date.now() - t0) / 1000)}${cost ? ` · ${usd(cost)}` : ""} · ${existing ? `proven on ${check.sha.slice(0, 12)}` : `on branch ${SETUP_BRANCH}`}`,
   );
-  if (!existing) out.phase(`Next: review it (git log -p ${cfg.forge.base}..${SETUP_BRANCH}), then ${mergeSetupHow(cfg)}`);
-  const waiting = listJobs(repo).filter((j) => j.stage === "paused" && j.waitFor === "no-toolkit");
-  if (waiting.length)
-    out.phase(`${existing ? "Next" : "Then"}: kitchen resume ${waiting.map((j) => j.id).join(" · kitchen resume ")}  (waiting for the Toolkit)`);
+  if (existing) {
+    const waiting = listJobs(repo).filter((j) => j.stage === "paused" && j.waitFor === "no-toolkit");
+    if (waiting.length) out.phase(`Next: kitchen resume ${waiting.map((j) => j.id).join(" · kitchen resume ")}  (waiting for the Toolkit)`);
+    return 0;
+  }
+  out.beat?.(""); // the heartbeat steps aside for the question
+  await askApproval(repo, check.sha, o, out.phase, `review it any time: git log -p ${cfg.forge.base}..${SETUP_BRANCH}`);
   return 0;
+}
+
+/**
+ * The end of a build or maintain that proved a new sha (ADR 0015): ask the person whether jobs use it.
+ * The question is ADR 0011's: `[Y/n]`, Enter takes the recommended yes, `--yes` says it. Nobody to ask (no
+ * terminal, no --yes): it ends "proven, waiting for your approval".
+ */
+export async function askApproval(
+  repo: string,
+  sha: string,
+  o: { ask?: Ask },
+  say: (l: string) => void,
+  review?: string,
+): Promise<"approved" | "declined" | "waiting" | "already"> {
+  const { approveToolkit, APPROVE_HOW } = await import("../toolkit/approve.ts");
+  const { trustOf } = await import("../toolkit/trust.ts");
+  if (await trustOf(repo, sha)) return "already";
+  const yes = await (o.ask ?? noOneToAsk).yesNo("Use this Toolkit to run your app for every job?", { recommended: true });
+  if (yes === undefined) {
+    say(`Proven, waiting for your approval: ${APPROVE_HOW}${review ? `; ${review}` : ""}`);
+    return "waiting";
+  }
+  if (!yes) {
+    say(`Not approved: jobs don't use it. Later: ${APPROVE_HOW}`);
+    return "declined";
+  }
+  await approveToolkit(repo, { sha }, say);
+  say("Share it with your team when you want: kitchen toolkit commit");
+  return "approved";
 }
 
 async function tracked(git: Awaited<ReturnType<typeof openGit>>, file: string): Promise<boolean> {

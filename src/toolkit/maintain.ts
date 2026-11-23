@@ -13,6 +13,9 @@
 //      it isn't merged); up to 2 fix rounds;
 //   5. a passing check → one Toolkit PR of proven fixes through the forge (openPr);
 //      else blocked, no PR.
+// A repo whose base has no Toolkit but an approved one (ADR 0015) is maintained from the
+// approved sha instead: the fix branch starts there, and the fixed sha needs the person's
+// approval before jobs use it (`kitchen toolkit maintain` asks, like the build).
 // The outcome is recorded in .kitchen/maintain.json (the base sha it ran on) and the
 // ledger. `kitchen run` starts it by itself when the feature-mapped paths changed by
 // more than `maintain_churn_lines` since the last maintain (maintainDue).
@@ -21,7 +24,9 @@ import path from "node:path";
 import type { AgentAdapter, AgentRequest, AgentResult } from "../agents/adapter.ts";
 import { buildAgentEnv } from "../agents/env.ts";
 import { type Config, loadConfig, modelFor } from "../config.ts";
+import { toolkitAt } from "../engine/base.ts";
 import { linkedWorktree, openGit, plainCheckout } from "../engine/git.ts";
+import { approvedToolkit } from "../engine/job-toolkit.ts";
 import { adapterFor } from "../engine/runner.ts";
 import { pickMode, ROLES_DIR, roleFile } from "../engine/stages/prompts.ts";
 import { kitchenDir, writeAtomic } from "../engine/store.ts";
@@ -32,6 +37,7 @@ import { appendLedger } from "../ledger/append.ts";
 import { type CheckReport, checkAtRef, readProven } from "./check.ts";
 import { toolkitCheckout } from "./checkout.ts";
 import { type Feature, parseFeature, touched } from "./contract.ts";
+import { recordPassed } from "./trust.ts";
 
 export type MaintainFeature = { file: string; drift: boolean; summary: string; live: "ok" | "failed" | "not-checked" };
 export type MaintainState = {
@@ -43,6 +49,8 @@ export type MaintainState = {
   features: MaintainFeature[];
   branch?: string;
   commit?: string;
+  /** The commit needs the person's approval before jobs use it: the Toolkit came from an approval, not the base (ADR 0015). */
+  approvable?: boolean;
   pr?: number;
   fixes: number;
   usd: number;
@@ -151,6 +159,9 @@ export async function maintain(o: {
   const t0 = Date.now();
   const main = await openGit(plainCheckout(repo));
   const base = (await main.run(["rev-parse", "--verify", "HEAD^{commit}"])).stdout.trim();
+  // The Toolkit to maintain: the base's, or the approved one when the base has none (ADR 0015).
+  const approved = (await toolkitAt(repo, base)) ? null : await approvedToolkit(repo);
+  const tk = approved ?? base;
   const dir = workDir(repo, base);
   fs.mkdirSync(dir, { recursive: true });
   const agent = o.agent ?? (await adapterFor(repo, cfg));
@@ -228,7 +239,8 @@ export async function maintain(o: {
   };
 
   // 0. The base's Toolkit, in the engine-owned clean checkout.
-  const co = await toolkitCheckout(repo, base);
+  const co = await toolkitCheckout(repo, tk);
+  if (approved) say(`the base has no Toolkit: maintaining the one you approved, ${approved.slice(0, 12)}`);
   const { features, broken } = featuresAt(co.dir);
   say(
     `base ${base.slice(0, 12)}: ${features.length} feature file(s)${broken.length ? `, ${broken.length} unreadable (${broken.map((b) => b.file).join(", ")})` : ""}`,
@@ -269,7 +281,7 @@ export async function maintain(o: {
 
   // 2. Live pass: the full check of the base drives every feature.
   say("live pass: kitchen toolkit check on the base (every feature's check drives)");
-  const live = await checkAtRef(repo, { rev: base, print: (l) => o.print(`  ${l}`) });
+  const live = await checkAtRef(repo, { rev: tk, print: (l) => o.print(`  ${l}`) });
   const failedFeature = (f: Feature, r: CheckReport) => r.steps.some((s) => !s.ok && f.drives.some((d) => s.step.includes(d.name)));
   const feats = (r: CheckReport | null): MaintainFeature[] =>
     features.map((f) => ({
@@ -291,7 +303,7 @@ export async function maintain(o: {
   if (fs.existsSync(wt)) await main.run(["worktree", "remove", "--force", wt]).catch(() => fs.rmSync(wt, { recursive: true, force: true }));
   await main.run(["worktree", "prune"]);
   fs.mkdirSync(path.dirname(wt), { recursive: true });
-  await main.run(["worktree", "add", "--quiet", "-B", branch, wt, base]);
+  await main.run(["worktree", "add", "--quiet", "-B", branch, wt, tk]);
   const wtGit = linkedWorktree(repo, WT_ID, wt);
   const git = await openGit(wtGit);
   const maxFix = o.maxFix ?? 2;
@@ -354,7 +366,10 @@ export async function maintain(o: {
       // The engine's proof: the full check of that commit (unmerged: bin/dev runs sandboxed), the fixer's worktree as the source.
       const again = await checkAtRef(repo, { rev: commit, src: wt, print: (l) => o.print(`  ${l}`) });
       if (again.ok) {
-        const changed = (await main.run(["diff", "--name-only", base, commit])).stdout.split("\n").filter(Boolean);
+        // Its source was the fixer's worktree at exactly this commit: a passed full check of it, which approval asks for.
+        await recordPassed(repo, commit, "toolkit maintain");
+        if (approved) say(`the fixed Toolkit ${commit.slice(0, 12)} waits for your approval: kitchen toolkit approve --sha ${commit.slice(0, 12)}`);
+        const changed = (await main.run(["diff", "--name-only", tk, commit])).stdout.split("\n").filter(Boolean);
         const pr = await o.forge.openPr({
           key: `maintain/${base}`,
           branch,
@@ -376,7 +391,7 @@ export async function maintain(o: {
             text.trim(),
           ].join("\n"),
         });
-        return finish({ outcome: "changed", features: feats(live), fixes, branch, commit, pr });
+        return finish({ outcome: "changed", features: feats(live), fixes, branch, commit, pr, ...(approved ? { approvable: true } : {}) });
       }
       if (fixes >= maxFix)
         return finish({

@@ -29,7 +29,7 @@ import { contractOf, needsApp, nothingPolicy } from "../contract.ts";
 import { doctorOk, freshUp, resetUp } from "../instance.ts";
 import { once, roundDir, writeAtomic } from "../store.ts";
 import { commitWith, headOf } from "../worktree.ts";
-import { nonDiscriminating } from "./base-check.ts";
+import { baseCheckStale, nonDiscriminating } from "./base-check.ts";
 import { contractBlock } from "./context.ts";
 import { prompt } from "./prompts.ts";
 import { headers, named, runRole } from "./role.ts";
@@ -38,13 +38,14 @@ import type { StageHandler } from "./types.ts";
 
 export { citationProblem, citationsOf } from "../../checks/verdict.ts";
 
-type Progress = { head: string; round: number; moves: number; proofs: ProofRecord[] };
+/** `toolkitRef`: the Toolkit the proofs ran with; a different one now means they run again (ADR 0015 review M4). */
+type Progress = { head: string; round: number; moves: number; toolkitRef?: string; proofs: ProofRecord[] };
 const progressFile = (jobDir: string, round: number, moves: number) => path.join(roundDir(jobDir, round), `proofs-m${moves}.json`);
 
-function readProgress(f: string, head: string, round: number, moves: number, n: number): ProofRecord[] {
+function readProgress(f: string, head: string, round: number, moves: number, n: number, toolkitRef: string): ProofRecord[] {
   try {
     const p = JSON.parse(fs.readFileSync(f, "utf8")) as Progress;
-    if (p.head !== head || p.round !== round || p.moves !== moves) return [];
+    if (p.head !== head || p.round !== round || p.moves !== moves || (p.toolkitRef ?? "") !== toolkitRef) return [];
     // A record whose evidence is past the signed head (cut by repairManifest) is not trusted.
     return p.proofs.filter((r) => r.evidence.every((id) => Number(id.slice(1)) <= n));
   } catch {
@@ -78,8 +79,8 @@ export const verify: StageHandler = async (ctx) => {
   const head = await headOf(job);
   const moves = job.moves;
   const pf = progressFile(ctx.jobDir, job.round, moves);
-  const proofs = readProgress(pf, head, job.round, moves, job.manifestHead.n);
-  const save = () => writeAtomic(pf, `${JSON.stringify({ head, round: job.round, moves, proofs } satisfies Progress, null, 2)}\n`);
+  const proofs = readProgress(pf, head, job.round, moves, job.manifestHead.n, job.toolkitRef);
+  const save = () => writeAtomic(pf, `${JSON.stringify({ head, round: job.round, moves, toolkitRef: job.toolkitRef, proofs } satisfies Progress, null, 2)}\n`);
   const todo = contract.criteria.filter((c) => !proofs.some((p) => p.criterion === c.id));
   if (proofs.length) ctx.log(`proofs already decided before a restart, not run again: ${proofs.map((p) => `${p.criterion} ${p.result}`).join(", ")}`);
 
@@ -129,7 +130,9 @@ export const verify: StageHandler = async (ctx) => {
 
   // Step 2: the verifier judges the judged criteria, only once every mechanical proof passed.
   const judged = contract.criteria.filter((c) => isJudged(c.expect) && !proofs.some((p) => p.criterion === c.id && p.result === "NO-TOOLKIT"));
-  const weak = job.kind === "bug" ? [] : nonDiscriminating(ctx.jobDir, contract.criteria);
+  const weak = job.kind === "bug" ? [] : nonDiscriminating(ctx.jobDir, contract.criteria, job.toolkitRef);
+  const stale = job.kind === "bug" ? null : baseCheckStale(ctx.jobDir, job.toolkitRef);
+  if (stale) ctx.log(`non-discriminating comparison left out: ${stale}`);
   const mechanicalPass = proofs.every((p) => p.result === "PASS" || p.result === "NO-TOOLKIT");
   let judgedText: string | null = null;
   if (judged.length && mechanicalPass) {
@@ -191,7 +194,7 @@ export const verify: StageHandler = async (ctx) => {
     primitives: prims,
     nonDiscriminating: weak,
   });
-  writeAtomic(path.join(roundDir(ctx.jobDir, job.round), `verdict-m${moves}.md`), renderVerdict(v, head, job.round));
+  writeAtomic(path.join(roundDir(ctx.jobDir, job.round), `verdict-m${moves}.md`), renderVerdict(v, head, job.round, job.toolkitRef));
   ctx.log(
     `verdict ${v.verdict}: ${v.criteria.map((c) => `${c.id} ${c.result}`).join(", ")}${v.citationProblem ? ` (${v.citationProblem})` : ""}${v.nonDiscriminating.length ? `; non-discriminating (passed on the base too): ${v.nonDiscriminating.join(", ")}` : ""}`,
   );

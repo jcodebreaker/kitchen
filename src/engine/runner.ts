@@ -30,12 +30,13 @@ import { effectiveConcurrency, readProven } from "../toolkit/check.ts";
 import { maintain, maintainDue } from "../toolkit/maintain.ts";
 import { beforeNewWork } from "../toolkit/reproof.ts";
 import { acquireSlot, downSlot, listSlots, reclaimStaleSlots, releaseSlot } from "../toolkit/slots.ts";
+import { readApproval } from "../toolkit/trust.ts";
 import { takeTicket } from "./base.ts";
 import { honorControl, stopRequested } from "./control.ts";
 import { ensureJobToolkit } from "./job-toolkit.ts";
 import { acquireRunLock } from "./lock.ts";
 import { type Facts, isActive, type Job, move, pausedByYou, type Stage } from "./machine.ts";
-import { baseTipThrottled, wakeWithToolkit } from "./no-toolkit.ts";
+import { baseTipThrottled, toolkitDropped, wakeWithToolkit } from "./no-toolkit.ts";
 import { HANDLERS } from "./stages/index.ts";
 import { hasToolkit } from "./stages/toolkit-info.ts";
 import { LockLost, type Proposal, RoleFailure, SkillMissing, type StageContext } from "./stages/types.ts";
@@ -290,9 +291,9 @@ async function checkWaits(repo: string, d: Deps, print: (l: string) => void, wan
         const waiting = !!job.until && Date.now() < Date.parse(job.until);
         cleared = ci !== "pending" && (!waiting || ci === "pass" || ci === "fail");
       } else if (job.waitFor === "toolkit-ticket") cleared = !!job.toolkitTicketRef && (await d.forge.ticketClosed(job.toolkitTicketRef));
-      // The Toolkit reached the base (kitchen/setup merged): the job takes it and goes on (no-toolkit.ts).
-      else if (job.waitFor === "no-toolkit" && tip) {
-        const w = await wakeWithToolkit(repo, d.config, job, tip).catch((e) => {
+      // The Toolkit reached the base, or the person approved one (a local file, cheap to read each pass): the job takes it and goes on (no-toolkit.ts).
+      else if (job.waitFor === "no-toolkit" && (tip || readApproval(repo))) {
+        const w = await wakeWithToolkit(repo, d.config, job, tip ?? "").catch((e) => {
           print(`${job.id}  no-toolkit: ${(e as Error).message}`);
           return { toolkit: false } as const;
         });
@@ -416,6 +417,23 @@ async function step(repo: string, start: Job, d: Deps, print: (l: string) => voi
     job = await ensureJobToolkit(repo, job, log);
   } catch (e) {
     log(`Toolkit checkout at ${job.toolkitRef.slice(0, 12)} failed: ${(e as Error).message}`);
+  }
+  // Its Toolkit was dropped (the approval revoked, here or by `kitchen drive`): a job that needs the app waits for one,
+  // never finishing on what's left (review H3).
+  if (job.toolkitLost) {
+    const dropped = toolkitDropped(jobDir, job);
+    if (dropped) {
+      await moveJob(repo, job, { to: "paused", facts: { toolkitDropped: dropped }, note: "its Toolkit was revoked: waits for one" }, print);
+      await updateJob(repo, job.id, (j) => {
+        if (j.running?.pid === me.pid) j.running = null;
+        return j;
+      });
+      return;
+    }
+    job = await updateJob(repo, job.id, (j) => {
+      j.toolkitLost = undefined;
+      return j;
+    });
   }
   // Also when job.json still names a slot: a runner killed mid-stage leaves it there while its
   // registry entry was reclaimed at start-up, and this runner must own the slot to free it on exit.

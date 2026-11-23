@@ -9,6 +9,7 @@ import { type InitState, type Question, questionsFile, readInitState } from "../
 import { readQuickRecord } from "../init/quick.ts";
 import { readStatus } from "../init/status.ts";
 import { ownerAlive } from "../lock.ts";
+import { type ToolkitState, toolkitState } from "../toolkit/approve.ts";
 import { activityOf, claudeTranscript, type Ev } from "./activity.ts";
 
 /** Setup's steps as the track shows them, each the init steps it covers. */
@@ -35,6 +36,10 @@ export type SetupView = {
   usd: number;
   secs: number;
   evs: Ev[];
+  /** Where the built Toolkit stands (ADR 0015): `waiting` is proven and waits for the person's approval. */
+  toolkit: ToolkitState["state"];
+  /** The sha waiting for approval, or the approved one. */
+  sha: string | null;
 };
 
 export function setupView(repo: string, now = Date.now()): SetupView {
@@ -76,7 +81,10 @@ export function setupView(repo: string, now = Date.now()): SetupView {
   const t = session ? claudeTranscript(session) : undefined;
   const wt = st?.steps.worktree ? path.join(repo, st.steps.worktree.path) : "";
   const start = s?.startedAt ?? st?.startedAt ?? null;
+  const tk = toolkitState(repo);
   return {
+    toolkit: tk.state,
+    sha: tk.sha ?? null,
     state,
     steps,
     idx,

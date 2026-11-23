@@ -102,9 +102,25 @@ export const ready: StageHandler = async (ctx) => {
   const pushed = ctx.forge.kind === "local" || !!pub.value?.pushed;
   if (pr !== job.pr) ctx.log(`PR ${pr}`);
   if (m.merged || job.base !== tip) {
-    const toolkitRef = (await toolkitAt(ctx.repo, tip)) ? tip : job.toolkitRef;
+    const onBase = await toolkitAt(ctx.repo, tip);
+    const toolkitRef = onBase ? tip : job.toolkitRef;
     ctx.log(`synced with the base ${tip.slice(0, 12)} → ${head.slice(0, 12)}; toolkitRef ${toolkitRef.slice(0, 12)}: Gate, drives and Verify run again`);
-    return { to: "gate", facts: { ready: { ...none, gatePass: false, baseMoved: true, toolkitPr, newBase: tip, toolkitRef, pushed, pr } } };
+    return {
+      to: "gate",
+      facts: {
+        ready: {
+          ...none,
+          gatePass: false,
+          baseMoved: true,
+          toolkitPr,
+          newBase: tip,
+          toolkitRef,
+          ...(onBase ? { toolkitFrom: "base" as const } : {}),
+          pushed,
+          pr,
+        },
+      },
+    };
   }
   const now = ctx.now();
   const memo = readCiMemo(ctx.jobDir, head, now);

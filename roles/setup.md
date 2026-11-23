@@ -87,6 +87,11 @@ this session, including the survey) is not read again.
 - **Build** what is missing: start the database (`ctx.container`), apply the
   migrations and seed, write a mock, a seed script. Keep it small and
   reviewable; the engine commits it on `kitchen/setup` for a human to review.
+  Prefer keeping what you build inside `.kitchen/toolkit/` (a compose file, a
+  seed script) and reaching it through `ctx.toolkitDir`: the person may only
+  approve the Toolkit, never commit it, and then jobs run it against a source
+  tree that holds none of your files (only `.kitchen/toolkit/` and
+  `.env.kitchen` travel with it).
 
 ## 3. The contract (what `kitchen toolkit check` holds you to)
 

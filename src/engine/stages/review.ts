@@ -150,7 +150,7 @@ export const review: StageHandler = async (ctx) => {
   const seeds = seedTouched(diff, ctx.config);
   // Criteria that already held on the base (before the change, or with only the new drives): their PASS proves nothing.
   const contract = contractOf(ctx.jobDir);
-  const weak = contract && job.kind !== "bug" ? nonDiscriminating(ctx.jobDir, contract.criteria) : [];
+  const weak = contract && job.kind !== "bug" ? nonDiscriminating(ctx.jobDir, contract.criteria, job.toolkitRef) : [];
   let entries: Entry[] = [];
   try {
     entries = verifyManifest(evidenceDir(ctx.jobDir), job.manifestHead, sealOf(job));
@@ -427,7 +427,7 @@ export const review: StageHandler = async (ctx) => {
     if (blocking.length) return { to: "build", facts: { review: { pass: false, blocking: summary, ...facts } } };
     // The diff can raise a job to high risk after spec; a high-risk job never reaches ready without a Toolkit (ADR 0010).
     if (!hasToolkit(job) && effectiveRisk(job) === "high") {
-      ctx.log("no Toolkit, and the job is high risk: waiting for kitchen toolkit build before ready");
+      ctx.log("no Toolkit, and the job is high risk: waiting for a Toolkit before ready (build it, then approve it)");
       return { to: "paused", facts: { review: { pass: true, ...facts }, noToolkit: { needsApp: [], highRisk: true } } };
     }
     return { to: "ready", facts: { review: { pass: true, ...facts } } };

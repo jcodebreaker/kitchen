@@ -346,14 +346,14 @@ const local = await toolkitCheckout(gr.dir, tsha);
 local.release();
 check(
   "M3: a Toolkit sha merged into the local HEAD but not the remote base stays unmerged (sandboxed)",
-  !local.merged && (local.sandboxed || process.platform !== "darwin") && !(await mergedIntoBase(gr.dir, tsha)),
-  `merged=${local.merged} sandboxed=${local.sandboxed}`,
+  !local.trust && (local.sandboxed || process.platform !== "darwin") && !(await mergedIntoBase(gr.dir, tsha)),
+  `trust=${local.trust} sandboxed=${local.sandboxed}`,
 );
 git(gr.dir, "push", "-q", gbare, "main:main");
 await baseTip(gr.dir, gcfg);
 const remote = await toolkitCheckout(gr.dir, tsha);
 remote.release();
-check("M3: once the remote base has it (fetched), it is merged and runs unsandboxed", remote.merged && !remote.sandboxed);
+check("M3: once the remote base has it (fetched), it is merged and runs unsandboxed", remote.trust === "base" && !remote.sandboxed);
 console.log(`\n  gh calls recorded: ${shimCalls(shim).length} (${[...new Set(shimCalls(shim).map((c) => c.argv.slice(0, 2).join(" ")))].join(", ")})`);
 finish("w3b forge");
 

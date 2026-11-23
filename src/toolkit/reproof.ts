@@ -17,6 +17,7 @@ import { appendLedger } from "../ledger/append.ts";
 import { type CheckReport, checkAtRef, type Proven, provenFile, readProven, runToolkitCheck } from "./check.ts";
 import { gcCheckouts, isPrepared, referencedShas, short, toolkitCheckout } from "./checkout.ts";
 import { toolkitPaths, touched } from "./contract.ts";
+import { readApproval } from "./trust.ts";
 
 export type QueueState = { paused: true; base: string; ticket: string; reason: string; at: string };
 export const queueFile = (repo: string) => path.join(kitchenDir(repo), "queue.json");
@@ -74,7 +75,16 @@ export async function beforeNewWork(o: { repo: string; forge: Forge; print: (l: 
       return true;
     }
     if (!(await hasToolkitAt(repo, base))) {
-      say(`the base (${short(base)}) has no Toolkit yet${proven.branch ? ` (proven on ${proven.branch}: merge it)` : ""}; not re-checking`);
+      const approved = readApproval(repo)?.sha;
+      say(
+        `the base (${short(base)}) has no Toolkit${
+          approved
+            ? `; jobs use the one you approved (${short(approved)})`
+            : proven.branch
+              ? ` (proven on ${proven.branch}: jobs use it once you approve it, kitchen toolkit approve)`
+              : ""
+        }; not re-checking`,
+      );
       return true;
     }
     const q = readQueue(repo);
@@ -99,7 +109,7 @@ export async function beforeNewWork(o: { repo: string; forge: Forge; print: (l: 
     else {
       const co = await toolkitCheckout(repo, base);
       try {
-        r = await runToolkitCheck({ repo, toolkitBin: co.bin, src: co.dir, smoke: true, prepare: !isPrepared(repo, co.sha, co.dir), print: prefixed });
+        r = await runToolkitCheck({ repo, toolkitBin: co.bin, src: co.dir, smoke: true, prepare: !isPrepared(co, co.dir), print: prefixed });
       } finally {
         co.release();
       }

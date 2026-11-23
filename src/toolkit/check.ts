@@ -32,6 +32,7 @@ import {
 } from "./contract.ts";
 import { runToolkit, type ToolkitCall } from "./run.ts";
 import { acquireSlot, releaseSlot, type Slot } from "./slots.ts";
+import { recordPassed, trustFile, untrustedNote } from "./trust.ts";
 
 /** `known`: a drive that failed but was tolerated (`CheckOpts.tolerate`: it fails on the base too). */
 export type CheckStep = { step: string; ok: boolean; secs: number; detail?: string; tail?: string; known?: boolean };
@@ -444,7 +445,8 @@ export type Proven = {
 /** Pure: how many jobs may run at once. A Toolkit proven parallel:false runs one, whatever kitchen.yaml says. */
 export const effectiveConcurrency = (configured: number, proven: Pick<Proven, "parallel"> | null) => (proven && !proven.parallel ? 1 : configured);
 
-export const provenFile = (repo: string) => path.join(kitchenDir(repo), "toolkit.proven");
+/** In $KITCHEN_HOME with the other trust records (trust.ts), out of an untrusted bin/dev's reach. */
+export const provenFile = (repo: string) => trustFile(repo, "toolkit.proven");
 
 export function readProven(repo: string): Proven | null {
   try {
@@ -467,12 +469,8 @@ export async function checkAtRef(
   repo = plainCheckout(repo).workTree;
   const co = await toolkitCheckout(repo, o.rev ?? "HEAD");
   o.print?.(`toolkit check: Toolkit ${co.sha.slice(0, 12)} (${path.relative(repo, co.dir)}), source ${o.src ? path.resolve(o.src) : "the same checkout"}`);
-  if (!co.merged)
-    o.print?.(
-      `toolkit check: ${co.sha.slice(0, 12)} is not merged into the base: bin/dev runs ${
-        co.sandboxed ? "under sandbox-exec (ADR 0008)" : "UNSANDBOXED: no OS sandbox on this platform (ADR 0008)"
-      }`,
-    );
+  if (!co.trust) o.print?.(`toolkit check: ${untrustedNote(co.sha, co.sandboxed)}`);
+  else if (co.trust === "approved") o.print?.(`toolkit check: ${co.sha.slice(0, 12)} is the Toolkit you approved: bin/dev runs unsandboxed`);
   const src = o.src ?? co.dir;
   let r: CheckReport;
   try {
@@ -480,8 +478,10 @@ export async function checkAtRef(
   } finally {
     co.release();
   }
-  if (r.prepareSecs !== undefined && r.steps.some((s) => s.step === "prepare" && s.ok)) markPrepared(repo, co.sha, src, r.prepareSecs);
+  if (r.prepareSecs !== undefined && r.steps.some((s) => s.step === "prepare" && s.ok)) markPrepared(co, src, r.prepareSecs);
   if (r.ok && !o.src && !o.feature) {
+    // A check of a branch that isn't the base (kitchen/setup) offers that sha for approval (ADR 0015).
+    await recordPassed(repo, co.sha, o.branch);
     const proven: Proven = {
       sha: co.sha,
       at: new Date().toISOString(),
@@ -492,7 +492,7 @@ export async function checkAtRef(
       secs: r.secs,
     };
     writeAtomic(provenFile(repo), `${JSON.stringify(proven, null, 2)}\n`);
-    o.print?.(`toolkit check: proven ${co.sha.slice(0, 12)} → ${path.relative(repo, provenFile(repo))}`);
+    o.print?.(`toolkit check: proven ${co.sha.slice(0, 12)} → ${provenFile(repo)}`);
   }
   return { ...r, sha: co.sha };
 }

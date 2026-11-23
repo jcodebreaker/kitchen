@@ -128,10 +128,10 @@ fs.writeFileSync(answers, JSON.stringify({ answers: { q1: "alice" } }));
 const init = kitchen(pr, ["toolkit", "build", "--verbose", "--answers", answers], { timeoutMs: 300_000 });
 check(
   "kitchen toolkit build: its check of the kitchen/setup commit runs bin/dev under sandbox-exec, and passes",
-  init.code === 0 && /is not merged into the base: bin\/dev runs under sandbox-exec/.test(init.out) && /toolkit check: PASS/.test(init.out),
+  init.code === 0 && /is neither on the base nor approved: bin\/dev runs under sandbox-exec/.test(init.out) && /toolkit check: PASS/.test(init.out),
   init.out
     .split("\n")
-    .filter((l) => /not merged|PASS|FAIL|done|refus/.test(l))
+    .filter((l) => /not approved|nor approved|PASS|FAIL|done|refus/.test(l))
     .join(" | "),
 );
 check("kitchen toolkit build: the planted bin/dev read nothing (no marker)", leaked().length === 0, leaked().join("; "));
@@ -147,7 +147,7 @@ git(pr.dir, "merge", "-q", "--ff-only", "kitchen/setup");
 const merged = kitchen(pr, ["toolkit", "check"], { timeoutMs: 300_000 });
 check(
   "after the merge the same Toolkit runs unsandboxed (by design: a human took it in), and the marker shows it could read",
-  merged.code === 0 && !/not merged/.test(merged.out) && leaked().some((l) => /engine\.key/.test(l)),
+  merged.code === 0 && !/nor approved/.test(merged.out) && leaked().some((l) => /engine\.key/.test(l)),
   `exit ${merged.code}; ${leaked().length} marker lines, e.g. ${leaked()[0] ?? "none"}`,
 );
 

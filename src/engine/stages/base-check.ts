@@ -31,7 +31,7 @@ import type { Job } from "../machine.ts";
 import { writeAtomic } from "../store.ts";
 import { changedFiles, headOf } from "../worktree.ts";
 import { jobRequirements } from "./context.ts";
-import { FEATURES_DIR, featureDrives, hasToolkit } from "./toolkit-info.ts";
+import { FEATURES_DIR, featureDrives, hasToolkit, toolkitDirOf } from "./toolkit-info.ts";
 import type { StageContext } from "./types.ts";
 
 export type BaseResult = { criterion: string; status: string; why?: string; evidence: string[]; clauses?: ClauseResult[] };
@@ -44,7 +44,9 @@ export type BaseCheck = {
   /** Criteria whose expect already held on the base. */
   passing: string[];
   /** After the drives stage: the criteria that needed new drives or tests, run on the base plus those files only. */
-  afterDrives?: { head: string; files: string[]; results: BaseResult[]; passing: string[] };
+  afterDrives?: { head: string; files: string[]; results: BaseResult[]; passing: string[]; toolkitRef?: string };
+  /** The Toolkit sha the base proofs ran with ("" none): a comparison with Verify only holds on the same one (review L4). */
+  toolkitRef?: string;
 };
 
 /** The contract's regression guards, from the `(unchanged)` requirements (intake.md's, with the spec's re-marks). */
@@ -124,15 +126,28 @@ export function readBaseCheck(jobDir: string): BaseCheck | null {
   }
 }
 
-/** Criteria flagged non-discriminating for this contract (the last base check's passes), or []. */
-export function nonDiscriminating(jobDir: string, criteria: Criterion[]): string[] {
+/**
+ * Criteria flagged non-discriminating for this contract (the last base check's passes), or []. `toolkitRef`: the
+ * Toolkit Verify proves with; a base check run with another one says nothing about it, so it isn't counted (review L4).
+ */
+export function nonDiscriminating(jobDir: string, criteria: Criterion[], toolkitRef?: string): string[] {
   const b = readBaseCheck(jobDir);
-  return b && b.key === keyOf(criteria) ? [...new Set([...b.passing, ...(b.afterDrives?.passing ?? [])])] : [];
+  if (!b || b.key !== keyOf(criteria)) return [];
+  const same = (t: string | undefined) => toolkitRef === undefined || (t ?? "") === toolkitRef;
+  return [...new Set([...(same(b.toolkitRef) ? b.passing : []), ...(b.afterDrives && same(b.afterDrives.toolkitRef) ? b.afterDrives.passing : [])])];
+}
+
+/** Why the recorded base check can't be compared with proofs run with `toolkitRef`, or null. */
+export function baseCheckStale(jobDir: string, toolkitRef: string): string | null {
+  const b = readBaseCheck(jobDir);
+  if (!b) return null;
+  const t = b.afterDrives?.toolkitRef ?? b.toolkitRef ?? "";
+  return t === toolkitRef ? null : `the base check ran with Toolkit ${t.slice(0, 12) || "none"}, Verify with ${toolkitRef.slice(0, 12) || "none"}`;
 }
 
 /** Criteria whose proof needs a feature drive or a test file `base` doesn't have. Pure but for reading `base`. */
-function needsNew(criteria: Criterion[], base: string): Criterion[] {
-  const have = featureDrives(base).drives;
+function needsNew(criteria: Criterion[], base: string, toolkitDir: string | null): Criterion[] {
+  const have = featureDrives(base, toolkitDir).drives;
   return criteria.filter(
     (c) => !isJudged(c.expect) && ([...namedDrives([c]).keys()].some((d) => !have[d]) || testFilesOf(c).some((t) => !fs.existsSync(path.join(base, t)))),
   );
@@ -174,9 +189,18 @@ async function onBaseCheckout<T>(ctx: StageContext, job: Job, fn: (dir: string, 
 export async function runBaseCheckAfterDrives(ctx: StageContext, job: Job, criteria: Criterion[], head: string): Promise<BaseCheck["afterDrives"] | null> {
   if (!hasToolkit(job) || !job.worktree || job.kind === "bug") return null;
   const key = keyOf(criteria);
+  // The first base check again when it ran with another Toolkit than the one these proofs use (review L4).
+  const first = readBaseCheck(ctx.jobDir);
+  if (first && first.key === key && (first.toolkitRef ?? "") !== (job.toolkitRef ?? "")) {
+    ctx.log(`the base check ran with Toolkit ${(first.toolkitRef ?? "").slice(0, 12) || "none"}: running it again with ${job.toolkitRef.slice(0, 12)}`);
+    await runBaseCheck(ctx, job, criteria);
+  }
   const prev = readBaseCheck(ctx.jobDir);
-  const b: BaseCheck = prev && prev.key === key ? prev : { head: job.base, key, results: [], skipped: [], passing: [] };
-  if (b.afterDrives?.head === head) return b.afterDrives;
+  const b: BaseCheck =
+    prev && prev.key === key && (prev.toolkitRef ?? "") === (job.toolkitRef ?? "")
+      ? prev
+      : { head: job.base, key, results: [], skipped: [], passing: [], toolkitRef: job.toolkitRef };
+  if (b.afterDrives?.head === head && (b.afterDrives.toolkitRef ?? "") === (job.toolkitRef ?? "")) return b.afterDrives;
   const files = [
     ...(await changedFiles(job, job.base, head)).filter((f) => f.startsWith(`${FEATURES_DIR}/`) && f.endsWith(".md")),
     ...criteria.flatMap(testFilesOf),
@@ -184,7 +208,7 @@ export async function runBaseCheckAfterDrives(ctx: StageContext, job: Job, crite
   const out: NonNullable<BaseCheck["afterDrives"]> = { head, files, results: [], passing: [] };
   const guards = guardsOf(ctx.jobDir, criteria);
   await onBaseCheckout(ctx, job, async (dir, source) => {
-    const todo = needsNew(criteria, dir); // before the new files are copied in
+    const todo = needsNew(criteria, dir, toolkitDirOf(job)); // before the new files are copied in
     for (const f of files) {
       fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true });
       fs.copyFileSync(path.join(job.worktree, f), path.join(dir, f));
@@ -199,7 +223,7 @@ export async function runBaseCheckAfterDrives(ctx: StageContext, job: Job, crite
       if (r.status === "pass" && !guards.includes(c.id)) out.passing.push(c.id);
     }
   });
-  b.afterDrives = out;
+  b.afterDrives = { ...out, toolkitRef: job.toolkitRef };
   writeAtomic(baseCheckFile(ctx.jobDir), `${JSON.stringify(b, null, 2)}\n`);
   ctx.log(
     `base check after drives (base + ${files.join(", ") || "no new files"}): ${out.results.map((r) => `${r.criterion} ${r.status}`).join(", ") || "nothing needed new drives"}${out.passing.length ? `; NON-DISCRIMINATING: ${out.passing.join(", ")}` : ""}`,
@@ -232,12 +256,12 @@ export async function runBaseCheck(ctx: StageContext, job: Job, criteria: Criter
   if (!job.worktree) return null;
   const key = keyOf(criteria);
   const prev = readBaseCheck(ctx.jobDir);
-  if (prev && prev.key === key && prev.head === job.base) return prev;
+  if (prev && prev.key === key && prev.head === job.base && (prev.toolkitRef ?? "") === (job.toolkitRef ?? "")) return prev;
   const toolkit = hasToolkit(job);
-  const out: BaseCheck = { head: job.base, key, results: [], skipped: [], passing: [] };
+  const out: BaseCheck = { head: job.base, key, results: [], skipped: [], passing: [], toolkitRef: job.toolkitRef };
   const guards = guardsOf(ctx.jobDir, criteria);
   const run = async (dir: string, source: { workTree: string; gitDir: string } | null) => {
-    const have = toolkit ? featureDrives(dir).drives : {};
+    const have = toolkit ? featureDrives(dir, toolkitDirOf(job)).drives : {};
     const todo: Criterion[] = [];
     for (const c of criteria) {
       if (isJudged(c.expect)) continue;

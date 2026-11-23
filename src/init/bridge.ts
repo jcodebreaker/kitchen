@@ -19,8 +19,8 @@ import { kitchenHome } from "../home.ts";
 import { RESERVED_ARGS } from "../proof/drive-format.ts";
 import { PREPARE_STALL_MS, runToolkitCheck } from "../toolkit/check.ts";
 import { runToolkit } from "../toolkit/run.ts";
-import { sandboxedBin } from "../toolkit/sandbox.ts";
 import { acquireSlot, releaseSlot, type Slot } from "../toolkit/slots.ts";
+import { binFor } from "../toolkit/trust.ts";
 
 const CLI = path.resolve(import.meta.dirname, "..", `cli${path.extname(import.meta.filename)}`);
 const PROTOCOL = "2025-06-18";
@@ -81,8 +81,8 @@ export function makeSetupBridge(o: SetupBridgeOpts) {
   const scratch = path.join(repo, ".kitchen", "init", "bridge");
   let slot: Slot | null = null;
   let up = false;
-  /** bin/dev as the bridge runs it: wrapped in the sandbox where the OS has one. */
-  const exe = () => sandboxedBin(bin).bin;
+  /** bin/dev as the bridge runs it: uncommitted, so no sha can be on the base or approved (trust null): sandboxed where the OS has one. */
+  const exe = () => binFor(bin, null).bin;
   let n = 0;
   let chain: Promise<unknown> = Promise.resolve();
   const serial = <T>(fn: () => Promise<T>): Promise<T> => {
@@ -199,7 +199,7 @@ export async function serveSetupBridge(o: SetupBridgeOpts): Promise<void> {
   const b = makeSetupBridge(o);
   console.error(
     `[setup-mcp] worktree ${o.worktree} pid ${process.pid}; bin/dev ${
-      sandboxedBin(path.join(o.worktree, ".kitchen", "toolkit", "bin", "dev")).sandboxed
+      binFor(path.join(o.worktree, ".kitchen", "toolkit", "bin", "dev"), null).sandboxed
         ? "runs under sandbox-exec (ADR 0008)"
         : "runs UNSANDBOXED: no OS sandbox on this platform (ADR 0008)"
     }`,
