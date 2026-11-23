@@ -5,6 +5,12 @@
 // to a `kitchen` on PATH. The manifests carry the same version. All of it is generated from
 // package.json and the repo skill, so nothing drifts: `npm run plugin:sync` rewrites it and a test
 // fails when it is stale.
+//
+// npx runs whatever the registry serves under that name. So the skill runs it only when the registry's
+// `dist.integrity` for that version equals the hash pinned here, at release, from the tarball the
+// maintainer published (`npm run plugin:sync -- --pin`, kept in plugins/kitchen/pin.json). With no pin
+// (not published yet) the skill never runs npx: it uses `kitchen` on PATH or says how to install it.
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -16,36 +22,71 @@ const RUN_END = "<!-- kitchen-run:end -->\n";
 const DESCRIPTION = "Kitchen turns tickets into pull requests proven by driving your real app, with Claude Code or Codex doing the judgment.";
 const KEYWORDS = ["kitchen", "pull-requests", "verification", "agents", "software-factory"];
 
-/** Pure: how the plugin runs Kitchen, pinned to `version`. */
-export function runBlock(version: string): string {
-  return `This skill comes from the Kitchen plugin, pinned to devkitchen ${version}.
+/** The published tarball's integrity the skill trusts, written at release (null: nothing published and pinned yet). */
+export type Pin = { package: "devkitchen"; version: string; integrity: string | null };
+export const PIN_FILE = path.join("plugins", "kitchen", "pin.json");
+
+/** Pure: how the plugin runs Kitchen: npx only for the pinned tarball, else `kitchen` on PATH. */
+export function runBlock(version: string, integrity: string | null): string {
+  const install = `3. If neither works, tell the user Kitchen isn't installed and how to get it:
+   \`npm install -g devkitchen@${version}\`. Don't install it yourself unless
+   they say so.`;
+  if (!integrity)
+    return `This skill comes from the Kitchen plugin, for devkitchen ${version}, which this plugin has not pinned yet:
+never run it through \`npx\`. Find how to run Kitchen once per session, from the repo root:
+
+1. \`kitchen --version\`: if it prints a version, use \`kitchen\` from PATH, and say
+   which version it is if it isn't ${version}.
+2. (Nothing else to try: there is no pinned package to fetch.)
+${install}
+
+Run every command below from the repo root. (This plugin's skill is \`/kitchen:kitchen\` in Claude Code and
+\`kitchen:kitchen\` in Codex: plugin skills are namespaced; where this page says \`/kitchen\`, that is this skill.)
+`;
+  return `This skill comes from the Kitchen plugin, pinned to devkitchen ${version} and to one tarball:
+\`${integrity}\`.
 Find how to run Kitchen once per session, from the repo root:
 
-1. \`npx -y devkitchen@${version} --version\`. If it prints \`${version}\`, use
-   \`npx -y devkitchen@${version}\` wherever this page says \`kitchen\`.
-2. Otherwise (no network, or the package can't be fetched) \`kitchen --version\`:
-   if it prints a version, use \`kitchen\` from PATH, and say which version it
-   is if it isn't ${version}.
-3. If neither works, tell the user Kitchen isn't installed and how to get it:
-   \`npm install -g devkitchen@${version}\`. Don't install it yourself unless
-   they say so.
+1. \`npm view devkitchen@${version} dist.integrity --fetch-timeout=5000 --fetch-retries=0\`
+   (a few seconds at most; offline it fails). Only if it prints exactly
+   \`${integrity}\`, use \`npx -y devkitchen@${version}\` wherever this page says
+   \`kitchen\`. Any other answer means the registry serves something this plugin
+   didn't pin: don't run it, and tell the user.
+2. Otherwise \`kitchen --version\`: if it prints a version, use \`kitchen\` from
+   PATH, and say which version it is if it isn't ${version}.
+${install}
 
-Run every command below from the repo root.
+Run every command below from the repo root. (This plugin's skill is \`/kitchen:kitchen\` in Claude Code and
+\`kitchen:kitchen\` in Codex: plugin skills are namespaced; where this page says \`/kitchen\`, that is this skill.)
 `;
 }
 
 /** Pure: the plugin's SKILL.md from the repo skill. Throws without the block. */
-export function pluginSkill(repoSkill: string, version: string): string {
+export function pluginSkill(repoSkill: string, version: string, integrity: string | null = null): string {
   const a = RUN_START.exec(repoSkill);
   const b = repoSkill.indexOf(RUN_END);
   if (!a || b < a.index) throw new Error("skills/kitchen/SKILL.md has no kitchen-run:start … kitchen-run:end block");
-  return `${repoSkill.slice(0, a.index)}${runBlock(version)}${repoSkill.slice(b + RUN_END.length)}`;
+  return `${repoSkill.slice(0, a.index)}${runBlock(version, integrity)}${repoSkill.slice(b + RUN_END.length)}`;
+}
+
+/** The pin for `version`: a pin for another version (before a re-pin) counts as none. */
+export function readPin(root: string, version: string): string | null {
+  try {
+    const p = JSON.parse(fs.readFileSync(path.join(root, PIN_FILE), "utf8")) as Pin;
+    return p.version === version && typeof p.integrity === "string" && /^sha512-[A-Za-z0-9+/=]+$/.test(p.integrity) ? p.integrity : null;
+  } catch {
+    return null;
+  }
 }
 
 const json = (o: unknown) => `${JSON.stringify(o, null, 2)}\n`;
 
 /** Pure: every generated file, path → content. */
-export function pluginFiles(pkg: { version: string; repository?: { url?: string } }, repoSkill: string): Record<string, string> {
+export function pluginFiles(
+  pkg: { version: string; repository?: { url?: string } },
+  repoSkill: string,
+  integrity: string | null = null,
+): Record<string, string> {
   const v = pkg.version;
   const repo = /github\.com\/([^/]+\/[^/.]+)/.exec(pkg.repository?.url ?? "")?.[1];
   const homepage = repo ? `https://github.com/${repo}` : undefined;
@@ -89,16 +130,29 @@ export function pluginFiles(pkg: { version: string; repository?: { url?: string 
         ...(homepage ? { websiteURL: homepage } : {}),
       },
     }),
-    "plugins/kitchen/skills/kitchen/SKILL.md": pluginSkill(repoSkill, v),
+    "plugins/kitchen/skills/kitchen/SKILL.md": pluginSkill(repoSkill, v, integrity),
+    [PIN_FILE]: json({ package: "devkitchen", version: v, integrity } satisfies Pin),
   };
 }
 
 export function currentFiles(root = ROOT): Record<string, string> {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as { version: string; repository?: { url?: string } };
-  return pluginFiles(pkg, fs.readFileSync(path.join(root, "skills", "kitchen", "SKILL.md"), "utf8"));
+  return pluginFiles(pkg, fs.readFileSync(path.join(root, "skills", "kitchen", "SKILL.md"), "utf8"), readPin(root, pkg.version));
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  // --pin, at release, after `npm publish`: trust the tarball the registry now serves for this version.
+  if (process.argv.includes("--pin")) {
+    const version = (JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")) as { version: string }).version;
+    const integrity = execFileSync("npm", ["view", `devkitchen@${version}`, "dist.integrity", "--fetch-timeout=10000", "--fetch-retries=1"], {
+      encoding: "utf8",
+      timeout: 30_000,
+    }).trim();
+    if (!/^sha512-[A-Za-z0-9+/=]+$/.test(integrity))
+      throw new Error(`npm view devkitchen@${version} dist.integrity gave ${JSON.stringify(integrity)}: publish it first`);
+    fs.writeFileSync(path.join(ROOT, PIN_FILE), json({ package: "devkitchen", version, integrity } satisfies Pin));
+    console.log(`plugin: pinned devkitchen@${version} to ${integrity}`);
+  }
   let n = 0;
   for (const [f, text] of Object.entries(currentFiles())) {
     const p = path.join(ROOT, f);

@@ -1,28 +1,55 @@
 // The plugin files are generated (npm run plugin:sync): they must match package.json's version and
-// the repo skill, and the plugin skill must run Kitchen pinned, falling back to PATH.
+// the repo skill, and the plugin skill runs npx only for the tarball pinned at release, else PATH.
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { test } from "vitest";
-import { currentFiles, pluginSkill, ROOT } from "./sync.ts";
+import { currentFiles, PIN_FILE, pluginSkill, ROOT, readPin } from "./sync.ts";
+
+const version = (JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")) as { version: string }).version;
+const repoSkill = fs.readFileSync(path.join(ROOT, "skills", "kitchen", "SKILL.md"), "utf8");
+const HASH = "sha512-XI5MPzVNApjAyhQzphX8BkmKsKUxD4LdyK24iZeQGinBN9yTQT3bFlCBy/aVx2HrNcqQGsdot8ghrjyrvMCoEA==";
 
 test("the committed plugin files are current (run npm run plugin:sync when this fails)", () => {
   for (const [f, text] of Object.entries(currentFiles())) assert.equal(fs.readFileSync(path.join(ROOT, f), "utf8"), text, f);
 });
 
-test("the plugin skill runs npx -y devkitchen@<version> first, then kitchen on PATH, and is otherwise the repo skill", () => {
-  const version = (JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")) as { version: string }).version;
-  const repo = fs.readFileSync(path.join(ROOT, "skills", "kitchen", "SKILL.md"), "utf8");
-  const plugin = pluginSkill(repo, version);
-  assert.match(plugin, new RegExp(`npx -y devkitchen@${version.replace(/\./g, "\\.")} --version`));
+test("no pin (nothing published and pinned): the skill never runs npx; kitchen on PATH, else how to install", () => {
+  const plugin = pluginSkill(repoSkill, version, null);
+  assert.doesNotMatch(plugin, /npx -y/);
+  assert.match(plugin, /never run it through `npx`/);
   assert.match(plugin, /use `kitchen` from PATH/);
+  assert.match(plugin, new RegExp(`npm install -g devkitchen@${version.replace(/\./g, "\\.")}`));
+});
+
+test("pinned: npx only when the registry's dist.integrity equals the pin, checked with a short timeout; otherwise PATH", () => {
+  const plugin = pluginSkill(repoSkill, version, HASH);
+  const v = version.replace(/\./g, "\\.");
+  assert.match(plugin, new RegExp(`npm view devkitchen@${v} dist\\.integrity --fetch-timeout=5000 --fetch-retries=0`));
+  assert.match(plugin, new RegExp(`Only if it prints exactly\\s+\`${HASH.replace(/[+/=]/g, "\\$&")}\`, use \`npx -y devkitchen@${v}\``));
+  assert.match(plugin, /use `kitchen` from\s+PATH/);
   assert.ok(!plugin.includes("kitchen-run:start"));
+  assert.match(plugin, /`\/kitchen:kitchen` in Claude Code/, "plugin skills are namespaced: the skill says how it is invoked");
+  // Otherwise it is the repo skill, word for word.
   const strip = (s: string) =>
     s
       .replace(/<!-- kitchen-run:start[\s\S]*?kitchen-run:end -->\n/, "")
-      .replace(/This skill comes from the Kitchen plugin[\s\S]*?Run every command below from the repo root\.\n/, "");
-  assert.equal(strip(plugin), strip(repo));
+      .replace(/This skill comes from the Kitchen plugin[\s\S]*?that is this skill\.\)\n/, "");
+  assert.equal(strip(plugin), strip(repoSkill));
   assert.throws(() => pluginSkill("no block", version), /kitchen-run:start/);
+});
+
+test("the pin counts only for this version and only as a sha512 integrity", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kitchen-pin-"));
+  fs.mkdirSync(path.join(dir, path.dirname(PIN_FILE)), { recursive: true });
+  const write = (o: object) => fs.writeFileSync(path.join(dir, PIN_FILE), JSON.stringify(o));
+  write({ package: "devkitchen", version, integrity: HASH });
+  assert.equal(readPin(dir, version), HASH);
+  assert.equal(readPin(dir, "9.9.9"), null, "a pin for an older version is no pin");
+  write({ package: "devkitchen", version, integrity: "sha1-abc; rm -rf /" });
+  assert.equal(readPin(dir, version), null);
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test("the marketplaces name the plugin kitchen at ./plugins/kitchen, for Claude Code and Codex, at the package version", () => {

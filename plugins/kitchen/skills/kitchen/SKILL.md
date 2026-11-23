@@ -9,19 +9,18 @@ Kitchen turns tickets into proven pull requests. You don't do the work
 yourself: you map what the user says onto `kitchen` commands, run them, and
 relay their one-line outputs.
 
-This skill comes from the Kitchen plugin, pinned to devkitchen 0.1.0.
-Find how to run Kitchen once per session, from the repo root:
+This skill comes from the Kitchen plugin, for devkitchen 0.1.0, which this plugin has not pinned yet:
+never run it through `npx`. Find how to run Kitchen once per session, from the repo root:
 
-1. `npx -y devkitchen@0.1.0 --version`. If it prints `0.1.0`, use
-   `npx -y devkitchen@0.1.0` wherever this page says `kitchen`.
-2. Otherwise (no network, or the package can't be fetched) `kitchen --version`:
-   if it prints a version, use `kitchen` from PATH, and say which version it
-   is if it isn't 0.1.0.
+1. `kitchen --version`: if it prints a version, use `kitchen` from PATH, and say
+   which version it is if it isn't 0.1.0.
+2. (Nothing else to try: there is no pinned package to fetch.)
 3. If neither works, tell the user Kitchen isn't installed and how to get it:
    `npm install -g devkitchen@0.1.0`. Don't install it yourself unless
    they say so.
 
-Run every command below from the repo root.
+Run every command below from the repo root. (This plugin's skill is `/kitchen:kitchen` in Claude Code and
+`kitchen:kitchen` in Codex: plugin skills are namespaced; where this page says `/kitchen`, that is this skill.)
 
 | the user says | run |
 |---|---|
