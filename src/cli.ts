@@ -39,6 +39,13 @@ QA's tools (evidence lands in the job's QA folder)
   kitchen qa page <id> <path> --name <n> [--script f.mjs]   Playwright: screenshot + page text
   kitchen qa http <id> <METHOD> <path> --name <n> [--header 'K: v']… [--data '<json>']   an HTTP transcript
 
+The verify map (the verify skill's features/: how to check each feature; QA keeps it)
+  kitchen verify sweep [--json]          before a release: staging checked out, the app up, a brief to drive every
+                                         feature in the README's order; changes nothing
+  kitchen verify maintain [--json]       map upkeep on a branch of staging: prune, fix drift, drive every feature;
+                                         a broken feature becomes a ticket, never a weaker map
+  kitchen verify finish <run>            read the run's result, write its report (maintain: land its map fixes)
+
 kitchen --version · kitchen <command> --help · docs: README.md in the package`;
 
 const COMMAND_HELP: Record<string, string> = {
@@ -60,6 +67,8 @@ const COMMAND_HELP: Record<string, string> = {
   skills: "kitchen skills\n\nEvery skill in Kitchen's role registry (skills/registry.json): found or not for the agent tool, and how to install a missing one.",
   init: "kitchen init [--tool claude|codex] [--yes] | init --skill\n\nChecks what Kitchen needs (node, git and a commit, python3 for the hooks, claude or codex signed in, gh optional), then writes kitchen.yaml with the checks and how to start the app it finds (one question at most when none is obvious; --yes asks nothing), installs the /kitchen skill and the guard hooks (merged into .claude/settings.json, with a backup), adds .gitignore entries, creates the staging branch from your branch, and runs the checks once.",
   job: "kitchen job next|start|finish|show …\n\nThe orchestrator's verbs: the single writer of job state. See kitchen --help.",
+  verify:
+    "kitchen verify sweep|maintain [--json] | verify finish <run>\n\nThe verify skill's feature map (ADR 0017).\n  sweep      checks out staging, starts the app and writes a brief that drives every feature in features/README.md order; prints the agent's prompt. Changes nothing.\n  maintain   the same on a branch of staging, with a brief to keep the map honest: prune, merge duplicates, fix drift from each feature's Code:, drive every feature; product regressions become tickets.\n  finish     reads the agent's verdict.json (sweep) or report.json (maintain), writes report.html in .kitchen/verify/<run>/, stops the app; maintain's map fixes (verify skill files only) merge into staging.\nkitchen qa … <run> drives the run's app, like a job's.",
   qa: "kitchen qa up|down|reset|page|http <id> …\n\nThe QA lane's tools: the app from the job's worktree (reset: down, app.reset, up, for fresh seed data), Playwright screenshots, HTTP transcripts. See kitchen --help.",
 };
 
@@ -179,6 +188,8 @@ async function main(argv: string[]): Promise<number> {
       return jobVerb(repo, f, json, out);
     case "qa":
       return qaVerb(repo, f, out);
+    case "verify":
+      return verifyVerb(repo, f, json, out);
     default:
       console.error(`kitchen: unknown command ${name}\n\nkitchen --help for the list`);
       return 2;
@@ -223,6 +234,22 @@ async function jobVerb(repo: string, f: Flags, json: boolean, out: (l: string) =
     return 0;
   }
   throw new Error(`kitchen job: next, start, finish or show (got ${verb ?? "nothing"})`);
+}
+
+async function verifyVerb(repo: string, f: Flags, json: boolean, out: (l: string) => void): Promise<number> {
+  const v = await import("./verify/run.ts");
+  const [verb, id] = f.pos;
+  if (verb === "sweep" || verb === "maintain") {
+    const r = await v.prepare(repo, verb, json ? () => {} : out);
+    if (json) out(JSON.stringify(r, null, 2));
+    else for (const l of [`run: ${r.id}`, `model: ${r.model}`, `cwd: ${r.cwd}`, `brief: ${r.brief}`, `prompt: ${r.prompt}`]) out(l);
+    return 0;
+  }
+  if (verb === "finish") {
+    if (!id) throw new Error("kitchen verify finish needs <run> (kitchen verify sweep printed it)");
+    return v.finishRun(repo, id, out);
+  }
+  throw new Error(`kitchen verify: sweep, maintain or finish (got ${verb ?? "nothing"})`);
 }
 
 async function qaVerb(repo: string, f: Flags, out: (l: string) => void): Promise<number> {

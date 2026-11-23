@@ -1,6 +1,6 @@
 ---
 name: kitchen
-description: "Drive Kitchen, the software factory in this repo: set it up (init), file tickets, run the queue as its orchestrator (/kitchen run: waves of intake, build, QA and review agents, merging passing jobs into staging), check status, answer jobs, steer, pause or stop a job. Use when the user mentions Kitchen or /kitchen, asks to turn a request into a reviewed change, to queue or run work, or to see job status."
+description: "Drive Kitchen, the software factory in this repo: set it up (init), file tickets, run the queue as its orchestrator (/kitchen run: waves of intake, build, QA and review agents, merging passing jobs into staging), check status, answer jobs, steer, pause or stop a job, sweep or maintain its verify map. Use when the user mentions Kitchen or /kitchen, asks to turn a request into a reviewed change, to queue or run work, or to see job status."
 ---
 
 # /kitchen
@@ -29,6 +29,8 @@ Run commands from the repo root. If `kitchen` is not on PATH, use
 | "show me the jobs", "open the dashboard" | `kitchen dashboard` as a background command, then give the user http://127.0.0.1:7357 |
 | run the queue headless, in the background | `kitchen run --detach` (a separate Claude Code session runs this skill) |
 | how is Kitchen doing | `kitchen report` |
+| "sweep", check every feature before a release, "is staging good to ship" | a verify run: see The verify map, below (`kitchen verify sweep`) |
+| "maintain the map", tidy or audit the verify skill, the map looks stale | a verify run: `kitchen verify maintain` |
 
 ## Tickets
 
@@ -55,7 +57,9 @@ only through `kitchen job` verbs, which refuse any illegal move. The Agent tool 
 **Loop** (repeat until the plan says `drained`):
 
 1. `kitchen job next --json` (the **first** call of a run: add `--restart-stranded`, which hands back lanes an
-   earlier session left open). It returns `start` (lanes to open now: every job in intake, then downstream first), `running`, `held` (each
+   earlier session left open). It returns `start` (lanes to open now: every job in intake, then downstream first;
+   a lane is intake, build, qa, review or **regress**, the short pass that drives the features a job touches on
+   staging with the job merged, before Kitchen merges it), `running`, `held` (each
    with why: a job it names on its `AFTER:` line, or no room; jobs touching the same files run side by side) and
    `you` (jobs waiting on the person). Tell the user the wave in one line.
 2. For **every** entry in `start`, in parallel:
@@ -67,8 +71,9 @@ only through `kitchen job` verbs, which refuse any illegal move. The Agent tool 
      agent is still running: a headless session that ends its turn stops the run. Use one agent per lane per
      job: never reuse one, never give one two jobs, never do a lane yourself.
 3. When an agent returns, run `kitchen job finish <id> --json` for its job, at once. Kitchen reads the files the
-   lane left (intake.md, the commits, the QA verdict and evidence, review.json), runs the checks itself, merges into
-   staging when review passes, and moves the job, or refuses and says why (the lane runs again in the next wave;
+   lane left (intake.md, the commits, the QA verdict, evidence and map updates, review.json, the regress verdict),
+   runs the checks itself, merges into staging when review passes and the features the merge touches still work
+   (or opens a regress lane to drive them first), and moves the job, or refuses and says why (the lane runs again in the next wave;
    three refusals go to a person). Relay its `line`. Never argue with a refusal and never write the lane's files
    yourself.
 4. Between waves, read nothing else: steering reaches the next agent through `kitchen job start`. Then go to 1.
@@ -79,6 +84,22 @@ never push either: that is the user's.
 
 If `kitchen job start` or `finish` fails with an error (not a refusal), show its last line and stop the run.
 If the user asks you to stop the run, finish the agents in flight (`kitchen job finish` each) and stop.
+
+## The verify map
+
+Kitchen keeps a verify skill in the repo (`.claude/skills/verify-<app>/`): how to start and drive the app, and a
+feature map (`features/`), one file per user-facing feature with its recipe and the files behind it. QA follows
+and updates it in every job; Kitchen drives the touched features before each merge. Two runs use it outside jobs,
+each one agent you start like a lane agent:
+
+1. `kitchen verify sweep --json` (a release check: every feature against staging, changes nothing) or
+   `kitchen verify maintain --json` (map upkeep: prune, fix drift, drive every feature; a broken feature becomes
+   a new ticket). It checks out staging, starts the app, writes the brief and returns `{ id, prompt, model, cwd }`.
+2. Spawn one Agent with exactly that `prompt` and `model`, in the foreground.
+3. When it returns, `kitchen verify finish <id>` and relay its lines: the report path, each feature's result,
+   and (maintain) what merged into staging and which tickets it filed. Offer to run the queue for new tickets.
+
+Suggest `kitchen verify maintain` when the user asks about a stale map, or after many merges since the last one.
 
 ## Talking to a job
 
