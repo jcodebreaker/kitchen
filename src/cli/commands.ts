@@ -42,20 +42,94 @@ export async function ticket(repo: string, text: string, out: Out): Promise<numb
   return 0;
 }
 
-export async function run(repo: string, o: { once: boolean; detach: boolean; job?: string; cli: string; argv: string[] }, out: Out): Promise<number> {
-  const id = o.job ? findJob(repo, o.job).id : undefined;
-  if (o.detach) {
-    const log = path.join(kitchenDir(repo), "run.log");
-    fs.mkdirSync(path.dirname(log), { recursive: true });
-    const fd = fs.openSync(log, "a");
-    const args = [o.cli, ...o.argv.filter((a) => a !== "--detach")];
-    const child = spawn(process.execPath, args, { cwd: repo, detached: true, stdio: ["ignore", fd, fd], env: { ...process.env, KITCHEN_LOG_FILE: log } });
-    child.unref();
-    fs.closeSync(fd);
-    out(`run detached: pid ${child.pid}, log ${log}`);
+/** Kitchen's own entry point, for the detached runner a dashboard starts. */
+const CLI = path.resolve(import.meta.dirname, "..", `cli${path.extname(import.meta.filename)}`);
+
+/** The live runner's lock, or null when none holds the queue (no lock, or a stale one). */
+export function liveRunner(repo: string) {
+  const l = readRunLock(repo);
+  return l?.info && !staleReason(l.info, Date.now()) ? l.info : null;
+}
+
+/**
+ * A runner in the background (`kitchen run --detach`, and the dashboard when an action makes work runnable):
+ * `kitchen run` in its own process group, its log .kitchen/run.log. It stays alive when the queue empties
+ * (KITCHEN_RUN_STAY), idling until work appears; `kitchen run --stop` ends it. None is started while one runs.
+ */
+export function startRunner(repo: string, out: Out, o: { args?: string[]; cli?: string } = {}): number {
+  const live = liveRunner(repo);
+  if (live) {
+    out(`runner: already running (pid ${live.pid}${live.log ? `, log ${live.log}` : ""})`);
     return 0;
   }
-  await runKitchen({ repo, once: o.once, job: id, print: out, logFile: process.env.KITCHEN_LOG_FILE });
+  // One this process just started, still before its run lock (a dashboard's two quick actions): not a second one.
+  const s = starting.get(repo);
+  if (s && Date.now() - s.at < 10_000 && alive(s.pid)) {
+    out(`runner: starting (pid ${s.pid})`);
+    return 0;
+  }
+  const log = path.join(kitchenDir(repo), "run.log");
+  fs.mkdirSync(path.dirname(log), { recursive: true });
+  const fd = fs.openSync(log, "a");
+  const args = [o.cli ?? CLI, ...(o.args ?? ["run", "--repo", repo])];
+  const child = spawn(process.execPath, args, {
+    cwd: repo,
+    detached: true,
+    stdio: ["ignore", fd, fd],
+    env: { ...process.env, KITCHEN_LOG_FILE: log, KITCHEN_RUN_STAY: "1" },
+  });
+  child.unref();
+  fs.closeSync(fd);
+  if (child.pid) starting.set(repo, { pid: child.pid, at: Date.now() });
+  out(`run detached: pid ${child.pid}, log ${log}`);
+  return 0;
+}
+const starting = new Map<string, { pid: number; at: number }>();
+const alive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/** `kitchen run --stop`: end the runner that holds the queue (SIGTERM; its jobs resume from their files on the next run). */
+export async function stopRunner(repo: string, out: Out, o: { waitMs?: number } = {}): Promise<number> {
+  const live = liveRunner(repo);
+  if (!live) {
+    out("runner: not running");
+    return 0;
+  }
+  try {
+    process.kill(live.pid, "SIGTERM");
+  } catch (e) {
+    out(`runner: could not stop pid ${live.pid}: ${(e as Error).message}`);
+    return 1;
+  }
+  const end = Date.now() + (o.waitMs ?? 15_000);
+  while (Date.now() < end) {
+    if (readRunLock(repo)?.info?.pid !== live.pid) {
+      out(`runner: stopped (pid ${live.pid})`);
+      return 0;
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  out(`runner: pid ${live.pid} was asked to stop and still holds the queue`);
+  return 1;
+}
+
+export async function run(
+  repo: string,
+  o: { once: boolean; detach: boolean; stop?: boolean; job?: string; cli: string; argv: string[] },
+  out: Out,
+): Promise<number> {
+  if (o.stop) return stopRunner(repo, out);
+  const id = o.job ? findJob(repo, o.job).id : undefined;
+  if (o.detach) return startRunner(repo, out, { cli: o.cli, args: o.argv.filter((a) => a !== "--detach") });
+  // The detached child (startRunner) stays alive when the queue empties; a foreground run exits then, as scripts expect.
+  const stay = !o.once && process.env.KITCHEN_RUN_STAY === "1";
+  await runKitchen({ repo, once: o.once, stay, job: id, print: out, logFile: process.env.KITCHEN_LOG_FILE });
   return 0;
 }
 

@@ -24,7 +24,7 @@ import * as cmd from "./cli/commands.ts";
 import { quietOnEpipe } from "./cli/epipe.ts";
 
 const USAGE =
-  'usage: kitchen ticket "<text>" | run [--once] [--detach] [<job>] | status | resume <id|n> | feedback <id> [--to <stage>] ["<text>"] | reject <id> | steer <id> "<text>" | pause <id> | stop <id> | report [--bench] [--json] | retro [status | unmute <lens>/<category> | approve <n>] | migrate [--dry-run] | dashboard [--port n] | bench smoke|full|tuned|heldout […] | skills | init [--tool claude|codex] [--toolkit] [--yes] [--start-over] | toolkit build [--answers <file>] [--yes] [--start-over] [--detach] [--verbose] | toolkit build --status [--wait <s>] | toolkit check [--feature x] [--src dir] | toolkit approve [--sha <sha>] | toolkit revoke | toolkit commit [--yes] | toolkit up | toolkit down --id <id> | drive <job> <C> [--repro] [--arg k=v]… | drive <job> --view "<view>" | dismiss <job> <finding> [--reason "<why>"] | toolkit maintain [--force] | mcp …';
+  'usage: kitchen ticket "<text>" | run [--once] [--detach] [<job>] | run --stop | status | resume <id|n> | feedback <id> [--to <stage>] ["<text>"] | reject <id> | steer <id> "<text>" | pause <id> | stop <id> | report [--bench] [--json] | retro [status | unmute <lens>/<category> | approve <n>] | migrate [--dry-run] | dashboard [--port n] | bench smoke|full|tuned|heldout […] | skills | init [--tool claude|codex] [--toolkit] [--yes] [--start-over] | toolkit build [--answers <file>] [--yes] [--start-over] [--detach] [--verbose] | toolkit build --status [--wait <s>] | toolkit check [--feature x] [--src dir] | toolkit approve [--sha <sha>] | toolkit revoke | toolkit commit [--yes] | toolkit up | toolkit down --id <id> | drive <job> <C> [--repro] [--arg k=v]… | drive <job> --view "<view>" | dismiss <job> <finding> [--reason "<why>"] | toolkit maintain [--force] | mcp …';
 
 const HELP = `kitchen: turns tickets into proven, reviewed pull requests (Claude Code or Codex)
 
@@ -44,7 +44,8 @@ Setup
 
 Work
   kitchen ticket "<what you want>"        a ticket from a prompt (or label a GitHub issue: source.kind github)
-  kitchen run [--detach] [--once] [<job>] work the queue (--detach: in the background, log in .kitchen/run.log)
+  kitchen run [--detach] [--once] [<job>] work the queue (--detach: in the background, stays up and waits for work; log in .kitchen/run.log)
+  kitchen run --stop                      end the background runner
   kitchen status [--json]                 one row per job (--json: one JSON array)
   kitchen dashboard [--port 7357]         the jobs in a browser, on 127.0.0.1: watch them, message them, pause them
   kitchen feedback <id> ["<text>"] [--to <stage>]   answer a job that needs you, or send a done one back
@@ -67,7 +68,7 @@ kitchen --version · kitchen <command> --help · docs: README.md in the package`
 /** `kitchen <command> --help`: the command's usage, then what it does. */
 const COMMAND_HELP: Record<string, string> = {
   ticket: 'kitchen ticket "<what you want>"\n\nFiles a ticket from a prompt; kitchen run takes it in. With source.kind github, label an issue instead.',
-  run: "kitchen run [--once] [--detach] [<job>]\n\nWorks the queue until nothing is left to do.\n  --once     one pass over the queue, then stop\n  --detach   in the background; the log is .kitchen/run.log\n  <job>      only this job",
+  run: "kitchen run [--once] [--detach] [<job>] | run --stop\n\nWorks the queue until nothing is left to do.\n  --once     one pass over the queue, then stop\n  --detach   in the background, and it keeps going: when nothing is left it waits for work (a new ticket, an answer, a resume, an approval) instead of exiting; the log is .kitchen/run.log. None is started while a runner already works the queue\n  --stop     end the runner that works the queue (its jobs resume from their files on the next run)\n  <job>      only this job",
   status:
     "kitchen status [--json]\n\nOne row per job: id, title, stage, round, when it last moved, PR, report.\n  --json   the jobs as one JSON array, nothing else",
   resume:
@@ -187,8 +188,12 @@ async function main(argv: string[]): Promise<number> {
     case "ticket":
       return cmd.ticket(repo, need('"<text>"'), out);
     case "run":
-      for (const f of flags) if (f !== "--once" && f !== "--detach") throw new Error(`kitchen run: unknown flag ${f}`);
-      return cmd.run(repo, { once: flags.has("--once"), detach: flags.has("--detach"), job: pos[0], cli: import.meta.filename, argv }, out);
+      for (const f of flags) if (f !== "--once" && f !== "--detach" && f !== "--stop") throw new Error(`kitchen run: unknown flag ${f}`);
+      return cmd.run(
+        repo,
+        { once: flags.has("--once"), detach: flags.has("--detach"), stop: flags.has("--stop"), job: pos[0], cli: import.meta.filename, argv },
+        out,
+      );
     case "status":
       return cmd.status(repo, out, { json: flags.has("--json") });
     case "resume":

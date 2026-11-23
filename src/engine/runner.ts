@@ -6,7 +6,8 @@
 // with its reason.
 //
 // `once`: one tick (waits checked once, every runnable job runs one stage), then exit.
-// Default: until no job is runnable or paused.
+// Default: until no job is runnable or paused. `stay` (a detached runner): never exits for an empty
+// queue; it idles, reading the job folder every tick (cheap), the source and forge every idlePollMs.
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -44,7 +45,23 @@ import { LockLost, type Proposal, RoleFailure, SkillMissing, type StageContext }
 import { jobDirOf, listJobs, readJobAt, repairManifest, scanJobs, updateJob, writeAtomic } from "./store.ts";
 import { headTime } from "./worktree.ts";
 
-export type RunOpts = { repo: string; once?: boolean; job?: string; tickMs?: number; print?: (line: string) => void; logFile?: string };
+export type RunOpts = {
+  repo: string;
+  once?: boolean;
+  /**
+   * Stay alive when nothing is runnable (a detached runner): idle, checking the job folder every tick, and wake when
+   * work appears (a ticket, an answer, a resume, an approval). Ends on SIGTERM (`kitchen run --stop`) or a lost lock.
+   */
+  stay?: boolean;
+  /** Ends a staying runner from inside the process (tests); outside, `kitchen run --stop` sends SIGTERM. */
+  signal?: AbortSignal;
+  job?: string;
+  tickMs?: number;
+  /** While idle, how often the source and forge are asked (new issues, issue replies, PR comments): they cost a network call. */
+  idlePollMs?: number;
+  print?: (line: string) => void;
+  logFile?: string;
+};
 type Deps = { config: Config; agent: AgentAdapter; forge: Forge; source: TicketSource; holdsLock: () => boolean };
 
 export async function adapterFor(repo: string, cfg: Config): Promise<AgentAdapter> {
@@ -159,13 +176,20 @@ export async function runKitchen(o: RunOpts): Promise<{ steps: number; moves: nu
         if (inFlight.size) await Promise.race(inFlight.values());
       }
     } else {
+      const idlePollMs = o.idlePollMs ?? Number(process.env.KITCHEN_IDLE_POLL_MS ?? 30_000);
+      let idle = false;
+      let lastRemote = 0;
       for (;;) {
         if (lock.lost()) {
           print("run: lost the run lock to another runner, stopping");
           break;
         }
-        await takeNew(repo, deps, print);
-        await checkWaits(repo, deps, print, wanted);
+        if (o.signal?.aborted && !inFlight.size) break;
+        // Idle: the job folder every tick, the network (issues, their replies, PR comments) every idlePollMs.
+        const remote = !idle || Date.now() - lastRemote >= idlePollMs;
+        if (remote) lastRemote = Date.now();
+        if (remote || deps.source.kind === "prompt") await takeNew(repo, deps, print);
+        await checkWaits(repo, deps, print, wanted, { remote });
         maybeRetro();
         const jobs = listJobs(repo).filter(wanted);
         const runnable = jobs.filter((j) => isActive(j.stage) && !inFlight.has(j.id)).sort(byOldest);
@@ -173,7 +197,11 @@ export async function runKitchen(o: RunOpts): Promise<{ steps: number; moves: nu
         // A job a person paused waits for `kitchen resume`, not for this runner: like needs-human, it keeps no runner alive.
         // So does a job waiting for the person to build a Toolkit (the next run wakes it).
         const waiting = jobs.filter((j) => j.stage === "paused" && !pausedByYou(j) && j.waitFor !== "no-toolkit");
-        if (!inFlight.size && !runnable.length && !waiting.length) break;
+        const nothing = !inFlight.size && !runnable.length && !waiting.length;
+        if (nothing && !o.stay) break;
+        if (nothing && !idle) print("run: idle, waiting for work (a ticket, an answer, a resume, an approval); kitchen run --stop ends it");
+        else if (!nothing && idle) print("run: work arrived");
+        idle = nothing;
         await Promise.race([...inFlight.values(), new Promise((r) => setTimeout(r, tickMs))]);
       }
     }
@@ -265,7 +293,15 @@ async function takeNew(repo: string, d: Deps, print: (l: string) => void) {
 
 let lastTipError = "";
 /** Paused jobs whose condition cleared go back to pausedFrom; needs-info jobs with a reply go back to intake, the reply in the clarification thread. */
-export async function checkWaits(repo: string, d: Pick<Deps, "source" | "forge" | "config">, print: (l: string) => void, wanted: (j: Job) => boolean) {
+export async function checkWaits(
+  repo: string,
+  d: Pick<Deps, "source" | "forge" | "config">,
+  print: (l: string) => void,
+  wanted: (j: Job) => boolean,
+  /** remote false (an idle runner between polls): only what the job folder says; no issue replies, no PR comments. */
+  o: { remote?: boolean } = {},
+) {
+  const remote = o.remote ?? true;
   const jobs = listJobs(repo).filter(wanted);
   // The base tip, once per pass and at most once a minute, only when a job waits for a Toolkit (review M4).
   let tip: string | null = null;
@@ -306,12 +342,13 @@ export async function checkWaits(repo: string, d: Pick<Deps, "source" | "forge" 
       if (cleared)
         await moveJob(repo, job, { to: job.pausedFrom, facts: { waitCleared: true, ...(wake ? { wake } : {}) }, note: `${job.waitFor} cleared` }, print);
     } else if (job.stage === "needs-info") {
+      if (!remote && d.source.kind !== "prompt") continue;
       const replies = await d.source.replies(job);
       if (!replies.length) continue;
       // Every reply since the question (an issue's comments), so the thread records them once however often it is read.
       recordAnswers(jobDirOf(repo, job.id), replies, { replace: true });
       await moveJob(repo, job, { to: "intake", facts: { replied: true }, note: "the author replied" }, print);
-    } else if (job.stage === "done" && job.pr !== null) {
+    } else if (job.stage === "done" && job.pr !== null && remote) {
       await prCommentsBack(repo, job, d, print);
     }
   }
