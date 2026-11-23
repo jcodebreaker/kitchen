@@ -606,7 +606,7 @@ const cases: Case[] = [
       assert.equal(j.waitFor, "no-toolkit");
       assert.equal(j.pausedFrom, "intake");
       assert.equal(j.risk, "low");
-      assert.match(j.pausedReason ?? "", /run `kitchen toolkit build` \(about 3–15 min\), then `kitchen resume 001-x`/);
+      assert.match(j.pausedReason ?? "", /run `kitchen toolkit build` \(about 3–15 min\), then approve it/);
     },
   },
   {

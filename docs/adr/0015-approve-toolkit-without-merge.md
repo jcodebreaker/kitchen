@@ -27,5 +27,15 @@ The user ran into it: a job paused for a Toolkit that was already built and prov
   - `kitchen toolkit approve [--sha]` approves after the fact.
   - `kitchen toolkit revoke` withdraws an approval; jobs then wait again.
 
+## Built (2026-11-22)
+
+- `src/toolkit/trust.ts`: the approval (`.kitchen/toolkit.approved`), the record of shas that passed a full `toolkit check` (`.kitchen/toolkit.passed`; approval takes only those), and the one trust predicate. Both files are in Kitchen's `.gitignore` list; a repo set up before them gets them in its own `info/exclude`, so `.gitignore` is never touched behind the person's back.
+- `src/toolkit/approve.ts`: `approve`, `revoke`, `commit` (one Kitchen commit of only `.kitchen/toolkit` and `.env.kitchen`, built on a private index; a PR with the GitHub forge), and where the Toolkit stands (`building`, `waiting`, `approved`, `base`, `none`) for every message.
+- `src/engine/job-toolkit.ts`: a job's Toolkit is the base's, else the approved sha. A job on an approved sha follows the approval: approve a newer one and it takes it at its next step; revoke and it has none (it waits `no-toolkit` where it needs the app). A Toolkit PR's sha is left alone.
+- The approved Toolkit's files are never needed in the job worktree: feature drives, `describe` and `SKILL.md` fall back to its own checkout (`.worktrees/_toolkit@<sha>`), and the template's `bin/dev` reads its own `.env.kitchen` when the source has none.
+- The dashboard's Approve Toolkit is `POST /api/toolkit-approve`, which takes no fields: it approves `kitchen/setup`'s proven tip only.
+
+**Deviations.** `kitchen toolkit commit` ships only `.kitchen/toolkit` and `.env.kitchen`, as decided; a Toolkit whose setup added dev-environment files elsewhere (its first `kitchen/setup` commit) needs those committed by the person, and until then an approved-only Toolkit can't see them in a job's tree (the setup role is now told to keep what it builds under `.kitchen/toolkit/`). Toolkits written before this change read `.env.kitchen` from the job's source only. `toolkit maintain` on a repo whose base has no Toolkit maintains the approved sha and asks for approval of the fixed one, like the build.
+
 ## Why not keep the merge
 A merge mixes two separate decisions: "run this code on my machine" and "put this code in my project's history". Only the first is needed to work, and an approval records it exactly, pinned to a sha, with no side effects on the person's branch.

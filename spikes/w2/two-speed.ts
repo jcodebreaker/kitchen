@@ -2,11 +2,11 @@
 //  1. `kitchen init` on fixtures E (Node) and B (Python): seconds, the checks found
 //     and run once, no agent, no worktree, no Toolkit.
 //  2. A ticket whose criterion drives the app pauses at intake: no-toolkit, with the
-//     message; `kitchen resume` refuses while a built Toolkit waits to be merged.
+//     message; `kitchen resume` refuses while a built Toolkit waits for approval (ADR 0015).
 //  3. `kitchen toolkit build` (scripted setup role copying fixture E's bench Toolkit,
 //     real `toolkit check` on a node app): one line per phase, details in init.log.
-//  4. Merged, the next `kitchen run` wakes the job by itself: base and toolkitRef move
-//     to the Toolkit commit and intake runs again with it.
+//  4. Approved (no merge), the job wakes at once: its toolkitRef is the approved commit, its
+//     base stays, and intake runs again with it.
 //  5. Another repo, no Toolkit: `kitchen resume` goes on with checks and tests only.
 //   node spikes/w2/two-speed.ts [scratch dir]
 import fs from "node:fs";
@@ -67,7 +67,7 @@ check(
 );
 check(
   "with the message",
-  j.pausedReason === `This ticket needs Kitchen to drive the app; run \`kitchen toolkit build\` (about 3–15 min), then \`kitchen resume ${id}\`.`,
+  j.pausedReason === "This ticket needs Kitchen to drive the app; run `kitchen toolkit build` (about 3–15 min), then approve it. The job wakes by itself.",
   j.pausedReason,
 );
 const st = kitchen(r, ["status"]);
@@ -81,29 +81,32 @@ check(
   "toolkit build: Read the repo, Wrote the Toolkit, Proved it",
   /✓ Read the repo/.test(b.out) && /✓ Wrote the Toolkit/.test(b.out) && /✓ Proved it +4 drives × 2/.test(b.out),
 );
-check("toolkit build: names the waiting job", new RegExp(`kitchen resume ${id}`).test(b.out));
+check("toolkit build: without a terminal it ends waiting for approval", /Proven, waiting for your approval: approve it \(kitchen toolkit approve\)/.test(b.out));
 check("toolkit build: no per-drive lines on the terminal", !/toolkit check: drive/.test(b.out));
 const initLog = fs.readFileSync(path.join(r.dir, ".kitchen", "init", "init.log"), "utf8");
 check("init.log holds the details", /toolkit check: drive books.list ok/.test(initLog) && /toolkit build: committed on kitchen\/setup/.test(initLog));
 const v = kitchen(r, ["toolkit", "build", "--status"]);
-check("toolkit build --status: done", /^toolkit build: done/.test(v.out), v.out.split("\n")[0]);
+check("toolkit build --status: done, waiting for approval", /^toolkit build: done: proven, waiting for your approval/.test(v.out), v.out.split("\n")[0]);
 
 const early = kitchen(r, ["resume", id]);
-show(`resume ${id}  (before the merge)`, early.out);
+show(`resume ${id}  (before the approval)`, early.out);
 check(
-  "resume before the merge: refused, says to merge kitchen/setup",
-  early.code === 1 && /git merge kitchen\/setup/.test(early.out) && job().stage === "paused",
+  "resume before the approval: refused, says to approve it",
+  early.code === 1 && /kitchen toolkit approve/.test(early.out) && job().stage === "paused",
 );
 
-git(r.dir, "merge", "--ff-only", "-q", "kitchen/setup");
-const tip = git(r.dir, "rev-parse", "HEAD");
+const before = git(r.dir, "rev-parse", "HEAD");
+const setupTip = git(r.dir, "rev-parse", "kitchen/setup");
+const a = kitchen(r, ["toolkit", "approve"]);
+show("toolkit approve", a.out);
+check("approved: one line, and the waiting job woke", a.code === 0 && /1 waiting job woke/.test(a.out), a.out.trim());
 const w = kitchen(r, ["run", "--once"]);
 j = job();
-check("merged: the runner wakes the job by itself", /no-toolkit cleared/.test(w.out), (w.out.match(/.*no-toolkit.*/g) ?? []).join(" | "));
+check("no merge, no commit: the base branch is where it was", git(r.dir, "rev-parse", "HEAD") === before);
 check(
-  "its base and toolkitRef move to the Toolkit commit",
-  j.base === tip && j.toolkitRef === tip,
-  `${j.base.slice(0, 8)} ${j.toolkitRef.slice(0, 8)} vs ${tip.slice(0, 8)}`,
+  "its toolkitRef is the approved commit; its base stays",
+  j.base === before && j.toolkitRef === setupTip,
+  `${j.base.slice(0, 8)} ${j.toolkitRef.slice(0, 8)} vs ${setupTip.slice(0, 8)}; ${w.code}`,
 );
 check(
   "intake ran again with the Toolkit and went on to build",

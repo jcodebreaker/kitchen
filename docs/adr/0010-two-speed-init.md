@@ -1,6 +1,6 @@
 # Two-speed init: start in a minute, build the Toolkit when a ticket needs it
 
-**Status.** Accepted and built, 2026-11-22 (docs/BUILD-LOG.md "ADR 0010"). The open questions are settled at the end.
+**Status.** Accepted and built, 2026-11-22 (docs/BUILD-LOG.md "ADR 0010"). The open questions are settled at the end. **Amended by ADR 0015:** a built Toolkit is used once the person approves it (`kitchen toolkit approve`, or Enter at the end of the build), not once `kitchen/setup` is merged; "merge kitchen/setup" below now reads "approve it".
 
 **Problem.** `kitchen init` pays the whole price up front. It surveys the repo, builds a Toolkit, self-tests it, then has the engine prove it again, before a single ticket can run.
 

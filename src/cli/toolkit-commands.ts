@@ -97,7 +97,7 @@ async function buildStatus(repo: string, flags: Record<string, string | true>, o
   // Done and proven, but no one approved it yet (ADR 0015): that is the next step, so the first line says it.
   const tk = toolkitState(repo);
   if (cur.s?.state === "done" && tk.state === "waiting")
-    r.lines[0] = `${who}: done: proven, waiting for your approval (${tk.sha?.slice(0, 12)}): ${APPROVE_HOW}`;
+    r.lines[0] = `${who ?? "toolkit build"}: done: proven, waiting for your approval (${tk.sha?.slice(0, 12)}): ${APPROVE_HOW}`;
   for (const l of r.lines) out(l);
   return r.code;
 }

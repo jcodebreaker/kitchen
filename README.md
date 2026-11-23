@@ -94,7 +94,7 @@ When the job is `done`, `kitchen status` prints the path of its Report (`.kitche
 
 A review comment on the PR from a trusted person sends the job back to build with your comment.
 
-Cleaning up: Kitchen removes nothing you might still want. After merging, you may delete the job branch (`git branch -d kitchen/<id>`) and `kitchen/setup`; `.worktrees/` holds Kitchen's working copies (ignored by git) and can be removed when no `kitchen run` is going (`git worktree prune` afterwards). Keep `kitchen-evidence`: it is where the Reports live.
+Cleaning up: Kitchen removes nothing you might still want. After merging, you may delete the job branch (`git branch -d kitchen/<id>`), and `kitchen/setup` once you no longer use the Toolkit approved from it; `.worktrees/` holds Kitchen's working copies (ignored by git) and can be removed when no `kitchen run` is going (`git worktree prune` afterwards). Keep `kitchen-evidence`: it is where the Reports live.
 
 ### 6. Make Kitchen drive your app: `kitchen toolkit build`
 
@@ -112,8 +112,12 @@ Teaching Kitchen to run your-repo…
   ✓ Wrote the Toolkit      api · features: books, loans                      2m 50s · $0.71
   ✓ Proved it              4 drives × 2 (after a reset) · 2 copies at once   25s
 Done in 3m 46s · $0.83 · on branch kitchen/setup
-Next: review it (git log -p main..kitchen/setup), then git merge kitchen/setup
+Use this Toolkit to run your app for every job? [Y/n]
+Approved Toolkit 4f03ec706808: every job runs your app with it; 1 waiting job woke. Undo: kitchen toolkit revoke
+Share it with your team when you want: kitchen toolkit commit
 ```
+
+Press Enter and you're done: jobs use it right away. Nothing is merged into your branch, committed or pushed; the approval is a local, gitignored file (`.kitchen/toolkit.approved`) pinned to that exact commit.
 
 Every detail (each drive, the evidence, the sandbox notes) goes to `.kitchen/init/init.log`; `--verbose` shows it on the terminal too. A failure prints the failing step in full, and `kitchen toolkit build` again resumes from there.
 
@@ -126,14 +130,16 @@ If it has questions (at most three, often none) it asks them right there. Withou
 | Codex | the escalation for `kitchen toolkit build --detach` and for `kitchen run --detach` ("run outside the sandbox"), once each | Same reason: inside Codex's sandbox Kitchen can't write `.git`, reach Docker or start its agents |
 | Codex | nothing else | `kitchen init`, `kitchen toolkit build --status`, `kitchen status` and `kitchen ticket` run inside the sandbox |
 
-Then review and merge the Toolkit. Run these on your default branch (`main` below; use yours). The branch `kitchen/setup` is checked out in Kitchen's own worktree (`.worktrees/_setup`), so read it with `git log`/`git diff` rather than checking it out:
+Without a terminal (`--detach`, an agent's shell) the build ends "Proven, waiting for your approval": approve it, or commit it to share with your team.
 
 ```sh
-git log -p main..kitchen/setup   # what the setup agent wrote: .kitchen/toolkit/
-git merge kitchen/setup
+git log -p main..kitchen/setup   # what the setup agent wrote: .kitchen/toolkit/ (review it any time)
+kitchen toolkit approve          # use it for every job: a local approval, pinned to the proven commit
+kitchen toolkit revoke           # stop using it: jobs that need the app wait again
+kitchen toolkit commit           # optional: share it, as one Kitchen commit of only .kitchen/toolkit and .env.kitchen (asks first; a PR with the GitHub forge)
 ```
 
-Jobs use the Toolkit that is on your main branch, so this merge is what lets them drive the app. A job paused `no-toolkit` goes on by itself at the next `kitchen run` (or `kitchen resume <id>`).
+Which Toolkit a job uses: the one on its base branch if there is one (once you commit or merge it), else the one you approved. `approve` refuses a commit that never passed `kitchen toolkit check`. A rebuild or `kitchen toolkit maintain` makes a new commit, which asks for your approval again; until you give it, jobs keep the one you approved before. A job paused `no-toolkit` wakes by itself as soon as you approve (or at the next `kitchen run`).
 
 ## Concepts
 
@@ -176,7 +182,7 @@ A job's steering thread is `.kitchen/jobs/<id>/messages.jsonl`: each message wit
 - Each running job shows a live line (the call its agent is making right now, with a shimmer while it runs), the time in its current stage (frozen while paused; a job that needs you shows how long it has waited; the job's total age is in its panel), its changed files and a six-step stage track: Intake, Build, Gate, Verify, Review, Report.
 - Click a job for its panel: the stage track, then **Activity** (every stage with what its agents did: their reasoning lines, each tool call with its time, file edits with +/− counts, your messages and whether they were read), **Checks** (each criterion and its last verdict) and **Changes** (files and line counts from the base). The Report link is there once it exists.
 - **One composer per job**, in its panel or under its row: answer a job that needs you, steer a running one, leave a note on a paused one, follow up on a done one (another Build round). Pause, Resume, Stop and Reject sit beside it. **New ticket** files a ticket.
-- **Setup** shows `kitchen toolkit build`'s steps (after a quick `kitchen init` only: "Toolkit not built"); its questions can be answered right there (the same as `kitchen toolkit build --answers <file> --detach`). A job paused `no-toolkit` shows as needing you, with its reason, a copy of `kitchen toolkit build` and Resume.
+- **Setup** shows `kitchen toolkit build`'s steps (after a quick `kitchen init` only: "Toolkit not built"); its questions can be answered right there (the same as `kitchen toolkit build --answers <file> --detach`). A job paused `no-toolkit` shows as needing you, with its reason and what to do now: **Approve Toolkit** when a proven one waits for you (the same as `kitchen toolkit approve`; the jobs wake), a copy of `kitchen toolkit build` when none is built, and Resume (checks and tests only). Setup then reads "Proven · waiting for your approval", with the same button.
 - Keys: `J`/`K` move, `Enter` opens, `R` messages the selected job, `Esc` closes, `⌘K` (or Ctrl-K) opens the command palette. Light and dark follow your system; the Theme button switches. It works down to a phone's width.
 
 Every button is a CLI verb: the page sends `POST /api/<verb>` and the server calls the same engine function as the command, so the browser can do nothing `kitchen` can't. Jobs move only while `kitchen run` works the queue; the page says so when it isn't running.
@@ -247,9 +253,10 @@ Every key, with its default:
 
 ## Known limitations (v0.1)
 
-- **Linux runs unsandboxed.** On macOS, Toolkit code the setup agent just wrote (and any Toolkit not yet merged) and every `cmd`/`test` proof run under `sandbox-exec`, away from your SSH keys, cloud and GitHub credentials, agent logins and Kitchen's key. Linux has no sandbox yet: those run as you, and Kitchen logs `UNSANDBOXED` when they start. Review `kitchen/setup` before you merge it either way. Details: `docs/adr/0008-setup-bridge.md` in the source repository.
-- **Your app and a merged Toolkit run unsandboxed.** They get no credentials through the environment, but they run as you, like `npm run dev` would. App code from a job branch is code an agent wrote; it is reviewed only after it ran.
-- **Docker is guarded only for an unmerged Toolkit, on macOS.** Toolkit code not yet merged talks to Docker through Kitchen's guard: no bind mounts outside the repo and temp, no privileged or host-namespace containers, and no requests on containers it didn't create (another project's database can't be exec'd into or stopped). A merged Toolkit, and Linux, talk to Docker directly.
+- **Linux runs unsandboxed.** On macOS, Toolkit code the setup agent just wrote (and any Toolkit neither on your base branch nor approved by you) and every `cmd`/`test` proof run under `sandbox-exec`, away from your SSH keys, cloud and GitHub credentials, agent logins and Kitchen's key. Linux has no sandbox yet: those run as you, and Kitchen logs `UNSANDBOXED` when they start. Review `kitchen/setup` before you approve it either way. Details: `docs/adr/0008-setup-bridge.md` and `docs/adr/0015-approve-toolkit-without-merge.md` in the source repository.
+- **Your app and an approved (or committed) Toolkit run unsandboxed.** They get no credentials through the environment, but they run as you, like `npm run dev` would. App code from a job branch is code an agent wrote; it is reviewed only after it ran.
+- **Docker is guarded only for a Toolkit you haven't approved, on macOS.** Such Toolkit code talks to Docker through Kitchen's guard: no bind mounts outside the repo and temp, no privileged or host-namespace containers, and no requests on containers it didn't create (another project's database can't be exec'd into or stopped). An approved or committed Toolkit, and Linux, talk to Docker directly.
+- **An approved Toolkit that isn't committed runs against job worktrees that don't hold its files.** Kitchen reads its feature drives from its own checkout, and Toolkits from Kitchen's template read their `.env.kitchen` there too. A Toolkit that needs other files of `kitchen/setup` in the app's tree (a dev-environment commit) works only once committed (`kitchen toolkit commit`).
 - **Ports are shared per machine.** Every Kitchen on the machine (each with its own `KITCHEN_HOME`) hands out slots from one registry, `~/.kitchen-slots/slots.json`, and skips ports something else listens on or a container publishes.
 - **Codex parity is owed.** Every part of Kitchen was built and proven on Claude Code first. Codex runs the same roles and passed setup on three of four fixtures, but its full proof runs (end to end, review, the benchmark subset) are still to do.
 - One machine, one repo per `kitchen run`. No hosted runner, no GitLab or Linear, no Windows, no mobile apps.

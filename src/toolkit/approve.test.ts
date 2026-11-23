@@ -1,0 +1,207 @@
+// ADR 0015: the person's approval, not a merge, is the Toolkit's trust gate. The trust predicate
+// (sandboxed vs not), which Toolkit a job uses, approve/revoke, waking waiting jobs, the words in each
+// state, and the dashboard's Approve action behind the same POST checks as every other.
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import http from "node:http";
+import os from "node:os";
+import path from "node:path";
+import { afterAll, beforeAll, test } from "vitest";
+import { dashboardServer } from "../dashboard/server.ts";
+import { ensureJobToolkit, resolveToolkitRef } from "../engine/job-toolkit.ts";
+import { createJob, jobDirOf, readJobAt, updateJob } from "../engine/store.ts";
+import { approveToolkit, noToolkitWords, revokeToolkit, toolkitLabel, toolkitState } from "./approve.ts";
+import { toolkitCheckout } from "./checkout.ts";
+import { sandboxedBin } from "./sandbox.ts";
+import { binFor, hasPassed, readApproval, recordPassed, trustOf } from "./trust.ts";
+
+let root = "";
+const saved = process.env.KITCHEN_HOME;
+beforeAll(() => {
+  root = fs.mkdtempSync(path.join(os.tmpdir(), "kitchen-approve-"));
+  process.env.KITCHEN_HOME = path.join(root, "home");
+});
+afterAll(() => {
+  if (saved === undefined) delete process.env.KITCHEN_HOME;
+  else process.env.KITCHEN_HOME = saved;
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+const git = (cwd: string, ...a: string[]) =>
+  execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgSign=false", ...a], { cwd, encoding: "utf8" }).trim();
+
+/** A repo on main with no Toolkit, and kitchen/setup one commit ahead holding one (a describe-only bin/dev). */
+function repo(name: string): { dir: string; base: string; setup: string } {
+  const dir = fs.realpathSync(fs.mkdirSync(path.join(root, name), { recursive: true }) ?? path.join(root, name));
+  fs.writeFileSync(path.join(dir, "server.js"), "export const ok = true;\n");
+  fs.writeFileSync(path.join(dir, ".gitignore"), ".kitchen/jobs/\n.worktrees/\n");
+  git(root, "init", "-q", "-b", "main", dir);
+  git(dir, "add", "-A");
+  git(dir, "commit", "-q", "-m", "base");
+  const base = git(dir, "rev-parse", "HEAD");
+  git(dir, "checkout", "-q", "-b", "kitchen/setup");
+  fs.mkdirSync(path.join(dir, ".kitchen", "toolkit", "bin"), { recursive: true });
+  fs.writeFileSync(path.join(dir, ".kitchen", "toolkit", "bin", "dev"), '#!/bin/sh\necho \'{"status":"ok","primitives":[]}\'\n', { mode: 0o755 });
+  git(dir, "add", "-f", ".kitchen/toolkit/bin/dev");
+  git(dir, "commit", "-q", "-m", "toolkit");
+  const setup = git(dir, "rev-parse", "HEAD");
+  git(dir, "checkout", "-q", "main");
+  return { dir, base, setup };
+}
+
+test("trust predicate: on the base or approved runs unsandboxed; anything else under the sandbox", async () => {
+  const r = repo("trust");
+  assert.equal(await trustOf(r.dir, r.base), "base");
+  assert.equal(await trustOf(r.dir, r.setup), null, "proven or not, an unapproved sha is not trusted");
+  assert.equal(await trustOf(r.dir, ""), null);
+  const sb = sandboxedBin("/x/.kitchen/toolkit/bin/dev").sandboxed; // false only where the OS has no sandbox (Linux)
+  let co = await toolkitCheckout(r.dir, r.setup);
+  co.release();
+  assert.equal(co.trust, null);
+  assert.equal(co.sandboxed, sb);
+  if (sb) assert.notEqual(co.bin, path.join(co.dir, ".kitchen/toolkit/bin/dev"), "the sandbox wrapper, not bin/dev itself");
+  recordPassed(r.dir, r.setup);
+  assert.equal(await approveToolkit(r.dir, {}), 0);
+  assert.equal(await trustOf(r.dir, r.setup), "approved");
+  co = await toolkitCheckout(r.dir, r.setup);
+  co.release();
+  assert.deepEqual([co.trust, co.sandboxed, co.bin], ["approved", false, path.join(co.dir, ".kitchen/toolkit/bin/dev")]);
+  // The setup bridge runs uncommitted code: never trusted.
+  assert.equal(binFor("/x/.kitchen/toolkit/bin/dev", null).sandboxed, sb);
+  assert.deepEqual(binFor("/x/.kitchen/toolkit/bin/dev", "approved"), { bin: "/x/.kitchen/toolkit/bin/dev", sandboxed: false });
+  revokeToolkit(r.dir);
+  assert.equal(await trustOf(r.dir, r.setup), null, "revoked: sandboxed again");
+});
+
+test("which Toolkit a job uses: the base's first, then the approved sha, else none", async () => {
+  const r = repo("resolve");
+  assert.equal(await resolveToolkitRef(r.dir, r.base), "", "nothing on the base, nothing approved");
+  recordPassed(r.dir, r.setup);
+  await approveToolkit(r.dir, {});
+  assert.equal(await resolveToolkitRef(r.dir, r.base), r.setup, "the approved sha");
+  git(r.dir, "merge", "-q", "--ff-only", "kitchen/setup");
+  const tip = git(r.dir, "rev-parse", "HEAD");
+  assert.equal(await resolveToolkitRef(r.dir, tip), tip, "the base has one: it wins over the approval");
+});
+
+test("approve refuses a sha that never passed toolkit check, one with no Toolkit, and an unknown one", async () => {
+  const r = repo("refuse");
+  const lines: string[] = [];
+  assert.equal(await approveToolkit(r.dir, {}, (l) => lines.push(l)), 1);
+  assert.match(lines.at(-1) ?? "", /hasn't passed kitchen toolkit check/);
+  assert.equal(readApproval(r.dir), null);
+  assert.equal(await approveToolkit(r.dir, { sha: r.base }, (l) => lines.push(l)), 1, "no Toolkit at that sha");
+  assert.match(lines.at(-1) ?? "", /has no Toolkit/);
+  git(r.dir, "commit", "-q", "--allow-empty", "-m", "later");
+  assert.equal(await approveToolkit(r.dir, { sha: "nope" }, (l) => lines.push(l)), 1);
+  assert.equal(readApproval(r.dir), null);
+  recordPassed(r.dir, r.setup);
+  assert.ok(hasPassed(r.dir, r.setup));
+  assert.equal(await approveToolkit(r.dir, {}, (l) => lines.push(l)), 0);
+  assert.equal(readApproval(r.dir)?.sha, r.setup);
+  assert.match(lines.at(-1) ?? "", /^Approved Toolkit [0-9a-f]{12}: every job runs your app with it\. Undo: kitchen toolkit revoke$/);
+  // Kitchen's state stays out of the person's history, without touching their .gitignore.
+  assert.equal(git(r.dir, "status", "--porcelain"), "");
+});
+
+test("approving wakes a job waiting no-toolkit; a job on a revoked approval loses it, on a newer one follows it", async () => {
+  const r = repo("wake");
+  const { job } = await createJob(r.dir, { title: "List books", ticket: { source: "prompt", id: "p1" }, body: "x", roundLimit: 3, base: r.base });
+  await updateJob(r.dir, job.id, (j) => ({ ...j, stage: "paused", pausedFrom: "intake", waitFor: "no-toolkit", pausedReason: "x" }));
+  recordPassed(r.dir, r.setup);
+  const lines: string[] = [];
+  assert.equal(await approveToolkit(r.dir, {}, (l) => lines.push(l)), 0);
+  assert.match(lines.at(-1) ?? "", /1 waiting job woke/);
+  let j = readJobAt(jobDirOf(r.dir, job.id));
+  assert.deepEqual([j.stage, j.toolkitRef, j.base], ["intake", r.setup, r.base], "woke with the approved sha; its base stays");
+  // Revoked: at its next step the job has no Toolkit (it waits again where it needs the app).
+  revokeToolkit(r.dir);
+  j = await ensureJobToolkit(r.dir, j);
+  assert.deepEqual([j.toolkitRef, j.toolkitBin], ["", ""]);
+  // A rebuild: approve the new sha, and a job on the old one takes it at its next step.
+  await updateJob(r.dir, job.id, (x) => ({ ...x, toolkitRef: r.setup }));
+  git(r.dir, "checkout", "-q", "kitchen/setup");
+  fs.writeFileSync(path.join(r.dir, ".kitchen", "toolkit", "SKILL.md"), "rebuilt\n");
+  git(r.dir, "add", "-f", ".kitchen/toolkit/SKILL.md");
+  git(r.dir, "commit", "-q", "-m", "rebuild");
+  const next = git(r.dir, "rev-parse", "HEAD");
+  git(r.dir, "checkout", "-q", "main");
+  await approveToolkit(r.dir, { sha: r.setup });
+  j = await ensureJobToolkit(r.dir, readJobAt(jobDirOf(r.dir, job.id)));
+  assert.equal(j.toolkitRef, r.setup, "the new sha isn't approved: the job keeps the old one");
+  recordPassed(r.dir, next);
+  await approveToolkit(r.dir, {});
+  j = await ensureJobToolkit(r.dir, readJobAt(jobDirOf(r.dir, job.id)));
+  assert.equal(j.toolkitRef, next, "approved: it follows");
+});
+
+test("the words in each state: build it, being built, approve it; the sidebar label", () => {
+  const none = noToolkitWords({ state: "none" });
+  assert.match(none, /run `kitchen toolkit build`.*then approve it/);
+  const building = noToolkitWords({ state: "building" });
+  assert.match(building, /being built/);
+  const waiting = noToolkitWords({ state: "waiting", sha: "a".repeat(40) });
+  assert.match(waiting, /approve it \(kitchen toolkit approve\), or commit it to share with your team \(kitchen toolkit commit\)/);
+  for (const w of [none, building, waiting]) assert.doesNotMatch(w, /merge/i);
+  assert.equal(toolkitLabel({ state: "waiting" }), "proven · waiting for approval");
+  assert.equal(toolkitLabel({ state: "approved" }), "approved");
+  assert.equal(toolkitLabel({ state: "none" }), "not built");
+});
+
+test("toolkitState reads the build, the passed record and the approval", async () => {
+  const r = repo("state");
+  assert.equal(toolkitState(r.dir).state, "none");
+  const init = path.join(r.dir, ".kitchen", "init");
+  fs.mkdirSync(init, { recursive: true });
+  fs.writeFileSync(
+    path.join(init, "state.json"),
+    JSON.stringify({
+      version: 1,
+      startedAt: "",
+      steps: { template: { copied: true, existing: false }, check: { ok: true, sha: r.setup, secs: 1, parallel: true } },
+      fixes: 0,
+      runs: [],
+    }),
+  );
+  assert.equal(toolkitState(r.dir).state, "none", "a check the passed record doesn't know of is not offered for approval");
+  recordPassed(r.dir, r.setup);
+  assert.deepEqual(toolkitState(r.dir), { state: "waiting", sha: r.setup });
+  await approveToolkit(r.dir, {});
+  assert.equal(toolkitState(r.dir).state, "approved");
+  fs.writeFileSync(path.join(init, "status.json"), JSON.stringify({ state: "running", pid: process.ppid, pidStart: null, startedAt: "", at: "", last: [] }));
+  assert.equal(toolkitState(r.dir).state, "building");
+});
+
+test("dashboard Approve Toolkit: refused without the token, from another origin or host, as a form, with fields; the page's own approves", async () => {
+  const r = repo("dash");
+  recordPassed(r.dir, r.setup);
+  const TOKEN = "k".repeat(64);
+  const server = dashboardServer(r.dir, { token: TOKEN });
+  await new Promise<void>((res) => server.listen(0, "127.0.0.1", () => res()));
+  const port = (server.address() as { port: number }).port;
+  const post = (headers: Record<string, string>, body = "{}") =>
+    new Promise<number>((resolve, reject) => {
+      const q = http.request({ host: "127.0.0.1", port, method: "POST", path: "/api/toolkit-approve", headers }, (res) => {
+        res.resume();
+        res.on("end", () => resolve(res.statusCode ?? 0));
+      });
+      q.on("error", reject);
+      q.end(body);
+    });
+  const good = { host: `127.0.0.1:${port}`, "content-type": "application/json", "x-kitchen-token": TOKEN };
+  try {
+    const { "x-kitchen-token": _, ...noToken } = good;
+    assert.equal(await post(noToken), 403, "no token");
+    assert.equal(await post({ ...good, "x-kitchen-token": "x".repeat(64) }), 403, "wrong token");
+    assert.equal(await post({ ...good, origin: "https://evil.example" }), 403, "another origin");
+    assert.equal(await post({ ...good, host: "evil.example" }), 403, "DNS rebinding");
+    assert.equal(await post({ ...good, "content-type": "text/plain" }), 415, "a cross-site form's type");
+    assert.equal(await post(good, JSON.stringify({ sha: r.base })), 400, "the page can't name a sha");
+    assert.equal(readApproval(r.dir), null, "nothing approved by any of those");
+    assert.equal(await post({ ...good, origin: `http://127.0.0.1:${port}` }), 200);
+    assert.equal(readApproval(r.dir)?.sha, r.setup);
+  } finally {
+    server.close();
+  }
+});
