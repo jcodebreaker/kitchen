@@ -4,9 +4,8 @@
 //                                  id (not the token): a tab from an earlier launch sees it changed and reloads once
 //   GET  /jobs/<id>/detail.json    one job: stage history with its agents' activity, thread, criteria
 //   GET  /jobs/<id>/report.html    a job's rendered Report
-//   GET  /setup.json               the Setup run
-//   POST /api/<action>             steer, answer, follow-up, pause, stop, resume, reject, ticket, setup-answers, toolkit-approve,
-//                                  start-runner (actions.ts; one that makes work runnable starts a runner when none runs)
+//   POST /api/<action>             steer, answer, follow-up, pause, stop, resume, reject, ticket, start-runner
+//                                  (actions.ts; one that gives the queue work starts an orchestrator when none runs)
 //
 // The page can change state (ADR 0009), so a POST must come from the page this server served:
 // the Host check (DNS rebinding), an Origin, when sent, that is this server's own, the per-launch
@@ -20,7 +19,6 @@ import { JOB_ID, jobDirOf, scanJobs } from "../engine/store.ts";
 import { act, BadRequest } from "./actions.ts";
 import { snapshot } from "./data.ts";
 import { detail } from "./detail.ts";
-import { setupView } from "./setup.ts";
 
 export const DASHBOARD_HTML = path.resolve(import.meta.dirname, "..", "..", "dashboard", "dashboard.html");
 /** A POST body larger than this is refused unread. */
@@ -110,7 +108,6 @@ export function dashboardServer(repo: string, o: { token?: string } = {}): http.
         return send(200, "text/html; charset=utf-8", page, { "content-security-policy": PAGE_CSP });
       }
       if (url.pathname === "/data.json") return json(200, { ...(await snapshot(repo)), launch });
-      if (url.pathname === "/setup.json") return json(200, setupView(repo));
       const m = /^\/jobs\/([^/]+)\/(report\.html|detail\.json)$/.exec(url.pathname);
       if (m) {
         let id: string;
