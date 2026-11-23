@@ -25,6 +25,7 @@ import { jobRequirements } from "./context.ts";
 import { prompt } from "./prompts.ts";
 import { lastVerdictFile } from "./review.ts";
 import { runRole } from "./role.ts";
+import { degradedRoles, skillsUsed } from "./skills.ts";
 import { hasToolkit } from "./toolkit-info.ts";
 import type { StageHandler } from "./types.ts";
 import { argsDeltasOf } from "./verify.ts";
@@ -287,6 +288,8 @@ export const report: StageHandler = async (ctx) => {
   } finally {
     fs.rmSync(packet, { recursive: true, force: true });
   }
+  // Every role's skills, the report role's own run included.
+  facts.skills = skillsUsed(ctx.refresh().agentRuns, degradedRoles());
   const out = renderReport({
     src,
     facts,

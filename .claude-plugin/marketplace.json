@@ -1,0 +1,26 @@
+{
+  "name": "kitchen",
+  "owner": {
+    "name": "Kitchen contributors"
+  },
+  "metadata": {
+    "description": "Kitchen turns tickets into pull requests proven by driving your real app, with Claude Code or Codex doing the judgment.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "kitchen",
+      "source": "./plugins/kitchen",
+      "description": "Kitchen turns tickets into pull requests proven by driving your real app, with Claude Code or Codex doing the judgment.",
+      "version": "0.1.0",
+      "category": "development",
+      "keywords": [
+        "kitchen",
+        "pull-requests",
+        "verification",
+        "agents",
+        "software-factory"
+      ]
+    }
+  ]
+}

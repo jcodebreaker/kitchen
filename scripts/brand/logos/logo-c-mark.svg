@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Kitchen: wordmark"><title>Kitchen: wordmark</title><style>
+.ink{fill:var(--k-ink,#18181b)}.inks{fill:none;stroke:var(--k-ink,#18181b);stroke-linecap:round;stroke-linejoin:round}
+.acc{fill:var(--k-acc,#d9480f)}.accs{fill:none;stroke:var(--k-acc,#d9480f);stroke-linecap:round;stroke-linejoin:round}
+.pap{fill:var(--k-paper,#fff)}.paps{fill:none;stroke:var(--k-paper,#fff);stroke-linecap:round;stroke-linejoin:round}
+.acct{fill:none;stroke:var(--k-acc-tile,#ff8a3d);stroke-linecap:round;stroke-linejoin:round}
+@media (prefers-color-scheme:dark){.ink{fill:var(--k-ink,#ededf0)}.inks{stroke:var(--k-ink,#ededf0)}.acc{fill:var(--k-acc,#ff8a3d)}.accs{stroke:var(--k-acc,#ff8a3d)}.pap{fill:var(--k-paper,#0f1011)}.paps{stroke:var(--k-paper,#0f1011)}.acct{stroke:var(--k-acc-tile,#d9480f)}}
+</style><path class="inks" stroke-width="6.4" d="M43.75,11.65A23.5,23.5 0 0 1 52.35,43.75M43.75,52.35A23.5,23.5 0 0 1 11.65,43.75M8.50,32.00A23.5,23.5 0 0 1 32.00,8.50"/><path class="accs" stroke-width="6.4" d="M22.6,32.8L29.4,39.6L41.6,25"/></svg>

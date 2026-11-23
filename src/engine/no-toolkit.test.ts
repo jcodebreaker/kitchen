@@ -130,6 +130,24 @@ test("no Toolkit: a ticket proven by cmd/test goes straight on; checks only goes
   assert.equal(d.proposal.to, "paused");
 });
 
+test("intake's TITLE becomes the job's short title, whatever it decided; the full ticket stays in ticket.md (ADR 0011)", async () => {
+  const { dir, base } = repo("titles");
+  const a = await runIntake(dir, base, CMD_PROOF.replace("KIND: feature", "TITLE: List the books\nKIND: feature"));
+  const r = move(a.job, a.proposal.to, { ...a.proposal.facts, now: new Date().toISOString() });
+  assert.ok("job" in r);
+  assert.equal(r.job.title, "List the books");
+  const q = await runIntake(dir, base, "DECISION: NEEDS-INFO\nTITLE: Renew a loan once\nQUESTION: For how long?\n");
+  const r2 = move(q.job, "needs-info", { ...q.proposal.facts, now: new Date().toISOString() });
+  assert.ok("job" in r2);
+  assert.equal(r2.job.title, "Renew a loan once");
+  // No TITLE: the title it had stays.
+  const n = await runIntake(dir, base, CMD_PROOF);
+  const r3 = move(n.job, n.proposal.to, { ...n.proposal.facts, now: new Date().toISOString() });
+  assert.ok("job" in r3);
+  assert.equal(r3.job.title, "list the books");
+  assert.match(fs.readFileSync(path.join(jobDirOf(dir, a.job.id), "ticket.md"), "utf8"), /list the books/);
+});
+
 test("a repo with a Toolkit is unchanged: the same app criterion lints against describe and goes to build, no noToolkit facts", async () => {
   const { dir, base } = repo("toolkit");
   const bin = path.join(root, "fake-toolkit", "bin", "dev");

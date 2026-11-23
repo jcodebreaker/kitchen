@@ -80,6 +80,7 @@ test("quick init on fixture E: kitchen.yaml with its checks, the skill, .gitigno
   // Quiet: one line per phase, a total, the next step.
   assert.match(lines.join("\n"), /… Running test \(npm test\)…\n.*✓ Ran the checks +test passed on main/);
   assert.match(lines.join("\n"), /Done in [\d.]+s · no agent/);
+  assert.match(lines.join("\n"), /Installed the skill .* · role skills: \d+ of \d+ found \(kitchen skills\)/, "the role skills report rides on the skill line");
   assert.match(lines.join("\n"), /kitchen toolkit build \(about 3–15 min\)/);
   assert.ok(lines.length <= 10, lines.join("\n"));
 });

@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "about": "Role → skill registry (docs/adr/0014-role-skills.md). Validated at load by src/skills/registry.ts; the README table between the skills-registry markers is generated from it (src/skills/readme.ts). A skill is only guidance: Kitchen copies its SKILL.md text into the role's prompt, pinned by sha256 in the ledger.",
+  "forbidden": ["grilling", "grill-me", "grill-with-docs", "wizard", "triage", "ask-matt", "to-questionnaire"],
+  "skills": {
+    "tdd": { "source": "mattpocock-skills" },
+    "diagnosing-bugs": { "source": "mattpocock-skills" },
+    "codebase-design": { "source": "mattpocock-skills" },
+    "domain-modeling": { "source": "mattpocock-skills" },
+    "code-review": { "source": "mattpocock-skills" },
+    "security-review": { "source": "kitchen", "vendored": "vendor/security-review" },
+    "impeccable": { "source": "local" },
+    "humanizer": { "source": "local" }
+  },
+  "sources": {
+    "mattpocock-skills": {
+      "about": "Matt Pocock's skills (MIT), github.com/mattpocock/skills",
+      "plugin": "mattpocock-skills",
+      "claude": "claude plugin install mattpocock-skills@claude-plugins-official",
+      "codex": "copy skills/engineering/{name}/ from github.com/mattpocock/skills to ~/.agents/skills/{name}/"
+    },
+    "kitchen": {
+      "about": "shipped with Kitchen in skills/vendor/ (see NOTICE)",
+      "claude": "nothing to install: it ships with Kitchen",
+      "codex": "nothing to install: it ships with Kitchen"
+    },
+    "local": {
+      "about": "used when present; nothing installs it",
+      "claude": "put the {name} skill folder (with its SKILL.md) in ~/.claude/skills/{name}/, or commit it in <repo>/.claude/skills/{name}/ on the base branch",
+      "codex": "put the {name} skill folder (with its SKILL.md) in ~/.agents/skills/{name}/, or commit it in <repo>/.agents/skills/{name}/ on the base branch"
+    }
+  },
+  "roles": {
+    "builder": {
+      "picked": [
+        { "skill": "diagnosing-bugs", "kind": ["bug"] },
+        { "skill": "tdd", "kind": ["feature", "ui"] },
+        { "skill": "codebase-design", "kind": ["chore"] }
+      ],
+      "ticket": true,
+      "fallback": "the role prompt alone (today's behaviour)"
+    },
+    "intake": { "optional": ["domain-modeling"], "fallback": "the role prompt" },
+    "spec": { "fallback": "the role prompt" },
+    "reviewer-code": { "optional": ["code-review", "codebase-design"], "fallback": "the roles/_review.md checklist" },
+    "reviewer-security": {
+      "required": [{ "skill": "security-review", "risk": ["high"] }],
+      "picked": [{ "skill": "security-review", "surface": ["security"] }],
+      "fallback": "none needed: Kitchen ships it"
+    },
+    "reviewer-ui": {
+      "picked": [{ "skill": "impeccable", "surface": ["ui"] }],
+      "fallback": "the reviewer-ui.md rubric; the Report says degraded",
+      "degraded": true
+    },
+    "reviewer-ux": { "fallback": "the role prompt" },
+    "verifier": { "fallback": "none: the verifier judges only what needs eyes" },
+    "report": { "optional": ["humanizer"], "fallback": "the role prompt" }
+  }
+}

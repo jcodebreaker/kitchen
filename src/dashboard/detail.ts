@@ -24,6 +24,8 @@ export type Seg = {
   sum: string;
   evs: (Ev | MsgEv)[];
   calls: number;
+  /** Role skills its agents were given (ADR 0014). */
+  sk?: string[];
 };
 export type MsgEv =
   | { c: "you"; t: string; at: string; kind: Message["kind"]; status: string; sent: boolean }
@@ -32,7 +34,22 @@ export type Detail = {
   id: string;
   tl: Seg[];
   crit: { id: string; text: string; st: "ok" | "bad" | "wait"; e: string }[];
+  /** The ticket's full text (ticket.md without its title line): the title is short (ADR 0011), the panel shows all of it. */
+  ticket: string;
 };
+
+/** ticket.md's body: everything after the `# <title>` line, at most 4,000 characters. */
+export function ticketText(dir: string): string {
+  try {
+    const t = fs
+      .readFileSync(path.join(dir, "ticket.md"), "utf8")
+      .replace(/^# [^\n]*\n+/, "")
+      .trim();
+    return t.length > 4000 ? `${t.slice(0, 3999)}…` : t;
+  } catch {
+    return "";
+  }
+}
 
 const EVENTS_PER_SEG = 160;
 /** A move that sends a job back: to a person who must decide (intake asking its question is not a failure), or to an earlier stage (a failed check, a contract sent back). */
@@ -118,6 +135,8 @@ export async function detail(repo: string, ref: string): Promise<Detail> {
     const runs = runsBy(m);
     const waited = stage === "needs-human" || stage === "needs-info" || (stage === "paused" && byYou(moves[m - 1]));
     const who = waited ? "you" : [...new Set(runs.length ? runs.map((r) => `${r.role} · ${r.model}`) : roles)].join(", ");
+    // The role skills its agents were given (ADR 0014), shown small under the segment.
+    const sk = [...new Set(runs.flatMap((r) => (r.skills ?? []).map((s) => s.name)))];
     if (stage === "paused") {
       tl.push({ stage, nm: STAGE_NAMES[stage], st: "paused", round: l?.round ?? j.round, who, start, end, sum: "", evs: [], calls: 0 });
       return;
@@ -135,6 +154,7 @@ export async function detail(repo: string, ref: string): Promise<Detail> {
         sum: stopped ? "Stopped by you" : "Paused by you after this step",
         evs: evs.slice(-EVENTS_PER_SEG),
         calls: evs.filter((e) => e.c === "tool").length,
+        sk,
       });
       return;
     }
@@ -152,6 +172,7 @@ export async function detail(repo: string, ref: string): Promise<Detail> {
       sum: (bad || stage === "verify" ? note : (runs.at(-1)?.line ?? "")).slice(0, 220),
       evs: evs.slice(-EVENTS_PER_SEG),
       calls: evs.filter((e) => e.c === "tool").length,
+      sk,
     });
   };
   moves.forEach((l, i) => {
@@ -211,5 +232,5 @@ export async function detail(repo: string, ref: string): Promise<Detail> {
       e: r ? `${r.result}${r.e ? ` · ${r.e}` : ""}` : "",
     };
   });
-  return { id: j.id, tl, crit };
+  return { id: j.id, tl, crit, ticket: ticketText(dir) };
 }

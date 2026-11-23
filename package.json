@@ -14,11 +14,11 @@
   "author": "Kitchen contributors",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/OWNER/kitchen.git"
+    "url": "git+https://github.com/jcodebreaker/kitchen.git"
   },
-  "homepage": "https://github.com/OWNER/kitchen#readme",
+  "homepage": "https://github.com/jcodebreaker/kitchen#readme",
   "bugs": {
-    "url": "https://github.com/OWNER/kitchen/issues"
+    "url": "https://github.com/jcodebreaker/kitchen/issues"
   },
   "type": "module",
   "bin": {
@@ -44,6 +44,8 @@
     "test": "vitest run",
     "format": "biome check --write .",
     "lint": "biome check .",
+    "skills:readme": "tsx src/skills/readme.ts",
+    "plugin:sync": "tsx src/plugin/sync.ts",
     "prepack": "rm -rf dist && tsc -p tsconfig.json"
   },
   "dependencies": {

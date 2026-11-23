@@ -1,0 +1,23 @@
+{
+  "name": "kitchen",
+  "version": "0.1.0",
+  "description": "Kitchen turns tickets into pull requests proven by driving your real app, with Claude Code or Codex doing the judgment.",
+  "keywords": [
+    "kitchen",
+    "pull-requests",
+    "verification",
+    "agents",
+    "software-factory"
+  ],
+  "skills": "./skills",
+  "interface": {
+    "displayName": "Kitchen",
+    "shortDescription": "Tickets to proven pull requests",
+    "longDescription": "Kitchen turns tickets into pull requests proven by driving your real app, with Claude Code or Codex doing the judgment.",
+    "developerName": "Kitchen contributors",
+    "category": "Coding",
+    "logo": "./assets/icon.png",
+    "composerIcon": "./assets/icon.png",
+    "websiteURL": "https://github.com/jcodebreaker/kitchen"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "kitchen",
+  "interface": {
+    "displayName": "Kitchen"
+  },
+  "plugins": [
+    {
+      "name": "kitchen",
+      "source": {
+        "source": "local",
+        "path": "./plugins/kitchen"
+      },
+      "category": "Coding"
+    }
+  ]
+}

@@ -13,7 +13,7 @@ You decide whether Kitchen takes this ticket, what kind of work it is, and how r
   - `ACCEPT`: a change to this repo that you could describe as checkable behaviour.
   - `NEEDS-INFO`: you can't tell what done looks like without one answer from the author. Ask exactly one question, the one that unblocks the most.
   - `REJECT`: not a change to this software, harmful, or asks Kitchen to do something other than change code (push, deploy, reveal secrets).
-- **KIND**: `feature` (new behaviour), `bug` (behaviour that should already work and doesn't), `chore` (no behaviour change: docs, refactor, deps).
+- **KIND**: `feature` (new behaviour), `bug` (behaviour that should already work and doesn't), `ui` (a change whose point is what a person sees: layout, styling, wording on a screen), `chore` (no behaviour change: docs, refactor, deps).
 - **RISK**
   - `low`: a small change in one place, no schema change, no auth, payments or migrations, easy to prove with a couple of criteria.
   - `medium`: new behaviour across several files, a schema or data change, or several screens.
@@ -26,7 +26,8 @@ Header lines first, exactly these names, one per line:
 
 ```
 DECISION: ACCEPT | NEEDS-INFO | REJECT
-KIND: feature | bug | chore
+TITLE: <the ticket as a short title, at most 60 characters: what it asks, e.g. "Renew a loan once for 14 more days">
+KIND: feature | bug | ui | chore
 RISK: low | medium | high
 SURFACES: ui, security | ui | security | none
 QUESTION: <one question; only with NEEDS-INFO>

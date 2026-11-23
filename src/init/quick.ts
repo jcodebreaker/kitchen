@@ -26,7 +26,9 @@ import { appendLedger } from "../ledger/append.ts";
 import { runSandboxed } from "../proof/run-sandboxed.ts";
 import { type Detected, detectChecks } from "./detect-checks.ts";
 import { addGitignore, hasOwnChecks, installSkill, toolFor, writeConfig } from "./files.ts";
+import { markStep } from "./resume.ts";
 import { dur, phaseLine, usd } from "./say.ts";
+import { skillsReport } from "./skills-report.ts";
 
 export type QuickOpts = {
   repo: string;
@@ -35,6 +37,16 @@ export type QuickOpts = {
   agent?: () => Promise<AgentAdapter>;
   /** Asks the person a yes/no question (a terminal). Absent: no one to ask, so proposed checks are written commented out. */
   confirm?: (question: string) => Promise<boolean>;
+  /** The command that resumes this init, printed at every halt (ADR 0011). */
+  resume?: string;
+};
+
+/** What `kitchen init` is doing at each step it records (answers.json), as said when it resumes there. */
+export const INIT_STEPS: Record<string, string> = {
+  agent: "choosing the agent",
+  checks: "finding the checks",
+  files: "writing kitchen.yaml",
+  run: "running the checks",
 };
 
 export type CheckRun = { name: string; run: string; ok: boolean; exit: number | null; secs: number; tail: string; sandboxed?: boolean };
@@ -90,6 +102,8 @@ export async function quickInit(o: QuickOpts, out: (l: string) => void): Promise
     branch = (await git.run(["symbolic-ref", "--short", "-q", "HEAD"])).stdout.trim();
   } catch {}
   out(`Setting up Kitchen in ${path.basename(repo)}…`);
+  const resume = o.resume ?? "kitchen init";
+  markStep(repo, "init", "checks");
 
   // 1. checks: kitchen.yaml's own, else the repo's files, else (once) one short agent call
   const tool = toolFor(repo, o.tool);
@@ -142,6 +156,7 @@ export async function quickInit(o: QuickOpts, out: (l: string) => void): Promise
   }
 
   // 2. the files
+  markStep(repo, "init", "files");
   const cfgW = writeConfig(repo, tool, detected, { proposed });
   const cfg = loadConfig(repo);
   const n = cfg.checkList.length;
@@ -163,7 +178,12 @@ export async function quickInit(o: QuickOpts, out: (l: string) => void): Promise
     ),
   );
   installSkill(repo);
-  out(phaseLine(true, "Installed the skill", "/kitchen for Claude Code (.claude/skills) and Codex (.agents/skills)"));
+  // Role skills (ADR 0014) ride on this line to keep init quiet: a report only, never a failure; `kitchen skills` lists them.
+  let roleSkills = "?";
+  try {
+    roleSkills = skillsReport(repo).short;
+  } catch {} // a report only: init never fails over it
+  out(phaseLine(true, "Installed the skill", `/kitchen for Claude Code and Codex · role skills: ${roleSkills} (kitchen skills)`));
   const added = addGitignore(repo);
   out(phaseLine(true, "Updated .gitignore", added.length ? `${added.length} Kitchen entries` : "already has Kitchen's entries"));
 
@@ -177,6 +197,7 @@ export async function quickInit(o: QuickOpts, out: (l: string) => void): Promise
   };
   // The same steps a job worktree gets (run-checks.ts): the frozen download online with no scripts, the rest offline.
   const prepare = checksPrepareOf(cfg);
+  markStep(repo, "init", "run");
   if (n && !sha) record.skipped = "no commit yet";
   else if (n && depsMissing(repo) && !prepare) record.skipped = "dependencies not installed, and no lockfile to install them from";
   else if (n) {
@@ -228,17 +249,18 @@ export async function quickInit(o: QuickOpts, out: (l: string) => void): Promise
     out(failed.tail.replace(/^/gm, "  | "));
     out("Gate runs these checks on every job, so every job would fail them.");
     out(`Done in ${dur((Date.now() - t0) / 1000)}, with failing checks.`);
-    out("Next: fix them (or edit checks: in kitchen.yaml), then run kitchen init again.");
+    out(`Next: fix them (or edit checks: in kitchen.yaml). Resume: ${resume}`);
     return 1;
   }
   const cost = agentRun?.usd;
+  if (!record.skipped) markStep(repo, "init", "done");
   out(`Done in ${dur((Date.now() - t0) / 1000)} · ${agentRun ? `one agent call${cost ? ` (${usd(cost)})` : ""}` : "no agent"}`);
   if (record.skipped === "no commit yet") {
-    out("Next: make a first commit (git add -A && git commit -m init), then kitchen init again to run the checks.");
+    out(`Next: make a first commit (git add -A && git commit -m init), then run the checks. Resume: ${resume}`);
     return 0;
   }
   if (record.skipped) {
-    out("Next: install the dependencies (or commit a lockfile), then kitchen init again to run the checks.");
+    out(`Next: install the dependencies (or commit a lockfile), then run the checks. Resume: ${resume}`);
     return 0;
   }
   if (!n && found !== "proposed") out('No checks: Gate will have nothing to run. Add them to kitchen.yaml (checks: ["npm test"]) when you can.');
