@@ -26,4 +26,12 @@ kitchen bench tuned --only a-count,b-done-many --runs 1
 kitchen report --bench
 ```
 
+**Role skills on and off** (ADR 0014 §7): `--no-skills` writes `skills: { enabled: false }` into every bench repo's `kitchen.yaml`, so each role runs on its prompt alone; its results go to `results/<date>-<tier>-<tool>-noskills.md` and its run id ends `-noskills`. Run both sides on the same tickets and machine, then keep a skill only if it raises the correct rate or lowers cost or rounds beyond the noise:
+
+```sh
+kitchen bench smoke --tool claude --runs 3 --max-usd 25
+kitchen bench smoke --tool claude --runs 3 --max-usd 25 --no-skills
+kitchen report --bench
+```
+
 Repos, logs and `KITCHEN_HOME` go to `bench/.work/<time>-<tier>/` (ignored); results to `results/<date>-<tier>-<tool>.md` and `.json`. At most `--concurrency` jobs at once (default 2) and at most one Docker fixture (A, C) at a time. `--max-usd` (default 25) stops starting tickets once the spend reaches it. Real-agent runs are started by hand, never in CI.

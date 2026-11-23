@@ -424,9 +424,13 @@ export const review: StageHandler = async (ctx) => {
       `review: ${lenses.length ? lenses.join(", ") : "no lenses on this path"} → ${blocking.length ? `BLOCKING ${summary}` : "PASS"} (${merged.length} finding(s) after merging ${all.length})`,
     );
     const facts = { nonDiscriminating: weak, findings: merged.length, notes: merged.length - blocking.length };
-    return blocking.length
-      ? { to: "build", facts: { review: { pass: false, blocking: summary, ...facts } } }
-      : { to: "ready", facts: { review: { pass: true, ...facts } } };
+    if (blocking.length) return { to: "build", facts: { review: { pass: false, blocking: summary, ...facts } } };
+    // The diff can raise a job to high risk after spec; a high-risk job never reaches ready without a Toolkit (ADR 0010).
+    if (!hasToolkit(job) && effectiveRisk(job) === "high") {
+      ctx.log("no Toolkit, and the job is high risk: waiting for kitchen toolkit build before ready");
+      return { to: "paused", facts: { review: { pass: true, ...facts }, noToolkit: { needsApp: [], highRisk: true } } };
+    }
+    return { to: "ready", facts: { review: { pass: true, ...facts } } };
   } finally {
     fs.rmSync(packet, { recursive: true, force: true });
   }

@@ -52,7 +52,7 @@ export function agentYaml(tool: "claude" | "codex", claudeBin: string): string {
 }
 
 /** Make the repo at `dir` (replaced if it exists). Returns its path. */
-export function makeBenchRepo(kitchenRoot: string, t: BenchTicket, dir: string, agent: string): string {
+export function makeBenchRepo(kitchenRoot: string, t: BenchTicket, dir: string, agent: string, extraYaml: string[] = []): string {
   fs.rmSync(dir, { recursive: true, force: true });
   const src = path.join(kitchenRoot, "fixtures", t.fixture);
   fs.cpSync(src, dir, { recursive: true, filter: (p) => !/[/\\](node_modules|__pycache__|\.worktrees|data)([/\\]|$)/.test(p.slice(src.length)) });
@@ -77,6 +77,7 @@ export function makeBenchRepo(kitchenRoot: string, t: BenchTicket, dir: string, 
       "checks:",
       ...fx.checks.map((c, i) => `  - { name: check${i + 1}, run: ${JSON.stringify(c)} }`),
       `test_cmd: ${JSON.stringify(fx.testCmd)}`,
+      ...extraYaml,
       "",
     ].join("\n"),
   );

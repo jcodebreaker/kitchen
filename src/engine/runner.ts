@@ -19,7 +19,7 @@ import { KITCHEN_MARKER } from "../checks/report-render.ts";
 import { type Config, loadConfig } from "../config.ts";
 import { type Forge, forgeFor, isTrusted } from "../forge/forge.ts";
 import { appendLedger } from "../ledger/append.ts";
-import { self } from "../lock.ts";
+import { ownerAlive, self } from "../lock.ts";
 import { procsDirOf, reapGroups } from "../procs.ts";
 import { retroDue, runRetro } from "../retro/retro.ts";
 import { dismissalsIn } from "../retro/signals.ts";
@@ -31,12 +31,14 @@ import { maintain, maintainDue } from "../toolkit/maintain.ts";
 import { beforeNewWork } from "../toolkit/reproof.ts";
 import { acquireSlot, downSlot, listSlots, reclaimStaleSlots, releaseSlot } from "../toolkit/slots.ts";
 import { takeTicket } from "./base.ts";
+import { honorControl, stopRequested } from "./control.ts";
 import { ensureJobToolkit } from "./job-toolkit.ts";
 import { acquireRunLock } from "./lock.ts";
-import { type Facts, isActive, type Job, move, type Stage } from "./machine.ts";
+import { type Facts, isActive, type Job, move, pausedByYou, type Stage } from "./machine.ts";
+import { baseTipThrottled, wakeWithToolkit } from "./no-toolkit.ts";
 import { HANDLERS } from "./stages/index.ts";
 import { hasToolkit } from "./stages/toolkit-info.ts";
-import { LockLost, type Proposal, RoleFailure, type StageContext } from "./stages/types.ts";
+import { LockLost, type Proposal, RoleFailure, SkillMissing, type StageContext } from "./stages/types.ts";
 import { jobDirOf, listJobs, readJobAt, repairManifest, scanJobs, updateJob, writeAtomic } from "./store.ts";
 import { headTime } from "./worktree.ts";
 
@@ -166,7 +168,9 @@ export async function runKitchen(o: RunOpts): Promise<{ steps: number; moves: nu
         const jobs = listJobs(repo).filter(wanted);
         const runnable = jobs.filter((j) => isActive(j.stage) && !inFlight.has(j.id)).sort(byOldest);
         while (runnable.length && inFlight.size < concurrency) dispatch(runnable.shift() as Job);
-        const waiting = jobs.filter((j) => j.stage === "paused");
+        // A job a person paused waits for `kitchen resume`, not for this runner: like needs-human, it keeps no runner alive.
+        // So does a job waiting for the person to build a Toolkit (the next run wakes it).
+        const waiting = jobs.filter((j) => j.stage === "paused" && !pausedByYou(j) && j.waitFor !== "no-toolkit");
         if (!inFlight.size && !runnable.length && !waiting.length) break;
         await Promise.race([...inFlight.values(), new Promise((r) => setTimeout(r, tickMs))]);
       }
@@ -257,11 +261,26 @@ async function takeNew(repo: string, d: Deps, print: (l: string) => void) {
   }
 }
 
+let lastTipError = "";
 /** Paused jobs whose condition cleared go back to pausedFrom; needs-info jobs with a reply go back to intake. */
 async function checkWaits(repo: string, d: Deps, print: (l: string) => void, wanted: (j: Job) => boolean) {
-  for (const job of listJobs(repo).filter(wanted)) {
+  const jobs = listJobs(repo).filter(wanted);
+  // The base tip, once per pass and at most once a minute, only when a job waits for a Toolkit (review M4).
+  let tip: string | null = null;
+  if (jobs.some((j) => j.stage === "paused" && j.waitFor === "no-toolkit")) {
+    try {
+      tip = await baseTipThrottled(repo, d.config);
+      lastTipError = "";
+    } catch (e) {
+      const m = (e as Error).message;
+      if (m !== lastTipError) print(`no-toolkit: can't read the base to see whether a Toolkit arrived: ${m}`);
+      lastTipError = m;
+    }
+  }
+  for (const job of jobs) {
     if (job.stage === "paused" && job.pausedFrom) {
       let cleared = false;
+      let wake: Facts["wake"];
       if (job.waitFor === "backoff") cleared = !job.until || Date.now() >= Date.parse(job.until);
       // Merged, or closed without merging (Ready then sends the job to needs-human, naming the PR).
       else if (job.waitFor === "toolkit-pr") cleared = job.smith.toolkitPr !== null && (await d.forge.prState(job.smith.toolkitPr)) !== "open";
@@ -271,7 +290,19 @@ async function checkWaits(repo: string, d: Deps, print: (l: string) => void, wan
         const waiting = !!job.until && Date.now() < Date.parse(job.until);
         cleared = ci !== "pending" && (!waiting || ci === "pass" || ci === "fail");
       } else if (job.waitFor === "toolkit-ticket") cleared = !!job.toolkitTicketRef && (await d.forge.ticketClosed(job.toolkitTicketRef));
-      if (cleared) await moveJob(repo, job, { to: job.pausedFrom, facts: { waitCleared: true }, note: `${job.waitFor} cleared` }, print);
+      // The Toolkit reached the base (kitchen/setup merged): the job takes it and goes on (no-toolkit.ts).
+      else if (job.waitFor === "no-toolkit" && tip) {
+        const w = await wakeWithToolkit(repo, d.config, job, tip).catch((e) => {
+          print(`${job.id}  no-toolkit: ${(e as Error).message}`);
+          return { toolkit: false } as const;
+        });
+        if (w.toolkit) {
+          cleared = true;
+          wake = w.facts;
+        }
+      }
+      if (cleared)
+        await moveJob(repo, job, { to: job.pausedFrom, facts: { waitCleared: true, ...(wake ? { wake } : {}) }, note: `${job.waitFor} cleared` }, print);
     } else if (job.stage === "needs-info" && (await d.source.replies(job)).length) {
       await moveJob(repo, job, { to: "intake", facts: { replied: true }, note: "the author replied" }, print);
     } else if (job.stage === "done" && job.pr !== null) {
@@ -368,8 +399,10 @@ function backoffUntil(cfg: Config, job: Job): string {
 async function step(repo: string, start: Job, d: Deps, print: (l: string) => void, stats: { steps: number; moves: number; refused: number }) {
   const me = self();
   if (!d.holdsLock()) return; // another runner has the lock: it runs the job
+  // A pause or stop asked for while the job waited for a slot: parked instead of run.
+  if ((await honorControl(repo, start.id, print)) === "parked") return;
   let job = await updateJob(repo, start.id, (j) => {
-    j.running = { pid: me.pid, start: me.start, stage: j.stage, at: new Date().toISOString() };
+    if (j.stage === start.stage) j.running = { pid: me.pid, start: me.start, stage: j.stage, at: new Date().toISOString() };
     return j;
   });
   if (job.stage !== start.stage) return;
@@ -399,13 +432,18 @@ async function step(repo: string, start: Job, d: Deps, print: (l: string) => voi
   try {
     p = await handler(ctx);
   } catch (e) {
+    // `kitchen stop` killed the agent: the stage's result is dropped and the job parked where it was.
+    if (stopRequested(jobDir) && (await honorControl(repo, job.id, print)) === "parked") return;
     const fresh = readJobAt(jobDir);
     const msg = (e as Error).message;
     if (e instanceof LockLost || !d.holdsLock()) {
       print(`${short(job)}  ${job.stage}: run lock lost, left for the runner that holds it`);
       return;
     }
-    if (e instanceof RoleFailure && (e.rateLimited || e.authFailure)) {
+    if (e instanceof SkillMissing) {
+      // Nothing to retry: a person installs the skill, then answers the job.
+      p = { to: "needs-human", facts: { escalate: "skill-missing", why: msg } };
+    } else if (e instanceof RoleFailure && (e.rateLimited || e.authFailure)) {
       p = { to: "paused", facts: { adapter: { rateLimited: e.rateLimited, authFailure: e.authFailure, until: backoffUntil(d.config, fresh), error: msg } } };
     } else if (fresh.attempts.errors + 1 >= 2) {
       // A role that failed is the adapter's error; anything else (git, worktree, files) is the engine's.
@@ -432,9 +470,12 @@ async function step(repo: string, start: Job, d: Deps, print: (l: string) => voi
     print(`${short(job)}  ${job.stage}: run lock lost, ${job.stage} → ${p.to} not made; the runner that holds the lock resumes it`);
     return;
   }
+  if (stopRequested(jobDir) && (await honorControl(repo, job.id, print)) === "parked") return;
   const r = await moveJob(repo, job, p, print);
   if (r === "moved") stats.moves++;
   else if (r === "refused") stats.refused++;
+  // `kitchen pause`: the step finished and moved; the job parks in the stage it moved to.
+  await honorControl(repo, job.id, print);
 }
 
 /**
@@ -454,12 +495,18 @@ export async function moveJob(
   by: "runner" | "human" = "runner",
   /** `filed` keys recorded in the same job.json write as the move (handled-once markers: a crash can't split them). */
   filed: string[] = [],
-): Promise<"moved" | "refused" | "stale"> {
-  let outcome: "moved" | "refused" | "stale" = "stale";
+): Promise<"moved" | "refused" | "stale" | "busy"> {
+  let outcome: "moved" | "refused" | "stale" | "busy" = "stale";
   const lines: string[] = [];
   let after: Job | null = null;
   await updateJob(repo, seen.id, (fresh) => {
     if (fresh.stage !== seen.stage || fresh.moves !== seen.moves) return fresh; // moved by someone else meanwhile
+    // A pause or stop never parks a job another live runner is in a step on: that runner parks it after (control.ts).
+    const parking = by === "human" && (p.facts.operator === "pause" || p.facts.operator === "stop");
+    if (parking && fresh.running && fresh.running.pid !== process.pid && ownerAlive({ pid: fresh.running.pid, start: fresh.running.start ?? null })) {
+      outcome = "busy";
+      return fresh;
+    }
     const now = new Date().toISOString();
     const log = (j: Job, to: Stage, row: string, note?: string) => {
       appendLedger(repo, {

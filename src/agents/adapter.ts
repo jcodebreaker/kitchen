@@ -32,6 +32,18 @@ export type AgentRequest = {
   effort?: "low" | "medium" | "high";
   /** Where the agent's process group is recorded while it runs (src/procs.ts), so a restart after kill -9 can kill it. */
   procsDir?: string;
+  /** Every event the agent prints, appended as JSONL (engine-owned; the dashboard reads it live). */
+  streamFile?: string;
+  /** Messages a person sends while the agent runs (ADR 0009). An adapter that can't take input mid-run ignores it. */
+  steer?: SteerInbox;
+};
+
+/** The steering messages of a running role: the adapter writes new ones into the agent and says which it read. */
+export type SteerInbox = {
+  /** Messages no agent has read yet, oldest first. */
+  take(): { id: string; text: string }[];
+  /** The agent went on after these were written to it. */
+  read(ids: string[]): void;
 };
 
 export type AgentResult = {

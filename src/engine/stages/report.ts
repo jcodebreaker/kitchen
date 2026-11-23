@@ -10,7 +10,7 @@
 // Forge.comment). Two refused renders send the job to needs-human.
 import fs from "node:fs";
 import path from "node:path";
-import { prComment, type ReportEntry, type ReportFacts, renderReport, shortCmd } from "../../checks/report-render.ts";
+import { NO_TOOLKIT_CLAIM, prComment, type ReportEntry, type ReportFacts, renderReport, shortCmd } from "../../checks/report-render.ts";
 import { appendLedger, readLedger } from "../../ledger/append.ts";
 import { stageCosts } from "../../ledger/report.ts";
 import { evidenceDir, sealOf } from "../../proof/job.ts";
@@ -25,6 +25,8 @@ import { jobRequirements } from "./context.ts";
 import { prompt } from "./prompts.ts";
 import { lastVerdictFile } from "./review.ts";
 import { runRole } from "./role.ts";
+import { degradedRoles, skillsUsed } from "./skills.ts";
+import { hasToolkit } from "./toolkit-info.ts";
 import type { StageHandler } from "./types.ts";
 import { argsDeltasOf } from "./verify.ts";
 
@@ -117,6 +119,7 @@ async function factsOf(repoDir: string, jobDir: string, job: Job, head: string, 
     head,
     verdict: /^VERDICT:\s*(\S+)/m.exec(vText)?.[1] ?? "none",
     humanMustCheck,
+    ...(hasToolkit(job) ? {} : { noToolkit: true }),
     requirements: jobRequirements(jobDir),
     criteria: (contract?.criteria ?? []).map((c) => {
       const r = rows.find((x) => x.id === c.id);
@@ -172,6 +175,7 @@ function factsText(f: ReportFacts, entries: ReportEntry[], shots: Map<string, st
   };
   return [
     `Verdict: ${f.verdict}. Risk: ${f.job.risk}. Round ${f.job.round}. HEAD ${f.head}.`,
+    ...(f.noToolkit ? ["", `${NO_TOOLKIT_CLAIM} Say this plainly in the summary.`] : []),
     "",
     "Requirements:",
     ...f.requirements.map((r) => `- ${r.id}${r.negative ? " (negative)" : ""}${r.outOfScope ? " (out of scope)" : ""}: ${r.text}`),
@@ -284,6 +288,8 @@ export const report: StageHandler = async (ctx) => {
   } finally {
     fs.rmSync(packet, { recursive: true, force: true });
   }
+  // Every role's skills, the report role's own run included.
+  facts.skills = skillsUsed(ctx.refresh().agentRuns, degradedRoles());
   const out = renderReport({
     src,
     facts,

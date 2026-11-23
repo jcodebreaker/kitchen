@@ -29,7 +29,7 @@ console.log(`superchat-lite ${head} cloned to ${dir}`);
 
 const CAP_MS = 60 * 60_000;
 const t0 = Date.now();
-const run = kitchenLive(r, ["init", "--generate-only", "--model", model, "--effort", effort], { logFile: log });
+const run = kitchenLive(r, ["toolkit", "build", "--verbose", "--generate-only", "--model", model, "--effort", effort], { logFile: log });
 const timer = new Promise<{ out: string; code: number; secs: number }>((resolve) =>
   setTimeout(() => resolve({ out: "", code: -2, secs: CAP_MS / 1000 }), CAP_MS).unref(),
 );
@@ -39,7 +39,9 @@ if (x.code === 3) {
   console.log(`init asked: ${JSON.stringify(qs)}; answering with the defaults`);
   fs.writeFileSync(path.join(root, "answers.json"), JSON.stringify({ answers: {} }));
   x = await Promise.race([
-    kitchenLive(r, ["init", "--generate-only", "--answers", path.join(root, "answers.json"), "--model", model, "--effort", effort], { logFile: log }),
+    kitchenLive(r, ["toolkit", "build", "--verbose", "--generate-only", "--answers", path.join(root, "answers.json"), "--model", model, "--effort", effort], {
+      logFile: log,
+    }),
     timer,
   ]);
 }

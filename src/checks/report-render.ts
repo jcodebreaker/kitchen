@@ -62,6 +62,8 @@ export type ReportFacts = {
   verdict: string;
   /** `human: always` on the job's risk path: the report must open with what a human must check. */
   humanMustCheck: boolean;
+  /** The job ran without a Toolkit (ADR 0010): proven by checks and tests only, no app driven. */
+  noToolkit?: boolean;
   requirements: RequirementRow[];
   criteria: CriterionRow[];
   /** `earlier`: what blocked in earlier rounds (the findings that sent the job back to build), oldest first. */
@@ -70,6 +72,14 @@ export type ReportFacts = {
   seeds: { files: string[]; patch: string } | null;
   costs: StageCost[];
   argsDeltas: string[];
+  /** Role skills (ADR 0014), per role in run order: each skill quoted into its prompt (sha256 pinned), the optional ones it went without. */
+  skills?: {
+    role: string;
+    used: { name: string; sha256: string; chars: number; of: number; truncated: boolean }[];
+    leftOut: string[];
+    skipped: string[];
+    degraded: boolean;
+  }[];
 };
 
 export type RenderInput = {
@@ -342,7 +352,14 @@ function appendix(e: ReportEntry, file: RenderInput["file"]): string {
   return `<details id="ev-${e.id}"><summary><b>${e.id}</b> · ${esc(e.criterion)} · ${esc(String(e.role ?? ""))} · <code>${esc(shortCmd(e.cmd))}</code> · exit ${e.exit} · ${e.sha.slice(0, 8)} r${e.round}</summary>${body}</details>`;
 }
 
-const badge = (r: string) => `<span class="badge ${/PASS/.test(r) ? "ok" : /FAIL|BLOCK/.test(r) ? "bad" : "warn"}">${esc(r)}</span>`;
+const badge = (r: string) =>
+  r === "NO-TOOLKIT"
+    ? '<span class="badge warn">NOT PROVEN (NO TOOLKIT)</span>'
+    : `<span class="badge ${/PASS/.test(r) ? "ok" : /FAIL|BLOCK/.test(r) ? "bad" : "warn"}">${esc(r)}</span>`;
+
+/** What a job without a Toolkit can claim (ADR 0010), in the page and the PR comment. */
+export const NO_TOOLKIT_CLAIM =
+  "Proven by checks and tests only: no app was driven, because this repository has no Toolkit yet. Criteria that need the running app are marked not proven (no Toolkit), never passed. `kitchen toolkit build` teaches Kitchen to drive the app.";
 
 function requirementsSection(f: ReportFacts, byId: Map<string, ReportEntry>, file: RenderInput["file"]): string {
   const rows = f.requirements.map((r) => {
@@ -402,6 +419,22 @@ function seedsSection(f: ReportFacts): string {
   return `<section id="seeds"><h2>Seed data and migrations</h2><p>This change touches what every proof's app is built from: ${f.seeds.files.map((x) => `<code>${esc(x)}</code>`).join(", ")}. Check nothing here seeds an answer a proof reads.</p><pre class="diff">${esc(f.seeds.patch)}</pre></section>`;
 }
 
+/** "Skills used", one line per role that ran: the skills quoted into its prompt, pinned by sha256. Pure. */
+export function skillsSection(f: Pick<ReportFacts, "skills">): string {
+  if (!f.skills?.length) return "";
+  const used = (u: NonNullable<ReportFacts["skills"]>[number]["used"][number]) =>
+    `<code>${esc(u.name)}</code> <span class="muted">${esc(u.sha256.slice(0, 12))}${u.truncated ? `, cut at ${u.chars} of ${u.of} characters` : ""}</span>`;
+  const rows = f.skills.map(
+    (s) =>
+      `<tr><td>${esc(s.role)}</td><td>${s.used.length ? s.used.map(used).join(", ") : '<span class="muted">none</span>'}${
+        s.leftOut.length ? `<br><span class="muted">left out (cap): ${s.leftOut.map(esc).join(", ")}</span>` : ""
+      }${s.skipped.length ? `<br><span class="muted">not found, skipped: ${s.skipped.map(esc).join(", ")}</span>` : ""}${
+        s.degraded ? ` ${badge("DEGRADED")}` : ""
+      }</td></tr>`,
+  );
+  return `<section id="skills"><h2>Skills used</h2><p class="muted">Skills are guidance quoted into a role's prompt (sha256 of the SKILL.md as used); they never decide a verdict.</p><table><thead><tr><th>role</th><th>skills</th></tr></thead><tbody>${rows.join("")}</tbody></table></section>`;
+}
+
 export function costSection(f: Pick<ReportFacts, "costs">): string {
   const t = f.costs.reduce((a, c) => ({ secs: a.secs + c.secs, usd: a.usd + c.usd }), { secs: 0, usd: 0 });
   const mm = (s: number) => (s >= 90 ? `${Math.round(s / 60)} min` : `${Math.round(s)} s`);
@@ -454,6 +487,7 @@ export function renderReport(i: RenderInput): { html: string; cited: string[]; w
 <body><main>
 <header><p class="meta">Kitchen report · <code>${esc(j.id)}</code> · ${esc(j.kind)} · risk ${esc(j.risk)} · round ${j.round} · HEAD <code>${f.head.slice(0, 10)}</code>${j.pr !== null ? ` · PR #${j.pr}` : ""} · branch <code>${esc(j.branch)}</code></p>
 <h1>${esc(j.title)}</h1><p>Verdict ${badge(f.verdict)} ${f.review.findings.some((x) => x.blocks) ? badge("REVIEW BLOCKING") : badge("REVIEW PASS")}${f.humanMustCheck ? ` ${badge("HUMAN REVIEW REQUIRED")}` : ""}</p></header>
+${f.noToolkit ? `<section id="no-toolkit" class="lead"><p><span class="badge warn">CHECKS AND TESTS ONLY</span> ${esc(NO_TOOLKIT_CLAIM).replace(/`([^`]+)`/g, "<code>$1</code>")}</p></section>` : ""}
 ${warnings.length ? `<section id="citation-warnings" class="lead"><p><span class="badge warn">CITATION</span> The engine checked the text's citations: ${warnings.map(esc).join("; ")}.</p></section>` : ""}
 ${f.humanMustCheck ? part("human-check", "What a human must check", "lead") : ""}
 ${part("summary", "Summary", f.humanMustCheck ? "" : "lead")}
@@ -464,6 +498,7 @@ ${reviewSection(f)}
 ${seedsSection(f)}
 ${part("notes", "Notes")}
 ${rest ? `<section id="more">${inline(rest)}</section>` : ""}
+${skillsSection(f)}
 ${costSection(f)}
 <section id="evidence"><h2>Evidence</h2><p class="muted">Every entry cited above, as stamped in the job's hash-chained manifest (sha, round, criterion, who ran it). The full folder is on the <code>kitchen-evidence</code> branch.</p>${cited
     .map((id) => appendix(byId.get(id) as ReportEntry, i.file))
@@ -506,12 +541,13 @@ export function prComment(f: ReportFacts, o: { url: string; entries: ReportEntry
     "",
     `**Verdict ${f.verdict}** · ${f.job.kind} · risk ${f.job.risk} · round ${f.job.round} · HEAD \`${f.head.slice(0, 10)}\``,
     ...(f.humanMustCheck ? ["", "**Human review required** (`kitchen:review-required`): the report opens with what a human must check."] : []),
+    ...(f.noToolkit ? ["", `**${NO_TOOLKIT_CLAIM.split(":")[0]}:**${NO_TOOLKIT_CLAIM.slice(NO_TOOLKIT_CLAIM.indexOf(":") + 1)}`] : []),
     "",
     "| criterion | covers | decided by | result | evidence |",
     "|---|---|---|---|---|",
     ...f.criteria.map(
       (c) =>
-        `| ${c.id} ${cell(c.text)}${c.nonDiscriminating ? " (NON-DISCRIMINATING)" : ""} | ${c.covers.join(", ")} | ${c.decidedBy} | ${c.result} | ${evidenceCell(c.evidence)} |`,
+        `| ${c.id} ${cell(c.text)}${c.nonDiscriminating ? " (NON-DISCRIMINATING)" : ""} | ${c.covers.join(", ")} | ${c.decidedBy} | ${c.result === "NO-TOOLKIT" ? "not proven (no Toolkit)" : c.result} | ${evidenceCell(c.evidence)} |`,
     ),
     "",
     `Review (${f.review.lenses.join(", ") || "no lenses"}): ${blocking} blocking, ${f.review.findings.length - blocking} note(s).`,

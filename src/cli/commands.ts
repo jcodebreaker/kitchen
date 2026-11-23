@@ -8,15 +8,19 @@ import { checksPrepareOf } from "../checks/run-checks.ts";
 import { loadConfig } from "../config.ts";
 import { takeTicket } from "../engine/base.ts";
 import { contractOf, specArgsOf } from "../engine/contract.ts";
+import { cancelControl, readControl } from "../engine/control.ts";
 import { ensureUp, freshUp } from "../engine/instance.ts";
 import { ensureJobToolkit } from "../engine/job-toolkit.ts";
 import { readRunLock, staleReason } from "../engine/lock.ts";
-import { feedbackTarget, type Job, roundsUsed, STAGES, type Stage } from "../engine/machine.ts";
+import { feedbackTarget, isActive, type Job, roundsUsed, STAGES, type Stage } from "../engine/machine.ts";
+import { addMessage } from "../engine/messages.ts";
+import { needsToolkitToGoOn, unmergedSetup, wakeWithToolkit } from "../engine/no-toolkit.ts";
 import { moveJob, runKitchen } from "../engine/runner.ts";
 import { findingById, findingsOf } from "../engine/stages/context.ts";
 import { findJob, jobDirOf, kitchenDir, scanJobs, writeAtomic } from "../engine/store.ts";
 import { runView } from "../engine/views.ts";
 import { changedFiles, headOf } from "../engine/worktree.ts";
+import { mergeSetupHow } from "../init/build.ts";
 import { appendLedger, readLedger } from "../ledger/append.ts";
 import { formatMeasures, measures } from "../ledger/measures.ts";
 import { formatCounts, summarize } from "../ledger/report.ts";
@@ -59,13 +63,18 @@ const ago = (iso: string) => {
   return s < 90 ? `${s}s ago` : s < 5400 ? `${Math.round(s / 60)}m ago` : `${Math.round(s / 3600)}h ago`;
 };
 
+/** The stage column: why a waiting job waits, beside its stage. Pure. */
+function stageLabel(j: Job): string {
+  if (j.stage === "paused") {
+    const why = !j.waitFor ? (j.pausedReason ?? "?") : `${j.waitFor}${j.until && j.waitFor === "backoff" ? ` until ${j.until.slice(11, 19)}` : ""}`;
+    return `paused(${why}, from ${j.pausedFrom})`;
+  }
+  if (j.pausedReason && ["needs-info", "needs-human", "rejected"].includes(j.stage)) return `${j.stage}(${j.pausedReason})`;
+  return j.stage;
+}
+
 export function statusLine(j: Job, jobDir: string): string {
-  const stage =
-    j.stage === "paused"
-      ? `paused(${j.waitFor}${j.until && j.waitFor === "backoff" ? ` until ${j.until.slice(11, 19)}` : ""}, from ${j.pausedFrom})`
-      : j.pausedReason && ["needs-info", "needs-human", "rejected"].includes(j.stage)
-        ? `${j.stage}(${j.pausedReason})`
-        : j.stage;
+  const stage = stageLabel(j);
   const report = fs.existsSync(path.join(jobDir, "report.html")) ? `  ${path.join(jobDir, "report.html")}` : "";
   return `${j.id.padEnd(28)} ${j.title.slice(0, 34).padEnd(34)} ${stage.padEnd(16)} round ${roundsUsed(j)}/${j.roundLimit}  moved ${ago(j.updatedAt)}  ${j.pr ? `PR #${j.pr}` : "no PR"}${report}`;
 }
@@ -106,11 +115,17 @@ export function status(repo: string, out: Out, opts: { json?: boolean } = {}): n
   if (q) out(q);
   const jobs = scanJobs(repo);
   if (!jobs.length) out("no jobs");
-  for (const e of jobs) out(e.job ? statusLine(e.job, jobDirOf(repo, e.id)) : `${e.id.padEnd(28)} corrupt(${e.corrupt})`);
+  for (const e of jobs) {
+    out(e.job ? statusLine(e.job, jobDirOf(repo, e.id)) : `${e.id.padEnd(28)} corrupt(${e.corrupt})`);
+    // What to do about a job waiting for a Toolkit (ADR 0010) is the next step, so it is shown in full.
+    if (e.job?.stage === "paused" && e.job.waitFor === "no-toolkit" && e.job.pausedReason) out(`  ${e.job.pausedReason}`);
+  }
   if (jobs.length) {
     const stages = jobs.map((e) => e.job?.stage);
     const done = stages.filter((s) => s === "done").length;
-    const needs = stages.filter((s) => s === "needs-info" || s === "needs-human").length;
+    const needs = jobs.filter(
+      (e) => e.job?.stage === "needs-info" || e.job?.stage === "needs-human" || (e.job?.stage === "paused" && e.job.waitFor === "no-toolkit"),
+    ).length;
     out(`${jobs.length} job${jobs.length === 1 ? "" : "s"}: ${done} done, ${needs} need${needs === 1 ? "s" : ""} you`);
   }
   return 0;
@@ -123,8 +138,48 @@ async function human(repo: string, ref: string, to: Stage, facts: Parameters<typ
   return r === "moved" ? 0 : 1;
 }
 
+/**
+ * A job waiting for a Toolkit (ADR 0010): with one on the base now it takes it; without one it goes on
+ * with checks and tests only, unless it can't (high risk, a bug whose reproduction drives the app) or a
+ * proven Toolkit is only waiting to be merged.
+ */
+async function resumeNoToolkit(repo: string, ref: string, job: Job, out: Out): Promise<number> {
+  const w = await wakeWithToolkit(repo, loadConfig(repo), job);
+  const from = job.pausedFrom as Stage;
+  if (w.toolkit) return human(repo, ref, from, { operator: "resume", wake: w.facts }, "resumed: the Toolkit is on the base now", out);
+  const cfg = loadConfig(repo);
+  if (await unmergedSetup(repo)) {
+    out(
+      `${job.id}  still waits: the Toolkit is on kitchen/setup but not on ${cfg.forge.base} yet. Review it, ${mergeSetupHow(cfg)}, then kitchen resume ${job.id}`,
+    );
+    return 1;
+  }
+  const hard = needsToolkitToGoOn(jobDirOf(repo, job.id), job);
+  if (hard) {
+    out(`${job.id}  can't go on without a Toolkit: ${hard}. Run kitchen toolkit build (about 3–15 min), ${mergeSetupHow(cfg)}, then kitchen resume ${job.id}`);
+    return 1;
+  }
+  out(`${job.id}  goes on without a Toolkit: proven by checks and tests only; criteria that need the app will say "not proven (no Toolkit)"`);
+  // The machine checks it again (a high-risk job, or one checks can't prove, is refused there too).
+  return human(
+    repo,
+    ref,
+    from,
+    { operator: "resume", wake: { checksOnly: true }, noToolkit: { needsApp: [], highRisk: false } },
+    "resumed without a Toolkit: checks and tests only",
+    out,
+  );
+}
+
 export async function resume(repo: string, ref: string, out: Out): Promise<number> {
   const job = findJob(repo, ref);
+  const c = readControl(jobDirOf(repo, job.id));
+  if (isActive(job.stage) && (c.pause || c.stop)) {
+    await cancelControl(repo, job.id);
+    out(`${job.id}  ${c.stop ? "stop" : "pause"} cancelled: it keeps running ${job.stage}`);
+    return 0;
+  }
+  if (job.stage === "paused" && job.pausedFrom && job.waitFor === "no-toolkit") return resumeNoToolkit(repo, ref, job, out);
   if (job.stage === "paused" && job.pausedFrom) return human(repo, ref, job.pausedFrom, { operator: "resume" }, "resumed by kitchen resume", out);
   out(
     `${job.id}  is ${job.stage}: nothing to resume${job.stage === "needs-info" || job.stage === "needs-human" ? " (answer with kitchen feedback)" : " (kitchen run picks it up)"}`,
@@ -145,15 +200,21 @@ export async function feedback(repo: string, ref: string, text: string, out: Out
   if (job.stage === "needs-info") {
     if (!text.trim()) throw new Error("kitchen feedback on a needs-info job needs the answer text");
     new PromptSource(repo).reply(job, text);
-    return human(repo, ref, "intake", { replied: true }, "the operator replied", out);
+    const code = await human(repo, ref, "intake", { replied: true }, "the operator replied", out);
+    if (code === 0) await addMessage(jobDirOf(repo, job.id), { kind: "answer", text: text.trim(), stage: job.stage });
+    return code;
   }
   const to = job.stage === "needs-human" ? feedbackTarget(job, { feedbackTo }) : (feedbackTo ?? "build");
   const file = path.join(jobDirOf(repo, job.id), "feedback", `${new Date().toISOString().replace(/[:.]/g, "-")}.md`);
   if (text.trim()) writeAtomic(file, `${text.trim()}\n`);
   const code = await human(repo, ref, to, { operator: "feedback", feedbackTo }, `kitchen feedback${feedbackTo ? ` --to ${feedbackTo}` : ""}`, out);
-  if (code !== 0) fs.rmSync(file, { force: true }); // refused: no side effect
+  if (code !== 0)
+    fs.rmSync(file, { force: true }); // refused: no side effect
+  else if (text.trim()) await addMessage(jobDirOf(repo, job.id), { kind: job.stage === "done" ? "follow-up" : "answer", text: text.trim(), stage: job.stage });
   return code;
 }
+
+export { pause, steer, stop } from "../engine/control.ts";
 
 export async function reject(repo: string, ref: string, out: Out): Promise<number> {
   return human(repo, ref, "rejected", { operator: "reject" }, "kitchen reject", out);

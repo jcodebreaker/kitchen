@@ -56,8 +56,8 @@ export const ConfigSchema = z
         reviewer: z.string().default("medium"),
         report: z.string().default("medium"),
         retro: z.string().default("cheap"),
-        /** `kitchen init`'s setup role (survey, build, fix rounds). */
-        setup: z.string().default("strong"),
+        /** `kitchen toolkit build`'s setup role (survey, build, fix rounds). */
+        setup: z.string().default("medium"),
         /** `kitchen toolkit maintain`: the source wave and the fix pass. */
         maintain: z.string().default("medium"),
       })
@@ -99,7 +99,7 @@ export const ConfigSchema = z
       .strict()
       .prefault({}),
     checks: z.array(Check).default([]),
-    /** Checks run under the proof sandbox; true allows them outbound network (a package install). The filesystem rules stay. */
+    /** Checks run under the proof sandbox; true allows the checks themselves outbound network. The filesystem rules stay. */
     checks_network: z.boolean().default(false),
     /**
      * Readies a worktree for the checks and `test` proofs (`npm ci`, `pip install -r requirements.txt`): a fresh
@@ -107,6 +107,12 @@ export const ConfigSchema = z
      * `checks_network`), before the first check or test proof, and again only when it or a lockfile changes.
      */
     checks_prepare: z.string().min(1).optional(),
+    /**
+     * A frozen install from the lockfile, written by `kitchen init` (ADR 0010): the package manager. The download
+     * runs with the network and no package scripts; the scripts run after in a rebuild, offline unless
+     * `checks_network` (run-checks.ts installSteps). Runs before `checks_prepare`.
+     */
+    checks_install: z.enum(["npm", "pnpm", "yarn", "yarn-classic", "bun"]).optional(),
     /** How a `test <file>` proof runs, in the job worktree with the untrusted env. `{file}` is the test file, shell-quoted. */
     test_cmd: z.string().min(1).default("npm test -- {file}"),
     agent: z
@@ -161,6 +167,20 @@ export const ConfigSchema = z
         url: z.string().optional(),
         /** The branch PRs target and Ready syncs with. */
         base: z.string().default("main"),
+      })
+      .strict()
+      .prefault({}),
+    /**
+     * Role skills (docs/adr/0014-role-skills.md): each role's SKILL.md guidance from skills/registry.json, found where the
+     * agent tool loads skills and quoted into its prompt. `enabled: false` runs every role on its prompt alone (the bench's
+     * `--no-skills` side). `host` names where to look for the `fake` tool (claude and codex look where they load skills).
+     */
+    skills: z
+      .object({
+        enabled: z.boolean().default(true),
+        host: z.enum(["claude", "codex"]).optional(),
+        /** Skills Kitchen vendors (security-review) to take from your own install instead of Kitchen's pinned copy. */
+        use_installed: z.array(z.string().min(1)).default([]),
       })
       .strict()
       .prefault({}),
@@ -222,6 +242,10 @@ export function modelFor(cfg: Config, role: string): string {
             ? "verifier"
             : "builder";
   const want = cfg.models[key];
-  const tiers = { ...DEFAULT_MODELS[cfg.agent.tool], ...cfg.agent.models };
-  return (TIERS as readonly string[]).includes(want) ? tiers[want as ModelTier] : want;
+  return (TIERS as readonly string[]).includes(want) ? tierModel(cfg, want as ModelTier) : want;
+}
+
+/** The model a tier maps to for the configured tool. */
+export function tierModel(cfg: Config, tier: ModelTier): string {
+  return { ...DEFAULT_MODELS[cfg.agent.tool], ...cfg.agent.models }[tier] as string;
 }

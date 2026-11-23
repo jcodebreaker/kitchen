@@ -54,7 +54,8 @@ verification scaffolding.
 
 Answer these from the code — package scripts, compose files, Makefile, README,
 CI config, env examples, migrations, seed files, tests — and only ask what you
-cannot observe:
+cannot observe. Read each file once: a file already in your context (read in
+this session, including the survey) is not read again.
 
 - **Surface:** what does a user actually touch? Web UI, CLI/TUI, API, several?
   Pick the primary one (`surface: web | cli | api`) and note the rest.

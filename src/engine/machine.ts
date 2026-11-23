@@ -32,13 +32,32 @@ export type Stage = (typeof STAGES)[number];
 /** Stages the runner dispatches a handler for. The rest wait for a human, a condition, or nothing. */
 export const ACTIVE: readonly Stage[] = ["intake", "spec", "repro", "build", "gate", "drives", "verify", "toolkit", "review", "ready", "report"];
 export const isActive = (s: Stage) => ACTIVE.includes(s);
+/** pausedReason of a job a person paused, or stopped (ADR 0009). Only `kitchen resume` wakes it. */
+export const BY_YOU = "by-you";
+export const BY_YOU_STOPPED = "by-you: stopped";
+export const pausedByYou = (j: Pick<Job, "stage" | "pausedReason">) => j.stage === "paused" && !!j.pausedReason?.startsWith(BY_YOU);
 /** Stages that carry a reason for whoever looks next. */
 export const WAITING: readonly Stage[] = ["needs-info", "needs-human", "paused", "rejected"];
 
 export type Risk = "low" | "medium" | "high";
-export type Kind = "feature" | "bug" | "chore";
-export type WaitFor = "backoff" | "toolkit-pr" | "ci" | "toolkit-ticket";
+export type Kind = "feature" | "bug" | "ui" | "chore";
+/** no-toolkit: the ticket needs Kitchen to drive the app and the repo has no Toolkit yet (ADR 0010). */
+export type WaitFor = "backoff" | "toolkit-pr" | "ci" | "toolkit-ticket" | "no-toolkit";
 export type TicketRef = { source: "prompt" | "github"; id: string; url?: string };
+/**
+ * One skill a role run was given (ADR 0014): its SKILL.md from `source` (kitchen (vendored), repo at <sha>, user,
+ * plugin <key>…), pinned by the sha256 of its bytes; `chars` of its `of` characters reached the prompt (0: left out).
+ */
+export type SkillUse = {
+  name: string;
+  source?: string;
+  path: string;
+  host: "claude" | "codex";
+  sha256: string;
+  chars: number;
+  of?: number;
+  truncated: boolean;
+};
 export type AgentRunRef = {
   key: string;
   role: string;
@@ -47,12 +66,17 @@ export type AgentRunRef = {
   adapter: string;
   model: string;
   sessionId?: string;
+  /** The agent's event stream, relative to the job folder (activity/…jsonl): what the dashboard shows. */
+  stream?: string;
   ok: boolean;
   line: string;
   file?: string;
   usd?: number;
   secs: number;
   at: string;
+  /** The skills quoted into its prompt, and the optional ones it went without (not installed). */
+  skills?: SkillUse[];
+  skillsSkipped?: string[];
 };
 
 export type Job = {
@@ -84,6 +108,11 @@ export type Job = {
   returnTo: Stage | null;
   /** The primitive a Toolkit gap named. */
   gap: string | null;
+  /**
+   * The person resumed a no-toolkit pause without building a Toolkit (ADR 0010): the job goes on with checks and
+   * tests only, and criteria that need the running app are reported "not proven (no Toolkit)", never passed.
+   */
+  checksOnly?: boolean;
   /** Files the repro stage committed (the regression test or feature drive): the builder may not edit them. */
   reproFiles?: string[];
   attempts: {
@@ -126,9 +155,10 @@ export type Job = {
 };
 
 export type Lint = { ok: boolean; reason?: string; missingPrimitive?: string };
-export type Verdict = "PASS" | "FAIL" | "INCONCLUSIVE" | "TOOLKIT-GAP";
+/** NO-TOOLKIT (overall): nothing proved the change, or a requirement, without the app (ADR 0010). */
+export type Verdict = "PASS" | "FAIL" | "INCONCLUSIVE" | "TOOLKIT-GAP" | "NO-TOOLKIT";
 /** review-unparseable: a lens said VERDICT: BLOCKING twice without a finding the engine could read (never a silent PASS). */
-export type Escalation = "round-limit" | "smith-limit" | "adapter-error" | "engine-error" | "refused" | "review-unparseable";
+export type Escalation = "round-limit" | "smith-limit" | "adapter-error" | "engine-error" | "refused" | "review-unparseable" | "skill-missing";
 
 /** What guards read. Gathered by the caller (stage handlers, runner, CLI) from files, git and the forge. */
 export type Facts = {
@@ -145,7 +175,8 @@ export type Facts = {
   /** needs-info: the source shows an answer from the author or operator. */
   replied?: boolean;
   /** A human command. */
-  operator?: "feedback" | "reject" | "resume";
+  /** pause / stop: a person parked the job (`kitchen pause`, `kitchen stop`, the dashboard; ADR 0009). */
+  operator?: "feedback" | "reject" | "resume" | "pause" | "stop";
   /** `kitchen feedback --to <stage>`: where a needs-human job goes instead of the stage it escalated from. */
   feedbackTo?: Stage;
   spec?: Lint;
@@ -198,6 +229,21 @@ export type Facts = {
   prComment?: { id: string; author: string; trusted: boolean };
   /** paused: the waitFor condition cleared. */
   waitCleared?: boolean;
+  /**
+   * The repo has no Toolkit for this job (ADR 0010). needsApp: criteria whose proof drives the app; highRisk: the
+   * job's path is high, which never reaches ready without a Toolkit.
+   */
+  noToolkit?: {
+    needsApp: string[];
+    highRisk: boolean;
+    /** Why checks and tests alone can't prove this job (a requirement only the app shows, a bug's repro that drives it): it never goes on without a Toolkit. */
+    unprovable?: string;
+  };
+  /**
+   * Waking a no-toolkit pause (runner or `kitchen resume`): the Toolkit now on the base (base, toolkitRef), or the
+   * person's choice to go on without one (checksOnly).
+   */
+  wake?: { base?: string; toolkitRef?: string; checksOnly?: boolean };
   adapter?: { rateLimited?: boolean; authFailure?: boolean; until?: string; error?: string };
   escalate?: Escalation;
   why?: string;
@@ -301,6 +347,25 @@ const synced = (j: Job, f: Facts) => {
 const readyPr = (j: Job, f: Facts) => {
   if (f.ready?.pr !== undefined && f.ready.pr !== null) j.pr = f.ready.pr;
 };
+/** The pause a job takes when it needs the running app and there is no Toolkit (ADR 0010). */
+export const noToolkitReason = (id: string) =>
+  `This ticket needs Kitchen to drive the app; run \`kitchen toolkit build\` (about 3–15 min), then \`kitchen resume ${id}\`.`;
+const needsToolkit: Guard = (j, f) =>
+  !f.noToolkit
+    ? "the job has a Toolkit"
+    : f.noToolkit.highRisk || f.noToolkit.unprovable || (!j.checksOnly && f.noToolkit.needsApp.length)
+      ? null
+      : j.checksOnly
+        ? "the person chose to go on with checks and tests only"
+        : "no criterion needs the running app";
+/** Without a Toolkit, a criterion that drives the app stops the job here unless the person chose checks only (review L3). */
+const notWaitingForToolkit: Guard = (j, f) =>
+  f.noToolkit && (f.noToolkit.highRisk || f.noToolkit.unprovable || (f.noToolkit.needsApp.length && !j.checksOnly))
+    ? `no Toolkit, and ${f.noToolkit.unprovable ?? (f.noToolkit.highRisk ? "the job is high risk" : `${f.noToolkit.needsApp.join(", ")} drive the app`)}: it waits for one`
+    : null;
+const pauseNoToolkit = (j: Job, f: Facts) => {
+  pause("no-toolkit", noToolkitReason(j.id))(j, f);
+};
 const pause = (waitFor: WaitFor, why: string) => (j: Job, f: Facts) => {
   j.pausedFrom = j.stage;
   j.waitFor = waitFor;
@@ -340,6 +405,7 @@ export const TABLE: readonly Row[] = [
         (j, f) => `risk is ${riskOf(j, f)}: only low skips spec`,
       ),
       criteriaLint,
+      notWaitingForToolkit,
     ),
     apply: setIntake,
   },
@@ -359,6 +425,7 @@ export const TABLE: readonly Row[] = [
         (j, f) => `risk is ${riskOf(j, f)}: a medium/high bug goes through spec first`,
       ),
       criteriaLint,
+      notWaitingForToolkit,
     ),
     apply: setIntake,
   },
@@ -382,6 +449,17 @@ export const TABLE: readonly Row[] = [
       j.pausedReason = f.why;
     },
   },
+  {
+    id: "intake>paused",
+    from: "intake",
+    to: "paused",
+    when: "ACCEPT, no Toolkit, and an inline criterion's proof drives the app (unless the person chose checks only): waits for `kitchen toolkit build` (no-toolkit)",
+    guard: all(intakeIs("ACCEPT"), needsToolkit),
+    apply: (j, f) => {
+      setIntake(j, f);
+      pauseNoToolkit(j, f);
+    },
+  },
   // needs-info
   {
     id: "needs-info>intake",
@@ -392,8 +470,8 @@ export const TABLE: readonly Row[] = [
   },
   { id: "needs-info>rejected", from: "needs-info", to: "rejected", when: "`kitchen reject`", guard: operatorIs("reject") },
   // spec
-  { id: "spec>repro", from: "spec", to: "repro", when: "kind=bug, spec-lint passes", guard: all(isBug, specLint) },
-  { id: "spec>build", from: "spec", to: "build", when: "kind≠bug, spec-lint passes", guard: all(notBug, specLint) },
+  { id: "spec>repro", from: "spec", to: "repro", when: "kind=bug, spec-lint passes", guard: all(isBug, specLint, notWaitingForToolkit) },
+  { id: "spec>build", from: "spec", to: "build", when: "kind≠bug, spec-lint passes", guard: all(notBug, specLint, notWaitingForToolkit) },
   {
     id: "spec>toolkit",
     from: "spec",
@@ -404,6 +482,14 @@ export const TABLE: readonly Row[] = [
       smithLeft,
     ),
     apply: (j, f) => toToolkit("spec", f.spec?.missingPrimitive)(j),
+  },
+  {
+    id: "spec>paused",
+    from: "spec",
+    to: "paused",
+    when: "no Toolkit, and the job is high risk or a criterion's proof drives the app (unless the person chose checks only): waits for `kitchen toolkit build` (no-toolkit)",
+    guard: needsToolkit,
+    apply: pauseNoToolkit,
   },
   // repro
   {
@@ -675,6 +761,21 @@ export const TABLE: readonly Row[] = [
     },
   },
   {
+    id: "verify>paused(no-toolkit)",
+    from: "verify",
+    to: "paused",
+    when: "NO-TOOLKIT: without a Toolkit nothing proved the change (or a requirement): waits for `kitchen toolkit build`, never a pass",
+    guard: all(
+      verdictIs("NO-TOOLKIT"),
+      check((_j, f) => !!f.noToolkit, "no noToolkit facts"),
+    ),
+    apply: (j, f) => {
+      pauseNoToolkit(j, f);
+      // Woken with a Toolkit, the job writes its feature drives first: they were never written without one (review R5).
+      j.pausedFrom = "drives";
+    },
+  },
+  {
     id: "verify>needs-human",
     from: "verify",
     to: "needs-human",
@@ -734,7 +835,27 @@ export const TABLE: readonly Row[] = [
     }),
   ),
   // review
-  { id: "review>ready", from: "review", to: "ready", when: "all lenses PASS", guard: check((_j, f) => !!f.review?.pass, "a lens did not PASS") },
+  {
+    id: "review>ready",
+    from: "review",
+    to: "ready",
+    when: "all lenses PASS, and a high-risk job has a Toolkit",
+    guard: all(
+      check((_j, f) => !!f.review?.pass, "a lens did not PASS"),
+      check((_j, f) => !f.noToolkit?.highRisk, "a high-risk job needs a Toolkit before ready"),
+    ),
+  },
+  {
+    id: "review>paused",
+    from: "review",
+    to: "paused",
+    when: "all lenses PASS but the job is high risk (the diff can raise it) and has no Toolkit: waits for `kitchen toolkit build` (no-toolkit)",
+    guard: all(
+      check((_j, f) => !!f.review?.pass, "a lens did not PASS"),
+      check((_j, f) => !!f.noToolkit?.highRisk, "not a high-risk job without a Toolkit"),
+    ),
+    apply: pauseNoToolkit,
+  },
   {
     id: "review>build",
     from: "review",
@@ -833,12 +954,27 @@ export const TABLE: readonly Row[] = [
           (_j, f) => !!f.waitCleared || f.operator === "resume",
           (j) => `still waiting for ${j.waitFor}`,
         ),
+        (j, f) =>
+          !f.wake?.checksOnly
+            ? null
+            : effectiveRisk(j) === "high"
+              ? "a high-risk job can't go on without a Toolkit"
+              : !f.noToolkit
+                ? "going on without a Toolkit needs the noToolkit facts (what checks can't prove: no-toolkit.ts needsToolkitToGoOn)"
+                : f.noToolkit.unprovable
+                  ? `it can't go on without a Toolkit: ${f.noToolkit.unprovable}`
+                  : null,
       ),
-      apply: (j) => {
+      apply: (j, f) => {
         j.pausedFrom = undefined;
         j.waitFor = undefined;
         j.until = undefined;
         j.pausedReason = undefined;
+        if (f.wake?.base) j.base = f.wake.base;
+        if (f.wake?.toolkitRef) {
+          j.toolkitRef = f.wake.toolkitRef;
+          j.checksOnly = undefined;
+        } else if (f.wake?.checksOnly) j.checksOnly = true;
       },
     }),
   ),
@@ -916,10 +1052,29 @@ export const TABLE: readonly Row[] = [
     },
   },
   {
+    id: "*>paused(by-you)",
+    from: "*",
+    to: "paused",
+    when: "`kitchen pause` (after the current step) or `kitchen stop` (its agent killed): parked until `kitchen resume`",
+    guard: all(
+      check(
+        (j) => isActive(j.stage),
+        (j) => `${j.stage} is not running: nothing to pause`,
+      ),
+      check((_j, f) => f.operator === "pause" || f.operator === "stop", "needs `kitchen pause` or `kitchen stop`"),
+    ),
+    apply: (j, f) => {
+      j.pausedFrom = j.stage;
+      j.waitFor = undefined;
+      j.until = undefined;
+      j.pausedReason = f.operator === "stop" ? BY_YOU_STOPPED : BY_YOU;
+    },
+  },
+  {
     id: "*>needs-human",
     from: "*",
     to: "needs-human",
-    when: "round limit, smith limit, an adapter error that repeats (not a rate limit), a stage whose result was refused twice, or a review lens that said BLOCKING twice without a readable finding",
+    when: "round limit, smith limit, an adapter error that repeats (not a rate limit), a stage whose result was refused twice, a review lens that said BLOCKING twice without a readable finding, or a required skill that is not installed (before any agent runs)",
     guard: all(
       check(
         (j) => isActive(j.stage),
@@ -938,6 +1093,8 @@ export const TABLE: readonly Row[] = [
             return j.attempts.refused + 1 >= 2 ? null : "first refused move is retried";
           case "review-unparseable":
             return j.stage === "review" ? null : "review-unparseable comes from review";
+          case "skill-missing":
+            return null;
           default:
             return "no escalation reason";
         }
@@ -953,7 +1110,7 @@ export const TABLE: readonly Row[] = [
       id: `needs-human>${to}`,
       from: "needs-human",
       to,
-      when: `\`kitchen feedback\` on a job that escalated from ${to}${FEEDBACK_TO.includes(to) ? ` (or \`--to ${to}\` on one that escalated later)` : ""}; the round budget resets`,
+      when: `\`kitchen feedback\` on a job that escalated from ${to}${FEEDBACK_TO.includes(to) ? ` (or \`--to ${to}\` on one that escalated later)` : ""}; the round budget resets (not after a missing skill: no round was spent)`,
       guard: all(
         operatorIs("feedback"),
         (j, f) => (f.feedbackTo ? feedbackToRefusal(j, f.feedbackTo) : null),
@@ -962,7 +1119,8 @@ export const TABLE: readonly Row[] = [
           (j, f) => `feedback goes to ${feedbackTarget(j, f)}${f.feedbackTo ? " (--to)" : j.escalatedFrom ? " (where it escalated from)" : ""}, not ${to}`,
         ),
       ),
-      apply: resetBudget,
+      // A job that stopped for a missing skill spent no round on it: its budget stays as it was.
+      apply: (j) => (j.pausedReason?.startsWith("skill-missing") ? undefined : resetBudget(j)),
     }),
   ),
   { id: "needs-human>rejected", from: "needs-human", to: "rejected", when: "`kitchen reject`", guard: operatorIs("reject") },
@@ -984,14 +1142,14 @@ export function move(job: Job, to: Stage, facts: Facts): MoveResult {
       continue;
     }
     const next: Job = structuredClone(job);
-    if (!WAITING.includes(to)) next.pausedReason = undefined;
     // The backoff counter survives a pause and its resume, so repeated rate limits back off longer;
     // the first move that is neither resets it.
     if (to !== "paused" && job.stage !== "paused") next.attempts.backoff = 0;
     next.escalatedFrom = to === "needs-human" ? job.stage : job.stage === "needs-human" ? undefined : job.escalatedFrom;
     next.attempts.errors = 0;
     next.attempts.refused = 0;
-    row.apply?.(next, facts); // sees the stage being left
+    row.apply?.(next, facts); // sees the stage being left, and the reason it waited
+    if (!WAITING.includes(to)) next.pausedReason = undefined;
     next.stage = to;
     next.moves += 1;
     next.updatedAt = facts.now;

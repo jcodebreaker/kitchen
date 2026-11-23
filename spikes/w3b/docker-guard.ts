@@ -184,7 +184,11 @@ for (const [what, cmd] of [
   ["cp out of it", `docker cp ${foreign}:/etc/hostname -`],
 ] as const) {
   const h = sandboxed(`${cmd} >/dev/null; echo rc=$?`);
-  check(`(h) ${what} on a container the guard didn't create is refused`, /rc=[1-9]/.test(h.out) && KITCHEN.test(h.err + h.out), `${h.out.trim()} ${h.err.trim().split("\n").at(-1)}`);
+  check(
+    `(h) ${what} on a container the guard didn't create is refused`,
+    /rc=[1-9]/.test(h.out) && KITCHEN.test(h.err + h.out),
+    `${h.out.trim()} ${h.err.trim().split("\n").at(-1)}`,
+  );
 }
 const still = spawnSync("docker", ["inspect", "-f", "{{.State.Running}}", foreign], { encoding: "utf8" });
 check("(h) and it is still running, untouched", still.stdout.trim() === "true", still.stdout.trim() || still.stderr.trim());

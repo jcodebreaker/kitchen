@@ -45,3 +45,6 @@ export class RoleFailure extends Error {
 
 /** The run lock went to another runner: the stage stops without a move; that runner resumes the job. */
 export class LockLost extends Error {}
+
+/** A required skill (ADR 0014) is not installed where the agent tool loads skills: the job goes to needs-human before any agent runs. */
+export class SkillMissing extends Error {}

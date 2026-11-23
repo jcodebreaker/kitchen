@@ -17,7 +17,7 @@ import type { Criterion } from "../../checks/spec-lint.ts";
 import { evidenceDir, readJob, sealOf } from "../../proof/job.ts";
 import { verifyManifest } from "../../proof/manifest.ts";
 import { type ChainCheck, checkChain, checkLineAlone, checkLinesOf, featureFileProblems } from "../../toolkit/feature-check.ts";
-import { contractOf, drivesPolicy, namedDrives, testFilesOf } from "../contract.ts";
+import { contractOf, drivesPolicy, namedDrives, provable, testFilesOf } from "../contract.ts";
 import { freshUp } from "../instance.ts";
 import type { Job } from "../machine.ts";
 import { roundDir, writeAtomic } from "../store.ts";
@@ -77,7 +77,8 @@ export const drives: StageHandler = async (ctx) => {
   const dir = roundDir(ctx.jobDir, job.round);
   const base = { resolved: false, featureChecks: false };
   if (!(await gateStillValid(ctx.jobDir, job))) return { to: "gate", facts: { drives: { gateValid: false, ...base } } };
-  const criteria = contractOf(ctx.jobDir)?.criteria ?? [];
+  // Without a Toolkit only the test/cmd criteria have anything to write or check (ADR 0010).
+  const criteria = provable(contractOf(ctx.jobDir)?.criteria ?? [], hasToolkit(job));
   const named = namedDrives(criteria);
   const testFiles = [...new Set(criteria.flatMap(testFilesOf))];
   let tk = await described(job);

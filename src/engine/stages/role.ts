@@ -14,9 +14,12 @@ import { modelFor } from "../../config.ts";
 import { kitchenHome } from "../../home.ts";
 import { appendLedger } from "../../ledger/append.ts";
 import { procsDirOf, reapGroups } from "../../procs.ts";
+import { closingLine, withSkills } from "../../skills/deliver.ts";
 import type { AgentRunRef } from "../machine.ts";
+import { markRead, operatorNotes, steerLine, unread, unreadSteers } from "../messages.ts";
 import { scratchOf, updateJob, writeAtomic } from "../store.ts";
 import { ensureWorktree } from "../worktree.ts";
+import { skillsFor } from "./skills.ts";
 import { LockLost, RoleFailure, type StageContext } from "./types.ts";
 
 const BRIDGE_ROLES = new Set(["builder", "verifier", "smith", "spec", "repro"]);
@@ -67,9 +70,22 @@ export async function runRole(
   const cwd = o.cwd ?? (job.worktree || ctx.repo);
   const outDir = o.tier === "read" ? path.join(scratchOf(ctx.repo, job.id), `${o.role}-m${job.moves}`) : undefined;
   const model = modelFor(ctx.config, o.role);
+  // Role skills (ADR 0014): a required one missing anywhere on the job's path throws SkillMissing here,
+  // before this role or any later one spends money; the found ones are quoted at the end of the prompt.
+  const skills = skillsFor(ctx, job, o.role);
+  const t0 = Date.now();
+  // Steers sent before this role started (a paused job, an engine-only step, a Codex role) open its prompt.
+  // Every steer this run reads is put back to `sent` if the run doesn't produce its file (failed, stopped,
+  // timed out, rate limited) or the lock is lost first: job roles never resume a session, so the next
+  // role must read them again.
+  const notes = unreadSteers(ctx.jobDir);
+  const delivered = notes.map((m) => m.id);
+  const marking: Promise<void>[] = [];
+  await markRead(ctx.jobDir, delivered, o.role, "next-role");
+  const stream = path.join("activity", `m${job.moves}-${o.role}-${t0}.jsonl`);
   const req: AgentRequest = {
     role: o.role,
-    prompt: o.prompt,
+    prompt: operatorNotes(notes) + withSkills(o.prompt, skills.section) + closingLine(o.file),
     cwd,
     model,
     tier: o.tier,
@@ -79,16 +95,39 @@ export async function runRole(
     outDir,
     env: buildAgentEnv(path.join(kitchenHome(), "agent-scrub")),
     procsDir: procsDirOf(ctx.jobDir),
+    streamFile: path.join(ctx.jobDir, stream),
+    steer: {
+      take: () => unreadSteers(ctx.jobDir).map((m) => ({ id: m.id, text: steerLine(m.text) })),
+      read: (ids) => {
+        delivered.push(...ids);
+        marking.push(markRead(ctx.jobDir, ids, o.role, "mid-run").catch((e) => ctx.log(`messages: ${(e as Error).message}`)));
+      },
+    },
     ...(o.bridge
       ? { bridge: o.bridge }
       : o.tier === "write" && BRIDGE_ROLES.has(o.role)
         ? { bridge: bridgeServer({ repo: ctx.repo, job: job.id, role: o.role }) }
         : {}),
   };
-  if (!ctx.holdsLock()) throw new LockLost(`run lock lost before ${o.role} started`);
-  const t0 = Date.now();
+  // Marks made while it ran land before anything else reads the thread.
+  const giveBack = async () => {
+    await Promise.all(marking);
+    await unread(ctx.jobDir, delivered, o.role);
+  };
+  if (!ctx.holdsLock()) {
+    await giveBack();
+    throw new LockLost(`run lock lost before ${o.role} started`);
+  }
   ctx.log(`${o.role}: ${ctx.agent.name} ${model} (${o.tier}) → ${o.file}`);
-  const r = await ctx.agent.run(req);
+  let r: Awaited<ReturnType<typeof ctx.agent.run>>;
+  try {
+    r = await ctx.agent.run(req);
+  } catch (e) {
+    await giveBack();
+    throw e;
+  }
+  await Promise.all(marking);
+  if (!r.ok || !r.outPath) await unread(ctx.jobDir, delivered, o.role);
   const secs = (Date.now() - t0) / 1000;
   // A wrapper (a scripted adapter passing a real run through) reports what really ran.
   const ran = r.ran ?? { adapter: ctx.agent.name, model };
@@ -113,11 +152,14 @@ export async function runRole(
     adapter: ran.adapter,
     model: ran.model,
     sessionId: r.sessionId,
+    stream: fs.existsSync(req.streamFile ?? "") ? stream : undefined,
     ok: r.ok && !!r.outPath,
     line: r.line,
     usd: r.usage?.usd,
     secs,
     at: ctx.now().toISOString(),
+    ...(skills.uses.length ? { skills: skills.uses } : {}),
+    ...(skills.skipped.length ? { skillsSkipped: skills.skipped.map((m) => m.name) } : {}),
   };
   appendLedger(ctx.repo, {
     job: job.id,
@@ -131,7 +173,28 @@ export async function runRole(
     model: ran.model,
     secs,
     usd: r.usage?.usd,
-    detail: { line: r.line, sessionId: r.sessionId, error: r.error, inTok: r.usage?.inTok, outTok: r.usage?.outTok },
+    detail: {
+      line: r.line,
+      sessionId: r.sessionId,
+      error: r.error,
+      inTok: r.usage?.inTok,
+      outTok: r.usage?.outTok,
+      ...(skills.uses.length
+        ? {
+            skills: skills.uses.map((u) => ({
+              name: u.name,
+              source: u.source,
+              path: u.path,
+              host: u.host,
+              sha256: u.sha256,
+              chars: u.chars,
+              of: u.of,
+              truncated: u.truncated,
+            })),
+          }
+        : {}),
+      ...(skills.skipped.length ? { skillsSkipped: skills.skipped.map((m) => m.name) } : {}),
+    },
   });
   if (!r.ok || !r.outPath) {
     const why = r.error ?? (r.outPath ? r.line : `no ${o.file} written`);

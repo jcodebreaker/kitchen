@@ -72,6 +72,8 @@ export type LintResult = {
   newDrives: string[];
   /** Rule 3 (c): negatives left to the base check (base-check.ts baseNegativeProblems). */
   baseNegatives: BaseNegative[];
+  /** With `noToolkit`: the criteria whose proof drives the app, which no Toolkit can run yet (ADR 0010). */
+  needsApp?: string[];
 };
 /**
  * What the Toolkit offers: primitive names, every feature drive's name → its args, the drives that take a
@@ -391,13 +393,27 @@ export function lintSpec(
     requirements?: Requirement[];
     /** The repo's test layout (checks/test-layout.ts): rule 8 runs when given. */
     testLayout?: TestLayout | null;
+    /**
+     * The repo has no Toolkit (ADR 0010): a toolkit proof can't be resolved against one, so rules 2, 9 and the judged
+     * screenshot rule skip it and its negatives get no base check; it is listed in `needsApp` instead.
+     */
+    noToolkit?: boolean;
   },
 ): LintResult {
   const criteria = parseCriteria(md);
   const newDriveText = newDriveLines(md);
   const newDrives = Object.keys(newDriveText);
   const baseNegatives: BaseNegative[] = [];
-  const fail = (reason: string, extra: Partial<LintResult> = {}): LintResult => ({ ok: false, reason, criteria, newDrives, baseNegatives, ...extra });
+  const needsApp: string[] = [];
+  const fail = (reason: string, extra: Partial<LintResult> = {}): LintResult => ({
+    ok: false,
+    reason,
+    criteria,
+    newDrives,
+    baseNegatives,
+    ...(o.noToolkit ? { needsApp } : {}),
+    ...extra,
+  });
   if (!criteria.length) return fail("no criteria (`- [C1] …` with a `proof:` line)");
   // 6. unique ids
   const seen = new Set<string>();
@@ -421,11 +437,13 @@ export function lintSpec(
     // 3. judged only for visual/wording, with a screenshot; mechanical expects must parse; negatives are backed
     const segs = parsed.get(c.id) ?? [];
     const kindOf = segs[0]?.kind;
+    const unresolved = !!o.noToolkit && segs.some((s) => s.kind === "toolkit");
+    if (unresolved) needsApp.push(c.id);
     if (isJudged(c.expect)) {
       if (kindOf !== "toolkit") return `${c.id}: a judged criterion needs a toolkit proof (evidence to look at)`;
       if (!isVisualOrWording(c.text))
         return `${c.id}: expect: judged is only for layout, appearance, visual style, tone or copy quality; make it mechanical (text "…" visible, $var == …)`;
-      if (!takesScreenshot(segs, o.toolkit, newDriveText))
+      if (!unresolved && !takesScreenshot(segs, o.toolkit, newDriveText))
         return `${c.id}: a judged criterion's proof must take a screenshot (a \`screenshot\` step, or a drive that takes one) for the verifier to look at`;
     } else if (c.expect) {
       try {
@@ -434,7 +452,7 @@ export function lintSpec(
           const b = negativeBacking(c.expect, segs);
           if (b.refuse)
             return `${c.id}: \`${b.refuse}\` holds whenever the thing never existed (an empty read); an earlier step of the same proof must make what it reads (a feature drive, a writing \`http\`)`;
-          for (const clause of b.base) baseNegatives.push({ criterion: c.id, clause });
+          if (!unresolved) for (const clause of b.base) baseNegatives.push({ criterion: c.id, clause });
         }
       } catch (e) {
         if (e instanceof ExpectError) return `${c.id}: expect ${e.message}`;
@@ -458,7 +476,7 @@ export function lintSpec(
       if (why) return `${c.id}: ${why}`;
     }
     // 2. names resolve
-    for (const s of segs) {
+    for (const s of unresolved ? [] : segs) {
       if (s.kind !== "toolkit") continue;
       const bad = jsonArgProblem(s);
       if (bad) return `${c.id}: ${bad}`;
@@ -486,7 +504,7 @@ export function lintSpec(
         return `${c.id}: ${s.name} takes ${want.map((a) => `--${a}`).join(" ") || "no args"}, got ${given.map((a) => `--${a}`).join(" ") || "none"}`;
     }
     // 9. seed users exist
-    const ghost = unknownUser(segs, o.toolkit.seedUsers ?? []);
+    const ghost = unresolved ? null : unknownUser(segs, o.toolkit.seedUsers ?? []);
     if (ghost)
       return `${c.id}: the proof uses the user ${JSON.stringify(ghost)}, who is not a seed user (${(o.toolkit.seedUsers ?? []).join(", ")}) and no earlier step makes; use a seed user, or create that user in an earlier step`;
     // 4. protected paths
@@ -506,7 +524,7 @@ export function lintSpec(
   if (o.kind === "bug" && !criteria.some((c) => c.repro && c.expect !== null && !isJudged(c.expect)))
     problems.push("a bug needs a `repro: true` criterion with a mechanical expect");
   if (problems.length) return fail(problems.join("\n"), missingPrimitive ? { missingPrimitive } : {});
-  return { ok: true, criteria, newDrives, baseNegatives };
+  return { ok: true, criteria, newDrives, baseNegatives, ...(o.noToolkit ? { needsApp } : {}) };
 }
 
 /**

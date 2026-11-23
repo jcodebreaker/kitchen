@@ -26,6 +26,10 @@ _Avoid_: Priority, severity
 The Spec's list of acceptance criteria, each naming how it will be proven; the builder may only tick criteria off, never change them.
 _Avoid_: Spec document, PRD, plan
 
+**Steer**:
+A person's message to a running Job (`kitchen steer`, the dashboard's composer): its agent reads it at its next step without stopping, or the next agent role reads it as operator notes. Kept on the Job's thread, `messages.jsonl`.
+_Avoid_: Chat, prompt, interrupt
+
 **Round**:
 One pass of Build, Gate, Verify and Review; a Job has a limited number before a human is asked.
 _Avoid_: Iteration, attempt
@@ -35,6 +39,10 @@ _Avoid_: Iteration, attempt
 **Toolkit**:
 The project-owned kit that starts, drives and observes the developer's app, and the only way any part of Kitchen touches the running app.
 _Avoid_: Kitchen (that is the product), harness, verify skill, dev CLI
+
+**Role skill**:
+An outside skill (a `SKILL.md`, such as test-first building or a security review) that a role's prompt quotes as guidance, chosen from Kitchen's registry by the Ticket's kind, surfaces and Risk, and pinned by its hash in the Ledger; it never decides a Verdict.
+_Avoid_: Plugin, tool, the /kitchen skill (that one drives Kitchen from Claude Code or Codex)
 
 **Toolkit gap**:
 Something the Toolkit cannot do that a Job needs in order to prove a behaviour; a missing capability, not a broken app.

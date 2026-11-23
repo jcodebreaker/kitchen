@@ -1,9 +1,16 @@
-// Claude Code adapter: `claude -p`, one JSON result on stdout (ADR 0006).
+// Claude Code adapter: `claude -p` in stream-json both ways (ADR 0006, ADR 0009).
+//
+// The prompt goes in as the first user message on stdin. While the agent runs, steering messages
+// (req.steer) are written as further user messages: Claude Code takes one after the tool call it is
+// in, inside the same turn (spikes/w6-steer). The session waits for input while stdin is open, so
+// stdin closes once a `result` arrives and every message written has been answered (an assistant
+// event after it); one never answered goes back to the queue for the next role. The last `result`
+// event is the object `--output-format json` printed: cost, turns, session, error text.
 
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { execa } from "execa";
 import { kitchenHome } from "../home.ts";
 import { trackGroup } from "../procs.ts";
@@ -49,8 +56,11 @@ export function claudeArgs(req: AgentRequest, sessionId: string): string[] {
   const out = outDirOf(req);
   const args = [
     "-p",
+    "--input-format",
+    "stream-json",
     "--output-format",
-    "json",
+    "stream-json",
+    "--verbose", // stream-json output needs it with -p
     "--model",
     req.model,
     "--max-turns",
@@ -107,7 +117,7 @@ export function claudeTranscriptPath(cwd: string, sessionId: string, env: Record
   return undefined;
 }
 
-type ClaudeJson = {
+export type ClaudeJson = {
   type?: string;
   subtype?: string;
   is_error?: boolean;
@@ -117,6 +127,88 @@ type ClaudeJson = {
   num_turns?: number;
   usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number };
 };
+
+/** One user message on stream-json stdin. */
+export const userLine = (text: string) => `${JSON.stringify({ type: "user", message: { role: "user", content: [{ type: "text", text }] } })}\n`;
+
+/** How long stdin stays open after a `result` for a written message that has not been answered yet. */
+export const ANSWER_GRACE_MS = 5000;
+
+/**
+ * The stdout side of one run, line by line: the last `result`, which written messages the agent
+ * answered, and when stdin may close. No I/O: the adapter feeds it lines and the clock.
+ */
+export class ClaudeStream {
+  /** The last `result` event; null again once a turn a queued message started is running. */
+  result: ClaudeJson | null = null;
+  /** The last `result` seen, with turns and tokens summed over every turn (each result counts its own turn; its cost is already cumulative). */
+  final: ClaudeJson | null = null;
+  readonly written = new Set<string>();
+  /**
+   * Written messages not answered yet. Claude Code takes a queued message at a turn boundary: after a
+   * tool result, or as a new turn (a fresh `system init`) once a `result` is out (spikes/w6-steer). So a
+   * message counts as answered by the first assistant event after such a boundary, never by more events
+   * of the message it arrived during.
+   */
+  private unanswered: { id: string; boundary: boolean }[] = [];
+  private resultAt = 0;
+  /** The session is up (its first `system init`): a message written before it could be read as part of the prompt. */
+  started = false;
+  /** The last stdout line that was not JSON, for an error message. */
+  junk = "";
+
+  /** Returns the ids this line shows were answered. */
+  line(text: string, now: number): string[] {
+    let e: ClaudeJson;
+    try {
+      e = JSON.parse(text) as ClaudeJson;
+    } catch {
+      if (text.trim()) this.junk = text.trim();
+      return [];
+    }
+    if (e.type === "result") {
+      this.final = this.final ? sumTurns(this.final, e) : e;
+      this.result = e;
+      this.resultAt = now;
+      return [];
+    }
+    if (e.type === "system" && e.subtype === "init") this.started = true;
+    if (e.type === "user" || (e.type === "system" && e.subtype === "init")) {
+      for (const u of this.unanswered) u.boundary = true;
+      if (e.type === "system" && this.result && this.unanswered.length) this.result = null; // the turn a queued message started
+      return [];
+    }
+    if (e.type !== "assistant") return [];
+    const read = this.unanswered.filter((u) => u.boundary).map((u) => u.id);
+    this.unanswered = this.unanswered.filter((u) => !u.boundary);
+    return read;
+  }
+
+  wrote(id: string) {
+    this.written.add(id);
+    this.unanswered.push({ id, boundary: false });
+  }
+
+  /** stdin may close: a result is in and nothing written waits for an answer (or the wait is over). */
+  canClose(now: number): boolean {
+    return !!this.result && (!this.unanswered.length || now - this.resultAt > ANSWER_GRACE_MS);
+  }
+}
+
+/** Pure: a later turn's result over an earlier one's. `num_turns` and `usage` are per turn, `total_cost_usd` is the session's so far. */
+export function sumTurns(a: ClaudeJson, b: ClaudeJson): ClaudeJson {
+  const u = (k: "input_tokens" | "output_tokens" | "cache_read_input_tokens" | "cache_creation_input_tokens") => (a.usage?.[k] ?? 0) + (b.usage?.[k] ?? 0);
+  return {
+    ...b,
+    num_turns: (a.num_turns ?? 0) + (b.num_turns ?? 0),
+    usage: {
+      input_tokens: u("input_tokens"),
+      output_tokens: u("output_tokens"),
+      cache_read_input_tokens: u("cache_read_input_tokens"),
+      cache_creation_input_tokens: u("cache_creation_input_tokens"),
+    },
+  };
+}
 
 export class ClaudeAdapter implements AgentAdapter {
   readonly name = "claude" as const;
@@ -128,37 +220,73 @@ export class ClaudeAdapter implements AgentAdapter {
   async run(req: AgentRequest): Promise<AgentResult> {
     mkdirSync(outDirOf(req), { recursive: true });
     rmSync(outPathOf(req), { force: true }); // a stale file must never pass as this run's
+    if (req.streamFile) mkdirSync(dirname(req.streamFile), { recursive: true });
     const sessionId = req.resumeSession ?? randomUUID();
     // Its own process group, recorded for the job: a restart after kill -9 kills it (src/procs.ts).
     const sub = execa(this.bin, claudeArgs(req, sessionId), {
       cwd: req.cwd,
       env: req.env,
       extendEnv: false,
-      input: req.prompt + contractFooter(req),
+      stdin: "pipe",
+      buffer: { stdout: false }, // read line by line below
       timeout: req.timeoutSec * 1000,
       forceKillAfterDelay: 5000,
       reject: false,
       detached: true,
     });
     const done = trackGroup(req.procsDir, sub.pid, `agent ${req.role}`);
+    const s = new ClaudeStream();
+    let open = true;
+    const close = () => {
+      if (!open) return;
+      open = false;
+      sub.stdin?.end();
+    };
+    sub.stdin?.on("error", () => {}); // the agent exited first: nothing more to write
+    sub.stdin?.write(userLine(req.prompt + contractFooter(req)));
+    let buf = "";
+    sub.stdout?.setEncoding("utf8"); // a character split across chunks stays whole
+    sub.stdout?.on("data", (d: string) => {
+      buf += d;
+      for (let i = buf.indexOf("\n"); i >= 0; i = buf.indexOf("\n")) {
+        const text = buf.slice(0, i);
+        buf = buf.slice(i + 1);
+        if (!text.trim()) continue;
+        if (req.streamFile)
+          try {
+            appendFileSync(req.streamFile, `${JSON.stringify({ _t: new Date().toISOString(), ...(JSON.parse(text) as object) })}\n`);
+          } catch {
+            /* not JSON, or the folder went away: the run goes on */
+          }
+        const read = s.line(text, Date.now());
+        if (read.length) req.steer?.read(read);
+      }
+    });
+    const tick = setInterval(() => {
+      if (!open) return;
+      if (s.started && !s.result)
+        for (const m of req.steer?.take() ?? []) {
+          if (s.written.has(m.id)) continue;
+          sub.stdin?.write(userLine(m.text));
+          s.wrote(m.id);
+        }
+      if (s.canClose(Date.now())) close();
+    }, 250);
     let p: Awaited<typeof sub>;
     try {
       p = await sub;
     } finally {
+      clearInterval(tick);
+      open = false;
       done();
     }
     const transcriptPath = claudeTranscriptPath(req.cwd, sessionId, req.env);
     const base = { sessionId, transcriptPath, outPath: foundOut(req), ran: { adapter: this.name, model: req.model } };
     if (p.timedOut) return { ...base, ok: false, line: "", timedOut: true, error: `timeout after ${req.timeoutSec}s` };
 
-    let j: ClaudeJson | undefined;
-    try {
-      j = JSON.parse(String(p.stdout)) as ClaudeJson;
-    } catch {
-      /* not JSON */
-    }
+    const j = s.final;
     if (!j) {
-      const err = lastLine(String(p.stderr)) || lastLine(String(p.stdout)) || `exit ${p.exitCode}`;
+      const err = lastLine(String(p.stderr)) || s.junk || `exit ${p.exitCode}`;
       return { ...base, ok: false, line: "", rateLimited: looksRateLimited(err), error: err };
     }
     const u = j.usage ?? {};
