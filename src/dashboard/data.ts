@@ -69,8 +69,10 @@ export function workStage(j: Pick<Job, "stage" | "pausedFrom" | "escalatedFrom">
 export const phaseOf = (s: Stage): Phase => PHASES.find((p) => (p.stages as readonly Stage[]).includes(s))?.k ?? "intake";
 export const agentOf = (s: Stage): string | null => AGENT[s] ?? null;
 export type JobState = "you" | "run" | "paused" | "done" | "rejected";
-export function stateOf(j: Pick<Job, "stage">): JobState {
+export function stateOf(j: Pick<Job, "stage" | "waitFor">): JobState {
   if (j.stage === "needs-info" || j.stage === "needs-human") return "you";
+  // Waiting for the person to build a Toolkit (ADR 0010): theirs to act on, not a pause of theirs.
+  if (j.stage === "paused" && j.waitFor === "no-toolkit") return "you";
   if (j.stage === "paused") return "paused";
   if (j.stage === "done") return "done";
   if (j.stage === "rejected") return "rejected";
@@ -87,6 +89,7 @@ export function questionOf(j: Job, dir: string): string | null {
       if (q) return q;
     } catch {}
   }
+  if (j.stage === "paused" && j.waitFor === "no-toolkit") return j.pausedReason ?? "This ticket needs Kitchen to drive the app; run kitchen toolkit build.";
   return j.stage === "needs-info" || j.stage === "needs-human" ? (j.pausedReason ?? "It needs your answer to go on.") : null;
 }
 /** The agent stream files of one stage entry, oldest first (activity/m<moves>-<role>-<t0>.jsonl). */
@@ -149,6 +152,8 @@ export type JobCard = {
   q: string | null;
   /** Paused by a person: "pause" or "stop". */
   pausedBy: "pause" | "stop" | null;
+  /** Paused no-toolkit (ADR 0010): the person builds the Toolkit, or resumes it to go on with checks and tests only. */
+  needsToolkit: boolean;
   /** The last thing the agent working on it now did. */
   live: Ev | null;
   /** A runner is working on it right now. */
@@ -294,6 +299,7 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
       agent: agentOf(stage),
       q: questionOf(j, dir),
       pausedBy: pausedByYou(j) ? (j.pausedReason === BY_YOU_STOPPED ? "stop" : "pause") : null,
+      needsToolkit: j.stage === "paused" && j.waitFor === "no-toolkit",
       live: (cur ? activityOf(cur.file, [j.worktree, repo]) : []).at(-1) ?? null,
       runnerOn: runningNow(j),
       files: await changesOf(j, now),

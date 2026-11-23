@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterAll, describe, test } from "vitest";
-import { type Facts, type Job, move, type Stage, TABLE } from "./machine.ts";
+import { type Facts, type Job, move, noToolkitReason, type Stage, TABLE } from "./machine.ts";
 
 const NOW = "2026-11-22T10:00:00.000Z";
 
@@ -506,6 +506,32 @@ const cases: Case[] = [
   },
   // review
   { row: "review>ready", job: { stage: "review" }, to: "ready", facts: f({ review: { pass: true } }) },
+  // ADR 0010: a high-risk job never reaches ready without a Toolkit; a lower one does, on checks and tests
+  {
+    row: "review>ready",
+    job: { stage: "review", risk: "high" },
+    to: "ready",
+    facts: f({ review: { pass: true }, noToolkit: { needsApp: [], highRisk: true } }),
+    refused: /high-risk job needs a Toolkit/,
+  },
+  {
+    row: "review>ready",
+    job: { stage: "review", risk: "medium", checksOnly: true },
+    to: "ready",
+    facts: f({ review: { pass: true }, noToolkit: { needsApp: ["C2"], highRisk: false } }),
+  },
+  {
+    row: "review>paused",
+    job: { stage: "review", risk: "high" },
+    to: "paused",
+    facts: f({ review: { pass: true }, noToolkit: { needsApp: [], highRisk: true } }),
+    expect: (j) => {
+      assert.equal(j.waitFor, "no-toolkit");
+      assert.equal(j.pausedFrom, "review");
+      assert.equal(j.pausedReason, noToolkitReason("001-x"));
+    },
+  },
+  { row: "review>paused", job: { stage: "review" }, to: "paused", facts: f({ review: { pass: true } }), refused: /not a high-risk job without a Toolkit/ },
   { row: "review>ready", job: { stage: "review" }, to: "ready", facts: f({ review: { pass: false, blocking: "x" } }), refused: /did not PASS/ },
   {
     row: "review>build",
@@ -567,6 +593,144 @@ const cases: Case[] = [
   { row: "ready>build", job: { stage: "ready" }, to: "build", facts: f({ ready: ready() }), refused: /no conflict, red CI/ },
   { row: "ready>gate", job: { stage: "ready" }, to: "gate", facts: f({ ready: ready({ gatePass: false }) }) },
   { row: "ready>gate", job: { stage: "ready" }, to: "gate", facts: f({ ready: ready() }), refused: /gate is PASS on this HEAD/ },
+  // no-toolkit (ADR 0010): intake and spec pause a job whose criteria drive the app when the repo has no Toolkit
+  {
+    row: "intake>paused",
+    job: { stage: "intake" },
+    to: "paused",
+    facts: f({
+      intake: { decision: "ACCEPT", kind: "feature", risk: "low", criteria: okLint, requirements: 1 },
+      noToolkit: { needsApp: ["C1"], highRisk: false },
+    }),
+    expect: (j) => {
+      assert.equal(j.waitFor, "no-toolkit");
+      assert.equal(j.pausedFrom, "intake");
+      assert.equal(j.risk, "low");
+      assert.match(j.pausedReason ?? "", /run `kitchen toolkit build` \(about 3–15 min\), then `kitchen resume 001-x`/);
+    },
+  },
+  {
+    row: "intake>paused",
+    job: { stage: "intake" },
+    to: "paused",
+    facts: f({ intake: { decision: "ACCEPT", risk: "low", criteria: okLint, requirements: 1 }, noToolkit: { needsApp: [], highRisk: false } }),
+    refused: /no criterion needs the running app/,
+  },
+  {
+    row: "intake>paused",
+    job: { stage: "intake", checksOnly: true },
+    to: "paused",
+    facts: f({ intake: { decision: "ACCEPT", risk: "low", criteria: okLint, requirements: 1 }, noToolkit: { needsApp: ["C1"], highRisk: false } }),
+    refused: /chose to go on with checks and tests only/,
+  },
+  {
+    row: "intake>paused",
+    job: { stage: "intake" },
+    to: "paused",
+    facts: f({ intake: { decision: "ACCEPT", risk: "low", criteria: okLint, requirements: 1 } }),
+    refused: /the job has a Toolkit/,
+  },
+  { row: "spec>paused", job: { stage: "spec", risk: "medium" }, to: "paused", facts: f({ spec: okLint, noToolkit: { needsApp: ["C2"], highRisk: false } }) },
+  // review L3: the machine itself refuses to build past criteria that need the app, without a Toolkit
+  {
+    row: "spec>build",
+    job: { stage: "spec", kind: "feature", risk: "medium" },
+    to: "build",
+    facts: f({ spec: okLint, noToolkit: { needsApp: ["C2"], highRisk: false } }),
+    refused: /C2 drive the app: it waits for one/,
+  },
+  {
+    row: "spec>build",
+    job: { stage: "spec", kind: "feature", risk: "medium", checksOnly: true },
+    to: "build",
+    facts: f({ spec: okLint, noToolkit: { needsApp: ["C2"], highRisk: false } }),
+  },
+  {
+    row: "spec>repro",
+    job: { stage: "spec", kind: "bug", risk: "medium", checksOnly: true },
+    to: "repro",
+    facts: f({ spec: okLint, noToolkit: { needsApp: ["C1"], highRisk: false, unprovable: "it is a bug whose reproduction (C1) drives the app" } }),
+    refused: /bug whose reproduction \(C1\) drives the app: it waits for one/,
+  },
+  {
+    row: "intake>build",
+    job: { stage: "intake" },
+    to: "build",
+    facts: f({
+      intake: { decision: "ACCEPT", kind: "feature", risk: "low", criteria: okLint, requirements: 1 },
+      noToolkit: { needsApp: ["C1"], highRisk: false },
+    }),
+    refused: /C1 drive the app: it waits for one/,
+  },
+  {
+    row: "intake>repro",
+    job: { stage: "intake", checksOnly: true },
+    to: "repro",
+    facts: f({
+      intake: { decision: "ACCEPT", kind: "bug", risk: "low", criteria: okLint, requirements: 1 },
+      noToolkit: { needsApp: ["C1"], highRisk: false, unprovable: "a bug" },
+    }),
+    refused: /a bug: it waits for one/,
+  },
+  // review M5: a verdict with nothing proven waits for the Toolkit, never a pass
+  {
+    row: "verify>paused(no-toolkit)",
+    job: { stage: "verify" },
+    to: "paused",
+    facts: f({ verify: verify("NO-TOOLKIT"), noToolkit: { needsApp: ["C1"], highRisk: false, unprovable: "no criterion was proven" } }),
+    expect: (j) => {
+      assert.equal(j.waitFor, "no-toolkit");
+      assert.equal(j.pausedFrom, "drives", "woken, it writes the feature drives first (review R5)");
+    },
+  },
+  {
+    row: "verify>paused(no-toolkit)",
+    job: { stage: "verify" },
+    to: "paused",
+    facts: f({ verify: verify("PASS") }),
+    refused: /verdict is PASS, not NO-TOOLKIT/,
+  },
+  { row: "verify>review", job: { stage: "verify" }, to: "review", facts: f({ verify: verify("NO-TOOLKIT") }), refused: /verdict is NO-TOOLKIT, not PASS/ },
+  // going on without a Toolkit: never high risk, never what checks can't prove, never without the facts
+  {
+    row: "paused>spec",
+    job: { stage: "paused", pausedFrom: "spec", waitFor: "no-toolkit", risk: "high" },
+    to: "spec",
+    facts: f({ operator: "resume", wake: { checksOnly: true }, noToolkit: { needsApp: [], highRisk: true } }),
+    refused: /high-risk job can't go on without a Toolkit/,
+  },
+  {
+    row: "paused>verify",
+    job: { stage: "paused", pausedFrom: "verify", waitFor: "no-toolkit" },
+    to: "verify",
+    facts: f({
+      operator: "resume",
+      wake: { checksOnly: true },
+      noToolkit: { needsApp: ["C1"], highRisk: false, unprovable: "R1 is proven only by driving the app" },
+    }),
+    refused: /R1 is proven only by driving the app/,
+  },
+  {
+    row: "paused>intake",
+    job: { stage: "paused", pausedFrom: "intake", waitFor: "no-toolkit" },
+    to: "intake",
+    facts: f({ operator: "resume", wake: { checksOnly: true } }),
+    refused: /needs the noToolkit facts/,
+  },
+  {
+    row: "spec>paused",
+    job: { stage: "spec", risk: "medium", checksOnly: true },
+    to: "paused",
+    facts: f({ spec: okLint, noToolkit: { needsApp: ["C2"], highRisk: false } }),
+    refused: /checks and tests only/,
+  },
+  {
+    row: "spec>paused",
+    job: { stage: "spec", risk: "high", checksOnly: true },
+    to: "paused",
+    facts: f({ noToolkit: { needsApp: [], highRisk: true } }),
+    expect: (j) => assert.equal(j.waitFor, "no-toolkit"),
+  },
   // paused
   ...(["intake", "spec", "repro", "build", "gate", "drives", "verify", "toolkit", "review", "ready", "report"] as const).flatMap((to): Case[] => [
     {
@@ -589,6 +753,36 @@ const cases: Case[] = [
     refused: /paused from build/,
   },
   { row: "paused>ready", job: { stage: "paused", pausedFrom: "ready", waitFor: "toolkit-pr" }, to: "ready", facts: f({ operator: "resume" }) },
+  // ADR 0010: waking a no-toolkit pause, with the Toolkit now on the base, or without one (checks and tests only)
+  {
+    row: "paused>intake",
+    job: { stage: "paused", pausedFrom: "intake", waitFor: "no-toolkit", pausedReason: noToolkitReason("001-x") },
+    to: "intake",
+    facts: f({ waitCleared: true, wake: { base: H, toolkitRef: H } }),
+    expect: (j) => {
+      assert.equal(j.base, H);
+      assert.equal(j.toolkitRef, H);
+      assert.equal(j.checksOnly, undefined);
+      assert.equal(j.waitFor, undefined);
+    },
+  },
+  {
+    row: "paused>spec",
+    job: { stage: "paused", pausedFrom: "spec", waitFor: "no-toolkit" },
+    to: "spec",
+    facts: f({ operator: "resume", wake: { checksOnly: true }, noToolkit: { needsApp: [], highRisk: false } }),
+    expect: (j) => {
+      assert.equal(j.checksOnly, true);
+      assert.equal(j.toolkitRef, "");
+    },
+  },
+  {
+    row: "paused>spec",
+    job: { stage: "paused", pausedFrom: "spec", waitFor: "no-toolkit" },
+    to: "spec",
+    facts: f({}),
+    refused: /still waiting for no-toolkit/,
+  },
   // report
   { row: "report>done", job: { stage: "report" }, to: "done", facts: f({ report: report() }) },
   { row: "report>done", job: { stage: "report" }, to: "done", facts: f({ report: report({ localForge: true, evidencePushed: false, commented: false }) }) },

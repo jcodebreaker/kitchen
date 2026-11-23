@@ -5,7 +5,7 @@
 // Toolkit (fixture A's) still passes the full `toolkit_check` through the bridge,
 // Docker included. Nothing secret is printed: the planted script reports only
 // whether each read worked.
-// Round 2: `kitchen init`'s own check of the kitchen/setup commit (and
+// Round 2: `kitchen toolkit build`'s own check of the kitchen/setup commit (and
 // `toolkit check --rev kitchen/setup`) runs a planted, working bin/dev that
 // writes a marker when it can read ~/.ssh or $KITCHEN_HOME/engine.key: no
 // marker while the sha is unmerged, the marker once merged (unsandboxed by design).
@@ -125,16 +125,16 @@ fs.rmSync(marker, { force: true });
 
 const answers = path.join(root, "answers.json");
 fs.writeFileSync(answers, JSON.stringify({ answers: { q1: "alice" } }));
-const init = kitchen(pr, ["init", "--answers", answers], { timeoutMs: 300_000 });
+const init = kitchen(pr, ["toolkit", "build", "--verbose", "--answers", answers], { timeoutMs: 300_000 });
 check(
-  "kitchen init: its check of the kitchen/setup commit runs bin/dev under sandbox-exec, and passes",
+  "kitchen toolkit build: its check of the kitchen/setup commit runs bin/dev under sandbox-exec, and passes",
   init.code === 0 && /is not merged into the base: bin\/dev runs under sandbox-exec/.test(init.out) && /toolkit check: PASS/.test(init.out),
   init.out
     .split("\n")
     .filter((l) => /not merged|PASS|FAIL|done|refus/.test(l))
     .join(" | "),
 );
-check("kitchen init: the planted bin/dev read nothing (no marker)", leaked().length === 0, leaked().join("; "));
+check("kitchen toolkit build: the planted bin/dev read nothing (no marker)", leaked().length === 0, leaked().join("; "));
 
 const rev = kitchen(pr, ["toolkit", "check", "--rev", "kitchen/setup"], { timeoutMs: 300_000 });
 check(

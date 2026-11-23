@@ -14,7 +14,9 @@
 import type { Entry } from "../proof/manifest.ts";
 import type { Criterion } from "./spec-lint.ts";
 
-export type Result = "PASS" | "FAIL" | "INCONCLUSIVE" | "TOOLKIT-GAP";
+/** NO-TOOLKIT: the criterion drives the app and the repo has no Toolkit, so nothing proved it (ADR 0010). Never a pass, never a failure. */
+export type Result = "PASS" | "FAIL" | "INCONCLUSIVE" | "TOOLKIT-GAP" | "NO-TOOLKIT";
+export const NOT_PROVEN_NO_TOOLKIT = "not proven (no Toolkit): it needs Kitchen to drive the app";
 /** What the engine found running one criterion's proof (prove.ts). */
 export type ProofRecord = {
   criterion: string;
@@ -27,11 +29,14 @@ export type ProofRecord = {
 export type ArgsDelta = { criterion: string; drive: string; spec: Record<string, string>; used: Record<string, string>; by: string; at: string };
 export type CriterionVerdict = { id: string; judged: boolean; result: Result; why?: string; evidence: string[] };
 export type Verdict = {
+  /** NO-TOOLKIT overall: nothing passed, or a requirement is covered only by criteria no Toolkit could run (never a PASS with nothing proven). */
   verdict: Result;
   criteria: CriterionVerdict[];
   manifestOk: boolean;
   citationsOk: boolean;
   citationProblem?: string;
+  /** With verdict NO-TOOLKIT: what is not proven. */
+  unproven?: string;
   gap?: string;
   argsDeltas: ArgsDelta[];
   /** Criteria that already passed on the base: a pass on them doesn't tell this change from no change. */
@@ -107,11 +112,23 @@ export function citationProblem(judged: string[], cited: Map<string, string[]>, 
   return null;
 }
 
-const RANK: Result[] = ["PASS", "INCONCLUSIVE", "TOOLKIT-GAP", "FAIL"];
-const worst = (rs: Result[]): Result => rs.reduce<Result>((a, b) => (RANK.indexOf(b) > RANK.indexOf(a) ? b : a), "PASS");
+// NO-TOOLKIT ranks below PASS: it neither fails a job nor counts as proof (the Report says which criteria it is).
+const RANK: Result[] = ["NO-TOOLKIT", "PASS", "INCONCLUSIVE", "TOOLKIT-GAP", "FAIL"];
+const worst = (rs: Result[]): Result => rs.reduce<Result>((a, b) => (b !== "NO-TOOLKIT" && RANK.indexOf(b) > RANK.indexOf(a) ? b : a), "PASS");
+
+/** Pure: what a PASS would claim without proof: no criterion passed, or a requirement only NO-TOOLKIT criteria cover. */
+export function unproven(criteria: { id: string; covers?: string[] }[], out: { id: string; result: Result }[]): string | null {
+  if (!out.some((c) => c.result === "PASS")) return "no criterion was proven";
+  const reqs = [...new Set(criteria.flatMap((c) => c.covers ?? []))];
+  const only = reqs.filter((r) => {
+    const by = criteria.filter((c) => c.covers?.includes(r)).map((c) => out.find((o) => o.id === c.id)?.result);
+    return by.length > 0 && by.every((x) => x === "NO-TOOLKIT");
+  });
+  return only.length ? `${only.join(", ")} ${only.length === 1 ? "is" : "are"} covered only by criteria that need the app` : null;
+}
 
 export function decideVerdict(o: {
-  criteria: Pick<Criterion, "id" | "expect">[];
+  criteria: (Pick<Criterion, "id" | "expect"> & { covers?: string[] })[];
   proofs: ProofRecord[];
   /** verify.md, or null when no agent ran (no judged criteria, or a mechanical one already failed). */
   judgedText: string | null;
@@ -152,11 +169,15 @@ export function decideVerdict(o: {
     return { id: c.id, judged, result: said, why: said === "PASS" ? undefined : "judged by the verifier", evidence: ids };
   });
   let verdict = worst(out.map((c) => c.result));
+  // Without a Toolkit a PASS needs something proven, for every requirement (ADR 0010 review M5).
+  const notProven = verdict === "PASS" && out.some((c) => c.result === "NO-TOOLKIT") ? unproven(o.criteria, out) : null;
+  if (notProven) verdict = "NO-TOOLKIT";
   // Evidence that doesn't verify proves nothing: a refused manifest is never a PASS.
   if (o.entries === null && verdict === "PASS") verdict = "INCONCLUSIVE";
   const gap = verdict === "TOOLKIT-GAP" ? (o.proofs.find((p) => p.gap)?.gap ?? agentGap) : undefined;
   return {
     verdict,
+    ...(notProven ? { unproven: notProven } : {}),
     criteria: out,
     manifestOk: o.entries !== null,
     citationsOk: !citationProblemText,
@@ -174,6 +195,7 @@ export function renderVerdict(v: Verdict, head: string, round: number): string {
     `HEAD: ${head}`,
     `ROUND: ${round}`,
     `MANIFEST: ${v.manifestOk ? "verified" : "REFUSED"}`,
+    ...(v.unproven ? [`UNPROVEN: ${v.unproven} (no Toolkit)`] : []),
     ...(v.gap ? [`GAP: ${v.gap}`] : []),
     "",
     "| criterion | decided by | result | evidence | why |",

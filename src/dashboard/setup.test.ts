@@ -1,11 +1,14 @@
-// The Setup run on the dashboard: its questions read from init's files, and answered the way `kitchen init --answers` is.
+// The Setup run on the dashboard: its questions read from the Toolkit build's files, and answered the way
+// `kitchen toolkit build --answers` is; a repo only quick init ran in shows the Toolkit as not built (ADR 0010).
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, test } from "vitest";
 import { answerSetup } from "../cli/toolkit-commands.ts";
+import type { Job } from "../engine/machine.ts";
 import { processStart } from "../lock.ts";
+import { questionOf, stateOf } from "./data.ts";
 import { setupView } from "./setup.ts";
 
 let repo = "";
@@ -51,7 +54,7 @@ test("a setup waiting on questions shows them, at the Your answers step", () => 
   assert.equal(v.usd, 0.2);
 });
 
-test("answers from the page: written to setup-answers.json, then kitchen init --answers <file> --detach", async () => {
+test("answers from the page: written to setup-answers.json, then kitchen toolkit build --answers <file> --detach", async () => {
   const stub = path.join(repo, "stub-cli.mjs");
   const seen = path.join(repo, "argv.json");
   fs.writeFileSync(stub, `import fs from "node:fs"; fs.writeFileSync(${JSON.stringify(seen)}, JSON.stringify(process.argv.slice(2)));`);
@@ -64,6 +67,38 @@ test("answers from the page: written to setup-answers.json, then kitchen init --
   const file = path.join(repo, ".kitchen", "setup-answers.json");
   assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), { answers: { q1: "Full host image" } });
   for (let i = 0; i < 100 && !fs.existsSync(seen); i++) await new Promise((r) => setTimeout(r, 20));
-  assert.deepEqual(JSON.parse(fs.readFileSync(seen, "utf8")), ["init", "--answers", file]);
-  assert.match(lines.join("\n"), /init detached/);
+  assert.deepEqual(JSON.parse(fs.readFileSync(seen, "utf8")), ["toolkit", "build", "--answers", file]);
+  assert.match(lines.join("\n"), /toolkit build detached/);
+});
+
+test("after quick init only: Setup says the Toolkit is not built, with its first step done (ADR 0010)", () => {
+  fs.rmSync(path.join(repo, ".kitchen", "init", "status.json"));
+  fs.rmSync(path.join(repo, ".kitchen", "init", "state.json"));
+  const empty = setupView(repo);
+  assert.equal(empty.state, "none", "kitchen init never ran");
+  fs.writeFileSync(path.join(repo, ".kitchen", "init", "checks.json"), JSON.stringify({ at: "", sha: null, from: [], found: "files", results: [] }));
+  const v = setupView(repo);
+  assert.equal(v.state, "quick");
+  assert.equal(v.steps[0].nm, "Config and skill");
+  assert.equal(v.steps[0].st, "ok", "quick init did that step");
+  assert.deepEqual(new Set(v.steps.slice(1).map((s) => s.st)), new Set(["wait"]));
+  assert.equal(v.steps[v.idx].k, "branch");
+});
+
+test("answering with no questions waiting says so in the build's words", () => {
+  fs.rmSync(path.join(repo, ".kitchen", "init", "status.json"));
+  const lines: string[] = [];
+  assert.equal(
+    answerSetup(repo, { q1: "x" }, (l) => lines.push(l)),
+    1,
+  );
+  assert.match(lines.join("\n"), /^toolkit build: no questions are waiting/);
+});
+
+test("a job paused no-toolkit needs you, with its reason; a job you paused stays paused", () => {
+  const reason = "This ticket needs Kitchen to drive the app; run `kitchen toolkit build` (about 3–15 min), then `kitchen resume 001-x`.";
+  const j = { stage: "paused", waitFor: "no-toolkit", pausedReason: reason } as Job;
+  assert.equal(stateOf(j), "you");
+  assert.equal(questionOf(j, repo), reason);
+  assert.equal(stateOf({ stage: "paused", waitFor: "backoff" } as Job), "paused");
 });

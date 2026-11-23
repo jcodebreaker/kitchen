@@ -172,7 +172,11 @@ export async function detail(repo: string, ref: string): Promise<Detail> {
         c: "ask",
         t: questionOf(j, dir) ?? "",
         at: j.updatedAt,
-        who: agentOf(j.stage === "needs-human" ? (j.escalatedFrom ?? "intake") : (tl.at(-2)?.stage ?? "intake")) ?? "Kitchen",
+        // A no-toolkit wait is Kitchen's own question, not an agent's (ADR 0010).
+        who:
+          j.waitFor === "no-toolkit"
+            ? "Kitchen"
+            : (agentOf(j.stage === "needs-human" ? (j.escalatedFrom ?? "intake") : (tl.at(-2)?.stage ?? "intake")) ?? "Kitchen"),
       });
     } else if (state === "paused") {
       last.st = "paused";

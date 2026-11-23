@@ -14,11 +14,13 @@ import { ensureJobToolkit } from "../engine/job-toolkit.ts";
 import { readRunLock, staleReason } from "../engine/lock.ts";
 import { feedbackTarget, isActive, type Job, roundsUsed, STAGES, type Stage } from "../engine/machine.ts";
 import { addMessage } from "../engine/messages.ts";
+import { needsToolkitToGoOn, unmergedSetup, wakeWithToolkit } from "../engine/no-toolkit.ts";
 import { moveJob, runKitchen } from "../engine/runner.ts";
 import { findingById, findingsOf } from "../engine/stages/context.ts";
 import { findJob, jobDirOf, kitchenDir, scanJobs, writeAtomic } from "../engine/store.ts";
 import { runView } from "../engine/views.ts";
 import { changedFiles, headOf } from "../engine/worktree.ts";
+import { mergeSetupHow } from "../init/build.ts";
 import { appendLedger, readLedger } from "../ledger/append.ts";
 import { formatMeasures, measures } from "../ledger/measures.ts";
 import { formatCounts, summarize } from "../ledger/report.ts";
@@ -113,11 +115,17 @@ export function status(repo: string, out: Out, opts: { json?: boolean } = {}): n
   if (q) out(q);
   const jobs = scanJobs(repo);
   if (!jobs.length) out("no jobs");
-  for (const e of jobs) out(e.job ? statusLine(e.job, jobDirOf(repo, e.id)) : `${e.id.padEnd(28)} corrupt(${e.corrupt})`);
+  for (const e of jobs) {
+    out(e.job ? statusLine(e.job, jobDirOf(repo, e.id)) : `${e.id.padEnd(28)} corrupt(${e.corrupt})`);
+    // What to do about a job waiting for a Toolkit (ADR 0010) is the next step, so it is shown in full.
+    if (e.job?.stage === "paused" && e.job.waitFor === "no-toolkit" && e.job.pausedReason) out(`  ${e.job.pausedReason}`);
+  }
   if (jobs.length) {
     const stages = jobs.map((e) => e.job?.stage);
     const done = stages.filter((s) => s === "done").length;
-    const needs = stages.filter((s) => s === "needs-info" || s === "needs-human").length;
+    const needs = jobs.filter(
+      (e) => e.job?.stage === "needs-info" || e.job?.stage === "needs-human" || (e.job?.stage === "paused" && e.job.waitFor === "no-toolkit"),
+    ).length;
     out(`${jobs.length} job${jobs.length === 1 ? "" : "s"}: ${done} done, ${needs} need${needs === 1 ? "s" : ""} you`);
   }
   return 0;
@@ -130,6 +138,39 @@ async function human(repo: string, ref: string, to: Stage, facts: Parameters<typ
   return r === "moved" ? 0 : 1;
 }
 
+/**
+ * A job waiting for a Toolkit (ADR 0010): with one on the base now it takes it; without one it goes on
+ * with checks and tests only, unless it can't (high risk, a bug whose reproduction drives the app) or a
+ * proven Toolkit is only waiting to be merged.
+ */
+async function resumeNoToolkit(repo: string, ref: string, job: Job, out: Out): Promise<number> {
+  const w = await wakeWithToolkit(repo, loadConfig(repo), job);
+  const from = job.pausedFrom as Stage;
+  if (w.toolkit) return human(repo, ref, from, { operator: "resume", wake: w.facts }, "resumed: the Toolkit is on the base now", out);
+  const cfg = loadConfig(repo);
+  if (await unmergedSetup(repo)) {
+    out(
+      `${job.id}  still waits: the Toolkit is on kitchen/setup but not on ${cfg.forge.base} yet. Review it, ${mergeSetupHow(cfg)}, then kitchen resume ${job.id}`,
+    );
+    return 1;
+  }
+  const hard = needsToolkitToGoOn(jobDirOf(repo, job.id), job);
+  if (hard) {
+    out(`${job.id}  can't go on without a Toolkit: ${hard}. Run kitchen toolkit build (about 3–15 min), ${mergeSetupHow(cfg)}, then kitchen resume ${job.id}`);
+    return 1;
+  }
+  out(`${job.id}  goes on without a Toolkit: proven by checks and tests only; criteria that need the app will say "not proven (no Toolkit)"`);
+  // The machine checks it again (a high-risk job, or one checks can't prove, is refused there too).
+  return human(
+    repo,
+    ref,
+    from,
+    { operator: "resume", wake: { checksOnly: true }, noToolkit: { needsApp: [], highRisk: false } },
+    "resumed without a Toolkit: checks and tests only",
+    out,
+  );
+}
+
 export async function resume(repo: string, ref: string, out: Out): Promise<number> {
   const job = findJob(repo, ref);
   const c = readControl(jobDirOf(repo, job.id));
@@ -138,6 +179,7 @@ export async function resume(repo: string, ref: string, out: Out): Promise<numbe
     out(`${job.id}  ${c.stop ? "stop" : "pause"} cancelled: it keeps running ${job.stage}`);
     return 0;
   }
+  if (job.stage === "paused" && job.pausedFrom && job.waitFor === "no-toolkit") return resumeNoToolkit(repo, ref, job, out);
   if (job.stage === "paused" && job.pausedFrom) return human(repo, ref, job.pausedFrom, { operator: "resume" }, "resumed by kitchen resume", out);
   out(
     `${job.id}  is ${job.stage}: nothing to resume${job.stage === "needs-info" || job.stage === "needs-human" ? " (answer with kitchen feedback)" : " (kitchen run picks it up)"}`,

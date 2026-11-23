@@ -18,14 +18,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import { checksPrepareOf, forgetChecksPrepared } from "../../checks/run-checks.ts";
-import { type ArgsDelta, decideVerdict, type ProofRecord, renderVerdict } from "../../checks/verdict.ts";
+import { type ArgsDelta, decideVerdict, NOT_PROVEN_NO_TOOLKIT, type ProofRecord, renderVerdict } from "../../checks/verdict.ts";
 import { appendLedger } from "../../ledger/append.ts";
 import { drivesOf } from "../../ledger/measures.ts";
 import { isJudged } from "../../proof/assert.ts";
 import { evidenceDir, sealOf } from "../../proof/job.ts";
 import { type Entry, verifyManifest } from "../../proof/manifest.ts";
 import { prove } from "../../proof/prove.ts";
-import { contractOf, nothingPolicy } from "../contract.ts";
+import { contractOf, needsApp, nothingPolicy } from "../contract.ts";
 import { doctorOk, freshUp, resetUp } from "../instance.ts";
 import { once, roundDir, writeAtomic } from "../store.ts";
 import { commitWith, headOf } from "../worktree.ts";
@@ -89,6 +89,13 @@ export const verify: StageHandler = async (ctx) => {
     forgetChecksPrepared(ctx.jobDir);
     if (hasToolkit(job)) await freshUp(job, ctx.jobDir, ctx.log);
     for (const c of todo) {
+      // No Toolkit (ADR 0010): nothing can drive the app, so this criterion is reported not proven, never passed.
+      if (!hasToolkit(job) && needsApp(c)) {
+        proofs.push({ criterion: c.id, result: "NO-TOOLKIT", why: NOT_PROVEN_NO_TOOLKIT, evidence: [] });
+        save();
+        ctx.log(`${c.id} NO-TOOLKIT: ${NOT_PROVEN_NO_TOOLKIT}`);
+        continue;
+      }
       if (hasToolkit(job)) await resetUp(job, ctx.jobDir);
       const p = await prove({
         jobDir: ctx.jobDir,
@@ -121,9 +128,9 @@ export const verify: StageHandler = async (ctx) => {
   }
 
   // Step 2: the verifier judges the judged criteria, only once every mechanical proof passed.
-  const judged = contract.criteria.filter((c) => isJudged(c.expect));
+  const judged = contract.criteria.filter((c) => isJudged(c.expect) && !proofs.some((p) => p.criterion === c.id && p.result === "NO-TOOLKIT"));
   const weak = job.kind === "bug" ? [] : nonDiscriminating(ctx.jobDir, contract.criteria);
-  const mechanicalPass = proofs.every((p) => p.result === "PASS");
+  const mechanicalPass = proofs.every((p) => p.result === "PASS" || p.result === "NO-TOOLKIT");
   let judgedText: string | null = null;
   if (judged.length && mechanicalPass) {
     const r = await runRole(ctx, {
@@ -202,6 +209,11 @@ export const verify: StageHandler = async (ctx) => {
     },
   };
   if (v.verdict === "PASS") return { to: "review", facts };
+  // Without a Toolkit, nothing (or not every requirement) was proven: never a pass; the job waits for one (ADR 0010 review M5).
+  if (v.verdict === "NO-TOOLKIT") {
+    const needsApp = v.criteria.filter((c) => c.result === "NO-TOOLKIT").map((c) => c.id);
+    return { to: "paused", facts: { ...facts, noToolkit: { needsApp, highRisk: false, unprovable: v.unproven ?? "nothing was proven" } }, note: v.unproven };
+  }
   if (v.verdict === "FAIL") return { to: "build", facts };
   if (v.verdict === "TOOLKIT-GAP") return { to: "toolkit", facts };
   // INCONCLUSIVE

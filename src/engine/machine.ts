@@ -41,7 +41,8 @@ export const WAITING: readonly Stage[] = ["needs-info", "needs-human", "paused",
 
 export type Risk = "low" | "medium" | "high";
 export type Kind = "feature" | "bug" | "chore";
-export type WaitFor = "backoff" | "toolkit-pr" | "ci" | "toolkit-ticket";
+/** no-toolkit: the ticket needs Kitchen to drive the app and the repo has no Toolkit yet (ADR 0010). */
+export type WaitFor = "backoff" | "toolkit-pr" | "ci" | "toolkit-ticket" | "no-toolkit";
 export type TicketRef = { source: "prompt" | "github"; id: string; url?: string };
 export type AgentRunRef = {
   key: string;
@@ -90,6 +91,11 @@ export type Job = {
   returnTo: Stage | null;
   /** The primitive a Toolkit gap named. */
   gap: string | null;
+  /**
+   * The person resumed a no-toolkit pause without building a Toolkit (ADR 0010): the job goes on with checks and
+   * tests only, and criteria that need the running app are reported "not proven (no Toolkit)", never passed.
+   */
+  checksOnly?: boolean;
   /** Files the repro stage committed (the regression test or feature drive): the builder may not edit them. */
   reproFiles?: string[];
   attempts: {
@@ -132,7 +138,8 @@ export type Job = {
 };
 
 export type Lint = { ok: boolean; reason?: string; missingPrimitive?: string };
-export type Verdict = "PASS" | "FAIL" | "INCONCLUSIVE" | "TOOLKIT-GAP";
+/** NO-TOOLKIT (overall): nothing proved the change, or a requirement, without the app (ADR 0010). */
+export type Verdict = "PASS" | "FAIL" | "INCONCLUSIVE" | "TOOLKIT-GAP" | "NO-TOOLKIT";
 /** review-unparseable: a lens said VERDICT: BLOCKING twice without a finding the engine could read (never a silent PASS). */
 export type Escalation = "round-limit" | "smith-limit" | "adapter-error" | "engine-error" | "refused" | "review-unparseable";
 
@@ -205,6 +212,21 @@ export type Facts = {
   prComment?: { id: string; author: string; trusted: boolean };
   /** paused: the waitFor condition cleared. */
   waitCleared?: boolean;
+  /**
+   * The repo has no Toolkit for this job (ADR 0010). needsApp: criteria whose proof drives the app; highRisk: the
+   * job's path is high, which never reaches ready without a Toolkit.
+   */
+  noToolkit?: {
+    needsApp: string[];
+    highRisk: boolean;
+    /** Why checks and tests alone can't prove this job (a requirement only the app shows, a bug's repro that drives it): it never goes on without a Toolkit. */
+    unprovable?: string;
+  };
+  /**
+   * Waking a no-toolkit pause (runner or `kitchen resume`): the Toolkit now on the base (base, toolkitRef), or the
+   * person's choice to go on without one (checksOnly).
+   */
+  wake?: { base?: string; toolkitRef?: string; checksOnly?: boolean };
   adapter?: { rateLimited?: boolean; authFailure?: boolean; until?: string; error?: string };
   escalate?: Escalation;
   why?: string;
@@ -308,6 +330,25 @@ const synced = (j: Job, f: Facts) => {
 const readyPr = (j: Job, f: Facts) => {
   if (f.ready?.pr !== undefined && f.ready.pr !== null) j.pr = f.ready.pr;
 };
+/** The pause a job takes when it needs the running app and there is no Toolkit (ADR 0010). */
+export const noToolkitReason = (id: string) =>
+  `This ticket needs Kitchen to drive the app; run \`kitchen toolkit build\` (about 3–15 min), then \`kitchen resume ${id}\`.`;
+const needsToolkit: Guard = (j, f) =>
+  !f.noToolkit
+    ? "the job has a Toolkit"
+    : f.noToolkit.highRisk || f.noToolkit.unprovable || (!j.checksOnly && f.noToolkit.needsApp.length)
+      ? null
+      : j.checksOnly
+        ? "the person chose to go on with checks and tests only"
+        : "no criterion needs the running app";
+/** Without a Toolkit, a criterion that drives the app stops the job here unless the person chose checks only (review L3). */
+const notWaitingForToolkit: Guard = (j, f) =>
+  f.noToolkit && (f.noToolkit.highRisk || f.noToolkit.unprovable || (f.noToolkit.needsApp.length && !j.checksOnly))
+    ? `no Toolkit, and ${f.noToolkit.unprovable ?? (f.noToolkit.highRisk ? "the job is high risk" : `${f.noToolkit.needsApp.join(", ")} drive the app`)}: it waits for one`
+    : null;
+const pauseNoToolkit = (j: Job, f: Facts) => {
+  pause("no-toolkit", noToolkitReason(j.id))(j, f);
+};
 const pause = (waitFor: WaitFor, why: string) => (j: Job, f: Facts) => {
   j.pausedFrom = j.stage;
   j.waitFor = waitFor;
@@ -347,6 +388,7 @@ export const TABLE: readonly Row[] = [
         (j, f) => `risk is ${riskOf(j, f)}: only low skips spec`,
       ),
       criteriaLint,
+      notWaitingForToolkit,
     ),
     apply: setIntake,
   },
@@ -366,6 +408,7 @@ export const TABLE: readonly Row[] = [
         (j, f) => `risk is ${riskOf(j, f)}: a medium/high bug goes through spec first`,
       ),
       criteriaLint,
+      notWaitingForToolkit,
     ),
     apply: setIntake,
   },
@@ -389,6 +432,17 @@ export const TABLE: readonly Row[] = [
       j.pausedReason = f.why;
     },
   },
+  {
+    id: "intake>paused",
+    from: "intake",
+    to: "paused",
+    when: "ACCEPT, no Toolkit, and an inline criterion's proof drives the app (unless the person chose checks only): waits for `kitchen toolkit build` (no-toolkit)",
+    guard: all(intakeIs("ACCEPT"), needsToolkit),
+    apply: (j, f) => {
+      setIntake(j, f);
+      pauseNoToolkit(j, f);
+    },
+  },
   // needs-info
   {
     id: "needs-info>intake",
@@ -399,8 +453,8 @@ export const TABLE: readonly Row[] = [
   },
   { id: "needs-info>rejected", from: "needs-info", to: "rejected", when: "`kitchen reject`", guard: operatorIs("reject") },
   // spec
-  { id: "spec>repro", from: "spec", to: "repro", when: "kind=bug, spec-lint passes", guard: all(isBug, specLint) },
-  { id: "spec>build", from: "spec", to: "build", when: "kind≠bug, spec-lint passes", guard: all(notBug, specLint) },
+  { id: "spec>repro", from: "spec", to: "repro", when: "kind=bug, spec-lint passes", guard: all(isBug, specLint, notWaitingForToolkit) },
+  { id: "spec>build", from: "spec", to: "build", when: "kind≠bug, spec-lint passes", guard: all(notBug, specLint, notWaitingForToolkit) },
   {
     id: "spec>toolkit",
     from: "spec",
@@ -411,6 +465,14 @@ export const TABLE: readonly Row[] = [
       smithLeft,
     ),
     apply: (j, f) => toToolkit("spec", f.spec?.missingPrimitive)(j),
+  },
+  {
+    id: "spec>paused",
+    from: "spec",
+    to: "paused",
+    when: "no Toolkit, and the job is high risk or a criterion's proof drives the app (unless the person chose checks only): waits for `kitchen toolkit build` (no-toolkit)",
+    guard: needsToolkit,
+    apply: pauseNoToolkit,
   },
   // repro
   {
@@ -682,6 +744,21 @@ export const TABLE: readonly Row[] = [
     },
   },
   {
+    id: "verify>paused(no-toolkit)",
+    from: "verify",
+    to: "paused",
+    when: "NO-TOOLKIT: without a Toolkit nothing proved the change (or a requirement): waits for `kitchen toolkit build`, never a pass",
+    guard: all(
+      verdictIs("NO-TOOLKIT"),
+      check((_j, f) => !!f.noToolkit, "no noToolkit facts"),
+    ),
+    apply: (j, f) => {
+      pauseNoToolkit(j, f);
+      // Woken with a Toolkit, the job writes its feature drives first: they were never written without one (review R5).
+      j.pausedFrom = "drives";
+    },
+  },
+  {
     id: "verify>needs-human",
     from: "verify",
     to: "needs-human",
@@ -741,7 +818,27 @@ export const TABLE: readonly Row[] = [
     }),
   ),
   // review
-  { id: "review>ready", from: "review", to: "ready", when: "all lenses PASS", guard: check((_j, f) => !!f.review?.pass, "a lens did not PASS") },
+  {
+    id: "review>ready",
+    from: "review",
+    to: "ready",
+    when: "all lenses PASS, and a high-risk job has a Toolkit",
+    guard: all(
+      check((_j, f) => !!f.review?.pass, "a lens did not PASS"),
+      check((_j, f) => !f.noToolkit?.highRisk, "a high-risk job needs a Toolkit before ready"),
+    ),
+  },
+  {
+    id: "review>paused",
+    from: "review",
+    to: "paused",
+    when: "all lenses PASS but the job is high risk (the diff can raise it) and has no Toolkit: waits for `kitchen toolkit build` (no-toolkit)",
+    guard: all(
+      check((_j, f) => !!f.review?.pass, "a lens did not PASS"),
+      check((_j, f) => !!f.noToolkit?.highRisk, "not a high-risk job without a Toolkit"),
+    ),
+    apply: pauseNoToolkit,
+  },
   {
     id: "review>build",
     from: "review",
@@ -840,12 +937,27 @@ export const TABLE: readonly Row[] = [
           (_j, f) => !!f.waitCleared || f.operator === "resume",
           (j) => `still waiting for ${j.waitFor}`,
         ),
+        (j, f) =>
+          !f.wake?.checksOnly
+            ? null
+            : effectiveRisk(j) === "high"
+              ? "a high-risk job can't go on without a Toolkit"
+              : !f.noToolkit
+                ? "going on without a Toolkit needs the noToolkit facts (what checks can't prove: no-toolkit.ts needsToolkitToGoOn)"
+                : f.noToolkit.unprovable
+                  ? `it can't go on without a Toolkit: ${f.noToolkit.unprovable}`
+                  : null,
       ),
-      apply: (j) => {
+      apply: (j, f) => {
         j.pausedFrom = undefined;
         j.waitFor = undefined;
         j.until = undefined;
         j.pausedReason = undefined;
+        if (f.wake?.base) j.base = f.wake.base;
+        if (f.wake?.toolkitRef) {
+          j.toolkitRef = f.wake.toolkitRef;
+          j.checksOnly = undefined;
+        } else if (f.wake?.checksOnly) j.checksOnly = true;
       },
     }),
   ),

@@ -353,6 +353,9 @@ kbd{font:500 11px var(--sans);color:var(--mute);border:1px solid var(--line2);bo
 .rbar{display:flex;align-items:center;gap:8px 10px;flex-wrap:wrap;padding:9px 16px 9px 20px;border-bottom:1px solid var(--line);background:var(--band);color:var(--fg2);font-size:13px}
 .rbar code{font:12px var(--mono);background:var(--raise);border:1px solid var(--line2);border-radius:6px;padding:1px 8px;color:var(--fg)}
 .meta .age{color:var(--faint)}
+.tka{display:inline-flex;gap:6px;flex:none;align-items:center}
+.sub.q code,.ev.ask p code,.card .q code{font:11.5px var(--mono);background:var(--raise);border:1px solid var(--line2);border-radius:4px;padding:0 4px}
+.cbot .tka{flex-wrap:wrap}
 @container main (max-width:680px){ .rbar{padding:9px 12px 9px 16px} }
 </style>
 </head>
@@ -458,7 +461,8 @@ function fromSnap(c){
     state:c.state==="rejected"?"rejected":c.state,crit:(details[c.id]||{}).crit||prev.crit||[]};
 }
 function fromSetup(s){
-  const st=s.state==="questions"?"you":s.state==="running"?"run":s.state==="done"?"done":"rejected";
+  /* quick: quick init ran and nothing failed; the Toolkit just isn't built (ADR 0010). It sits with the finished rows, not as a failure. */
+  const st=s.state==="questions"?"you":s.state==="running"?"run":s.state==="done"||s.state==="quick"?"done":"rejected";
   return {id:"setup",num:"setup",kind:"setup",title:"Set up Kitchen for "+(snap?snap.repo:"this repo"),state:st,round:1,cost:s.usd,secs0:s.secs,at0:performance.now(),
     q:s.questions.length?s.questions.length===1?s.questions[0].question:`${s.questions.length} questions before I build the Toolkit.`:null,
     live:s.evs.at(-1)||null,files:[],crit:[],runnerOn:s.state==="running",failed:s.state==="failed",setup:s};
@@ -518,12 +522,12 @@ function evHTML(e,uid,anim){
   if(e.c==="tool"){const live=liveOpen(e);return `<div class="ev tool${live?" live":""}${a}"><span class="vb">${esc(e.vb||e.t)}</span><span class="tg${live?" shim":""}">${esc(e.tg||"")}</span>${e.df?dfHTML(...e.df):""}<span class="du num" ${live&&e.at?`data-at="${esc(e.at)}"`:""}>${live?(e.at?elapsed(e.at).toFixed(1):"0.0")+"s":(e.dur||0).toFixed(1)+"s"}</span></div>`}
   if(e.c==="res"||e.c==="bad") return `<div class="ev ${e.c}${a}">${e.c==="res"?I.chk:I.xx}<span>${esc(e.t)}</span></div>`;
   if(e.c==="you") return `<div class="ev you${a}"><div class="bub">${esc(e.t)}</div><div class="ms">${esc(e.status)}${e.at?" · "+hhmm(e.at):""}</div></div>`;
-  if(e.c==="ask") return `<div class="ev ask${a}"><span class="whoo">${esc(e.who||"Agent")} asks</span><p>${esc(e.t)}</p></div>`;
+  if(e.c==="ask") return `<div class="ev ask${a}"><span class="whoo">${e.who==="Kitchen"?"Kitchen needs you":esc(e.who||"Agent")+" asks"}</span><p>${md(e.t)}</p></div>`;
   return `<div class="ev sys${a}">${esc(e.t)}${e.at?` · <span class="mono">${hhmm(e.at)}</span>`:""}</div>`;
 }
 function liveHTML(j){
   if(j.kind==="setup"){const st=stp(j);let h=`<span class="stg">${esc(st.nm)}</span><span class="dot">·</span>`;
-    if(j.failed)return h+`<span class="bad">Failed: ${esc((j.setup.last||[]).at(-1)||"see kitchen init --status")}</span>`;
+    if(j.failed)return h+`<span class="bad">Failed: ${esc((j.setup.last||[]).at(-1)||"see kitchen toolkit build --status")}</span>`;
     return h+liveEv(j)}
   const st=stp(j);
   let h=`<span class="stg">${esc(st.nm)}</span>${j.round>1?`<span class="rd">round ${j.round}</span>`:""}<span class="dot">·</span>`;
@@ -545,18 +549,22 @@ function patchLive(j){const el=$("#lv-"+CSS.escape(j.id));if(el)el.innerHTML=liv
 function trackHTML(j){
   const ss=steps(j),i=sidx(j);
   return `<span class="trk" title="${esc(stp(j).nm)} · step ${i+1} of ${ss.length}">${ss.map((s,k)=>{
-    let c=j.state==="done"?"ok":k<i?"ok":k>i?"":j.state==="you"?"you":j.state==="paused"?"paused":j.state==="run"?(j.runnerOn?"run":"paused"):"skip";
+    let c=j.kind==="setup"&&j.setup.state==="quick"?(k<i?"ok":""):j.state==="done"?"ok":k<i?"ok":k>i?"":j.state==="you"?"you":j.state==="paused"?"paused":j.state==="run"?(j.runnerOn?"run":"paused"):"skip";
     if(j.kind==="setup"&&j.failed&&k===i)c="you";
     if(k===i-1&&just.has(j.id))c+=" just"; return `<i class="seg ${c}"></i>`}).join("")}</span>`;
 }
 function chgHTML(j,bump){const A=j.files.reduce((a,f)=>a+f.a,0),D=j.files.reduce((a,f)=>a+f.d,0);
   return `<span class="chg${bump?" bump":""}" id="chg-${esc(j.id)}">${j.files.length&&group(j)==="run"?`${j.files.length} file${j.files.length>1?"s":""}${dfHTML(A,D)}`:""}</span>`}
-function finLabel(j){return j.state==="done"?(j.kind==="setup"?"Proven":"Ready to merge"):j.kind==="setup"?"Failed":"Rejected"}
-function icon(j){return S[j.state==="done"?"ok":j.state==="rejected"?"skip":j.state==="run"&&!j.runnerOn?"paused":j.state]}
+function finLabel(j){if(j.kind==="setup"&&j.setup.state==="quick")return "Toolkit not built — kitchen toolkit build";return j.state==="done"?(j.kind==="setup"?"Proven":"Ready to merge"):j.kind==="setup"?"Failed":"Rejected"}
+/* A job paused no-toolkit (ADR 0010): build the Toolkit in a terminal, or resume (the resume rules decide whether it may go on without one). */
+/* Kitchen's own messages name commands in backticks: shown as code. */
+const md=t=>esc(t).replace(/`([^`]+)`/g,"<code>$1</code>");
+function tkActs(j){return `<button type="button" class="btn act sm" data-act="copy-build" title="Then merge kitchen/setup; the job wakes by itself">Copy kitchen toolkit build</button><button type="button" class="btn ghost sm" data-act="resume" data-id="${esc(j.id)}" title="Go on with checks and tests only, if it can">${I.play}Resume</button>`}
+function icon(j){if(j.kind==="setup"&&j.setup.state==="quick")return S.wait;return S[j.state==="done"?"ok":j.state==="rejected"?"skip":j.state==="run"&&!j.runnerOn?"paused":j.state]}
 function rowHTML(j){
   const g=group(j),ex=expanded===j.id;
   let sub="",mid="",tm="",acts="";
-  if(g==="you"){sub=`<div class="sub q">${esc(j.q)}</div>`;mid=`<button class="btn act sm rep" data-act="message" data-id="${esc(j.id)}">${ex?"Close":"Reply"}</button>`;tm=`<span class="tm mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`}
+  if(g==="you"){sub=`<div class="sub q">${md(j.q)}</div>`;mid=j.needsToolkit?`<span class="tka">${tkActs(j)}</span>`:`<button class="btn act sm rep" data-act="message" data-id="${esc(j.id)}">${ex?"Close":"Reply"}</button>`;tm=`<span class="tm mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`}
   else if(g==="run"){sub=`<div class="sub" id="lv-${esc(j.id)}">${liveHTML(j)}</div>`;mid=chgHTML(j)+trackHTML(j);tm=`<span class="tm mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`;
     acts=`<span class="acts"><button class="ib" title="Message ${esc(agent(j))} (R)" aria-label="Message agent" data-act="message" data-id="${esc(j.id)}">${I.msg}</button></span>`}
   else{mid=`<span class="fin ${fresh.has(j.id)?"new":""}">${fresh.has(j.id)?"Just finished · ":""}${finLabel(j)}</span>`;tm=`<span class="tm mono num">$${j.cost.toFixed(2)}</span>`;
@@ -572,10 +580,10 @@ const colOf=j=>j.kind==="setup"?(sidx(j)<4?"intake":sidx(j)<5?"build":"gate"):j.
 function cardHTML(j){
   const g=group(j),cls=`${open===j.id?"open":""} ${sel===j.id?"sel":""} ${just.has(j.id)?"flash":""}`;
   const head=`id="rw-${esc(j.id)}" style="view-transition-name:r-${esc(j.id)}" tabindex="0" role="button" data-row="${esc(j.id)}"`;
-  if(g==="done") return `<div class="rw card end ${j.state==="done"?"":"gone"} ${cls}" ${head}><div class="ctop">${S[j.state==="done"?"ok":"skip"]}<span class="id mono">${esc(j.num)}</span><span class="sp"></span><span class="mono num">$${j.cost.toFixed(2)}</span></div><div class="ctt">${esc(j.title)}</div><div class="fin ${fresh.has(j.id)?"new":""}">${fresh.has(j.id)?"Just finished · ":""}${finLabel(j)}</div></div>`;
+  if(g==="done") return `<div class="rw card end ${j.state==="done"?"":"gone"} ${cls}" ${head}><div class="ctop">${icon(j)}<span class="id mono">${esc(j.num)}</span><span class="sp"></span><span class="mono num">$${j.cost.toFixed(2)}</span></div><div class="ctt">${esc(j.title)}</div><div class="fin ${fresh.has(j.id)?"new":""}">${fresh.has(j.id)?"Just finished · ":""}${finLabel(j)}</div></div>`;
   return `<div class="rw card ${cls}" ${head}><div class="ctop">${icon(j)}<span class="id mono">${esc(j.num)}</span><span class="sp"></span><span class="mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span></div>
-    <div class="ctt">${esc(j.title)}</div><div class="sub" id="lv-${esc(j.id)}">${liveHTML(j)}</div>${trackHTML(j)}
-    <div class="cbot">${chgHTML(j)}<span class="sp"></span><button class="ib" title="Message ${esc(agent(j))} (R)" aria-label="Message agent" data-act="message" data-id="${esc(j.id)}">${I.msg}</button></div></div>`;
+    <div class="ctt">${esc(j.title)}</div><div class="sub" id="lv-${esc(j.id)}">${j.needsToolkit?`<span class="q">${md(j.q)}</span>`:liveHTML(j)}</div>${trackHTML(j)}
+    <div class="cbot">${j.needsToolkit?`<span class="tka">${tkActs(j)}</span>`:chgHTML(j)}<span class="sp"></span><button class="ib" title="Message ${esc(agent(j))} (R)" aria-label="Message agent" data-act="message" data-id="${esc(j.id)}">${I.msg}</button></div></div>`;
 }
 function boardHTML(run,done){
   return `<div class="board" id="g-run">${COLS.map(([nm,ks])=>{const cs=run.filter(j=>ks.includes(colOf(j)));
@@ -604,7 +612,7 @@ function renderCounts(){
   $("#sum").innerHTML=(you.length?`<span class="a">${you.length} need${you.length===1?"s":""} you</span>`:`<span>Nothing needs you</span>`)+`<i>·</i><span><b>${run.length}</b> running</span><i class="rdy">·</i><span class="rdy"><b>${done.filter(j=>j.state==="done"&&j.kind!=="setup").length}</b> ready</span>`;
   $("#sYou").textContent=you.length||"";$("#sRun").textContent=run.length;$("#sDone").textContent=done.length;
   $("#wsName").textContent=snap.repo;document.title=(you.length?`(${you.length}) `:"")+"Kitchen · "+snap.repo;
-  $("#sSetup").textContent=!setup||setup.state==="none"?"not run":setup.state==="done"?"proven":setup.state==="failed"?"failed":"step "+(setup.idx+1)+"/"+setup.steps.length;
+  $("#sSetup").textContent=!setup||setup.state==="none"?"not run":setup.state==="quick"?"Toolkit not built":setup.state==="done"?"proven":setup.state==="failed"?"failed":"step "+(setup.idx+1)+"/"+setup.steps.length;
   $("#sTk").textContent=snap.toolkitProven?"proven":"not proven";
   $("#tCost").textContent="$"+snap.usdToday.toFixed(2)+" today";$("#tCost").title="Spent today on every agent run, setup and retro included";$("#sCost").textContent="$"+snap.usdTotal.toFixed(2);$("#sCost").parentElement.title="Spent in all on every agent run, setup and retro included";
   $("#foot").innerHTML=`Runner: ${esc(snap.runner.text)}${snap.runner.running?"":`. Jobs move only while <span class="mono">kitchen run</span> works the queue.`}${snap.corrupt.length?` · Unreadable job folders: ${esc(snap.corrupt.join(", "))}`:""}`;
@@ -623,12 +631,14 @@ function composerHTML(j,where="row"){
   const g=group(j),a=agent(j),eng=!j.agent&&j.kind!=="setup";
   if(j.state==="rejected"||(j.kind==="setup"&&g!=="you"))return "";
   const ph=g==="you"?(j.kind==="setup"?"Anything else the setup agent should know (optional)…":`Reply to ${a}…`):j.state==="paused"?`Leave a note for ${a}…`:g==="run"?`Message ${a}: redirect it, add context, ask…`:`Follow up to reopen ${j.num} for another round…`;
-  const hint=g==="you"?`${Agent(j)} is waiting for you`:g==="done"?"Starts round "+(j.round+1):j.state==="paused"?"Paused. It reads this when you resume":eng?"Automatic step. Your note goes to the next agent":g==="run"&&!j.runnerOn?"Not running now. The next agent reads this when it starts":g==="run"&&snap&&snap.tool==="codex"?"Codex reads this when its next role starts":g==="run"?"It reads this at its next step, without stopping":"Starts round "+(j.round+1);
+  const hint=g==="you"?(j.needsToolkit?"Kitchen needs a Toolkit to drive the app: build it, or resume with checks and tests only":`${Agent(j)} is waiting for you`):g==="done"?"Starts round "+(j.round+1):j.state==="paused"?"Paused. It reads this when you resume":eng?"Automatic step. Your note goes to the next agent":g==="run"&&!j.runnerOn?"Not running now. The next agent reads this when it starts":g==="run"&&snap&&snap.tool==="codex"?"Codex reads this when its next role starts":g==="run"?"It reads this at its next step, without stopping":"Starts round "+(j.round+1);
   const chips=g==="run"&&j.state!=="paused"?["What are you doing right now?","Add a test for this","Keep the diff minimal"]:[];
   const qs=j.kind==="setup"&&g==="you"?j.setup.questions:[];
   const ch=qs.map(q=>`<div class="choice qa"><b>${esc(q.id)}</b><span class="qq">${esc(q.question)}${q.why?`<i>${esc(q.why)}</i>`:""}</span><div class="box qbox"><input data-draft="setup-${esc(q.id)}" data-where="${where}" data-q="${esc(q.id)}" placeholder="${esc(q.default?"Default: "+q.default:"Your answer")}" value="${esc(answersDraft[q.id]||"")}" aria-label="${esc(q.question)}"></div></div>`).join("");
   const ctl=g==="run"&&where==="panel"?"":g==="run"?`<button type="button" class="btn ghost sm" data-act="${j.state==="paused"?"resume":"pause"}" data-id="${esc(j.id)}">${j.state==="paused"?I.play+"Resume":I.pause+"Pause"}</button>${j.state==="paused"?"":`<button type="button" class="btn ghost sm" data-act="stop" data-id="${esc(j.id)}">${I.stop}Stop</button>`}`
     :g==="you"&&j.kind!=="setup"?`<button type="button" class="btn ghost sm" data-act="reject" data-id="${esc(j.id)}">Reject</button>`:"";
+  /* A no-toolkit wait takes no message: nothing would read it. Its two ways on are the actions. */
+  if(j.needsToolkit)return `<div class="cmp you"><div class="box"><div class="cbar"><span class="hint">Build the Toolkit, then it goes on by itself; or Resume to go on with checks and tests only.</span><span class="sp"></span>${tkActs(j)}<button type="button" class="btn ghost sm" data-act="reject" data-id="${esc(j.id)}">Reject</button></div></div></div>`;
   return `<form class="cmp ${g==="you"?"you":""} ${qs.length?"ready":""}" data-cmp="${esc(j.id)}">${ch}
     ${chips.length?`<div class="chips">${chips.map(c=>`<button type="button" class="chip" data-act="chip" data-id="${esc(j.id)}">${esc(c)}</button>`).join("")}</div>`:""}
     <div class="box"><textarea rows="1" data-draft="${esc(j.id)}" data-where="${where}" placeholder="${esc(ph)}" aria-label="${esc(ph)}" maxlength="4000">${esc(drafts[j.id]||"")}</textarea>
@@ -701,7 +711,7 @@ function segHTML(j,s,i,n){
 }
 function setupBody(j){
   const s=j.setup, evs=s.evs;
-  return `${s.questions.length?`<div class="evs" style="border:0;padding-left:0;margin-left:0">${s.questions.map(q=>`<div class="ev ask"><span class="whoo">The setup agent asks · ${esc(q.id)}</span><p>${esc(q.question)}</p>${q.why?`<p style="color:var(--mute);margin-top:4px">${esc(q.why)}</p>`:""}</div>`).join("")}</div>`:""}
+  return `${s.state==="quick"?`<div class="rbar" role="status">${S.wait}<span>Toolkit not built — Kitchen proves jobs with your checks and tests until it can drive the app.</span><code>kitchen toolkit build</code><button type="button" class="btn sm" data-act="copy-build">Copy</button></div>`:""}${s.questions.length?`<div class="evs" style="border:0;padding-left:0;margin-left:0">${s.questions.map(q=>`<div class="ev ask"><span class="whoo">The setup agent asks · ${esc(q.id)}</span><p>${esc(q.question)}</p>${q.why?`<p style="color:var(--mute);margin-top:4px">${esc(q.why)}</p>`:""}</div>`).join("")}</div>`:""}
     ${s.steps.map((x,k)=>`<button class="sg" tabindex="-1">${S[x.st==="wait"?"wait":x.st==="run"?"run":x.st]||S.wait}<b>${esc(x.nm)}</b><span class="who">${x.k==="answers"?"you":x.k==="survey"||x.k==="build"?"setup agent":"Kitchen"}</span><span class="du mono num"></span></button>
       ${k===s.idx&&evs.length&&s.state!=="done"?`<div class="evs" id="evs">${evs.map(e=>evHTML(e)).join("")}</div>`:""}`).join("")}
     ${s.last.length?`<div class="sgsum" style="margin:10px 0 0;font-family:var(--mono);font-size:11.5px;white-space:pre-wrap">${esc(s.last.slice(-6).join("\n"))}</div>`:""}`;
@@ -716,7 +726,7 @@ function tabBody(j){
 }
 function tabsHTML(j){const okN=j.crit.filter(c=>c.st==="ok").length;
   return [["activity","Activity",""],["checks","Checks",j.crit.length?okN+"/"+j.crit.length:""],["changes","Changes",j.files.length||""]].filter(([k])=>k==="activity"||j.kind!=="setup").map(([k,n,c])=>`<button class="tab ${tab===k?"on":""}" onclick="setTab('${k}')">${n}${c!==""?`<span class="n num">${c}</span>`:""}</button>`).join("")}
-function statusOf(j){return j.state==="you"?"Needs you":j.state==="run"?(j.runnerOn?stp(j).nm+(j.round>1?" · round "+j.round:""):"Waiting · "+stp(j).nm):j.state==="paused"?(j.pausedBy==="stop"?"Stopped in ":"Paused in ")+stp(j).nm:j.state==="done"?(j.kind==="setup"?"Proven":"Ready to merge"):j.kind==="setup"?"Failed":"Rejected"}
+function statusOf(j){if(j.kind==="setup"&&j.setup.state==="quick")return "Toolkit not built";return j.state==="you"?"Needs you":j.state==="run"?(j.runnerOn?stp(j).nm+(j.round>1?" · round "+j.round:""):"Waiting · "+stp(j).nm):j.state==="paused"?(j.pausedBy==="stop"?"Stopped in ":"Paused in ")+stp(j).nm:j.state==="done"?(j.kind==="setup"?"Proven":"Ready to merge"):j.kind==="setup"?"Failed":"Rejected"}
 function paintHead(){const j=J(open);if(!j)return;const t=$("#tabs");if(t)t.innerHTML=tabsHTML(j);const st=$("#pst");if(st)st.innerHTML=icon(j)+esc(statusOf(j));if(tab!=="activity"&&j.kind!=="setup"){const b=$("#tabbody");if(b)b.innerHTML=tabBody(j)}}
 function panelUpdate(old,d){
   if(!old||tab!=="activity"){renderPanel();return}
@@ -743,7 +753,7 @@ function renderPanel(scrollEnd){
     <div class="ph"><button class="ib back" onclick="closePanel()" aria-label="Back">${I.back}</button><span class="mono">${esc(j.num)}</span><span>·</span><span>${esc(sub)}</span><span class="sp"></span>${ctl}<button class="ib" onclick="closePanel()" aria-label="Close" title="Close (Esc)">${I.x}</button></div>
     <div class="pscroll" id="pscroll"><h1>${esc(j.title)}</h1>
       <div class="meta"><span class="st ${j.state==="you"?"you":""}" id="pst">${icon(j)}${esc(statusOf(j))}</span><span class="mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span><span class="age" title="Since the ticket came in">age <span class="mono num" id="pt">${clock(secsOf(j))}</span></span><span class="mono num" id="pc">$${j.cost.toFixed(2)}</span>${j.report?`<a href="/${esc(j.report)}" target="_blank" rel="noopener">Open report</a>`:""}${j.pr?`<span>PR #${j.pr}</span>`:""}</div>
-      <div class="ptrk ${ss.length>6?"many":""}">${trackHTML(j)}<div class="lbls">${ss.length>6?`<span class="cur ${j.state==="you"?"you":""}">${ended(j)&&j.state==="done"?"All "+ss.length+" steps done":"Step "+(i+1)+" of "+ss.length+" · "+esc(ss[i]?ss[i].nm:"")}</span>`:ss.map((s,k)=>`<span class="${k===i&&!ended(j)?"cur "+(j.state==="you"?"you":""):""}">${esc(s.nm)}</span>`).join("")}</div></div>
+      <div class="ptrk ${ss.length>6?"many":""}">${trackHTML(j)}<div class="lbls">${ss.length>6?`<span class="cur ${j.state==="you"?"you":""}">${j.kind==="setup"&&j.setup.state==="quick"?"Step 2 of "+ss.length+" · run kitchen toolkit build":ended(j)&&j.state==="done"?"All "+ss.length+" steps done":"Step "+(i+1)+" of "+ss.length+" · "+esc(ss[i]?ss[i].nm:"")}</span>`:ss.map((s,k)=>`<span class="${k===i&&!ended(j)?"cur "+(j.state==="you"?"you":""):""}">${esc(s.nm)}</span>`).join("")}</div></div>
       <div class="tabs" id="tabs">${tabsHTML(j)}</div><div id="tabbody">${tabBody(j)}</div></div>
     <div class="pcmp" ${composerHTML(j,"panel")?"":'style="display:none"'}>${composerHTML(j,"panel")}</div>`});
   p.classList.add("on"); grow();
@@ -766,6 +776,7 @@ setInterval(()=>{
 /* ───────── misc ───────── */
 let toastT;function toast(msg,label,fn){const t=$("#toast");t.innerHTML=`<span>${esc(msg)}</span>${label?`<button>${esc(label)}</button>`:""}`;if(label)t.querySelector("button").onclick=()=>{fn();t.classList.remove("on")};t.classList.add("on");clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove("on"),5000)}
 function newTicket(){palette(true,"ticket")}
+async function copyBuild(){try{await navigator.clipboard.writeText("kitchen toolkit build");toast("Copied: kitchen toolkit build. Run it in the repo, then merge kitchen/setup")}catch(e){toast("Run this in the repo: kitchen toolkit build")}}
 async function copyRun(){try{await navigator.clipboard.writeText("kitchen run --detach");toast("Copied: kitchen run --detach. Run it in the repo")}catch(e){toast("Run this in the repo: kitchen run --detach")}}
 function jump(id){const n=$("#"+id);if(n)n.scrollIntoView({behavior:RM?"auto":"smooth",block:"start"})}
 function toggleTheme(){const r=document.documentElement,dark=r.dataset.theme?r.dataset.theme==="dark":matchMedia("(prefers-color-scheme: dark)").matches;r.dataset.theme=dark?"light":"dark";try{localStorage.setItem("kitchen.theme",r.dataset.theme)}catch(e){}}
@@ -809,7 +820,7 @@ document.addEventListener("keydown",e=>{
 document.addEventListener("click",e=>{
   const b=e.target.closest("[data-act]");
   if(b){const id=b.dataset.id,a=b.dataset.act;e.stopPropagation();
-    if(a==="message")message(id);else if(a==="pause")pause(id);else if(a==="resume")resume(id);else if(a==="stop")stopJob(id);else if(a==="reject")reject(id);else if(a==="chip")useChip(id,b);else if(a==="copy")copyRun();
+    if(a==="message")message(id);else if(a==="pause")pause(id);else if(a==="resume")resume(id);else if(a==="stop")stopJob(id);else if(a==="reject")reject(id);else if(a==="chip")useChip(id,b);else if(a==="copy")copyRun();else if(a==="copy-build")copyBuild();
     return}
   const r=e.target.closest("[data-row]");if(r)openJob(r.dataset.row);
 });
