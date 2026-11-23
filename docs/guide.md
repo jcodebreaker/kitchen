@@ -143,7 +143,7 @@ Next: review it (git log -p main..kitchen/setup), then git merge kitchen/setup
 
 While it works it shows where it is, `✓ Read the repo · ▸ Writing the Toolkit · Prove it`, and a heartbeat from the setup agent's live activity (`… writing .kitchen/toolkit/features/loans.md · 1m 20s`, `… running toolkit check (step 4): drive books.list ✓`). In a terminal that is one status line rewritten in place; in a log or CI, a line at most every 10 seconds. It is never silent for longer.
 
-Its questions work like init's: the recommended answer first, Enter takes it, `--yes` takes them all; each answer is saved as you give it, so a stop halfway asks only the rest. Run it again to continue where it stopped; `--start-over` begins again (the old state goes to `.bak`, the branch to `kitchen/setup-bak`).
+Its questions work like init's: the recommended answer first, Enter takes it, `--yes` takes them all; each answer is saved as you give it, so a stop halfway asks only the rest. Run it again to continue where it stopped; `--start-over` begins again (the old state goes to `.bak`, the branch to `kitchen/setup-bak`, or `kitchen/setup-bak-<UTC time>` when that exists; if git can't rename it, nothing moves and it stops). A `kitchen/setup` you pushed, and its pull request, stay on GitHub.
 
 Every detail (each drive, the evidence, the sandbox notes) goes to `.kitchen/init/init.log`; `--verbose` shows it on the terminal too. A failure prints the failing step in full, and `kitchen toolkit build` again resumes from there.
 
@@ -206,3 +206,35 @@ Safety: the server listens on 127.0.0.1 and refuses any other `Host` (DNS rebind
 - `kitchen report` prints the measures Kitchen keeps from its first run: merge-ready rate over tickets taken in, first-pass verdict rate, rounds per job, escalation reasons, Toolkit gaps per job, INCONCLUSIVE and flake rate per drive, time (agent time and wall clock) and cost per job and per risk path, findings dismissed per review lens, primitive PRs per job. `--json` for the numbers.
 - `kitchen dashboard` serves the jobs in your browser; see [Dashboard](guide.md#dashboard).
 - **Retro.** Every 5 finished jobs (`retro.every_jobs`), Kitchen looks back. A review finding you dismiss (`kitchen dismiss <job> <finding> --reason "…"`, or a "not useful" reply naming the finding on the PR, in the same sentence) counts against its lens and its category (each finding has one: security, correctness, performance, naming, style, types, tests, docs, ux, ui); after 3 (`retro.mute_after`) that category stops blocking for that lens (it is still shown as a note). Security findings are never muted, in any lens: neither one in the `security` category nor one that mentions auth, a token, a session, permissions, ownership, injection, SQL, XSS, CSRF, a leak, a secret, a password, a credential or access. A security finding is dismissed only with a reason ("security-1-2 is not useful because …", or `--reason`). The rest of a PR comment that dismisses something is still feedback; a comment that only dismisses is not. PR replies are read for jobs done in the last 30 days (`retro.lookback_days`). `kitchen retro status` lists mutes; `kitchen retro unmute <lens>/<category>` lifts one. The retro also proposes up to 3 lesson tickets (a lint rule, a check, a Toolkit fix, or an AGENTS.md note) as **drafts**: Kitchen never works on its own proposal until you approve it (`kitchen retro approve <n>`, or on GitHub, add the `kitchen` label to the issue). It never edits Kitchen's own prompts.
+
+## A worked example
+
+From Kitchen's own dogfood repo. The ticket, as filed:
+
+> kitchen status should end with one summary line after the job rows: how many jobs, how many are done, and how many need a person (needs-info or needs-human), e.g. '4 jobs: 2 done, 1 needs you'. With no jobs it keeps printing 'no jobs' and no summary.
+
+What Kitchen did, in about 3 minutes and $0.51:
+
+| step | what happened |
+|---|---|
+| Intake | rated it a low-risk feature; six requirements (R1–R6), one of them a negative (no summary with no jobs), and three criteria, each with a proof. Its first criteria failed Kitchen's own lint, so it asked; one line of feedback and it went on |
+| Build, round 2 | the builder added the summary line and a test |
+| Verify | C2 and C3 failed: the test file sat outside the folders vitest looked in. Back to build, with the failure |
+| Build, round 3 | the builder fixed the test include; gate, drives and verify passed: C1, C2, C3 PASS, proven by Kitchen running the real command |
+| Review, Report | no blocking findings; the Report below |
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="img/report-dark.webp">
+  <img alt="The job's Report: verdict PASS and REVIEW PASS, a summary, what changed with evidence links, and what a human must check" src="img/report-light.webp">
+</picture>
+
+The Report opens with what a person must still check (here: "1 jobs" reads oddly, and corrupt jobs count in the total), then the requirements, the criteria and who decided each verdict, the evidence, the review notes and the cost. Click a job in the dashboard for the same story live:
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="img/dashboard-panel-dark.webp">
+  <img alt="The dashboard with job 005's panel open: each stage with who ran it, its time and what its agent did" src="img/dashboard-panel-light.webp">
+</picture>
+
+## Developing Kitchen
+
+`npm test`, `npm run typecheck` and `npm run lint` (Biome). The scripts under `spikes/` prove whole paths against copies of the fixtures; each one's README says what it needs. On macOS with Docker Desktop, give a Docker-using spike a scratch folder under `$HOME` (the default `spikes/<wave>/.work/` is), not `/tmp` or `/private/tmp`: Docker Desktop shares only some host folders with its VM, and a bind mount from elsewhere can fail or come up empty in the container.
