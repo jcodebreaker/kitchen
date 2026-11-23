@@ -58,7 +58,7 @@ In Claude Code, type `/kitchen run`. Or, from a terminal:
 kitchen run --detach && kitchen dashboard
 ```
 
-The session plans waves (two tickets touching the same file go one after the other) and starts one agent per lane. Answer a job that needs you, or steer one from the dashboard.
+The session plans waves (tickets run side by side, even when they touch the same file: git merges them, and a conflict sends one back to Build on top of `staging`) and starts one agent per lane. Answer a job that needs you, or steer one from the dashboard.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/dashboard-panel-dark.webp">

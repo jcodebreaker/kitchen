@@ -176,6 +176,60 @@ test("a review whose branch moved is refused; a conflict with staging sends the 
   assert.match(fs.readFileSync((await open(r, a, "build")).brief, "utf8"), /the merge into staging failed: it conflicts/);
 });
 
+test("two jobs on one file run at once; the one that conflicts is rebuilt on staging as it is now, then merges", async () => {
+  const r = await repo();
+  const a = await toBuild(r, "add a fourth line");
+  const b = await toBuild(r, "shout the third line");
+  assert.deepEqual(
+    next(r).start.map((s) => [s.id, s.lane]),
+    [
+      [a, "build"],
+      [b, "build"],
+    ],
+    "both touch app.txt; neither waits",
+  );
+  await build(r, a);
+  await build(r, b, "one\ntwo\nTHREE\n");
+  await qa(r, a, "PASS");
+  await qa(r, b, "PASS");
+  assert.match((await review(r, a)).line, /merged into staging/);
+  assert.match((await review(r, b)).line, /conflicts with staging in app\.txt → build \(round 2\)/);
+  const tip = g(r, "rev-parse", "staging");
+  const s = await open(r, b, "build");
+  assert.match(fs.readFileSync(s.brief, "utf8"), /resolve the merge first[\s\S]*conflicts in app\.txt/);
+  assert.equal(findJob(r, b).base, tip, "the round starts from staging's tip");
+  assert.match(fs.readFileSync(path.join(s.cwd, "app.txt"), "utf8"), /<<<<<<<[\s\S]*four[\s\S]*>>>>>>>/);
+  // A builder that aborts Kitchen's merge is refused: the branch must contain staging.
+  g(s.cwd, "merge", "--abort");
+  assert.match((await fin(r, b)).line, /doesn't contain staging's/);
+  const again = await open(r, b, "build");
+  assert.match(fs.readFileSync(again.brief, "utf8"), /conflicts in app\.txt/);
+  fs.writeFileSync(path.join(s.cwd, "app.txt"), "one\ntwo\nTHREE\nfour\n");
+  g(s.cwd, "add", "app.txt");
+  g(s.cwd, "commit", "-q", "--no-edit");
+  assert.match((await fin(r, b)).line, /checks pass → qa/);
+  await qa(r, b, "PASS");
+  assert.match((await review(r, b)).line, /merged into staging/);
+  assert.equal(g(r, "show", "staging:app.txt"), "one\ntwo\nTHREE\nfour");
+});
+
+test("a later round with staging moved but no conflict: Kitchen merges staging in and the builder builds on it", async () => {
+  const r = await repo();
+  const id = await toBuild(r);
+  await build(r, id, "one\ntwo\nthree\nfour\n");
+  await qa(r, id, "FAIL");
+  const wt = path.join(root, `side${n}`);
+  g(r, "worktree", "add", "-q", wt, "staging");
+  fs.writeFileSync(path.join(wt, "other.txt"), "x\n");
+  g(wt, "add", "other.txt");
+  g(wt, "commit", "-qm", "other job");
+  g(r, "worktree", "remove", "--force", wt);
+  const s = await open(r, id, "build");
+  assert.match(fs.readFileSync(s.brief, "utf8"), /## staging moved\n\nKitchen merged staging/);
+  assert.ok(fs.existsSync(path.join(s.cwd, "other.txt")));
+  assert.equal(findJob(r, id).base, g(r, "rev-parse", "staging"));
+});
+
 test("staging checked out somewhere: Kitchen won't move it, the job waits at Ready", async () => {
   const r = await repo();
   const id = await toBuild(r);

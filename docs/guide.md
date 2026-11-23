@@ -70,7 +70,7 @@ In Claude Code: `/kitchen run` (or `/kitchen:kitchen run` from the plugin). In a
 
 The session is the orchestrator. It loops:
 
-1. `kitchen job next`: the next wave. Downstream first (review, QA, build, intake), at most `parallel` lanes at once. A job whose files overlap an unfinished earlier job's (or that names it on `AFTER:`) waits.
+1. `kitchen job next`: the next wave. Downstream first (review, QA, build, intake), at most `parallel` lanes at once. Jobs that touch the same files build side by side: git merges each into `staging`, and one that conflicts goes back to Build. Only a job that names an unfinished one on its `AFTER:` line waits for it.
 2. For each lane, `kitchen job start <id> <lane>` makes the job's worktree (`.worktrees/<id>`, branch `kitchen/<id>` from staging), writes the lane's brief and hands over your unread messages; the session starts one agent with the prompt and model it returns.
 3. When the agent returns, `kitchen job finish <id>`: Kitchen reads what the lane left and moves the job, or refuses and says why.
 
@@ -83,7 +83,7 @@ The session is the orchestrator. It loops:
 
 A lane refused three times, or a job out of rounds (`round_limit`), goes to you (`needs-human`).
 
-**The merge.** Review passed: under a lock, Kitchen merges the reviewed head onto `staging` as it is now in a scratch worktree, runs your checks there, and moves `staging` only if they pass (on GitHub: it pushes the job branch, opens its PR into `staging` and merges it with `--match-head-commit`). A conflict or red checks: Build again. High risk, a change to a `high_paths` file, more than `staging.max_lines` changed lines, or `staging` checked out somewhere: the job stops at **Ready** for you, with the reason.
+**The merge.** Review passed: under a lock, Kitchen merges the reviewed head onto `staging` as it is now in a scratch worktree, runs your checks there, and moves `staging` only if they pass (on GitHub: it pushes the job branch, opens its PR into `staging` and merges it with `--match-head-commit`). A conflict or red checks: Build again, and that round starts by merging `staging` as it is now into the job branch (a clean merge is committed by Kitchen; a conflicting one is left for the builder to resolve and commit, and Kitchen refuses a build whose branch doesn't contain `staging`'s tip). High risk, a change to a `high_paths` file, more than `staging.max_lines` changed lines, or `staging` checked out somewhere: the job stops at **Ready** for you, with the reason.
 
 ## 5. Read the Report
 
@@ -142,7 +142,7 @@ Wave 7: 002 build
 Queue drained.
 ```
 
-`git log staging` has both merges; `main` is untouched; each job has its Report.
+`git log staging` has both merges; `main` is untouched; each job has its Report. (That run predates side-by-side builds: today 001 and 002 build in the same wave, and if 002 then conflicts with 001 in `staging` it goes back to Build on top of `staging`.)
 
 ## Developing Kitchen
 

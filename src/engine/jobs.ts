@@ -21,7 +21,7 @@ import { BY_YOU, isLane, type Job, type Lane, outOfRounds, roundsUsed, type Stag
 import { markRead, operatorNotes, unreadMessages } from "./messages.ts";
 import { type Plan, planWave } from "./plan.ts";
 import { writeReport } from "./report.ts";
-import { mergeToStaging, stagingTip } from "./staging.ts";
+import { type CatchUp, catchUpWithStaging, mergeToStaging, stagingTip } from "./staging.ts";
 import { findJob, jobDirOf, kitchenDir, listJobs, roundDir, shortTitle, updateJob, worktreeOf, writeAtomic } from "./store.ts";
 
 export type Out = (line: string) => void;
@@ -97,7 +97,13 @@ function earlier(dir: string, job: Job): string {
   return parts.length ? `## Earlier rounds\n\n${parts.join("\n\n")}\n` : "";
 }
 
-function brief(repo: string, cfg: Config, job: Job, lane: Lane, o: { wt: string; base: string; head?: string; notes: string; skills: string }): string {
+function brief(
+  repo: string,
+  cfg: Config,
+  job: Job,
+  lane: Lane,
+  o: { wt: string; base: string; head?: string; notes: string; skills: string; caught?: CatchUp | null },
+): string {
   const dir = jobDirOf(repo, job.id);
   const ticket = fs.readFileSync(path.join(dir, "ticket.md"), "utf8");
   const clar = clarificationsSection(readRounds(dir));
@@ -147,6 +153,7 @@ function brief(repo: string, cfg: Config, job: Job, lane: Lane, o: { wt: string;
     "",
     crit.length && lane !== "intake" ? `## Criteria (fixed)\n\n${crit.map((c) => `- ${c.id} (${c.check}): ${c.text}`).join("\n")}\n` : "",
     o.notes,
+    lane === "build" && o.caught ? stagingMoved(cfg, o.caught) : "",
     lane === "build" || lane === "intake" ? earlier(dir, job) : "",
     lane === "review" ? qaSummary(dir, job) : "",
     o.skills,
@@ -154,6 +161,16 @@ function brief(repo: string, cfg: Config, job: Job, lane: Lane, o: { wt: string;
     ...lenses,
   ];
   return `${lines.filter((l) => l !== "").join("\n")}\n`;
+}
+
+/** The builder's note when Kitchen merged staging's tip into the job branch before this round. */
+function stagingMoved(cfg: Config, c: CatchUp): string {
+  const s = cfg.staging.branch;
+  if (c.merged === "clean")
+    return `## ${s} moved\n\nKitchen merged ${s} (${c.tip.slice(0, 12)}) into your branch: other jobs' changes are in. Build on them; don't undo them.\n`;
+  if (c.merged === "conflict")
+    return `## ${s} moved: resolve the merge first\n\nKitchen started merging ${s} (${c.tip.slice(0, 12)}) into your branch and it conflicts in ${c.conflicts.join(", ") || "some files"}. Before anything else, resolve every conflict so both changes work (other jobs' changes stay), then \`git add\` the files and \`git commit --no-edit\` to conclude the merge. Never abort it: Kitchen refuses a branch without ${s}'s tip.\n`;
+  return "";
 }
 
 function qaSummary(dir: string, job: Job): string {
@@ -193,8 +210,15 @@ export async function start(
   }
   let wt = repo;
   let base = job.base;
-  if (lane === "build") ({ wt, base } = await ensureWorktree(repo, cfg, job));
-  else if (lane !== "intake") {
+  let caught: CatchUp | null = null;
+  if (lane === "build") {
+    ({ wt, base } = await ensureWorktree(repo, cfg, job));
+    // A later round (QA or review sent it back, or the merge conflicted): rebuild on staging as it is now.
+    if (job.base) {
+      caught = await catchUpWithStaging(repo, cfg, wt, job);
+      if (caught && caught.merged !== "already") base = caught.tip;
+    }
+  } else if (lane !== "intake") {
     wt = worktreeOf(repo, job.id);
     if (!fs.existsSync(path.join(wt, ".git"))) {
       if (!(await branchExists(repo, job.branch))) return { refused: `${job.id} has no branch ${job.branch} to ${lane}` };
@@ -210,12 +234,12 @@ export async function start(
   fs.writeFileSync(path.join(dir, stream), "");
   fs.rmSync(path.join(dir, "refused.txt"), { force: true });
   if (lane === "qa") fs.mkdirSync(qaDir(dir, job.round), { recursive: true });
-  const text = brief(repo, cfg, { ...job, base }, lane, { wt, base, head, notes: operatorNotes(unread), skills: sk.text });
+  const text = brief(repo, cfg, { ...job, base }, lane, { wt, base, head, notes: operatorNotes(unread), skills: sk.text, caught });
   const briefFile = path.join(roundDir(dir, job.round), `brief-${lane}-m${job.moves}.md`);
   writeAtomic(briefFile, text);
   const model = modelFor(cfg, ROLE_OF[lane]);
   job = await updateJob(repo, job.id, (j) => {
-    if (lane === "build" && !j.base) j.base = base;
+    if (lane === "build") j.base = base;
     if (lane !== "intake") j.worktree = wt;
     j.running = { lane, at: new Date(t0).toISOString(), key, stream, ...(head ? { head } : {}) };
     j.agentRuns.push({ key, role: ROLE_OF[lane], stage: lane, round: j.round, at: new Date(t0).toISOString(), stream, model });
@@ -346,6 +370,12 @@ export async function finish(repo: string, id: string): Promise<Finished | { ref
   if (lane === "build") {
     const dirty = (await git(wt, ["status", "--porcelain"])).stdout.trim();
     if (dirty) return refuseLane(repo, job, `the worktree has uncommitted changes (commit them): ${dirty.split("\n").slice(0, 5).join("; ")}`);
+    if ((await git(repo, ["merge-base", "--is-ancestor", job.base, job.branch], { allowFail: true })).code)
+      return refuseLane(
+        repo,
+        job,
+        `${job.branch} doesn't contain ${cfg.staging.branch}'s ${job.base.slice(0, 7)}: conclude the merge Kitchen started (resolve, git add, git commit)`,
+      );
     const ahead = Number(await gitOut(repo, ["rev-list", "--count", `${job.base}..${job.branch}`]));
     if (!ahead) return refuseLane(repo, job, `${job.branch} has no commit since ${job.base.slice(0, 7)}: nothing was built`);
     const rd = roundDir(dir, job.round);

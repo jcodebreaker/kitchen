@@ -60,7 +60,7 @@ export type Job = {
   branch: string;
   worktree: string;
   pr: number | null;
-  /** Files intake expects the change to touch: two jobs that share one run in order (plan.ts). */
+  /** Files intake expects the change to touch (a hint for the brief; jobs sharing files still run side by side). */
   files?: string[];
   /** Jobs this one waits for (intake's AFTER: line). */
   after?: string[];

@@ -70,22 +70,25 @@ test("a wave: downstream first, capped by parallel; running lanes take room", ()
   assert.deepEqual([busy.start.length, busy.running.length, busy.drained], [0, 1, false]);
 });
 
-test("dependencies: two jobs touching one file run in order; AFTER: holds too; a finished job holds nothing", () => {
-  const a = job(1, { stage: "build", files: ["server.js"] });
-  const b = job(2, { stage: "build", files: ["server.js", "lib/x.js"] });
-  assert.equal(waitsFor(b, a), true);
-  assert.equal(waitsFor(a, b), false, "the lower number goes first");
+test("dependencies: jobs touching one file run side by side; only AFTER: holds; a finished job holds nothing", () => {
+  const a = job(1, { stage: "build", files: ["server.js", "README.md"] });
+  const b = job(2, { stage: "build", files: ["server.js", "README.md", "lib/x.js"] });
+  assert.equal(waitsFor(b, a), false, "sharing files is no wait: git merges both into staging");
+  assert.equal(waitsFor(a, b), false);
   const p = planWave([a, b], { parallel: 4 });
   assert.deepEqual(
     p.start.map((s) => s.id.slice(0, 3)),
-    ["001"],
+    ["001", "002"],
   );
-  assert.match(p.held[0].why, /waits for 001-t1 \(build\): both touch server\.js/);
-  // The one that started building first keeps going, whatever its number.
-  assert.equal(waitsFor(job(1, { stage: "build", files: ["s"] }), job(2, { stage: "qa", base: "abc", files: ["s"] })), true);
-  assert.equal(waitsFor(job(5, { stage: "build", after: ["003"] }), job(3, { stage: "review" })), true);
-  assert.equal(waitsFor(b, { ...a, stage: "done" }), false);
-  const heldByReady = planWave([job(1, { stage: "ready", files: ["s"] }), job(2, { stage: "build", files: ["s"] })], { parallel: 4 });
+  assert.deepEqual(p.held, []);
+  const after = job(5, { stage: "build", after: ["003"] });
+  assert.equal(waitsFor(after, job(3, { stage: "review" })), true);
+  assert.match(
+    planWave([job(3, { stage: "review", running: { lane: "review", at: "t", key: "k" } }), after], { parallel: 4 }).held[0].why,
+    /waits for 003-t3 \(review\): named on its AFTER: line/,
+  );
+  assert.equal(waitsFor(after, job(3, { stage: "done" })), false);
+  const heldByReady = planWave([job(1, { stage: "ready" }), job(2, { stage: "build", after: ["1"] })], { parallel: 4 });
   assert.match(heldByReady.held[0].why, /a person merges it first/);
   assert.equal(heldByReady.drained, true, "nothing can move: drained, waiting on the person");
 });

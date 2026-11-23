@@ -20,7 +20,7 @@ Most of what broke was Kitchen's heavy machinery, not the idea. The user's call:
 ## Decision
 
 ### 1. One orchestrator session runs the queue
-- `/kitchen run`, inside Claude Code (or Codex), is the orchestrator. It reads the queue, plans what can run in parallel (respecting dependencies between tickets, e.g. two tickets touching the same file), and spawns one agent per lane: intake, build, QA, review. It moves each job through those lanes.
+- `/kitchen run`, inside Claude Code (or Codex), is the orchestrator. It reads the queue, plans what can run in parallel (respecting dependencies between tickets: a ticket's `AFTER:` line; see the 2026-11-23 amendment), and spawns one agent per lane: intake, build, QA, review. It moves each job through those lanes.
 - The `kitchen` CLI stays as the **single writer of job state**: `kitchen job …` verbs that refuse illegal moves (like the reference factory's `bin/job`). The orchestrator changes state only through them.
 - The dashboard reads the same job folders.
 - The plain-code runner loop and the `claude -p` / `codex exec` adapters are removed. `kitchen run` (a terminal command) becomes a thin wrapper that starts a headless orchestrator session, for people who aren't in Claude Code.
@@ -71,3 +71,10 @@ Each job folder keeps screenshots, logs, HTTP transcripts and the Report. The ha
 - Merges to `staging` happen without a person; `main` stays human-only.
 - Running the queue needs an orchestrator session: Claude Code open, or `kitchen run` starting a headless one.
 - Signed evidence is gone: proof is plain files, and their integrity rests on QA running in its own lane.
+
+## Amendment, 2026-11-23: file overlap no longer holds a job
+
+A paid run on library-demo (a renew-loan endpoint and a React UI, both touching `server.js` and `README.md`) held job 002 until 001 merged, which doubled the wall time. Now:
+- Only an explicit dependency holds a job: a ticket's `AFTER:` line (intake writes it when the ticket builds on another job). Intake's `FILES:` is a hint, not a lock.
+- Jobs touching the same files build side by side. Git merges each into `staging`; a conflict (or red checks on the merged result) sends the job back to Build, as before.
+- Every Build round after the first starts with Kitchen merging `staging`'s tip into the job branch: committed when clean, left in progress for the builder to resolve when it conflicts. `kitchen job finish` refuses a build whose branch doesn't contain that tip, and the job's base moves to it, so review and the diff size see only the job's own change.

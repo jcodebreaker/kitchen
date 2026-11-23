@@ -41,7 +41,7 @@ The Claude Code session that runs the queue (`/kitchen run`, or headless through
 _Avoid_: Runner (the removed plain-code loop), dispatcher
 
 **Wave**:
-The lanes the Orchestrator starts at once, from `kitchen job next`: downstream first, at most `parallel`, a Job that shares a file with an unfinished earlier one held back.
+The lanes the Orchestrator starts at once, from `kitchen job next`: downstream first, at most `parallel`, a Job held back only while one it names on its `AFTER:` line is unfinished (Jobs sharing files run side by side).
 _Avoid_: Batch, tick
 
 **Lane**:

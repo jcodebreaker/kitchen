@@ -3,10 +3,11 @@
 //
 // - Width follows the dependency graph, capped by `parallel` (lane agents at once, the running ones included).
 // - Downstream first: review, then QA, then build, then intake, so finished work lands before new work starts.
-// - Dependencies: a job does not start its first Build while an earlier job it depends on is unfinished, either
-//   named on its AFTER: line or sharing a file intake expects both to touch. "Earlier" is whichever started
-//   building first, else the lower number. Finished is done or rejected: a job held at Ready still blocks, since
-//   staging doesn't have its change yet.
+// - Dependencies: a job does not start its first Build while a job named on its AFTER: line is unfinished. Finished
+//   is done or rejected: a job held at Ready still blocks, since staging doesn't have its change yet.
+// - Jobs that touch the same files run side by side: git merges each into staging, and a conflict sends the later one
+//   back to Build, where it starts from staging as it is then (`kitchen job start`). Holding them in a queue instead
+//   doubled the wall time of two tickets that only shared a route file and the README.
 // - Paused, waiting-for-you and finished jobs are listed, never started.
 import { isLane, type Job, type Lane } from "./machine.ts";
 
@@ -27,17 +28,10 @@ const ORDER: Lane[] = ["review", "qa", "build", "intake"];
 const num = (id: string) => Number(id.split("-")[0]);
 const finished = (j: Job) => j.stage === "done" || j.stage === "rejected";
 
-/** Pure: does `b` wait for `a`? (a is unfinished, and b depends on it.) */
+/** Pure: does `b` wait for `a`? (a is unfinished, and b names it on its AFTER: line.) Sharing files is no wait. */
 export function waitsFor(b: Job, a: Job): boolean {
   if (a.id === b.id || finished(a)) return false;
-  const named = (b.after ?? []).some((x) => num(x) === num(a.id));
-  if (named) return true;
-  const shared = (b.files ?? []).some((f) => (a.files ?? []).includes(f));
-  if (!shared) return false;
-  // The one that started building first goes first; else the lower number.
-  if (a.base && !b.base) return true;
-  if (b.base && !a.base) return false;
-  return num(a.id) < num(b.id);
+  return (b.after ?? []).some((x) => num(x) === num(a.id));
 }
 
 export function planWave(jobs: Job[], o: { parallel: number; restartStranded?: boolean; paused?: Set<string> }): Plan {
@@ -64,11 +58,10 @@ export function planWave(jobs: Job[], o: { parallel: number; restartStranded?: b
     if (lane === "build" && !j.base) {
       const dep = jobs.find((a) => waitsFor(j, a));
       if (dep) {
-        const shared = (j.files ?? []).filter((f) => (dep.files ?? []).includes(f));
         plan.held.push({
           id: j.id,
           lane,
-          why: `waits for ${dep.id} (${dep.stage}${dep.stage === "ready" ? ": a person merges it first" : ""})${shared.length ? `: both touch ${shared.slice(0, 3).join(", ")}` : ": named on its AFTER: line"}`,
+          why: `waits for ${dep.id} (${dep.stage}${dep.stage === "ready" ? ": a person merges it first" : ""}): named on its AFTER: line`,
         });
         continue;
       }

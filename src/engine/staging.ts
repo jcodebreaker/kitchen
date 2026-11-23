@@ -75,6 +75,32 @@ export async function stagingTip(repo: string, cfg: Config): Promise<string | nu
   return revParse(repo, cfg.staging.branch);
 }
 
+export type CatchUp = { tip: string; merged: "already" | "clean" | "conflict"; conflicts: string[] };
+
+/**
+ * Bring staging's tip into a job's worktree before a Build round, so a job that conflicted with staging (or that
+ * staging moved under) is rebuilt on top of staging as it is now. A clean merge is committed (as Kitchen); a
+ * conflicting one is left in progress for the builder to resolve and commit. Null when there is no staging.
+ */
+export async function catchUpWithStaging(repo: string, cfg: Config, wt: string, job: Job): Promise<CatchUp | null> {
+  const tip = await stagingTip(repo, cfg);
+  if (!tip) return null;
+  const unmerged = async () => (await git(wt, ["diff", "--name-only", "--diff-filter=U"], { allowFail: true })).stdout.split("\n").filter(Boolean);
+  // A merge already in progress (an earlier start of this round): the builder concludes that one.
+  const pending = await revParse(wt, "MERGE_HEAD");
+  if (pending) return { tip: pending, merged: "conflict", conflicts: await unmerged() };
+  if ((await git(wt, ["merge-base", "--is-ancestor", tip, "HEAD"], { allowFail: true })).code === 0) return { tip, merged: "already", conflicts: [] };
+  const m = await git(wt, [...IDENTITY, "merge", "--no-ff", "--no-edit", "-m", `Merge ${cfg.staging.branch} into ${job.branch}`, tip], { allowFail: true });
+  if (!m.code) return { tip, merged: "clean", conflicts: [] };
+  const conflicts = await unmerged();
+  if (!conflicts.length) {
+    // Not a conflict (e.g. an untracked file in the way): leave the worktree as it was.
+    await git(wt, ["merge", "--abort"], { allowFail: true });
+    throw new Error(`could not merge ${cfg.staging.branch} into ${job.branch}: ${(m.stderr || m.stdout).trim().split("\n").pop()}`);
+  }
+  return { tip, merged: "conflict", conflicts };
+}
+
 /** Merge `head` (the reviewed commit of the job branch) onto `onto` in a scratch worktree, then run the checks there. */
 async function trialMerge(
   repo: string,

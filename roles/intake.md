@@ -20,8 +20,8 @@ You decide whether Kitchen takes this ticket, what kind of work it is, how risky
   - `medium`: new behaviour across several files, a schema or data change, several screens.
   - `high`: auth, permissions, payments, migrations of existing data, secrets, infra or CI. A high-risk job never merges by itself: it stops at Ready for a person.
 - **SURFACES**: `ui` if a person will see the change, `security` if it touches auth, permissions or secrets; `none` otherwise.
-- **FILES**: the files you expect the change to touch (your best reading of the code). Two jobs that touch the same file run one after the other.
-- **AFTER**: job numbers this ticket must wait for, only when it builds on one of them (`AFTER: 003`). Usually leave it out.
+- **FILES**: the files you expect the change to touch (your best reading of the code). Jobs that touch the same file still run side by side: git merges them.
+- **AFTER**: job numbers this ticket must wait for, only when it builds on one of them (it needs that job's code or data to exist: `AFTER: 003`). Sharing a file is no reason. Usually leave it out.
 
 ## Criteria
 
