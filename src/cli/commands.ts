@@ -116,7 +116,7 @@ export function status(repo: string, out: Out, opts: { json?: boolean } = {}): n
   const tk = toolkitState(repo);
   out(`toolkit: ${toolkitLabel(tk)}${tk.sha ? ` (${tk.sha.slice(0, 12)})` : ""}${tk.state === "waiting" ? `: ${APPROVE_HOW}` : ""}`);
   const jobs = scanJobs(repo);
-  if (!jobs.length) out("no jobs");
+  if (!jobs.length) out("Nothing cooking.");
   for (const e of jobs) {
     out(e.job ? statusLine(e.job, jobDirOf(repo, e.id)) : `${e.id.padEnd(28)} corrupt(${e.corrupt})`);
     // What to do about a job waiting for a Toolkit (ADR 0010) is the next step, so it is shown in full.
