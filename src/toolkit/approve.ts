@@ -22,6 +22,8 @@ export const SETUP_REF = "refs/heads/kitchen/setup";
 const IDENTITY = { GIT_AUTHOR_NAME: "Kitchen", GIT_AUTHOR_EMAIL: "kitchen@localhost", GIT_COMMITTER_NAME: "Kitchen", GIT_COMMITTER_EMAIL: "kitchen@localhost" };
 /** What a commit of the Toolkit carries: nothing else of kitchen/setup. */
 export const TOOLKIT_PATHS = [".kitchen/toolkit", ".env.kitchen"];
+/** The same as pathspecs from the top: engine git runs with the gitdir as its cwd, inside the work tree of a plain checkout. */
+const TOP = (paths: string[]) => paths.map((p) => `:(top)${p}`);
 
 /** The two ways on from a proven Toolkit, as every message says them (ADR 0015). */
 export const APPROVE_HOW = "approve it (kitchen toolkit approve), or commit it to share with your team (kitchen toolkit commit)";
@@ -175,7 +177,7 @@ export async function commitToolkit(
     return 1;
   }
   const head = (await git.run(["rev-parse", "HEAD"])).stdout.trim();
-  const dirty = (await git.run(["status", "--porcelain", "--untracked-files=all", "--", ...TOOLKIT_PATHS])).stdout.trim();
+  const dirty = (await git.run(["status", "--porcelain", "--untracked-files=all", "--", ...TOP(TOOLKIT_PATHS)])).stdout.trim();
   const staged = await git.run(["diff", "--cached", "--quiet"]).then(
     () => false,
     (e) => (e instanceof GitError && e.exitCode === 1 ? true : Promise.reject(e)),
@@ -190,7 +192,7 @@ export async function commitToolkit(
   let commit: string;
   try {
     await git.run(["read-tree", head], { env });
-    await git.run(["rm", "-r", "--cached", "--quiet", "--ignore-unmatch", "--", ...TOOLKIT_PATHS], { env });
+    await git.run(["rm", "-r", "--cached", "--quiet", "--ignore-unmatch", "--", ...TOP(TOOLKIT_PATHS)], { env });
     const entries = (await git.run(["ls-tree", "-r", "--full-tree", sha, "--", ...TOOLKIT_PATHS])).stdout;
     await git.run(["update-index", "--index-info"], { env, input: entries });
     const tree = (await git.run(["write-tree"], { env })).stdout.trim();
@@ -224,7 +226,7 @@ export async function commitToolkit(
     }
     await git.run(["update-ref", "-m", "kitchen toolkit commit", `refs/heads/${branch}`, commit, head]);
     // The person's index and files follow the new commit for the Toolkit paths only.
-    await git.run(["checkout", "HEAD", "--", ...TOOLKIT_PATHS.filter((p) => files.some((f) => f === p || f.startsWith(`${p}/`)))]);
+    await git.run(["checkout", "HEAD", "--", ...TOP(TOOLKIT_PATHS.filter((p) => files.some((f) => f === p || f.startsWith(`${p}/`))))]);
   } finally {
     fs.rmSync(index, { force: true });
   }

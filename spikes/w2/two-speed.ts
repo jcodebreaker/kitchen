@@ -81,7 +81,10 @@ check(
   "toolkit build: Read the repo, Wrote the Toolkit, Proved it",
   /✓ Read the repo/.test(b.out) && /✓ Wrote the Toolkit/.test(b.out) && /✓ Proved it +4 drives × 2/.test(b.out),
 );
-check("toolkit build: without a terminal it ends waiting for approval", /Proven, waiting for your approval: approve it \(kitchen toolkit approve\)/.test(b.out));
+check(
+  "toolkit build: without a terminal it ends waiting for approval",
+  /Proven, waiting for your approval: approve it \(kitchen toolkit approve\)/.test(b.out),
+);
 check("toolkit build: no per-drive lines on the terminal", !/toolkit check: drive/.test(b.out));
 const initLog = fs.readFileSync(path.join(r.dir, ".kitchen", "init", "init.log"), "utf8");
 check("init.log holds the details", /toolkit check: drive books.list ok/.test(initLog) && /toolkit build: committed on kitchen\/setup/.test(initLog));
@@ -90,10 +93,7 @@ check("toolkit build --status: done, waiting for approval", /^toolkit build: don
 
 const early = kitchen(r, ["resume", id]);
 show(`resume ${id}  (before the approval)`, early.out);
-check(
-  "resume before the approval: refused, says to approve it",
-  early.code === 1 && /kitchen toolkit approve/.test(early.out) && job().stage === "paused",
-);
+check("resume before the approval: refused, says to approve it", early.code === 1 && /kitchen toolkit approve/.test(early.out) && job().stage === "paused");
 
 const before = git(r.dir, "rev-parse", "HEAD");
 const setupTip = git(r.dir, "rev-parse", "kitchen/setup");

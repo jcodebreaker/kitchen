@@ -32,7 +32,7 @@ import {
 } from "./contract.ts";
 import { runToolkit, type ToolkitCall } from "./run.ts";
 import { acquireSlot, releaseSlot, type Slot } from "./slots.ts";
-import { ensureIgnored, recordPassed, untrustedNote } from "./trust.ts";
+import { recordPassed, untrustedNote } from "./trust.ts";
 
 /** `known`: a drive that failed but was tolerated (`CheckOpts.tolerate`: it fails on the base too). */
 export type CheckStep = { step: string; ok: boolean; secs: number; detail?: string; tail?: string; known?: boolean };
@@ -479,8 +479,7 @@ export async function checkAtRef(
   }
   if (r.prepareSecs !== undefined && r.steps.some((s) => s.step === "prepare" && s.ok)) markPrepared(repo, co.sha, src, r.prepareSecs);
   if (r.ok && !o.src && !o.feature) {
-    await ensureIgnored(repo).catch(() => {});
-    recordPassed(repo, co.sha);
+    await recordPassed(repo, co.sha);
     const proven: Proven = {
       sha: co.sha,
       at: new Date().toISOString(),

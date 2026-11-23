@@ -367,7 +367,7 @@ export async function maintain(o: {
       const again = await checkAtRef(repo, { rev: commit, src: wt, print: (l) => o.print(`  ${l}`) });
       if (again.ok) {
         // Its source was the fixer's worktree at exactly this commit: a passed full check of it, which approval asks for.
-        recordPassed(repo, commit);
+        await recordPassed(repo, commit);
         const changed = (await main.run(["diff", "--name-only", tk, commit])).stdout.split("\n").filter(Boolean);
         const pr = await o.forge.openPr({
           key: `maintain/${base}`,

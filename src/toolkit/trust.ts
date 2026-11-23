@@ -51,8 +51,9 @@ function readPassed(repo: string): Passed {
     return [];
   }
 }
-/** A full `toolkit check` of `sha` passed (the last 50 kept). */
-export function recordPassed(repo: string, sha: string) {
+/** A full `toolkit check` of `sha` passed (the last 50 kept); the file stays out of git status (ensureIgnored). */
+export async function recordPassed(repo: string, sha: string): Promise<void> {
+  await ensureIgnored(repo).catch(() => {});
   const list = readPassed(repo).filter((p) => p.sha !== sha);
   list.push({ sha, at: new Date().toISOString() });
   writeAtomic(passedFile(repo), `${JSON.stringify(list.slice(-50), null, 2)}\n`);

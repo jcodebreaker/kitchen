@@ -11,7 +11,7 @@ import { afterAll, beforeAll, test } from "vitest";
 import { dashboardServer } from "../dashboard/server.ts";
 import { ensureJobToolkit, resolveToolkitRef } from "../engine/job-toolkit.ts";
 import { createJob, jobDirOf, readJobAt, updateJob } from "../engine/store.ts";
-import { approveToolkit, noToolkitWords, revokeToolkit, toolkitLabel, toolkitState } from "./approve.ts";
+import { approveToolkit, commitToolkit, noToolkitWords, revokeToolkit, toolkitLabel, toolkitState } from "./approve.ts";
 import { toolkitCheckout } from "./checkout.ts";
 import { sandboxedBin } from "./sandbox.ts";
 import { binFor, hasPassed, readApproval, recordPassed, trustOf } from "./trust.ts";
@@ -61,7 +61,7 @@ test("trust predicate: on the base or approved runs unsandboxed; anything else u
   assert.equal(co.trust, null);
   assert.equal(co.sandboxed, sb);
   if (sb) assert.notEqual(co.bin, path.join(co.dir, ".kitchen/toolkit/bin/dev"), "the sandbox wrapper, not bin/dev itself");
-  recordPassed(r.dir, r.setup);
+  await recordPassed(r.dir, r.setup);
   assert.equal(await approveToolkit(r.dir, {}), 0);
   assert.equal(await trustOf(r.dir, r.setup), "approved");
   co = await toolkitCheckout(r.dir, r.setup);
@@ -77,7 +77,7 @@ test("trust predicate: on the base or approved runs unsandboxed; anything else u
 test("which Toolkit a job uses: the base's first, then the approved sha, else none", async () => {
   const r = repo("resolve");
   assert.equal(await resolveToolkitRef(r.dir, r.base), "", "nothing on the base, nothing approved");
-  recordPassed(r.dir, r.setup);
+  await recordPassed(r.dir, r.setup);
   await approveToolkit(r.dir, {});
   assert.equal(await resolveToolkitRef(r.dir, r.base), r.setup, "the approved sha");
   git(r.dir, "merge", "-q", "--ff-only", "kitchen/setup");
@@ -96,7 +96,7 @@ test("approve refuses a sha that never passed toolkit check, one with no Toolkit
   git(r.dir, "commit", "-q", "--allow-empty", "-m", "later");
   assert.equal(await approveToolkit(r.dir, { sha: "nope" }, (l) => lines.push(l)), 1);
   assert.equal(readApproval(r.dir), null);
-  recordPassed(r.dir, r.setup);
+  await recordPassed(r.dir, r.setup);
   assert.ok(hasPassed(r.dir, r.setup));
   assert.equal(await approveToolkit(r.dir, {}, (l) => lines.push(l)), 0);
   assert.equal(readApproval(r.dir)?.sha, r.setup);
@@ -109,7 +109,7 @@ test("approving wakes a job waiting no-toolkit; a job on a revoked approval lose
   const r = repo("wake");
   const { job } = await createJob(r.dir, { title: "List books", ticket: { source: "prompt", id: "p1" }, body: "x", roundLimit: 3, base: r.base });
   await updateJob(r.dir, job.id, (j) => ({ ...j, stage: "paused", pausedFrom: "intake", waitFor: "no-toolkit", pausedReason: "x" }));
-  recordPassed(r.dir, r.setup);
+  await recordPassed(r.dir, r.setup);
   const lines: string[] = [];
   assert.equal(await approveToolkit(r.dir, {}, (l) => lines.push(l)), 0);
   assert.match(lines.at(-1) ?? "", /1 waiting job woke/);
@@ -130,7 +130,7 @@ test("approving wakes a job waiting no-toolkit; a job on a revoked approval lose
   await approveToolkit(r.dir, { sha: r.setup });
   j = await ensureJobToolkit(r.dir, readJobAt(jobDirOf(r.dir, job.id)));
   assert.equal(j.toolkitRef, r.setup, "the new sha isn't approved: the job keeps the old one");
-  recordPassed(r.dir, next);
+  await recordPassed(r.dir, next);
   await approveToolkit(r.dir, {});
   j = await ensureJobToolkit(r.dir, readJobAt(jobDirOf(r.dir, job.id)));
   assert.equal(j.toolkitRef, next, "approved: it follows");
@@ -165,7 +165,7 @@ test("toolkitState reads the build, the passed record and the approval", async (
     }),
   );
   assert.equal(toolkitState(r.dir).state, "none", "a check the passed record doesn't know of is not offered for approval");
-  recordPassed(r.dir, r.setup);
+  await recordPassed(r.dir, r.setup);
   assert.deepEqual(toolkitState(r.dir), { state: "waiting", sha: r.setup });
   await approveToolkit(r.dir, {});
   assert.equal(toolkitState(r.dir).state, "approved");
@@ -175,7 +175,7 @@ test("toolkitState reads the build, the passed record and the approval", async (
 
 test("dashboard Approve Toolkit: refused without the token, from another origin or host, as a form, with fields; the page's own approves", async () => {
   const r = repo("dash");
-  recordPassed(r.dir, r.setup);
+  await recordPassed(r.dir, r.setup);
   const TOKEN = "k".repeat(64);
   const server = dashboardServer(r.dir, { token: TOKEN });
   await new Promise<void>((res) => server.listen(0, "127.0.0.1", () => res()));
@@ -204,4 +204,28 @@ test("dashboard Approve Toolkit: refused without the token, from another origin 
   } finally {
     server.close();
   }
+});
+
+test("toolkit commit: only after a yes, one Kitchen commit of only the Toolkit paths, the person's checkout clean", async () => {
+  const r = repo("commit");
+  // kitchen/setup also carries a dev-environment file: it is not shared.
+  git(r.dir, "checkout", "-q", "kitchen/setup");
+  fs.writeFileSync(path.join(r.dir, "docker-compose.dev.yml"), "services: {}\n");
+  fs.writeFileSync(path.join(r.dir, ".env.kitchen"), "PORT=1\n");
+  git(r.dir, "add", "-A");
+  git(r.dir, "commit", "-q", "-m", "dev env");
+  const setup = git(r.dir, "rev-parse", "HEAD");
+  git(r.dir, "checkout", "-q", "main");
+  await recordPassed(r.dir, setup);
+  const lines: string[] = [];
+  assert.equal(await commitToolkit(r.dir, { confirm: async () => false }, (l) => lines.push(l)), 1);
+  assert.equal(git(r.dir, "rev-parse", "HEAD"), r.base, "no: nothing committed");
+  assert.equal(await commitToolkit(r.dir, { confirm: async () => true }, (l) => lines.push(l)), 0, lines.join("\n"));
+  assert.equal(git(r.dir, "rev-parse", "HEAD^"), r.base, "one commit on the base");
+  assert.deepEqual(git(r.dir, "diff", "--name-only", "HEAD^", "HEAD").split("\n").sort(), [".env.kitchen", ".kitchen/toolkit/bin/dev"]);
+  assert.equal(git(r.dir, "log", "-1", "--format=%an"), "Kitchen");
+  assert.equal(git(r.dir, "status", "--porcelain"), "", "index and files follow the commit");
+  assert.ok(fs.existsSync(path.join(r.dir, ".kitchen/toolkit/bin/dev")));
+  const head = git(r.dir, "rev-parse", "HEAD");
+  assert.equal(await resolveToolkitRef(r.dir, head), head, "jobs now take it from the base");
 });

@@ -617,7 +617,7 @@ function tkActs(j,where){
 function waitActs(j,where){return j.waitYou==="no-toolkit"?tkActs(j,where):`<button type="button" class="btn act sm" data-act="resume" data-id="${esc(j.id)}" title="${j.waitYou==="auth"?"After you log the agent in again":"Try now, without waiting for the merge"}">${I.play}Resume</button>`}
 const WAIT_HINT={auth:"Log the agent's CLI in again, then Resume.","toolkit-pr":"Merge the Toolkit PR and it goes on by itself, or Resume to try now."};
 function waitHint(j){if(j.waitYou!=="no-toolkit")return WAIT_HINT[j.waitYou]||"";
-  return j.tkApprove?"Approve the proven Toolkit and it goes on by itself.":tkState()==="building"?"The Toolkit is being built. Approve it once it is proven.":"Build the Toolkit and approve it; it goes on by itself."}
+  return j.tkApprove?"Approve the Toolkit; it goes on by itself.":tkState()==="building"?"The Toolkit is being built.":"Build the Toolkit, then approve it."}
 function icon(j){if(j.kind==="setup"&&j.setup.state==="quick")return S.wait;return S[j.state==="done"?"ok":j.state==="rejected"?"skip":j.state==="run"&&!j.runnerOn?"paused":j.state]}
 function rowHTML(j){
   const g=group(j),ex=expanded===j.id;
