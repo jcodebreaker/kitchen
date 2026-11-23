@@ -32,7 +32,7 @@ import {
 } from "./contract.ts";
 import { runToolkit, type ToolkitCall } from "./run.ts";
 import { acquireSlot, releaseSlot, type Slot } from "./slots.ts";
-import { recordPassed, untrustedNote } from "./trust.ts";
+import { recordPassed, trustFile, untrustedNote } from "./trust.ts";
 
 /** `known`: a drive that failed but was tolerated (`CheckOpts.tolerate`: it fails on the base too). */
 export type CheckStep = { step: string; ok: boolean; secs: number; detail?: string; tail?: string; known?: boolean };
@@ -445,7 +445,8 @@ export type Proven = {
 /** Pure: how many jobs may run at once. A Toolkit proven parallel:false runs one, whatever kitchen.yaml says. */
 export const effectiveConcurrency = (configured: number, proven: Pick<Proven, "parallel"> | null) => (proven && !proven.parallel ? 1 : configured);
 
-export const provenFile = (repo: string) => path.join(kitchenDir(repo), "toolkit.proven");
+/** In $KITCHEN_HOME with the other trust records (trust.ts), out of an untrusted bin/dev's reach. */
+export const provenFile = (repo: string) => trustFile(repo, "toolkit.proven");
 
 export function readProven(repo: string): Proven | null {
   try {
@@ -477,7 +478,7 @@ export async function checkAtRef(
   } finally {
     co.release();
   }
-  if (r.prepareSecs !== undefined && r.steps.some((s) => s.step === "prepare" && s.ok)) markPrepared(repo, co.sha, src, r.prepareSecs);
+  if (r.prepareSecs !== undefined && r.steps.some((s) => s.step === "prepare" && s.ok)) markPrepared(co, src, r.prepareSecs);
   if (r.ok && !o.src && !o.feature) {
     // A check of a branch that isn't the base (kitchen/setup) offers that sha for approval (ADR 0015).
     await recordPassed(repo, co.sha, o.branch);
@@ -491,7 +492,7 @@ export async function checkAtRef(
       secs: r.secs,
     };
     writeAtomic(provenFile(repo), `${JSON.stringify(proven, null, 2)}\n`);
-    o.print?.(`toolkit check: proven ${co.sha.slice(0, 12)} → ${path.relative(repo, provenFile(repo))}`);
+    o.print?.(`toolkit check: proven ${co.sha.slice(0, 12)} → ${provenFile(repo)}`);
   }
   return { ...r, sha: co.sha };
 }

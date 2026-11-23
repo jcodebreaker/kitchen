@@ -36,6 +36,7 @@ export async function ensureJobToolkit(repo: string, job: Job, log: (m: string) 
       job = await updateJob(repo, job.id, (j) => {
         j.toolkitRef = "";
         j.toolkitFrom = undefined;
+        j.toolkitLost = true; // the runner's next step decides whether it waits (review H3), whoever dropped it here
         return j;
       });
     } else if (approved !== job.toolkitRef) {

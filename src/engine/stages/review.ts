@@ -150,7 +150,7 @@ export const review: StageHandler = async (ctx) => {
   const seeds = seedTouched(diff, ctx.config);
   // Criteria that already held on the base (before the change, or with only the new drives): their PASS proves nothing.
   const contract = contractOf(ctx.jobDir);
-  const weak = contract && job.kind !== "bug" ? nonDiscriminating(ctx.jobDir, contract.criteria) : [];
+  const weak = contract && job.kind !== "bug" ? nonDiscriminating(ctx.jobDir, contract.criteria, job.toolkitRef) : [];
   let entries: Entry[] = [];
   try {
     entries = verifyManifest(evidenceDir(ctx.jobDir), job.manifestHead, sealOf(job));

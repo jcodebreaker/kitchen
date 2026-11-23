@@ -1,24 +1,76 @@
 // Which Toolkit sha Kitchen trusts to run unsandboxed (ADR 0015, amending ADR 0008): one on the base
-// (an ancestor of it: a human took it in), or the one the person approved (.kitchen/toolkit.approved,
-// gitignored, pinned to a sha). Anything else, the setup bridge's uncommitted worktree included, runs
-// under sandbox-exec. Every caller asks `trustOf` and runs `binFor`'s answer: toolkitCheckout (jobs,
-// `toolkit check`, `toolkit up`, maintain, the re-proof), and the setup bridge.
-// Also the record of shas that passed a full `toolkit check` (.kitchen/toolkit.passed): approval
-// takes only one of those.
+// (an ancestor of it: a human took it in), or the one the person approved (pinned to a sha). Anything
+// else, the setup bridge's uncommitted worktree included, runs under sandbox-exec. Every caller asks
+// `trustOf` and runs `binFor`'s answer: toolkitCheckout (jobs, `toolkit check`, `toolkit up`, maintain,
+// the re-proof), and the setup bridge.
+// The records that make a sha trusted live outside the repo (review H1, round 2): the approval, the shas
+// that passed a full `toolkit check` (approval takes only one of those, and the offers among them), and
+// toolkit.proven are in $KITCHEN_HOME/repos/<hash of the repo's real path>/, with the trusted Toolkit
+// checkouts. The sandbox denies $KITCHEN_HOME as a whole, and no folder above it can be renamed from
+// inside the sandbox, so an untrusted bin/dev can't move a record aside and write its own.
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { loadConfig } from "../config.ts";
 import { BASE_REF } from "../engine/base.ts";
 import { openGit, plainCheckout } from "../engine/git.ts";
 import { kitchenDir, writeAtomic } from "../engine/store.ts";
+import { ensureHome, kitchenHome } from "../home.ts";
 import { sandboxedBin } from "./sandbox.ts";
+
+const RECORDS = ["toolkit.approved", "toolkit.passed", "toolkit.proven"] as const;
+
+/** The repo's real path (what the folder in $KITCHEN_HOME is keyed by). */
+function realRepo(repo: string): string {
+  try {
+    return fs.realpathSync(repo);
+  } catch {
+    return path.resolve(repo);
+  }
+}
+
+/**
+ * $KITCHEN_HOME/repos/<hash>/: this repo's trust records and trusted Toolkit checkouts (made 0700 when first written:
+ * `trustHomeMade`). The first use moves the records a repo kept in `.kitchen/` before, once: after that they are
+ * never read from the repo again. A repo with nothing to move and nothing written yet leaves no folder behind.
+ */
+export function trustHome(repo: string): string {
+  const real = realRepo(repo);
+  const dir = path.join(kitchenHome(), "repos", createHash("sha256").update(real).digest("hex").slice(0, 16));
+  if (fs.existsSync(path.join(dir, "migrated"))) return dir;
+  const old = RECORDS.map((f) => path.join(kitchenDir(real), f)).filter((f) => fs.existsSync(f));
+  if (!old.length && !fs.existsSync(dir)) return dir; // nothing to move: made by the first write
+  trustHomeMade(dir, real);
+  for (const f of old) {
+    const to = path.join(dir, path.basename(f));
+    if (!fs.existsSync(to)) fs.copyFileSync(f, to);
+    fs.rmSync(f, { force: true });
+  }
+  return dir;
+}
+/** The folder made (0700, in a 0700 $KITCHEN_HOME), with its repo noted, and marked migrated: no in-repo record counts from now on. */
+function trustHomeMade(dir: string, real: string) {
+  if (fs.existsSync(path.join(dir, "migrated"))) return;
+  ensureHome(path.dirname(path.dirname(dir)));
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  writeAtomic(path.join(dir, "repo"), `${real}\n`);
+  writeAtomic(path.join(dir, "migrated"), `${new Date().toISOString()}\n`);
+}
+/** The repo's trust folder, made if missing: for a write. */
+export function trustHomeForWrite(repo: string): string {
+  const dir = trustHome(repo);
+  trustHomeMade(dir, realRepo(repo));
+  return dir;
+}
+/** One of the repo's trust records, in $KITCHEN_HOME (never `.kitchen/` in the repo). */
+export const trustFile = (repo: string, name: (typeof RECORDS)[number]) => path.join(trustHome(repo), name);
 
 /** Why a sha is trusted: it is on the base, or the person approved it. */
 export type Trust = "base" | "approved";
 export type Approval = { sha: string; at: string; by: string };
 
-export const approvedFile = (repo: string) => path.join(kitchenDir(repo), "toolkit.approved");
-export const passedFile = (repo: string) => path.join(kitchenDir(repo), "toolkit.passed");
+export const approvedFile = (repo: string) => trustFile(repo, "toolkit.approved");
+export const passedFile = (repo: string) => trustFile(repo, "toolkit.passed");
 
 export function readApproval(repo: string): Approval | null {
   try {
@@ -30,6 +82,7 @@ export function readApproval(repo: string): Approval | null {
 }
 
 export function writeApproval(repo: string, sha: string, by = "you"): Approval {
+  trustHomeForWrite(repo);
   const a: Approval = { sha, at: new Date().toISOString(), by };
   writeAtomic(approvedFile(repo), `${JSON.stringify(a, null, 2)}\n`);
   return a;
@@ -56,9 +109,9 @@ function readPassed(repo: string): Passed {
     return [];
   }
 }
-/** A full `toolkit check` of `sha` passed (the last 50 kept); the file stays out of git status (ensureIgnored). */
+/** A full `toolkit check` of `sha` passed (the last 50 kept). */
 export async function recordPassed(repo: string, sha: string, offer?: string): Promise<void> {
-  await ensureIgnored(repo).catch(() => {});
+  trustHomeForWrite(repo);
   const old = readPassed(repo).find((p) => p.sha === sha);
   const list = readPassed(repo).filter((p) => p.sha !== sha);
   const label = offer ?? old?.offer;
@@ -112,27 +165,3 @@ export function binFor(bin: string, trust: Trust | null): { bin: string; sandbox
 /** Pure: how a run of an untrusted sha is announced. */
 export const untrustedNote = (sha: string, sandboxed: boolean) =>
   `${sha.slice(0, 12)} is neither on the base nor approved: bin/dev runs ${sandboxed ? "under sandbox-exec" : "UNSANDBOXED: no OS sandbox on this platform"} (ADR 0008, 0015)`;
-
-/**
- * The approval and passed records are Kitchen's state, never the person's history: a repo set up before they
- * existed lacks their .gitignore lines, so a path git doesn't ignore yet goes into the repo's own
- * info/exclude (untracked, so `git status` stays clean without touching .gitignore).
- */
-export async function ensureIgnored(repo: string): Promise<void> {
-  const g = await openGit(plainCheckout(repo));
-  const common = (await g.run(["rev-parse", "--git-common-dir"])).stdout.trim();
-  const file = path.join(path.isAbsolute(common) ? common : path.join(g.repo.gitDir, common), "info", "exclude");
-  const have = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
-  const listed = new Set(have.split("\n").map((l) => l.trim()));
-  const missing: string[] = [];
-  // Engine git runs with the gitdir as its cwd (inside the work tree of a plain checkout): paths from the top (review L7).
-  for (const rel of [".kitchen/toolkit.approved", ".kitchen/toolkit.passed"]) {
-    if (listed.has(rel)) continue;
-    await g.run(["check-ignore", "-q", "--no-index", `:(top)${rel}`]).catch(() => {
-      missing.push(rel);
-    });
-  }
-  if (!missing.length) return;
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.appendFileSync(file, `${have && !have.endsWith("\n") ? "\n" : ""}# Kitchen (ADR 0015)\n${missing.join("\n")}\n`);
-}

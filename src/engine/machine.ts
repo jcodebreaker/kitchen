@@ -110,6 +110,11 @@ export type Job = {
    * (follows it: a newer approval, or none after a revoke), or a Toolkit PR. Unset on jobs from before: treated as base.
    */
   toolkitFrom?: "base" | "approved" | "pr";
+  /**
+   * Its approved Toolkit was revoked while it ran (review H3): set where the Toolkit is dropped (job-toolkit.ts, whoever
+   * called it: the runner or `kitchen drive`), so the runner's next step pauses it if it needs the app. Cleared then.
+   */
+  toolkitLost?: boolean;
   returnTo: Stage | null;
   /** The primitive a Toolkit gap named. */
   gap: string | null;
@@ -999,6 +1004,7 @@ export const TABLE: readonly Row[] = [
         if (f.wake?.base) j.base = f.wake.base;
         if (f.wake?.toolkitRef) {
           j.toolkitRef = f.wake.toolkitRef;
+          j.toolkitLost = undefined;
           j.toolkitFrom = f.wake.toolkitFrom ?? "base";
           j.checksOnly = undefined;
         } else if (f.wake?.checksOnly) j.checksOnly = true;
@@ -1094,7 +1100,10 @@ export const TABLE: readonly Row[] = [
         (j) => (j.checksOnly ? "the person chose checks and tests only" : "nothing it proves needs the app"),
       ),
     ),
-    apply: pauseNoToolkit,
+    apply: (j, f) => {
+      pauseNoToolkit(j, f);
+      j.toolkitLost = undefined;
+    },
   },
   {
     id: "*>paused(by-you)",

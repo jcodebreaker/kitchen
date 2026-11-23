@@ -9,15 +9,22 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, test } from "vitest";
 import { renderVerdict } from "../checks/verdict.ts";
+import { loadConfig } from "../config.ts";
 import { dashboardServer } from "../dashboard/server.ts";
 import { ensureJobToolkit, resolveToolkitRef } from "../engine/job-toolkit.ts";
 import { move } from "../engine/machine.ts";
 import { toolkitDropped } from "../engine/no-toolkit.ts";
+import { runKitchen } from "../engine/runner.ts";
+import { baseCheckFile, baseCheckStale, nonDiscriminating } from "../engine/stages/base-check.ts";
+import { ready } from "../engine/stages/ready.ts";
+import { offerSmithCommit } from "../engine/stages/toolkit.ts";
 import { createJob, jobDirOf, readJobAt, updateJob } from "../engine/store.ts";
+import { ensureWorktree } from "../engine/worktree.ts";
+import { forgeFor } from "../forge/forge.ts";
 import { approveToolkit, commitToolkit, noToolkitWords, revokeToolkit, toolkitLabel, toolkitState } from "./approve.ts";
 import { toolkitCheckout } from "./checkout.ts";
 import { sandboxedBin } from "./sandbox.ts";
-import { binFor, ensureIgnored, hasPassed, readApproval, recordPassed, trustOf } from "./trust.ts";
+import { approvedFile, binFor, hasPassed, readApproval, recordPassed, trustHome, trustOf } from "./trust.ts";
 
 let root = "";
 const saved = process.env.KITCHEN_HOME;
@@ -300,6 +307,36 @@ test("revoked mid-job: a job past intake that needs the app (or is high risk) wa
   assert.notEqual(toolkitDropped(dir, { ...j, checksOnly: true, riskFloor: "high" }), null, "high risk never goes on without one");
 });
 
+test("a revoke first seen by `kitchen drive` still pauses the job at the runner's next step (review L3)", async () => {
+  const r = repo("drive-revoke");
+  fs.writeFileSync(path.join(r.dir, "agent.ts"), 'export default () => ({ line: "unused", file: "STATUS: READY\\n" });\n');
+  fs.writeFileSync(path.join(r.dir, "kitchen.yaml"), "agent: { tool: fake, script: agent.ts }\n");
+  await recordPassed(r.dir, r.setup, "kitchen/setup");
+  await approveToolkit(r.dir, {});
+  const { job } = await createJob(r.dir, {
+    title: "x",
+    ticket: { source: "prompt", id: "p4" },
+    body: "x",
+    roundLimit: 3,
+    base: r.base,
+    ...(await resolved(r.dir, r.base)),
+  });
+  const dir = jobDirOf(r.dir, job.id);
+  fs.writeFileSync(
+    path.join(dir, "intake.md"),
+    "DECISION: ACCEPT\nKIND: feature\nRISK: low\n\n## Requirements\n- R1: lists books\n\n## Criteria\n- [C1] the app lists books\n  proof: toolkit http --method GET --path /books\n  expect: exit 0\n  covers: R1\n",
+  );
+  await updateJob(r.dir, job.id, (x) => ({ ...x, stage: "verify", kind: "feature", risk: "low" }));
+  revokeToolkit(r.dir);
+  // `kitchen drive` resolves the job's Toolkit first (commands.ts): it is the one that drops it.
+  const j = await ensureJobToolkit(r.dir, readJobAt(dir));
+  assert.deepEqual([j.toolkitRef, j.toolkitLost], ["", true]);
+  const lines: string[] = [];
+  await runKitchen({ repo: r.dir, once: true, job: job.id, tickMs: 20, print: (l) => lines.push(l) });
+  const after = readJobAt(dir);
+  assert.deepEqual([after.stage, after.waitFor, after.pausedFrom, after.toolkitLost], ["paused", "no-toolkit", "verify", undefined], lines.join("\n"));
+});
+
 test("the verdict names the Toolkit its proofs ran with (review M4)", () => {
   const v = renderVerdict(
     { verdict: "PASS", criteria: [], manifestOk: true, nonDiscriminating: [], argsDeltas: [] } as unknown as Parameters<typeof renderVerdict>[0],
@@ -314,34 +351,139 @@ test("the verdict names the Toolkit its proofs ran with (review M4)", () => {
   );
 });
 
-test("ensureIgnored is idempotent (review L7)", async () => {
-  const r = repo("ignore");
-  await ensureIgnored(r.dir);
-  await ensureIgnored(r.dir);
-  await recordPassed(r.dir, r.setup);
-  const ex = fs.readFileSync(path.join(r.dir, ".git", "info", "exclude"), "utf8");
-  assert.equal(ex.split("\n").filter((l) => l === ".kitchen/toolkit.approved").length, 1, ex);
-  assert.equal(git(r.dir, "status", "--porcelain"), "");
+test("the trust records live in $KITCHEN_HOME, not the repo; old in-repo ones move there once and are never read again (review H1, round 2)", async () => {
+  const r = repo("records");
+  // A repo from before: its records in .kitchen/.
+  fs.mkdirSync(path.join(r.dir, ".kitchen"), { recursive: true });
+  fs.writeFileSync(path.join(r.dir, ".kitchen", "toolkit.passed"), JSON.stringify([{ sha: r.setup, at: "", offer: "kitchen/setup" }]));
+  assert.ok(hasPassed(r.dir, r.setup), "moved on first use");
+  assert.equal(fs.existsSync(path.join(r.dir, ".kitchen", "toolkit.passed")), false, "and gone from the repo");
+  assert.ok(trustHome(r.dir).startsWith(path.join(process.env.KITCHEN_HOME as string, "repos")));
+  await approveToolkit(r.dir, {});
+  assert.equal(approvedFile(r.dir), path.join(trustHome(r.dir), "toolkit.approved"));
+  // Written into the repo afterwards (as an untrusted run once could): never read.
+  fs.writeFileSync(path.join(r.dir, ".kitchen", "toolkit.approved"), JSON.stringify({ sha: r.base, at: "", by: "x" }));
+  assert.equal(readApproval(r.dir)?.sha, r.setup);
+  assert.equal(git(r.dir, "status", "--porcelain", "--", ":(exclude).kitchen"), "", "nothing of Kitchen's state in the repo's git status");
 });
 
-test("a trusted checkout runs only as the sha: one a sandboxed run used, or one changed, is made again (review L8)", async () => {
+test("a trusted checkout runs only as the sha: never the folder a sandboxed run used, nor one changed (review L8)", async () => {
   const r = repo("pristine");
-  let co = await toolkitCheckout(r.dir, r.setup); // untrusted: it may write in its checkout
-  co.release();
-  fs.writeFileSync(path.join(co.dir, ".kitchen", "toolkit", "planted.js"), "evil\n");
-  fs.mkdirSync(path.join(co.dir, ".kitchen", "toolkit", "node_modules"), { recursive: true });
-  fs.writeFileSync(path.join(co.dir, ".kitchen", "toolkit", "node_modules", "x.js"), "evil\n");
+  const untrusted = await toolkitCheckout(r.dir, r.setup); // untrusted: it may write in its checkout
+  untrusted.release();
+  assert.ok(fs.realpathSync(untrusted.dir).startsWith(fs.realpathSync(path.join(r.dir, ".worktrees"))), "in the repo, where its sandbox can read it");
+  fs.writeFileSync(path.join(untrusted.dir, ".kitchen", "toolkit", "planted.js"), "evil\n");
+  fs.mkdirSync(path.join(untrusted.dir, ".kitchen", "toolkit", "node_modules", "evil"), { recursive: true });
+  fs.writeFileSync(path.join(untrusted.dir, ".kitchen", "toolkit", "node_modules", "evil", "index.js"), "evil\n"); // ignored by git
   await recordPassed(r.dir, r.setup, "kitchen/setup");
   await approveToolkit(r.dir, {});
-  co = await toolkitCheckout(r.dir, r.setup);
+  let co = await toolkitCheckout(r.dir, r.setup);
   co.release();
   assert.equal(co.trust, "approved");
-  assert.equal(fs.existsSync(path.join(co.dir, ".kitchen", "toolkit", "planted.js")), false, "made again from the sha");
-  assert.equal(fs.existsSync(path.join(co.dir, ".kitchen", "toolkit", "node_modules")), false, "an untrusted prepare's leftovers too");
+  assert.ok(
+    fs.realpathSync(co.dir).startsWith(fs.realpathSync(path.join(trustHome(r.dir), "checkouts"))),
+    "a trusted checkout of its own, in $KITCHEN_HOME (denied to every sandbox)",
+  );
+  assert.notEqual(co.dir, untrusted.dir);
+  assert.equal(fs.existsSync(path.join(co.dir, ".kitchen", "toolkit", "planted.js")), false, "nothing an untrusted run wrote");
+  assert.equal(fs.existsSync(path.join(co.dir, ".kitchen", "toolkit", "node_modules", "evil")), false, "an ignored planted module neither");
   // Trusted and clean: kept (its own prepare's ignored files stay).
   fs.writeFileSync(path.join(co.dir, "keep.txt"), "x\n");
   git(co.dir, "update-index", "--refresh");
   co = await toolkitCheckout(r.dir, r.setup);
   co.release();
   assert.equal(fs.existsSync(path.join(co.dir, "keep.txt")), false, "an untracked file is a change: made again");
+});
+
+test("a base check run with another Toolkit sha than Verify's says nothing about it (review L4)", () => {
+  const dir = fs.mkdtempSync(path.join(root, "bc-"));
+  const criteria = [{ id: "C1", proof: "toolkit books.list --user ana", expect: "exit 0", covers: ["R1"] }] as unknown as Parameters<
+    typeof nonDiscriminating
+  >[1];
+  const key = JSON.stringify(criteria.map((c) => [c.id, c.proof, c.expect]));
+  const write = (b: object) => fs.writeFileSync(baseCheckFile(dir), JSON.stringify({ head: "h", key, results: [], skipped: [], ...b }));
+  write({ passing: ["C1"], toolkitRef: "a".repeat(40) });
+  assert.deepEqual(nonDiscriminating(dir, criteria, "a".repeat(40)), ["C1"], "same Toolkit: it counts");
+  assert.equal(baseCheckStale(dir, "a".repeat(40)), null);
+  assert.deepEqual(nonDiscriminating(dir, criteria, "b".repeat(40)), [], "another Toolkit: left out");
+  assert.match(baseCheckStale(dir, "b".repeat(40)) ?? "", /ran with Toolkit aaaaaaaaaaaa, Verify with bbbbbbbbbbbb/);
+  write({ passing: [], toolkitRef: "a".repeat(40), afterDrives: { head: "h", files: [], results: [], passing: ["C1"], toolkitRef: "b".repeat(40) } });
+  assert.deepEqual(nonDiscriminating(dir, criteria, "b".repeat(40)), ["C1"], "the re-run after drives with Verify's Toolkit counts");
+});
+
+test("a Toolkit gap on an approved-only repo (local forge): the smith's commit is offered for approval, no PR, and Ready waits on no merge (review M5)", async () => {
+  const r = repo("gap");
+  await recordPassed(r.dir, r.setup, "kitchen/setup");
+  await approveToolkit(r.dir, {});
+  const { job: created } = await createJob(r.dir, {
+    title: "x",
+    ticket: { source: "prompt", id: "p5" },
+    body: "x",
+    roundLimit: 3,
+    base: r.base,
+    ...(await resolved(r.dir, r.base)),
+  });
+  const cfg = loadConfig(r.dir);
+  const forge = forgeFor(r.dir, cfg);
+  let prs = 0;
+  const spy = Object.assign(Object.create(Object.getPrototypeOf(forge)), forge, {
+    openToolkitPr: async () => {
+      prs++;
+      return 1;
+    },
+  });
+  const lines: string[] = [];
+  const smithSha = r.setup; // stands in for the smith's proven commit
+  const offered = await offerSmithCommit(
+    { repo: r.dir, forge: spy, log: (l) => lines.push(l) },
+    { ...created, returnTo: "drives" },
+    { head: smithSha, gap: "sql", branch: "kitchen/toolkit/x-1" },
+  );
+  assert.deepEqual(offered?.facts.toolkit, { checkPassed: true, sha: smithSha, pr: null, approvable: true });
+  assert.equal(prs, 0, "no PR");
+  assert.match(lines.join("\n"), /waits for your approval \(kitchen toolkit approve --sha/);
+  assert.equal(
+    await offerSmithCommit(
+      { repo: r.dir, forge: { ...spy, kind: "github" }, log: () => {} },
+      { ...created, returnTo: "drives" },
+      { head: smithSha, gap: "sql", branch: "b" },
+    ),
+    null,
+    "GitHub keeps the PR path",
+  );
+  assert.equal(
+    await offerSmithCommit(
+      { repo: r.dir, forge: spy, log: () => {} },
+      { ...created, toolkitFrom: "base", returnTo: "drives" },
+      { head: smithSha, gap: "sql", branch: "b" },
+    ),
+    null,
+    "so does a base Toolkit",
+  );
+  // The machine takes it in: pinned to the commit, no Toolkit PR.
+  const m = move({ ...created, stage: "toolkit", returnTo: "drives", smith: { attempts: 1, toolkitPr: null } }, "drives", {
+    ...(offered?.facts ?? {}),
+    now: new Date().toISOString(),
+  });
+  assert.ok("job" in m, "refused" in m ? m.refused : "");
+  assert.deepEqual([m.job.toolkitRef, m.job.smith.toolkitPr, m.job.toolkitFrom], [smithSha, null, "pr"]);
+  // Ready: nothing to wait for.
+  await updateJob(r.dir, created.id, () => ({ ...m.job, stage: "ready" }));
+  const job = await ensureWorktree(r.dir, readJobAt(jobDirOf(r.dir, created.id)));
+  const dir = jobDirOf(r.dir, created.id);
+  const p = await ready({
+    repo: r.dir,
+    job,
+    jobDir: dir,
+    config: cfg,
+    forge: spy,
+    agent: undefined as never,
+    source: undefined as never,
+    holdsLock: () => true,
+    now: () => new Date(),
+    log: (l) => lines.push(l),
+    refresh: () => readJobAt(dir),
+  });
+  assert.notEqual(p.to, "paused", lines.join("\n"));
+  assert.equal(p.facts.ready?.toolkitPr, "none");
 });

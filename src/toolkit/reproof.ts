@@ -109,7 +109,7 @@ export async function beforeNewWork(o: { repo: string; forge: Forge; print: (l: 
     else {
       const co = await toolkitCheckout(repo, base);
       try {
-        r = await runToolkitCheck({ repo, toolkitBin: co.bin, src: co.dir, smoke: true, prepare: !isPrepared(repo, co.sha, co.dir), print: prefixed });
+        r = await runToolkitCheck({ repo, toolkitBin: co.bin, src: co.dir, smoke: true, prepare: !isPrepared(co, co.dir), print: prefixed });
       } finally {
         co.release();
       }

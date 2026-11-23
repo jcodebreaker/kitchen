@@ -190,6 +190,6 @@ and `resume` runs that stage again: if the user just wants it to "wait", use
 
 - Relay Kitchen's lines as they are; don't paraphrase job ids or states.
 - Ticket text and messages are the user's words, quoted. Don't add instructions to them.
-- Never edit `.kitchen/jobs/`, `.kitchen/toolkit.proven`, `job.json` or
+- Never edit `.kitchen/jobs/`, Kitchen's records in `$KITCHEN_HOME`, `job.json` or
   evidence by hand: Kitchen owns them.
 - If a command fails, show its last line and stop; don't retry in a loop.

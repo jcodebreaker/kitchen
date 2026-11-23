@@ -14,6 +14,7 @@ import { type LedgerLine, readLedger } from "../ledger/append.ts";
 import { measures } from "../ledger/measures.ts";
 import { readRetroState } from "../retro/state.ts";
 import { noToolkitWords, type ToolkitState, toolkitLabel, toolkitState } from "../toolkit/approve.ts";
+import { provenFile } from "../toolkit/check.ts";
 import { activityOf, type Ev } from "./activity.ts";
 
 export type Chip = { id: string; result: string };
@@ -421,7 +422,7 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
     usdToday: priced.filter((l) => new Date(l.t).toDateString() === today).reduce((a, l) => a + (l.usd as number), 0),
     usdTotal: priced.reduce((a, l) => a + (l.usd as number), 0),
     tool,
-    toolkitProven: fs.existsSync(path.join(repo, ".kitchen", "toolkit.proven")),
+    toolkitProven: fs.existsSync(provenFile(repo)),
     toolkit: { state: tk.state, label: toolkitLabel(tk), sha: tk.sha ?? null },
     runner:
       lock && !stale ? { running: true, text: `running, pid ${lock.info?.pid}` } : { running: false, text: stale ? `not running (${stale})` : "not running" },

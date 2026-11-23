@@ -150,6 +150,7 @@ export const JobSchema = z.looseObject({
   slot: z.object({ n: Count, ports: z.array(z.number().int()) }).nullable(),
   toolkitRef: z.string(),
   toolkitFrom: z.enum(["base", "approved", "pr"]).optional(),
+  toolkitLost: z.boolean().optional(),
   returnTo: Stage.nullable(),
   gap: z.string().nullable(),
   attempts: z.object({

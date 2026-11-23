@@ -8,13 +8,20 @@ import path from "node:path";
 import { afterAll, beforeAll, test } from "vitest";
 import { acquireRunLock } from "../engine/lock.ts";
 import { createJob } from "../engine/store.ts";
+import { trustFile } from "../toolkit/trust.ts";
 import { hereLine } from "./here.ts";
 
 let root: string;
+const savedHome = process.env.KITCHEN_HOME;
 beforeAll(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "kitchen-here-"));
+  process.env.KITCHEN_HOME = path.join(root, "home"); // the trust records live there (ADR 0015)
 });
-afterAll(() => fs.rmSync(root, { recursive: true, force: true }));
+afterAll(() => {
+  if (savedHome === undefined) delete process.env.KITCHEN_HOME;
+  else process.env.KITCHEN_HOME = savedHome;
+  fs.rmSync(root, { recursive: true, force: true });
+});
 
 const repo = (name: string) => {
   const dir = path.join(root, name);
@@ -45,7 +52,8 @@ test("set up: jobs, the Toolkit and the runner", async () => {
   fs.mkdirSync(path.join(dir, ".kitchen", "toolkit", "bin"), { recursive: true });
   fs.writeFileSync(path.join(dir, ".kitchen", "toolkit", "bin", "dev"), "");
   assert.equal(hereLine(dir), "Kitchen is set up here · 1 job · Toolkit: built, not proven · runner: stopped");
-  fs.writeFileSync(path.join(dir, ".kitchen", "toolkit.proven"), "{}");
+  fs.mkdirSync(path.dirname(trustFile(dir, "toolkit.proven")), { recursive: true });
+  fs.writeFileSync(trustFile(dir, "toolkit.proven"), "{}");
   const lock = acquireRunLock(dir);
   try {
     assert.equal(hereLine(dir), "Kitchen is set up here · 1 job · Toolkit: proven · runner: running");

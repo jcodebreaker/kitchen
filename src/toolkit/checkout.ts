@@ -1,5 +1,6 @@
 // The engine-owned Toolkit checkout (PLAN §2 "Which bin/dev runs"): a clean,
-// detached checkout of the base at `toolkitRef`, `.worktrees/_toolkit@<sha>`.
+// detached checkout of the base at `toolkitRef`: `.worktrees/_toolkit@<sha>` in the repo for an untrusted sha,
+// `$KITCHEN_HOME/repos/<repo>/checkouts/_trusted@<sha>` for a trusted one (placeOf).
 // Primitives always resolve from it, never from the user's main checkout (which
 // may be dirty or on another branch). `prepare` readies it (Playwright, browser
 // binaries…) together with a source tree, and is cached per sha and source.
@@ -21,10 +22,12 @@ import { validate } from "./contract.ts";
 import { runToolkit } from "./run.ts";
 import { wrappedBin } from "./sandbox.ts";
 import { listSlots } from "./slots.ts";
-import { binFor, readApproval, type Trust, trustOf } from "./trust.ts";
+import { binFor, readApproval, type Trust, trustHome, trustOf } from "./trust.ts";
 
 export const TOOLKIT_BIN = path.join(".kitchen", "toolkit", "bin", "dev");
 const PREFIX = "_toolkit@";
+/** A trusted checkout's folder name (its git worktree id too: the two kinds never share one). */
+const TRUSTED = "_trusted@";
 export const short = (sha: string) => sha.slice(0, 12);
 
 /**
@@ -32,18 +35,47 @@ export const short = (sha: string) => sha.slice(0, 12);
  * `bin` is what to run: for a sha neither on the base nor approved (`trust: null`, agent-written code no
  * human has accepted: init's check of kitchen/setup, `toolkit check --rev …`) it is the sandbox-exec wrapper
  * (ADR 0008, 0015; `sandboxed: false` where the OS has none), else the checkout's own bin/dev.
+ * `meta`: the folder holding this checkout's prepared marker and leases (with the checkout's own kind, below).
  */
-export type Checkout = { sha: string; dir: string; bin: string; git: GitRepo; trust: Trust | null; sandboxed: boolean; release: () => void };
+export type Checkout = {
+  sha: string;
+  dir: string;
+  bin: string;
+  git: GitRepo;
+  trust: Trust | null;
+  sandboxed: boolean;
+  meta: string;
+  release: () => void;
+};
 
-const checkoutsRoot = (repo: string) => path.join(repo, ".worktrees");
-const markerOf = (repo: string, sha: string) => path.join(kitchenDir(repo), "toolkit-checkouts", `${short(sha)}.json`);
-const leasesOf = (repo: string, sha12: string) => path.join(kitchenDir(repo), "toolkit-checkouts", `${sha12}.leases`);
+/**
+ * Where a checkout of `sha` lives (review H1, round 2). Untrusted: in the repo, `.worktrees/_toolkit@<sha12>`, which
+ * its sandboxed bin/dev can read. Trusted (on the base or approved): `$KITCHEN_HOME/repos/<repo>/checkouts/_trusted@<sha12>`,
+ * which the sandbox denies as a whole, so no untrusted run can plant code (an ignored `node_modules/` file included)
+ * in what will run unsandboxed. The two kinds never share a folder, a marker or a lease.
+ */
+type Place = { id: string; dir: string; meta: string };
+function placeOf(repo: string, sha: string, trusted: boolean): Place {
+  if (!trusted) {
+    const id = `${PREFIX}${short(sha)}`;
+    return { id, dir: path.join(repo, ".worktrees", id), meta: path.join(kitchenDir(repo), "toolkit-checkouts") };
+  }
+  const id = `${TRUSTED}${short(sha)}`;
+  return { id, dir: path.join(trustHome(repo), "checkouts", id), meta: path.join(trustHome(repo), "checkouts-meta") };
+}
+/** Both folders checkouts live in, with their names' prefix and their meta folder. */
+const roots = (repo: string) => [
+  { root: path.join(repo, ".worktrees"), prefix: PREFIX, meta: path.join(kitchenDir(repo), "toolkit-checkouts") },
+  { root: path.join(trustHome(repo), "checkouts"), prefix: TRUSTED, meta: path.join(trustHome(repo), "checkouts-meta") },
+];
+const markerOf = (meta: string, id: string) => path.join(meta, `${id}.json`);
+const leasesOf = (meta: string, id: string) => path.join(meta, `${id}.leases`);
 const gcLock = (repo: string) => path.join(kitchenDir(repo), "toolkit-checkouts", "gc.lock");
 
 type Lease = { pid: number; start: string | null; at: string };
 
-function takeLease(repo: string, sha: string): () => void {
-  const dir = leasesOf(repo, short(sha));
+function takeLease(p: Place): () => void {
+  const dir = leasesOf(p.meta, p.id);
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, `${process.pid}-${randomBytes(3).toString("hex")}.json`);
   const lease: Lease = { pid: process.pid, start: processStart(process.pid), at: new Date().toISOString() };
@@ -51,9 +83,9 @@ function takeLease(repo: string, sha: string): () => void {
   return () => fs.rmSync(file, { force: true });
 }
 
-/** Whether a live process holds a lease on the checkout of `sha12`. Leases of dead owners (or reused pids) are removed. */
-export function leased(repo: string, sha12: string, alive = ownerAlive): boolean {
-  const dir = leasesOf(repo, sha12);
+/** Whether a live process holds a lease on checkout `id` (its leases in `meta`). Leases of dead owners (or reused pids) are removed. */
+export function leased(meta: string, id: string, alive = ownerAlive): boolean {
+  const dir = leasesOf(meta, id);
   if (!fs.existsSync(dir)) return false;
   let any = false;
   for (const n of fs.readdirSync(dir)) {
@@ -85,57 +117,50 @@ export async function toolkitCheckout(repo: string, rev: string): Promise<Checko
   const sha = await resolveRev(repo, rev);
   fs.mkdirSync(path.dirname(gcLock(repo)), { recursive: true });
   const trust = await trustOf(repo, sha);
+  const place = placeOf(repo, sha, !!trust);
   const co = await withFileLock(gcLock(repo), async () => {
-    const release = takeLease(repo, sha);
+    const release = takeLease(place);
     try {
-      return { ...(await checkoutOf(repo, sha, !!trust)), release };
+      return { ...(await checkoutOf(repo, sha, place, !!trust)), release };
     } catch (e) {
       release();
       throw e;
     }
   });
   const run = binFor(co.bin, trust);
-  return { ...co, bin: run.bin, trust, sandboxed: run.sandboxed };
+  return { ...co, bin: run.bin, trust, sandboxed: run.sandboxed, meta: place.meta };
 }
 
-/** The engine's note that a checkout was handed out to run sandboxed (its bin/dev may have written in it). */
-const untrustedMark = (repo: string, sha: string) => path.join(kitchenDir(repo), "toolkit-checkouts", `${short(sha)}.untrusted`);
-
 /**
- * The checkout of `sha`. `trusted`: it is about to run unsandboxed, so it must be exactly the sha (review L8): HEAD is
- * the sha, `git status` is clean, and no sandboxed run ever used it (anything an untrusted `prepare` left, ignored
- * files included); otherwise it is made again. The git calls use the engine's own record of the worktree's gitdir,
- * never the checkout's `.git` file.
+ * The checkout of `sha` at `p`. A trusted one is about to run unsandboxed, so it must be exactly the sha (review L8):
+ * HEAD is the sha and `git status` is clean; otherwise it is made again. Its ignored files (a trusted `prepare`'s
+ * `node_modules/`) can only come from trusted runs: no sandboxed run can reach its folder. The git calls use the
+ * engine's own record of the worktree's gitdir, never the checkout's `.git` file.
  */
-async function checkoutOf(repo: string, sha: string, trusted = false): Promise<Omit<Checkout, "release" | "trust" | "sandboxed">> {
-  const id = `${PREFIX}${short(sha)}`;
-  const dir = path.join(checkoutsRoot(repo), id);
+async function checkoutOf(repo: string, sha: string, p: Place, trusted: boolean): Promise<Omit<Checkout, "release" | "trust" | "sandboxed" | "meta">> {
   const main = await openGit(plainCheckout(repo));
   let git: GitRepo | null = null;
-  if (fs.existsSync(dir)) {
+  if (fs.existsSync(p.dir)) {
     try {
-      git = linkedWorktree(repo, id, dir);
+      git = linkedWorktree(repo, p.id, p.dir);
       const g = await openGit(git);
       const head = (await g.run(["rev-parse", "HEAD"])).stdout.trim();
       if (head !== sha)
         git = null; // someone moved it: start over
-      else if (trusted && (fs.existsSync(untrustedMark(repo, sha)) || (await g.run(["status", "--porcelain", "--untracked-files=all"])).stdout.trim()))
-        git = null; // changed, or used by a sandboxed run: a trusted run starts from the sha itself
+      else if (trusted && (await g.run(["status", "--porcelain", "--untracked-files=all"])).stdout.trim()) git = null; // changed: start from the sha
     } catch {
       git = null;
     }
     if (!git) {
-      await removeDir(repo, dir);
-      fs.rmSync(untrustedMark(repo, sha), { force: true });
-      fs.rmSync(markerOf(repo, sha), { force: true }); // what was prepared there is gone with it
+      await removeDir(repo, p.dir);
+      fs.rmSync(markerOf(p.meta, p.id), { force: true }); // what was prepared there is gone with it
     }
   }
-  if (!trusted) writeAtomic(untrustedMark(repo, sha), `${new Date().toISOString()}\n`);
   if (!git) {
     await main.run(["worktree", "prune"]);
-    fs.mkdirSync(checkoutsRoot(repo), { recursive: true });
-    await main.run(["worktree", "add", "--quiet", "--detach", dir, sha]);
-    git = linkedWorktree(repo, id, dir);
+    fs.mkdirSync(path.dirname(p.dir), { recursive: true, mode: 0o700 });
+    await main.run(["worktree", "add", "--quiet", "--detach", p.dir, sha]);
+    git = linkedWorktree(repo, p.id, p.dir);
   }
   const bin = path.join(git.workTree, TOOLKIT_BIN);
   if (!fs.existsSync(bin)) throw new Error(`no Toolkit at ${short(sha)}: ${TOOLKIT_BIN} is missing (run kitchen init)`);
@@ -144,11 +169,11 @@ async function checkoutOf(repo: string, sha: string, trusted = false): Promise<O
 
 type Marker = { sha: string; prepared: Record<string, { at: string; secs: number }> };
 
-function readMarker(repo: string, sha: string): Marker {
+function readMarker(co: Pick<Checkout, "sha" | "dir" | "meta">): Marker {
   try {
-    return JSON.parse(fs.readFileSync(markerOf(repo, sha), "utf8")) as Marker;
+    return JSON.parse(fs.readFileSync(markerOf(co.meta, path.basename(co.dir)), "utf8")) as Marker;
   } catch {
-    return { sha, prepared: {} };
+    return { sha: co.sha, prepared: {} };
   }
 }
 
@@ -195,46 +220,48 @@ export function prepareKey(src: string, toolkitDir: string): string | null {
   return h.digest("hex");
 }
 
-const preparedIndex = (repo: string) => path.join(kitchenDir(repo), "toolkit-checkouts", "prepared.json");
+const preparedIndex = (meta: string) => path.join(meta, "prepared.json");
 type PreparedIndex = Record<string, { key: string; sha: string; at: string; secs: number }>;
-function readIndex(repo: string): PreparedIndex {
+function readIndex(meta: string): PreparedIndex {
   try {
-    return JSON.parse(fs.readFileSync(preparedIndex(repo), "utf8")) as PreparedIndex;
+    return JSON.parse(fs.readFileSync(preparedIndex(meta), "utf8")) as PreparedIndex;
   } catch {
     return {};
   }
 }
-const toolkitDirOf = (repo: string, sha: string) => path.join(checkoutsRoot(fs.realpathSync(repo)), `${PREFIX}${short(sha)}`, ".kitchen", "toolkit");
+const toolkitDirOf = (co: Pick<Checkout, "dir">) => path.join(co.dir, ".kitchen", "toolkit");
 
-export function markPrepared(repo: string, sha: string, src: string, secs: number) {
-  const m = readMarker(repo, sha);
+/** `prepare --src` ran with this checkout (its own kind's records: a trusted checkout's never come from an untrusted run). */
+export function markPrepared(co: Pick<Checkout, "sha" | "dir" | "meta">, src: string, secs: number) {
+  const m = readMarker(co);
   const at = new Date().toISOString();
   m.prepared[path.resolve(src)] = { at, secs };
-  writeAtomic(markerOf(repo, sha), JSON.stringify(m, null, 2));
-  const key = prepareKey(src, toolkitDirOf(repo, sha));
+  fs.mkdirSync(co.meta, { recursive: true });
+  writeAtomic(markerOf(co.meta, path.basename(co.dir)), JSON.stringify(m, null, 2));
+  const key = prepareKey(src, toolkitDirOf(co));
   if (key) {
-    const idx = readIndex(repo);
-    idx[path.resolve(src)] = { key, sha, at, secs };
-    writeAtomic(preparedIndex(repo), JSON.stringify(idx, null, 2));
+    const idx = readIndex(co.meta);
+    idx[path.resolve(src)] = { key, sha: co.sha, at, secs };
+    writeAtomic(preparedIndex(co.meta), JSON.stringify(idx, null, 2));
   }
 }
 
-/** Prepared for this Toolkit sha, or (where the source has lockfiles) with the same lockfiles under any Toolkit sha. */
-export function isPrepared(repo: string, sha: string, src: string): boolean {
-  if (readMarker(repo, sha).prepared[path.resolve(src)]) return true;
-  const hit = readIndex(repo)[path.resolve(src)];
-  return !!hit && hit.key === prepareKey(src, toolkitDirOf(repo, sha));
+/** Prepared for this checkout, or (where the source has lockfiles) with the same lockfiles under another checkout of its kind. */
+export function isPrepared(co: Pick<Checkout, "sha" | "dir" | "meta">, src: string): boolean {
+  if (readMarker(co).prepared[path.resolve(src)]) return true;
+  const hit = readIndex(co.meta)[path.resolve(src)];
+  return !!hit && hit.key === prepareKey(src, toolkitDirOf(co));
 }
 
-/** `prepare --src` with this checkout's bin/dev, once per sha and source. */
-export async function ensurePrepared(repo: string, co: Checkout, src: string): Promise<{ cached: boolean; secs: number }> {
-  if (isPrepared(repo, co.sha, src)) return { cached: true, secs: 0 };
+/** `prepare --src` with this checkout's bin/dev, once per checkout and source. */
+export async function ensurePrepared(_repo: string, co: Checkout, src: string): Promise<{ cached: boolean; secs: number }> {
+  if (isPrepared(co, src)) return { cached: true, secs: 0 };
   const t0 = Date.now();
   const r = await runToolkit(co.bin, ["prepare", `--src=${src}`], { src, timeoutMs: 30 * 60_000, stallMs: 5 * 60_000 });
   const v = validate("prepare", r.json);
   if (!v.ok || r.exit !== 0) throw new Error(`prepare failed: ${v.ok ? `exit ${r.exit}` : v.why} ${r.stderr.slice(-400)}`);
   const secs = (Date.now() - t0) / 1000;
-  markPrepared(repo, co.sha, src, secs);
+  markPrepared(co, src, secs);
   return { cached: false, secs };
 }
 
@@ -258,9 +285,9 @@ export function referencedShas(repo: string, proven: string | null): Set<string>
   return keep;
 }
 
-/** The sha12s of this repo's checkouts whose bin/dev a live slot runs (shared registry: only paths under this repo count). */
+/** The checkout folder names of this repo (either kind) whose bin/dev a live slot runs (shared registry: only this repo's paths count). */
 export function slotShas(repo: string, slots = listSlots(), alive = ownerAlive): Set<string> {
-  const root = checkoutsRoot(fs.realpathSync(repo)) + path.sep;
+  repo = fs.realpathSync(repo);
   const out = new Set<string>();
   for (const s of slots) {
     if (!alive({ pid: s.pid, start: s.pidStart ?? null })) continue;
@@ -268,33 +295,40 @@ export function slotShas(repo: string, slots = listSlots(), alive = ownerAlive):
     try {
       bin = fs.realpathSync(bin);
     } catch {}
-    if (!bin.startsWith(root)) continue;
-    const m = new RegExp(`^${PREFIX}([0-9a-f]{12})$`).exec(bin.slice(root.length).split(path.sep)[0]);
-    if (m) out.add(m[1]);
+    for (const r of roots(repo)) {
+      let root = r.root;
+      try {
+        root = fs.realpathSync(root);
+      } catch {}
+      if (!bin.startsWith(root + path.sep)) continue;
+      const m = new RegExp(`^${r.prefix}([0-9a-f]{12})$`).exec(bin.slice(root.length + 1).split(path.sep)[0]);
+      if (m) out.add(m[1]);
+    }
   }
   return out;
 }
 
 /**
- * Remove every `_toolkit@<sha>` checkout not in `keep`, not leased by a live
- * process and not run by a live slot. Returns the removed sha12s.
+ * Remove every checkout (either kind) whose sha is not in `keep`, not leased by a live process and not run by a live
+ * slot. Returns the removed sha12s.
  */
 export async function gcCheckouts(repo: string, keep: Set<string>): Promise<string[]> {
   repo = fs.realpathSync(repo);
-  const root = checkoutsRoot(repo);
-  if (!fs.existsSync(root)) return [];
   fs.mkdirSync(path.dirname(gcLock(repo)), { recursive: true });
   return withFileLock(gcLock(repo), async () => {
     const gone: string[] = [];
     const inSlots = slotShas(repo);
-    for (const name of fs.readdirSync(root)) {
-      if (!name.startsWith(PREFIX)) continue;
-      const sha = name.slice(PREFIX.length);
-      if (keep.has(sha) || inSlots.has(sha) || leased(repo, sha)) continue;
-      await removeDir(repo, path.join(root, name));
-      fs.rmSync(path.join(kitchenDir(repo), "toolkit-checkouts", `${sha}.json`), { force: true });
-      fs.rmSync(leasesOf(repo, sha), { recursive: true, force: true });
-      gone.push(sha);
+    for (const r of roots(repo)) {
+      if (!fs.existsSync(r.root)) continue;
+      for (const name of fs.readdirSync(r.root)) {
+        if (!name.startsWith(r.prefix)) continue;
+        const sha = name.slice(r.prefix.length);
+        if (keep.has(sha) || inSlots.has(sha) || leased(r.meta, name)) continue;
+        await removeDir(repo, path.join(r.root, name));
+        fs.rmSync(markerOf(r.meta, name), { force: true });
+        fs.rmSync(leasesOf(r.meta, name), { recursive: true, force: true });
+        gone.push(sha);
+      }
     }
     return gone;
   });

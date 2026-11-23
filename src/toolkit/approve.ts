@@ -15,7 +15,7 @@ import { listJobs } from "../engine/store.ts";
 import type { Forge } from "../forge/forge.ts";
 import { readInitState } from "../init/build.ts";
 import { runningInit } from "../init/status.ts";
-import { clearApproval, ensureIgnored, hasPassed, latestOffer, mergedIntoBase, readApproval, writeApproval } from "./trust.ts";
+import { clearApproval, hasPassed, latestOffer, mergedIntoBase, readApproval, writeApproval } from "./trust.ts";
 
 type Out = (l: string) => void;
 export const SETUP_REF = "refs/heads/kitchen/setup";
@@ -135,7 +135,6 @@ export async function approveToolkit(repo: string, o: { sha?: string; expect?: s
     return 1;
   }
   const before = readApproval(repo)?.sha;
-  await ensureIgnored(repo);
   writeApproval(repo, sha);
   const woke = await wakeWaiting(repo);
   out(

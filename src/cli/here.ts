@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { readRunLock, staleReason } from "../engine/lock.ts";
 import { listJobs } from "../engine/store.ts";
+import { latestOffer, readApproval, trustFile } from "../toolkit/trust.ts";
 
 /** The nearest folder at or above `dir` with a `.git` (a folder, or a worktree's file). */
 export function gitRoot(dir: string): string | null {
@@ -23,11 +24,18 @@ export function hereLine(cwd: string, now = Date.now()): string {
     jobs = listJobs(repo).length;
   } catch {}
   const k = path.join(repo, ".kitchen");
-  const toolkit = fs.existsSync(path.join(k, "toolkit.proven"))
-    ? "proven"
-    : fs.existsSync(path.join(k, "toolkit", "bin", "dev"))
-      ? "built, not proven"
-      : "not built";
+  const approved = readApproval(repo)?.sha;
+  const offer = latestOffer(repo);
+  const toolkit =
+    offer && offer.sha !== approved
+      ? "proven · waiting for approval"
+      : approved
+        ? "approved"
+        : fs.existsSync(trustFile(repo, "toolkit.proven"))
+          ? "proven"
+          : fs.existsSync(path.join(k, "toolkit", "bin", "dev"))
+            ? "built, not proven"
+            : "not built";
   let runner = "stopped";
   try {
     const l = readRunLock(repo);

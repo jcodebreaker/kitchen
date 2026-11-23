@@ -10,7 +10,7 @@ The user ran into it: a job paused for a Toolkit that was already built and prov
 
 - **The trust gate is the person's approval, not a merge.**
   - `kitchen toolkit build` ends by asking `Use this Toolkit to run your app for every job? [Y/n]`. `--yes` and the `/kitchen` skill ask the same.
-  - A yes writes `.kitchen/toolkit.approved` (gitignored): `{sha, at, by: "you"}`.
+  - A yes writes the approval `{sha, at, by: "you"}`: outside the repo, in `$KITCHEN_HOME` (see Built).
 - **Which Toolkit a job uses.**
   - Jobs use the Toolkit at the approved sha, through the existing `toolkitCheckout`. If the base branch has a newer proven Toolkit, they use that instead.
   - Jobs waiting `no-toolkit` wake on approval.
@@ -29,7 +29,8 @@ The user ran into it: a job paused for a Toolkit that was already built and prov
 
 ## Built (2026-11-22)
 
-- `src/toolkit/trust.ts`: the approval (`.kitchen/toolkit.approved`), the record of shas that passed a full `toolkit check` (`.kitchen/toolkit.passed`; approval takes only those), and the one trust predicate. Both files are in Kitchen's `.gitignore` list; a repo set up before them gets them in its own `info/exclude`, so `.gitignore` is never touched behind the person's back.
+- `src/toolkit/trust.ts`: the approval, the record of shas that passed a full `toolkit check` (approval takes only those; the ones a build, a maintain fix or the smith offered are marked) and `toolkit.proven`, and the one trust predicate. They live in `$KITCHEN_HOME/repos/<hash of the repo's real path>/`, never in the repo (security review H1, round 2): an untrusted bin/dev runs under a profile that denies `$KITCHEN_HOME` as a whole, and may not rename the repo, any folder above it or above `$KITCHEN_HOME`, `.kitchen` or `.worktrees`, so it can't move a record aside and write its own. Records an older Kitchen kept in `.kitchen/` are moved there on first use and never read from the repo again.
+- Toolkit checkouts: an untrusted sha's in the repo (`.worktrees/_toolkit@<sha>`, where its sandbox can read it); a trusted sha's in `$KITCHEN_HOME/repos/<…>/checkouts/_trusted@<sha>`, which no sandboxed run can reach, so nothing an untrusted run wrote (an ignored `node_modules/` file included) is ever run unsandboxed. A trusted checkout is used only at its sha with a clean `git status`.
 - `src/toolkit/approve.ts`: `approve`, `revoke`, `commit` (one Kitchen commit of only `.kitchen/toolkit` and `.env.kitchen`, built on a private index; a PR with the GitHub forge), and where the Toolkit stands (`building`, `waiting`, `approved`, `base`, `none`) for every message.
 - `src/engine/job-toolkit.ts`: a job's Toolkit is the base's, else the approved sha. A job on an approved sha follows the approval: approve a newer one and it takes it at its next step; revoke and it has none (it waits `no-toolkit` where it needs the app). A Toolkit PR's sha is left alone.
 - The approved Toolkit's files are never needed in the job worktree: feature drives, `describe` and `SKILL.md` fall back to its own checkout (`.worktrees/_toolkit@<sha>`), and the template's `bin/dev` reads its own `.env.kitchen` when the source has none.

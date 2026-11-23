@@ -24,14 +24,34 @@ import { describeToolkit } from "../../proof/drive.ts";
 import { runToolkitCheck } from "../../toolkit/check.ts";
 import { toolkitCheckout } from "../../toolkit/checkout.ts";
 import { recordPassed } from "../../toolkit/trust.ts";
+import type { Job } from "../machine.ts";
 import { kitchenDir, once, roundDir, writeAtomic } from "../store.ts";
 import { commitWith, ensureSmithWorktree, removeSmithWorktree } from "../worktree.ts";
 import { contractBlock, fileBlock } from "./context.ts";
 import { prompt } from "./prompts.ts";
 import { headers, runRole } from "./role.ts";
-import type { StageContext, StageHandler } from "./types.ts";
+import type { Proposal, StageContext, StageHandler } from "./types.ts";
 
 const TOOLKIT = ".kitchen/toolkit/";
+
+/**
+ * The smith's proven commit on a repo whose Toolkit is approved, not on the base, and not on GitHub (ADR 0015 review
+ * M5): offered for the person's approval (recorded as a proven offer, which `kitchen toolkit approve` takes) instead of
+ * a PR, so nothing waits on a merge; the job goes back pinned to it, with no Toolkit PR for Ready to wait on. Null: the
+ * PR path (a base Toolkit, or the GitHub forge, where Toolkit changes go through review).
+ */
+export async function offerSmithCommit(
+  ctx: Pick<StageContext, "repo" | "forge" | "log">,
+  job: Pick<Job, "id" | "toolkitFrom" | "returnTo">,
+  o: { head: string; gap: string; branch: string },
+): Promise<Proposal | null> {
+  if (job.toolkitFrom !== "approved" || ctx.forge.kind === "github") return null;
+  await recordPassed(ctx.repo, o.head, `the smith (${o.gap}, job ${job.id})`);
+  ctx.log(
+    `Toolkit with ${o.gap} proven at ${o.head.slice(0, 12)} (${o.branch}): it waits for your approval (kitchen toolkit approve --sha ${o.head.slice(0, 12)}); this job runs it sandboxed until then`,
+  );
+  return { to: job.returnTo ?? "drives", facts: { toolkit: { checkPassed: true, sha: o.head, pr: null, approvable: true } } };
+}
 
 /** What the smith may leave for the engine to commit: Toolkit files outside features/. Pure. */
 export function smithPolicy(file: string): string | null {
@@ -204,14 +224,11 @@ export const toolkit: StageHandler = async (ctx) => {
   // The job's Toolkit came from the person's approval, not the base (ADR 0015 review M5): a PR would force a merge on a
   // repo that runs Kitchen locally. The proven commit is offered for approval instead and Ready waits on no merge.
   // With the GitHub forge the PR path stays: there the team takes Toolkit changes in through review.
-  if (job.toolkitFrom === "approved" && ctx.forge.kind !== "github") {
-    await recordPassed(ctx.repo, c.head, `the smith (${gap}, job ${job.id})`);
+  const offered = await offerSmithCommit(ctx, job, { head: c.head, gap, branch: smith.branch });
+  if (offered) {
     await removeSmithWorktree(ctx.repo, job, n).catch(() => {});
     if (retry) await removeSmithWorktree(ctx.repo, job, n - 1).catch(() => {});
-    ctx.log(
-      `Toolkit with ${gap} proven at ${c.head.slice(0, 12)} (${smith.branch}): it waits for your approval (kitchen toolkit approve --sha ${c.head.slice(0, 12)}); this job runs it sandboxed until then`,
-    );
-    return { to: job.returnTo ?? "drives", facts: { toolkit: { checkPassed: true, sha: c.head, pr: null, approvable: true } } };
+    return offered;
   }
   const pr = await once(ctx.repo, job.id, `toolkit-pr/${n}`, () =>
     ctx.forge.openToolkitPr({

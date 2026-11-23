@@ -50,18 +50,32 @@ const DENIED_IN_HOME = [
 ];
 
 /**
- * What an untrusted bin/dev may not write in its repo (ADR 0015): the files that make a Toolkit trusted
- * (`.kitchen/toolkit.approved`, `toolkit.passed`, `toolkit.proven`), git (`.git`: refs, HEAD, worktrees, config)
- * and every other Toolkit checkout (`.worktrees/_toolkit@*`, where an approved sha runs unsandboxed), with the engine's notes on them (`.kitchen/toolkit-checkouts/`). Its own
- * checkout stays writable (its `prepare` installs there; a trusted run first checks a checkout is clean), but not
- * its `.git` pointer.
+ * What an untrusted bin/dev may not write in its repo (ADR 0015). The records that make a Toolkit trusted and the
+ * trusted checkouts live in $KITCHEN_HOME (trust.ts), which the profile denies as a whole; a path rule alone can be
+ * walked around by renaming a folder above it (review H1, round 2), so no folder above a protected path may be
+ * renamed or removed: the repo and each folder above it, `.kitchen`, `.worktrees`, and each folder above
+ * $KITCHEN_HOME (`ancestors`). Also denied: git (`.git`: refs, HEAD, worktrees, config), the old in-repo records,
+ * the engine's checkout notes (`.kitchen/toolkit-checkouts/`) and every other in-repo Toolkit checkout
+ * (`.worktrees/_toolkit@*`). Its own checkout stays writable (its `prepare` installs there), but not its `.git` pointer.
  */
 export type RepoWrites = { literals: string[]; subpaths: string[]; regexes: string[]; allowWrite: string[]; ownGit: string[] };
 
 const reEsc = (s: string) => s.replace(/[.*+?^${}()|[\]\\"]/g, "\\$&");
 
+/** Every folder from `p` up to (not including) the root, as given and resolved. */
+export function ancestors(p: string): string[] {
+  const out = new Set<string>();
+  for (let start of [path.resolve(p)]) {
+    try {
+      start = fs.realpathSync(start);
+    } catch {}
+    for (const from of new Set([path.resolve(p), start])) for (let d = from; d !== path.dirname(d); d = path.dirname(d)) out.add(d);
+  }
+  return [...out];
+}
+
 /** Pure but for resolving paths: the repo's write denials for a bin/dev of `own` (its Toolkit checkout, or null). */
-export function repoWrites(repo: string, own: string | null): RepoWrites {
+export function repoWrites(repo: string, own: string | null, kHome?: string): RepoWrites {
   const both = (p: string) => {
     const out = new Set([p]);
     try {
@@ -76,7 +90,17 @@ export function repoWrites(repo: string, own: string | null): RepoWrites {
   const roots = both(repo);
   const ownDirs = own ? both(own) : [];
   return {
-    literals: roots.flatMap((r) => ["toolkit.approved", "toolkit.passed", "toolkit.proven"].map((f) => path.join(r, ".kitchen", f))),
+    literals: [
+      ...new Set([
+        ...roots.flatMap((r) => [
+          ...ancestors(r),
+          path.join(r, ".kitchen"),
+          path.join(r, ".worktrees"),
+          ...["toolkit.approved", "toolkit.passed", "toolkit.proven"].map((f) => path.join(r, ".kitchen", f)),
+        ]),
+        ...(kHome ? ancestors(path.dirname(kHome)) : []),
+      ]),
+    ],
     subpaths: roots.flatMap((r) => [path.join(r, ".git"), path.join(r, ".kitchen", "toolkit-checkouts")]),
     regexes: roots.map((r) => `^${reEsc(path.join(r, ".worktrees"))}/_toolkit@[^/]+(/|$)`),
     allowWrite: ownDirs,
@@ -317,7 +341,7 @@ export function setupSandboxProfile(o: { home?: string; kHome?: string; repo?: s
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   fs.writeFileSync(
     file,
-    profileText(deniedPaths(home, kHome), allow, dockerSockets(home, dockerSocket()), o.repo ? repoWrites(o.repo, o.own ?? null) : undefined),
+    profileText(deniedPaths(home, kHome), allow, dockerSockets(home, dockerSocket()), o.repo ? repoWrites(o.repo, o.own ?? null, kHome) : undefined),
     { mode: 0o600 },
   );
   return file;

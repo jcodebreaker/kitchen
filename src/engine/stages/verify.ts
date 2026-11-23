@@ -29,7 +29,7 @@ import { contractOf, needsApp, nothingPolicy } from "../contract.ts";
 import { doctorOk, freshUp, resetUp } from "../instance.ts";
 import { once, roundDir, writeAtomic } from "../store.ts";
 import { commitWith, headOf } from "../worktree.ts";
-import { nonDiscriminating } from "./base-check.ts";
+import { baseCheckStale, nonDiscriminating } from "./base-check.ts";
 import { contractBlock } from "./context.ts";
 import { prompt } from "./prompts.ts";
 import { headers, named, runRole } from "./role.ts";
@@ -130,7 +130,9 @@ export const verify: StageHandler = async (ctx) => {
 
   // Step 2: the verifier judges the judged criteria, only once every mechanical proof passed.
   const judged = contract.criteria.filter((c) => isJudged(c.expect) && !proofs.some((p) => p.criterion === c.id && p.result === "NO-TOOLKIT"));
-  const weak = job.kind === "bug" ? [] : nonDiscriminating(ctx.jobDir, contract.criteria);
+  const weak = job.kind === "bug" ? [] : nonDiscriminating(ctx.jobDir, contract.criteria, job.toolkitRef);
+  const stale = job.kind === "bug" ? null : baseCheckStale(ctx.jobDir, job.toolkitRef);
+  if (stale) ctx.log(`non-discriminating comparison left out: ${stale}`);
   const mechanicalPass = proofs.every((p) => p.result === "PASS" || p.result === "NO-TOOLKIT");
   let judgedText: string | null = null;
   if (judged.length && mechanicalPass) {
