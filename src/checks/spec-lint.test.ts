@@ -72,7 +72,7 @@ test("rule 7: an (unchanged) requirement is a regression guard, proven positivel
   const json = `${C("C1", "status --json is JSON", "cmd node src/cli.ts status --json", 'json .jobs != ""')}\n  covers: R1`;
   const noAnsi = `${C("C3", "no colour codes", "cmd node src/cli.ts status --json", 'not contains "\\u001b["')}\n  covers: R3`;
   // A positive "unchanged" criterion: the old command still prints the same header, exit 0.
-  const same = `${C("C2", "plain status prints the table as before", "cmd node src/cli.ts status", 'contains "ID  STAGE" and exit 0')}\n  covers: R2`;
+  const same = `${C("C2", "plain status keeps the table it had before", "cmd node src/cli.ts status", 'contains "ID  STAGE" and exit 0')}\n  covers: R2`;
   assert.equal(L(spec(json, same, noAnsi)).reason, undefined, "a positive criterion covers the guard");
   const judgedGuard = `${C("C2", "plain status table layout looks as before", "toolkit screenshot --name s", "judged")}\n  covers: R2`;
   assert.match(L(spec(json, judgedGuard, noAnsi)).reason ?? "", /R2 guards existing behaviour/);
@@ -500,4 +500,31 @@ test("probe: a repro may not pin the bug's outcome through a feature drive's exp
   const view = { primitives: ["read", "http"], drives: { "orders.create": ["qty", "expect_status"] } };
   const md = spec(C("C1", "x", "toolkit orders.create --qty 100 --expect_status 400 ; toolkit read --target status --save code", '$code == "201"', true));
   assert.match(lintSpec(md, { kind: "bug", toolkit: view }).reason ?? "", /pins an error outcome/);
+});
+
+test("rule 10: what the running app does is proven by driving it; a test the verifier writes is only for pure logic or next to a drive", () => {
+  // Must refuse: job 001's shape, an HTTP route proven only by a test file the verifier writes.
+  const refused: [string, string][] = [
+    ["A member renewing their own loan gets 200 and POST /loans/:id/renew moves due_at 14 days", "test test/renew-extend.test.js"],
+    ["A second renewal returns 409 with an error body", "test test/renew-once.test.js"],
+    ["Pressing the Borrow button on the catalogue page borrows the book", "cmd node test/borrow.mjs"],
+    ["`tasks done 3` prints the task as done and exits 0", "test test/done.test.js"],
+  ];
+  for (const [text, proof] of refused)
+    assert.match(
+      lint(spec(C("C1", text, proof, "exit 0"))).reason ?? "",
+      /C1: it is about what the running app does .*must drive the app through the Toolkit/,
+      text,
+    );
+  // Must pass: the same behaviour driven through the Toolkit, a test next to a drive, pure logic with a test.
+  const passed = [
+    C("C1", "A second renewal returns 409 with an error body", "toolkit http --method POST --path /loans/1/renew --as alice --save r", '$r_status == "409"'),
+    C("C2", "GET /loans shows the renewed due date", "toolkit http --method GET --path /loans --as alice --save l", 'json $l[0].due_at == "2025-01-30"'),
+    C("C5", "The renewal rule's unit tests hold (an extra check next to C1 and C2)", "test test/renew.test.js", "exit 0"),
+    C("C3", "addDays adds whole days across a month end", "test test/dates.test.js", "exit 0"),
+    C("C4", "package.json lists react and react-dom as dependencies", 'cmd node -e "process.exit(0)"', "exit 0"),
+  ];
+  assert.equal(lint(spec(...passed)).reason, undefined);
+  // Without a Toolkit (ADR 0010) checks and tests are all there is: not refused.
+  assert.equal(lintSpec(spec(C("C1", refused[0][0], refused[0][1], "exit 0")), { kind: "feature", toolkit, noToolkit: true }).ok, true);
 });

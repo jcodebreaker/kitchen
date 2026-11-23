@@ -37,9 +37,31 @@ const PATTERNS: RegExp[] = [
   /\bAIza[0-9A-Za-z_-]{35}\b/g, // Google API key
 ];
 
-/** `NAME_KEY=value`, `"password": "value"`, `Authorization: Bearer value`: the value is masked, the name kept. */
-const NAMED =
-  /((?:[A-Za-z0-9_]*(?:secret|token|passw(?:or)?d|api[_-]?key|access[_-]?key|private[_-]?key|credential|auth)[A-Za-z0-9_]*)["']?\s*[:=]\s*["']?)(?!Bearer\b|Basic\b|\[redacted\])([^\s"',;}{]{6,})/gi;
+/**
+ * `NAME_KEY=value`, `"password": "value"`, `X-Auth-Token: value`: the value is masked, the name kept, but
+ * only when the name is secret-named (see `secretName`). `author=tolkien` is not. The value stops at
+ * whitespace, a quote, a separator, markup (`<`, `>`) or an HTML entity, so a mask never swallows a tag.
+ */
+const QUOTE = `(?:["'\`]|&quot;|&#0?39;|&#x27;|&apos;)`;
+const NAMED = new RegExp(
+  `([A-Za-z][A-Za-z0-9_.-]*)(${QUOTE}?\\s*[:=]\\s*${QUOTE}?)(?!Bearer\\b|Basic\\b|\\[redacted\\])((?:(?!&(?:[a-z]+|#[0-9]+|#x[0-9a-f]+);)[^\\s"'\`,;{}<>])+)`,
+  "gi",
+);
+/** Substrings that make any name secret-named (`DB_PASSWORD`, `apiToken`, `client_secret`). */
+const SECRET_WORDS = ["secret", "token", "passw", "credential", "apikey", "privatekey", "accesskey"];
+/** Whole name parts that do (`key`, `X-Auth-Token`, `session_id`), but not inside a word (`author`, `monkey`). */
+const SECRET_PARTS = new Set(["key", "auth", "authorization", "cookie", "cookies", "session", "sessionid", "pwd", "creds"]);
+
+/** True when a key name is named like a secret: by its words, split on `_ - .` and camelCase. */
+export function secretName(name: string): boolean {
+  const parts = name
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .toLowerCase()
+    .split(/[_.-]+/)
+    .filter(Boolean);
+  const joined = parts.join("");
+  return SECRET_WORDS.some((w) => joined.includes(w)) || parts.some((p) => SECRET_PARTS.has(p));
+}
 const BEARER = /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{12,}/g;
 const URL_CREDS = /(\b[a-z][a-z0-9+.-]*:\/\/[^/\s:@]+:)([^@\s/]+)(@)/gi;
 
@@ -48,6 +70,6 @@ export function redact(text: string): string {
   for (const p of PATTERNS) out = out.replace(p, MASK);
   out = out.replace(BEARER, (_m, kind: string) => `${kind} ${MASK}`);
   out = out.replace(URL_CREDS, (_m, a: string, _pw: string, at: string) => `${a}${MASK}${at}`);
-  out = out.replace(NAMED, (_m, name: string) => `${name}${MASK}`);
+  out = out.replace(NAMED, (m, name: string, sep: string, value: string) => (value.length >= 6 && secretName(name) ? `${name}${sep}${MASK}` : m));
   return out;
 }

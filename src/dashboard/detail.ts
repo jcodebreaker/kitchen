@@ -3,19 +3,19 @@
 // results, and the files it changed. Read from .kitchen/ and the agents' own streams only.
 import fs from "node:fs";
 import path from "node:path";
-import { contractOf } from "../engine/contract.ts";
 import { isActive, type Job, STAGES, type Stage } from "../engine/machine.ts";
 import { type Message, readMessages } from "../engine/messages.ts";
 import { findJob, jobDirOf } from "../engine/store.ts";
 import { type LedgerLine, readLedger } from "../ledger/append.ts";
+import { toolkitState } from "../toolkit/approve.ts";
 import { activityOf, claudeTranscript, type Ev } from "./activity.ts";
-import { agentOf, liveStreams, questionOf, STAGE_NAMES, stateOf } from "./data.ts";
+import { agentOf, critOf, liveStreams, questionOf, STAGE_NAMES, stateOf, toolkitStepName } from "./data.ts";
 
 export type Seg = {
   stage: Stage;
   nm: string;
-  /** ok, bad (sent back or escalated), run (the agent works now), you, paused, wait. */
-  st: "ok" | "bad" | "run" | "you" | "paused" | "skip";
+  /** ok, bad (a real failure: sent back or escalated), back (a normal retry: drives sent it back to gate), run (the agent works now), you, paused, skip. */
+  st: "ok" | "bad" | "back" | "run" | "you" | "paused" | "skip";
   round: number;
   /** Agents that ran in it, "role · model". */
   who: string;
@@ -26,6 +26,8 @@ export type Seg = {
   calls: number;
   /** Role skills its agents were given (ADR 0014). */
   sk?: string[];
+  /** The Toolkit step ended with a proven Toolkit offered for approval (ADR 0015): its sha, for the Approve action. */
+  approve?: string;
 };
 export type MsgEv =
   | { c: "you"; t: string; at: string; kind: Message["kind"]; status: string; sent: boolean }
@@ -52,33 +54,18 @@ export function ticketText(dir: string): string {
 }
 
 const EVENTS_PER_SEG = 160;
+/**
+ * A move back that is the normal path, not a failure: drives sends the job back to gate after the verifier wrote
+ * its own test or drive files (they are checked like any other change). Shown neutral, "↻ back to gate".
+ */
+export const normalRetry = (from: Stage, to: string) => from === "drives" && to === "gate";
 /** A move that sends a job back: to a person who must decide (intake asking its question is not a failure), or to an earlier stage (a failed check, a contract sent back). */
 const sentBack = (from: Stage, to: string) =>
   to === "needs-human" ||
   (to === "needs-info" && from !== "intake") ||
   to === "rejected" ||
-  (isActive(from) && isActive(to as Stage) && STAGES.indexOf(to as Stage) < STAGES.indexOf(from));
-
-/** The latest verdict table of the job: criterion → result, evidence and why. */
-function verdictRows(dir: string): Map<string, { result: string; e: string }> {
-  const out = new Map<string, { result: string; e: string }>();
-  const rounds = path.join(dir, "rounds");
-  if (!fs.existsSync(rounds)) return out;
-  for (const r of fs
-    .readdirSync(rounds)
-    .filter((x) => /^\d+$/.test(x))
-    .sort((a, b) => Number(b) - Number(a))) {
-    const f = fs
-      .readdirSync(path.join(rounds, r))
-      .filter((x) => /^verdict-m\d+\.md$/.test(x))
-      .sort((a, b) => Number(/\d+/.exec(b)?.[0]) - Number(/\d+/.exec(a)?.[0]))[0];
-    if (!f) continue;
-    for (const m of fs.readFileSync(path.join(rounds, r, f), "utf8").matchAll(/^\|\s*(C\d+)\s*\|[^|]*\|\s*([A-Z-]+)\s*\|([^|]*)\|([^|]*)\|/gm))
-      out.set(m[1], { result: m[2], e: [m[3].trim(), m[4].trim()].filter(Boolean).join(" · ") });
-    return out;
-  }
-  return out;
-}
+  // The Toolkit step hands the job back to the stage that needed it (returnTo) when it succeeds: not a failure.
+  (from !== "toolkit" && isActive(from) && isActive(to as Stage) && STAGES.indexOf(to as Stage) < STAGES.indexOf(from));
 
 /** Verify's outcome for one stage entry (rounds/<round>/verdict-m<m>.md): which criteria failed, or that all passed. */
 function verdictSum(dir: string, round: number, m: number): string {
@@ -126,6 +113,9 @@ export async function detail(repo: string, ref: string): Promise<Detail> {
   const roots = [j.worktree, repo];
   const moves = readLedger(repo).filter((l): l is LedgerLine & { result: string } => l.job === j.id && l.event === "move" && typeof l.result === "string");
   const msgs = readMessages(dir);
+  // A proven Toolkit waiting for the person's approval (ADR 0015): the smith's offer, if this job made it.
+  const tk = toolkitState(repo);
+  const offer = tk.state === "waiting" ? tk.sha : undefined;
   const tl: Seg[] = [];
   let stage: Stage = "intake";
   let start = j.startedAt;
@@ -158,21 +148,29 @@ export async function detail(repo: string, ref: string): Promise<Detail> {
       });
       return;
     }
-    const bad = to !== null && sentBack(stage, to);
+    const back = to !== null && normalRetry(stage, to);
+    const bad = !back && to !== null && sentBack(stage, to);
     const round = l?.round ?? j.round;
     const note = (stage === "verify" ? verdictSum(dir, round, m) : "") || (typeof l?.detail?.note === "string" ? l.detail.note : "");
+    const sum = back
+      ? `↻ back to ${STAGE_NAMES[to as Stage].toLowerCase()}${note ? `: ${note}` : ""}`
+      : bad || stage === "verify"
+        ? note
+        : (runs.at(-1)?.line ?? "");
     tl.push({
       stage,
-      nm: STAGE_NAMES[stage],
-      st: end === null ? "run" : bad ? "bad" : "ok",
+      nm: stage === "toolkit" ? toolkitStepName(j.gap) : STAGE_NAMES[stage],
+      st: end === null ? "run" : back ? "back" : bad ? "bad" : "ok",
       round,
-      who,
+      who: stage === "toolkit" && !waited && !who ? "Toolkit smith" : who,
       start,
       end,
-      sum: (bad || stage === "verify" ? note : (runs.at(-1)?.line ?? "")).slice(0, 220),
+      sum: sum.slice(0, 220),
       evs: evs.slice(-EVENTS_PER_SEG),
       calls: evs.filter((e) => e.c === "tool").length,
       sk,
+      // Left with a proven Toolkit that waits for the person's approval: the Approve action sits on this step.
+      ...(stage === "toolkit" && to !== null && to === (j.returnTo ?? "drives") && offer && offer === j.toolkitRef ? { approve: offer } : {}),
     });
   };
   moves.forEach((l, i) => {
@@ -185,7 +183,7 @@ export async function detail(repo: string, ref: string): Promise<Detail> {
     close(moves.length, null, null);
     const last = tl[tl.length - 1];
     last.stage = j.stage;
-    last.nm = STAGE_NAMES[j.stage];
+    last.nm = j.stage === "toolkit" ? toolkitStepName(j.gap) : STAGE_NAMES[j.stage];
     const state = stateOf(j);
     if (state === "you") {
       last.st = "you";
@@ -222,15 +220,6 @@ export async function detail(repo: string, ref: string): Promise<Detail> {
       sent: m.kind === "steer" && m.status === "sent",
     });
   }
-  const rows = verdictRows(dir);
-  const crit = (contractOf(dir)?.criteria ?? []).map((c) => {
-    const r = rows.get(c.id);
-    return {
-      id: c.id,
-      text: c.text,
-      st: (!r ? "wait" : r.result === "PASS" ? "ok" : "bad") as "ok" | "bad" | "wait",
-      e: r ? `${r.result}${r.e ? ` · ${r.e}` : ""}` : "",
-    };
-  });
+  const crit = critOf(dir);
   return { id: j.id, tl, crit, ticket: ticketText(dir) };
 }

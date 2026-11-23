@@ -286,7 +286,7 @@ On a pass it writes `.kitchen/toolkit.proven` with the base sha. **When the base
 ```
 
 **spec-lint checks:**
-1. Every criterion has a `proof:` whose kind is `toolkit`, `cmd` or `test`.
+1. Every criterion has a `proof:` whose kind is `toolkit`, `cmd` or `test`. A criterion about what the running app does (an HTTP route or status, a page, a button or form, a CLI command's output or exit) must drive the app: at least one `toolkit` segment. `test`/`cmd` alone is for pure logic (C3 above), or an extra criterion next to a driven one; not enforced without a Toolkit (ADR 0010). (Rule 10 in `src/checks/spec-lint.ts`, from live use: 5 of job 001's 6 criteria were proven by tests the verifier wrote.) Bench oracles are hidden and run through `prove()`, not spec-lint: they may stay `cmd`.
 2. Every primitive and feature drive it names is in `describe`, or is a **new feature drive** for this job's feature, which is allowed: the verifier writes it in the `drives` stage. A missing *primitive* sends the job to `toolkit`.
 3. No `expect: judged` unless the criterion is visual or about wording.
 4. Nothing touches a protected path.

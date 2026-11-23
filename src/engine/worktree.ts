@@ -159,6 +159,28 @@ export async function commitWith(
   policy: CommitPolicy,
 ): Promise<{ committed: boolean; head: string; ahead: boolean; clean: boolean; refused: string[]; files: string[] }> {
   const git = await gitOf(job);
+  const { refused, changes } = await putBackRefused(job, policy);
+  let staged = false;
+  try {
+    await git.run(["diff", "--cached", "--quiet", "--no-ext-diff"]);
+  } catch (e) {
+    if (!(e instanceof GitError) || e.exitCode !== 1) throw e;
+    staged = true;
+  }
+  if (staged) await git.run(["commit", "--quiet", "--no-verify", "-m", message], { env: IDENTITY });
+  const head = (await git.run(["rev-parse", "HEAD"])).stdout.trim();
+  const status = await dirtyLines(git);
+  const files = changes.filter((c) => !refused.some((r) => r.startsWith(`${c.file}: `))).map((c) => c.file);
+  return { committed: staged, head, ahead: head !== job.base, clean: status === "", refused, files };
+}
+
+/**
+ * Stages what a role left and puts back every change `policy` refuses, without committing: a tracked file goes
+ * back to HEAD, an added one is removed. `refused`: `path: reason`. The smith's stage uses it to refuse app
+ * changes before its commit and send the smith back with the reason.
+ */
+export async function putBackRefused(job: Job, policy: CommitPolicy): Promise<{ refused: string[]; changes: { status: string; file: string }[] }> {
+  const git = await gitOf(job);
   await addAll(git);
   const rows = (await git.run(["diff", "--cached", "--name-status", "--no-renames", "-z", "HEAD"])).stdout.split("\0").filter(Boolean);
   const changes: { status: string; file: string }[] = [];
@@ -177,18 +199,7 @@ export async function commitWith(
     await git.run(["rm", "--cached", "--quiet", "-f", "--", ...drop]);
     for (const p of drop) fs.rmSync(path.join(job.worktree, p), { force: true });
   }
-  let staged = false;
-  try {
-    await git.run(["diff", "--cached", "--quiet", "--no-ext-diff"]);
-  } catch (e) {
-    if (!(e instanceof GitError) || e.exitCode !== 1) throw e;
-    staged = true;
-  }
-  if (staged) await git.run(["commit", "--quiet", "--no-verify", "-m", message], { env: IDENTITY });
-  const head = (await git.run(["rev-parse", "HEAD"])).stdout.trim();
-  const status = await dirtyLines(git);
-  const files = changes.filter((c) => !refused.some((r) => r.startsWith(`${c.file}: `))).map((c) => c.file);
-  return { committed: staged, head, ahead: head !== job.base, clean: status === "", refused, files };
+  return { refused, changes };
 }
 
 export async function changedFiles(job: Job, from: string, to = "HEAD"): Promise<string[]> {

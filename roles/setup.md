@@ -23,9 +23,13 @@ the engine runs the Toolkit for you through the `kitchen` MCP tools (below).
   - `app.mjs`: the project half (name, surface, ports, prepare, up, doctor,
     reset, down, primitives, seed users, externals, parallel). `bin/dev` and
     `lib/common.mjs` are Kitchen's generic contract code: don't edit them. Use
-    `lib/browser.mjs` for a web UI, `lib/terminal.mjs` for a CLI; delete the
-    optional modules you don't use. Add the Toolkit's own dependencies (e.g.
-    `playwright`) to `.kitchen/toolkit/package.json`.
+    `lib/browser.mjs` for a web UI, `lib/terminal.mjs` for a CLI. Never
+    delete the optional modules (`lib/browser.mjs`, `lib/browser-daemon.mjs`,
+    `lib/terminal.mjs`) and never edit them: leave the ones you don't use in
+    place, unused, so they are there when the app grows a UI or a CLI. Add the
+    Toolkit's own dependencies to `.kitchen/toolkit/package.json` only for the
+    modules you use (`playwright` `1.65.0` for the browser module; an API-only
+    app drops it from `dependencies`).
   - `SKILL.md`: every TODO replaced with what you found (frontmatter `name:
     verify-<app>` and a `description` naming the app, its surface and when to
     use it; sections Launch, Doctor, Drive, Evidence, Cleanup).

@@ -65,7 +65,7 @@ test("config parsing helpers", () => {
 
 test("spec-lint rule 8: a `test` proof's file must be in the repo's test layout", () => {
   const layout: TestLayout = { runner: "vitest", globs: ["src/**/*.test.ts"], source: "vitest.config.ts" };
-  const md = (file: string) => `## Criteria\n- [C1] status --json prints JSON\n  proof: test ${file}\n  expect: exit 0\n`;
+  const md = (file: string) => `## Criteria\n- [C1] the status JSON serializer emits valid JSON\n  proof: test ${file}\n  expect: exit 0\n`;
   const L = (file: string, l: TestLayout | null = layout) => lintSpec(md(file), { kind: "feature", toolkit: { primitives: [], drives: {} }, testLayout: l });
   assert.equal(L("src/cli/status-json.test.ts").reason, undefined);
   assert.match(L("tests/status-json.test.ts").reason ?? "", /outside the repo's test layout \(vitest: src\/\*\*\/\*\.test\.ts/);
