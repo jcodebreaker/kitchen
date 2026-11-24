@@ -50,26 +50,49 @@ svg{flex:none;display:block}
 
 /* ── sidebar ── */
 .side{width:216px;flex:none;padding:12px 10px;display:flex;flex-direction:column;gap:1px}
-.ws{display:flex;align-items:center;gap:9px;padding:6px 8px 12px;font-weight:600;letter-spacing:-.01em;min-width:0}
+.ws{display:flex;align-items:center;gap:9px;padding:6px 8px;margin-bottom:6px;font-weight:600;letter-spacing:-.01em;min-width:0;border-radius:6px}
 .ws .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.logo{width:22px;height:22px;flex:none;background:var(--logo) center/contain no-repeat}
+.logo{width:22px;height:22px;flex:none;background:var(--logo) center/contain no-repeat;position:relative}
+/* The repo name is the repo picker (ADR 0019); on a --private dashboard it is plain text. */
+button.ws{width:100%;text-align:left;transition:background .12s}
+button.ws:hover{background:var(--hover)}
+button.ws:active,button.ws[aria-expanded="true"]{background:var(--press)}
+.ws .chev{color:var(--faint);display:grid;margin-left:-4px}
+button.ws:hover .chev,button.ws[aria-expanded="true"] .chev{color:var(--mute)}
+/* another repo needs you: a dot on the logo, so that attention isn't lost behind the menu */
+.ws.dot .logo::after{content:"";position:absolute;top:-2px;right:-3px;width:8px;height:8px;border-radius:4px;background:var(--act);box-shadow:0 0 0 2px var(--side)}
+button.ws.dot:hover .logo::after{box-shadow:0 0 0 2px var(--hover)}
+button.ws.dot:active .logo::after,button.ws.dot[aria-expanded="true"] .logo::after{box-shadow:0 0 0 2px var(--press)}
+.rmenu{position:absolute;left:10px;width:300px;z-index:40;background:var(--raise);border:1px solid var(--line2);border-radius:10px;box-shadow:var(--shadow);padding:5px;animation:drop .16s var(--ease)}
+.rmh{font-size:12px;color:var(--faint);padding:5px 8px 4px}
+.rmi{display:flex;align-items:center;gap:8px;width:100%;padding:5px 8px;border-radius:6px;text-align:left;color:var(--fg)}
+.rmi:hover,.rmi:focus-visible{background:var(--hover);outline:none}
+.rmi .mk{width:16px;flex:none;display:grid;place-items:center;color:var(--fg)}
+.rmi .rt{display:flex;flex-direction:column;flex:1;min-width:0;line-height:1.3}
+.rmi .nm{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rmi .pa{font-size:11px;color:var(--faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rmi kbd{flex:none;min-width:20px;text-align:right;font:500 11.5px var(--sans);color:var(--faint)}
+.rmi.add{color:var(--mute)}.rmi.add .mk{color:var(--faint)}
+.rmsep{height:1px;background:var(--line);margin:5px 4px}
+.rmhint{padding:0 8px 6px 32px;font-size:12px;line-height:1.5;color:var(--fg2)}
+.rmhint p{margin:0 0 6px}.rmhint p:last-child{margin:0}
+.rmhint code{font:11.5px var(--mono);color:var(--fg);background:var(--hover);border:1px solid var(--line);padding:0 5px;border-radius:4px;white-space:nowrap}
 .nav{display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:6px;color:var(--mute);width:100%;text-align:left;transition:background .12s}
 .nav:hover{background:var(--hover);color:var(--fg)}
 .nav.on{background:var(--press);color:var(--fg);font-weight:500}
 /* counts are macOS-style badges, shown only when non-zero; Needs you's is the one in the attention color */
-.nav .bdg{margin-left:auto;min-width:20px;height:18px;padding:0 6px;border-radius:9px;font:600 11px/18px var(--sans);text-align:center;font-variant-numeric:tabular-nums;background:color-mix(in srgb,var(--fg) 7%,transparent);color:var(--mute)}
+.nav .bdg,.rmi .bdg{margin-left:auto;min-width:20px;height:18px;padding:0 6px;border-radius:9px;font:600 11px/18px var(--sans);text-align:center;font-variant-numeric:tabular-nums;background:color-mix(in srgb,var(--fg) 7%,transparent);color:var(--mute)}
 .nav .bdg:empty{display:none}
-.nav .bdg.act{background:var(--act);color:var(--on-act)}
+.nav .bdg.act,.rmi .bdg.act{background:var(--act);color:var(--on-act)}
 .nav.on .bdg:not(.act){background:color-mix(in srgb,var(--fg) 10%,transparent);color:var(--fg2)}
 /* sidebar icons are one color; only Needs you turns orange, and only when something needs you */
 .nav .si{color:var(--mute);display:grid}
 .nav:hover .si,.nav.on .si{color:var(--fg)}
-.nav.repo .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .nav.addr,.nav.addr .si{color:var(--faint)}
 .side .lbl{font-size:12px;color:var(--faint);padding:16px 8px 6px}
 .side .lbl.first{padding-top:4px}
 .side .foot{margin-top:auto;padding:8px 0 0;display:flex;align-items:center}
-/* Add a repo: the hint, in a popover under its row */
+/* Add a source: the hint, in a popover under its row */
 .rpop{position:absolute;left:10px;width:290px;z-index:40;background:var(--raise);border:1px solid var(--line2);border-radius:10px;box-shadow:var(--shadow);padding:10px 12px;font-size:12.5px;line-height:1.5;color:var(--fg2);animation:drop .16s var(--ease)}
 .rpop b{display:block;font-weight:600;color:var(--fg);margin-bottom:4px}
 .rpop p{margin:0 0 8px}.rpop p:last-child{margin:0}
@@ -669,7 +692,14 @@ button.ghead:hover{background:var(--hover)}
 <body>
 <div class="app">
   <nav class="side" id="side" aria-label="Project">
-    <div class="ws"><span class="logo" role="img" aria-label="Kitchen"></span><span class="nm" id="wsName">kitchen</span></div>
+    <button class="ws" id="wsB" aria-haspopup="menu" aria-expanded="false" aria-controls="rmenu" title="Switch repo"><span class="logo" role="img" aria-label="Kitchen"></span><span class="nm" id="wsName">kitchen</span><span class="chev" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 6.5L8 10l3.5-3.5"/></svg></span></button>
+    <div class="rmenu" id="rmenu" role="menu" aria-label="Repos on this dashboard" hidden>
+      <div class="rmh" aria-hidden="true">Repos on this dashboard</div>
+      <div id="rmL" role="group"></div>
+      <div class="rmsep" role="separator"></div>
+      <button class="rmi add" id="rmAdd" role="menuitem" tabindex="-1" aria-expanded="false" aria-controls="rmHint"><span class="mk" id="rmAddI"></span>Add a repo…</button>
+      <div class="rmhint" id="rmHint" hidden><p>In the repo, run <code>kitchen dashboard</code>. It joins this page instead of opening a new port.</p><p>Remove one: <code>kitchen dashboard --forget</code></p></div>
+    </div>
     <div class="lbl first">Outer loop</div>
     <button class="nav" data-osec="o-inbox"><span class="si" id="nInI"></span>Inbox<span class="bdg" id="sInbox"></span></button>
     <button class="nav" data-osec="o-held"><span class="si" id="nHeldI"></span>Held<span class="bdg" id="sHeld"></span></button>
@@ -680,12 +710,6 @@ button.ghead:hover{background:var(--hover)}
     <button class="nav" data-sec="g-you" onclick="jump('g-you')"><span class="si" id="nYouI"></span>Needs you<span class="bdg act" id="sYou"></span></button>
     <button class="nav" data-sec="g-run" onclick="jump('g-run')"><span class="si" id="nRunI"></span><span id="sRunN">Running</span><span class="bdg" id="sRun"></span></button>
     <button class="nav" data-sec="g-done" onclick="jump('g-done')"><span class="si" id="nDoneI"></span>Done<span class="bdg" id="sDone"></span></button>
-    <div id="repoG" hidden>
-      <div class="lbl">Repos</div>
-      <div id="repoL"></div>
-      <button class="nav addr" id="addR" onclick="addRepo()" aria-haspopup="dialog" aria-expanded="false"><span class="si" id="nAddI"></span>Add a repo…</button>
-      <div class="rpop" id="rpop" role="dialog" aria-label="Add a repo" hidden><b>Add a repo</b><p>In the repo, run <code>kitchen dashboard</code>. It joins this page instead of opening a new port.</p><p>Remove one: <code>kitchen dashboard --forget</code></p></div>
-    </div>
     <div class="foot"><button class="ib" id="thB" onclick="toggleTheme()" aria-label="Appearance" title="Appearance"></button></div>
   </nav>
   <main class="main">
@@ -771,7 +795,7 @@ S.rejected=S.skip; S.done=S.ok;
 const SB={
   run:`<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="6" opacity=".35"/><path d="M8 2a6 6 0 0 1 6 6"/></svg>`,
   done:`<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M5.4 8.2l1.8 1.8 3.4-3.7"/></svg>`,
-  repo:`<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M2 4.6A1.6 1.6 0 0 1 3.6 3h2.6l1.5 1.6h4.7A1.6 1.6 0 0 1 14 6.2v5.2a1.6 1.6 0 0 1-1.6 1.6H3.6A1.6 1.6 0 0 1 2 11.4z"/></svg>`,
+  check:sv('<path d="M3.5 8.4l2.9 2.9 6.1-6.3"/>',14),
   add:sv('<path d="M8 3.5v9M3.5 8h9"/>'),
   side:`<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2.25"/><path d="M6.25 2.75v10.5"/></svg>`,
   look:`<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="5.75"/><path d="M8 2.25a5.75 5.75 0 0 0 0 11.5z" fill="currentColor" stroke="none"/></svg>`,
@@ -1212,9 +1236,9 @@ function toggleSidebar(){const a=$(".app");
   sbLabel()}
 try{if(localStorage.getItem("kitchen.sidebar")==="hidden")$(".app").classList.add("nosb")}catch(e){}
 document.addEventListener("keydown",e=>{if(e.ctrlKey&&e.metaKey&&e.key.toLowerCase()==="s"){e.preventDefault();toggleSidebar()}
-  else if(e.key==="Escape"&&!$("#rpop").hidden){e.stopImmediatePropagation();addRepo(false);$("#addR").focus()}
+  else if(e.key==="Escape"&&$("#rmenu")&&!$("#rmenu").hidden){e.stopImmediatePropagation();repoMenu(false);$("#wsB").focus()}
   else if(e.key==="Escape"&&$(".app").classList.contains("sbopen")){e.stopImmediatePropagation();$(".app").classList.remove("sbopen");sbLabel();$("#sbB").focus()}},true);
-document.addEventListener("click",e=>{if(!e.target.closest("#rpop,#addR"))addRepo(false);
+document.addEventListener("click",e=>{if(!e.target.closest("#rmenu,#wsB"))repoMenu(false);
   const a=$(".app");if(a.classList.contains("sbopen")&&!e.target.closest("#side,#sbB")){a.classList.remove("sbopen");sbLabel()}});
 function toggleTheme(){const r=document.documentElement,dark=r.dataset.theme?r.dataset.theme==="dark":matchMedia("(prefers-color-scheme: dark)").matches;r.dataset.theme=dark?"light":"dark";try{localStorage.setItem("kitchen.theme",r.dataset.theme)}catch(e){}}
 let palI=0,palItems=[],palMode="cmd";
@@ -1264,7 +1288,7 @@ document.addEventListener("submit",e=>{const f=e.target.closest("form[data-cmp]"
 
 /* ───────── repos: one server, many repos (ADR 0019) ───────── */
 let reposAt=0;
-/* The list, at most every 3 s: the switcher, the other-repos badge, and which repo the page shows. */
+/* The list, at most every 3 s: the repo menu, the other-repos dot, and which repo the page shows. */
 async function loadRepos(force){
   if(!force&&performance.now()-reposAt<3000&&repos.length)return;
   try{const d=await getJSON("/repos.json");reposAt=performance.now();repos=d.repos;reposLast=d.last||null}catch(e){return}
@@ -1274,20 +1298,41 @@ async function loadRepos(force){
   otherBadge();paintRepos();
 }
 const otherYou=()=>repos.filter(r=>r.key!==CUR).reduce((a,r)=>a+r.you,0);
-/* The sidebar toggle carries a dot when the sidebar is out of sight and another repo needs you. */
-function otherBadge(){const n=otherYou();$("#sbB").classList.toggle("dot",!!n)}
-/* Repos group: every repo on this dashboard, Mail-mailbox style. Badge: its Needs-you count (orange), else its running count. */
-function paintRepos(){const g=$("#repoG");g.hidden=MODE!=="repos"||!repos.length;if(g.hidden)return;
-  $("#repoL").innerHTML=repos.map((r,i)=>{const b=r.you?`<span class="bdg act" title="${r.you} need${r.you===1?"s":""} you">${r.you}</span>`:r.running?`<span class="bdg" title="${r.running} running">${r.running}</span>`:"";
-    return `<button class="nav repo${r.key===CUR?" on":""}" data-repo="${esc(r.key)}" ${r.key===CUR?'aria-current="page"':""} title="${esc(r.path)}${i<9?" · ⌘"+(i+1):""}"><span class="si">${SB.repo}</span><span class="nm">${esc(r.name)}</span>${b}</button>`}).join("")}
-function addRepo(force){const p=$("#rpop"),show=force!==undefined?force:p.hidden;p.hidden=!show;$("#addR").setAttribute("aria-expanded",String(show))}
+/* Another repo needs you: a dot on the repo name (the picker), and on the sidebar toggle when the sidebar is out of sight. */
+function otherBadge(){const n=otherYou();$("#sbB").classList.toggle("dot",!!n);const w=$("#wsB");if(!w)return;
+  w.classList.toggle("dot",!!n);w.title=n===1?"1 job in another repo needs you":n?`${n} jobs in other repos need you`:"Switch repo"}
+/* The repo menu, under the repo name: every repo on this dashboard. Badge: its Needs-you count (orange), else its running count. */
+function paintRepos(){if(MODE!=="repos")return;
+  const h=repos.map((r,i)=>{const on=r.key===CUR,b=r.you?`<span class="bdg act" title="${r.you} need${r.you===1?"s":""} you">${r.you}</span>`:r.running?`<span class="bdg" title="${r.running} running">${r.running}</span>`:"";
+    return `<button class="rmi" role="menuitemradio" aria-checked="${on}" tabindex="-1" data-repo="${esc(r.key)}" title="${esc(r.path)}"><span class="mk">${on?SB.check:""}</span><span class="rt"><span class="nm">${esc(r.name)}</span><span class="pa mono">${esc(r.path)}</span></span>${b}${i<9?`<kbd>⌘${i+1}</kbd>`:""}</button>`}).join("");
+  if(h===paintRepos.last)return;paintRepos.last=h;
+  const f=document.activeElement&&document.activeElement.dataset.repo;$("#rmL").innerHTML=h;
+  if(f){const n=$(`#rmL [data-repo="${CSS.escape(f)}"]`);if(n)n.focus()}}
+/* Opens or closes the menu; from the keyboard, focus lands on the current repo. */
+function repoMenu(show,focus){const m=$("#rmenu"),b=$("#wsB");if(!m||!b)return;show=show===undefined?m.hidden:show;
+  if(show&&m.hidden){m.style.top=(b.offsetTop+b.offsetHeight+4)+"px";paintRepos();hintRepo(false)}
+  m.hidden=!show;b.setAttribute("aria-expanded",String(show));
+  if(show&&focus)(m.querySelector('[aria-checked="true"]')||m.querySelector(".rmi")).focus()}
+function hintRepo(show){$("#rmHint").hidden=!show;$("#rmAdd").setAttribute("aria-expanded",String(show))}
 /* Points the page at a repo: its routes, its address; nothing of the last repo's list stays. */
 function setRepo(k){CUR=k;BASE="/r/"+encodeURIComponent(k);gen++;if(location.hash.slice(1)!==k)history.replaceState(null,"","#"+k)}
 function switchRepo(k){if(k===CUR||!repos.some(r=>r.key===k))return;
   setRepo(k);open=null;expanded=null;drafts={};sel=null;snap=null;jobs=[];details={};sigs={};pending={};fresh.clear();just.clear();typing.clear();
   paint.runner=undefined; // the next snapshot redraws the whole board, even when the new repo has no jobs
   renderList();renderPanel();otherBadge();paintRepos();poll(gen)}
-$("#repoL").addEventListener("click",e=>{const b=e.target.closest("[data-repo]");if(b){switchRepo(b.dataset.repo);$(".app").classList.remove("sbopen")}});
+if(MODE!=="repos"){const b=$("#wsB"),d=document.createElement("div");d.className="ws";d.append(b.querySelector(".logo"),$("#wsName"));b.replaceWith(d);$("#rmenu").remove()}
+else{$("#wsB").addEventListener("click",e=>repoMenu(undefined,e.detail===0));
+  $("#rmenu").addEventListener("click",e=>{const r=e.target.closest("[data-repo]");
+    if(r){repoMenu(false);$("#wsB").focus();switchRepo(r.dataset.repo);$(".app").classList.remove("sbopen");return}
+    if(e.target.closest("#rmAdd"))hintRepo($("#rmHint").hidden)});
+  /* Keys while the menu is open: arrows move, Enter picks (the button's own click), Tab leaves; Escape is with the sidebar's keys. */
+  document.addEventListener("keydown",e=>{const m=$("#rmenu"),b=$("#wsB"),t=e.target,act=e.key==="Enter"||e.key===" ";
+    if(m.hidden){if(t!==b)return;if(e.key==="ArrowDown"||e.key==="ArrowUp"){e.preventDefault();e.stopImmediatePropagation();repoMenu(true,true)}else if(act)e.stopImmediatePropagation();return}
+    const it=$$("#rmenu .rmi"),i=it.indexOf(t);
+    if(/^(ArrowDown|ArrowUp|Home|End)$/.test(e.key)){e.preventDefault();e.stopImmediatePropagation();
+      const n=e.key==="Home"?0:e.key==="End"?it.length-1:i<0?(e.key==="ArrowDown"?0:it.length-1):(i+(e.key==="ArrowDown"?1:-1)+it.length)%it.length;it[n].focus()}
+    else if(e.key==="Tab")repoMenu(false);
+    else if(act&&(i>=0||t===b))e.stopImmediatePropagation()},true)}
 document.addEventListener("keydown",e=>{if(MODE!=="repos")return;
   if((e.metaKey||e.ctrlKey)&&!e.altKey&&!e.shiftKey&&/^[1-9]$/.test(e.key)){const r=repos[+e.key-1];if(r){e.preventDefault();switchRepo(r.key)}}},true);
 addEventListener("hashchange",()=>{const k=decodeURIComponent(location.hash.slice(1));if(k&&k!==CUR)switchRepo(k)});
@@ -1568,7 +1613,7 @@ document.addEventListener("change",async e=>{const s=e.target.closest("[data-mla
 document.addEventListener("keydown",e=>{if(e.key==="Escape"&&!$("#mpop").hidden){e.stopImmediatePropagation();modelsPop(false)}},true);
 
 /* ───────── boot ───────── */
-$("#nYouI").innerHTML=S.wait;$("#nRunI").innerHTML=SB.run;$("#nDoneI").innerHTML=SB.done;$("#nAddI").innerHTML=SB.add;$("#thB").innerHTML=SB.look;$("#sbB").innerHTML=SB.side;$("#kI").innerHTML=I.search;$("#nInI").innerHTML=OI.tray;$("#nHeldI").innerHTML=OI.held;$("#nAddSI").innerHTML=SB.add;sbLabel();paintLoopNav();
+$("#nYouI").innerHTML=S.wait;$("#nRunI").innerHTML=SB.run;$("#nDoneI").innerHTML=SB.done;if($("#rmAddI"))$("#rmAddI").innerHTML=SB.add;$("#thB").innerHTML=SB.look;$("#sbB").innerHTML=SB.side;$("#kI").innerHTML=I.search;$("#nInI").innerHTML=OI.tray;$("#nHeldI").innerHTML=OI.held;$("#nAddSI").innerHTML=SB.add;sbLabel();paintLoopNav();
 renderList();poll(gen);pollDetail();pollInbox();
 </script>
 </body>
