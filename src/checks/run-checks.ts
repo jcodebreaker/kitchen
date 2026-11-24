@@ -53,18 +53,26 @@ function prepareKey(cmd: string, dir: string): string {
   return h.digest("hex");
 }
 
-/** One shell command in `cwd`, its output kept (the last 60 lines in `tail`, all of it in `log` when given). */
+/**
+ * One shell command in `cwd`, its output kept (the last 60 lines in `tail`, all of it in `log` when given). ADR 0025
+ * §4: the log is written as the output arrives (`$ cmd` first, `[exit …]` last), so a long check shows progress.
+ */
 export function runShell(cmd: string, o: { cwd: string; timeoutSec: number; log?: string; env?: NodeJS.ProcessEnv }): Promise<CheckRun & { all: string }> {
   const t0 = Date.now();
+  const log = o.log;
+  if (log) {
+    fs.mkdirSync(path.dirname(log), { recursive: true });
+    fs.appendFileSync(log, `$ ${cmd}\n`);
+  }
   return new Promise((resolve) => {
     const child = spawn("/bin/sh", ["-c", cmd], { cwd: o.cwd, env: { ...process.env, CI: "1", ...o.env }, stdio: ["ignore", "pipe", "pipe"], detached: true });
     let all = "";
-    child.stdout.on("data", (d) => {
+    const take = (d: Buffer) => {
       all += d;
-    });
-    child.stderr.on("data", (d) => {
-      all += d;
-    });
+      if (log) fs.appendFileSync(log, d);
+    };
+    child.stdout.on("data", take);
+    child.stderr.on("data", take);
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
@@ -74,15 +82,15 @@ export function runShell(cmd: string, o: { cwd: string; timeoutSec: number; log?
     }, o.timeoutSec * 1000);
     child.on("close", (code) => {
       clearTimeout(timer);
-      if (o.log) {
-        fs.mkdirSync(path.dirname(o.log), { recursive: true });
-        fs.appendFileSync(o.log, `$ ${cmd}\n${all}${all.endsWith("\n") || !all ? "" : "\n"}[exit ${timedOut ? "timeout" : code}]\n\n`);
-      }
+      if (log) fs.appendFileSync(log, `${all.endsWith("\n") || !all ? "" : "\n"}[exit ${timedOut ? "timeout" : code}]\n\n`);
       const tail = all.trimEnd().split("\n").slice(-60).join("\n");
       resolve({ name: "", run: cmd, ok: !timedOut && code === 0, exit: timedOut ? null : code, secs: (Date.now() - t0) / 1000, tail, all });
     });
   });
 }
+
+/** ADR 0025 §4: told the command a check step starts (null when the steps end), so the job can say what runs. */
+export type OnCheck = (cmd: string | null) => Promise<void> | void;
 
 /** The app for a `needs_app` check (ADR 0021): started, with the env that names its URL, and how to stop it. */
 export type AppForCheck = () => Promise<{ ok: true; url: string; stop: () => Promise<void> } | { ok: false; why: string }>;
@@ -102,7 +110,16 @@ export async function runChecks(o: {
   stateDir?: string;
   log?: string;
   app?: AppForCheck;
+  onCheck?: OnCheck;
 }): Promise<ChecksResult> {
+  try {
+    return await checksIn(o);
+  } finally {
+    await o.onCheck?.(null);
+  }
+}
+
+async function checksIn(o: Parameters<typeof runChecks>[0]): Promise<ChecksResult> {
   const results: CheckRun[] = [];
   if (o.prepare && o.checks.length) {
     const marker = o.stateDir ? path.join(o.stateDir, "prepared.json") : null;
@@ -112,6 +129,7 @@ export async function runChecks(o: {
       done = !!marker && JSON.parse(fs.readFileSync(marker, "utf8"))[o.dir] === key;
     } catch {}
     if (!done) {
+      await o.onCheck?.(o.prepare);
       const r = await runShell(o.prepare, { cwd: o.dir, timeoutSec: 1800, log: o.log });
       results.push({ ...r, name: "prepare" });
       if (!r.ok) return { ok: false, results };
@@ -127,6 +145,7 @@ export async function runChecks(o: {
     }
   }
   for (const c of o.checks) {
+    await o.onCheck?.(c.run);
     const r = c.needsApp ? await withApp(c, o) : await runShell(c.run, { cwd: o.dir, timeoutSec: c.timeoutSec, log: o.log });
     results.push({ name: c.name, run: r.run, ok: r.ok, exit: r.exit, secs: r.secs, tail: r.tail });
     if (!r.ok) break;

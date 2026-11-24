@@ -152,6 +152,33 @@ export function critOf(dir: string, round: number): Crit[] {
   });
 }
 
+/** ADR 0025 §4: the check running now and the last line its log has so far (the log is written as it arrives). */
+export function checkingOf(j: Pick<Job, "checking">, dir: string): { cmd: string; at: string; log: string; last: string } | null {
+  if (!j.checking) return null;
+  let last = "";
+  try {
+    const fd = fs.openSync(path.join(dir, j.checking.log), "r");
+    try {
+      const size = fs.fstatSync(fd).size;
+      const buf = Buffer.alloc(Math.min(size, 4096));
+      fs.readSync(fd, buf, 0, buf.length, size - buf.length);
+      last =
+        buf
+          .toString("utf8")
+          // biome-ignore lint/suspicious/noControlCharactersInRegex: terminal colour codes in a check's output
+          .replace(/\x1b\[[0-9;]*[A-Za-z]/g, "")
+          .split(/[\r\n]+/)
+          .map((l) => l.trim())
+          .filter(Boolean)
+          .at(-1) ?? "";
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {}
+  // The header alone: nothing printed yet.
+  return { cmd: j.checking.cmd, at: j.checking.at, log: j.checking.log, last: last === `$ ${j.checking.cmd}` ? "" : last.slice(0, 300) };
+}
+
 /** One ledger line, as a card's "now" line. Pure. */
 export function stepOf(l: LedgerLine): string {
   if (l.event === "agent") return `${l.role ?? "agent"} ${String(l.result ?? "started")}`.trim();
@@ -214,6 +241,8 @@ export type JobCard = {
   waits: Waits | null;
   /** ADR 0022: where it came from in the outer loop ("GitHub #17", "3 reports"), or null (New ticket). */
   from: string | null;
+  /** ADR 0025 §4: the check command running now, since when, its log (in the job folder) and its last line; null between checks. */
+  checking: { cmd: string; at: string; log: string; last: string } | null;
 };
 
 export type Snapshot = {
@@ -334,6 +363,7 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
       merged: j.merged ? { into: j.merged.into, sha: j.merged.sha } : null,
       waits: waitsOf(j, dir),
       from: j.from?.label ?? null,
+      checking: checkingOf(j, dir),
     });
   }
   let cfg: Config | null = null;

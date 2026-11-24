@@ -520,3 +520,52 @@ test("kitchen remove on a merged job only hides it: staging untouched", async ()
   assert.ok(findJob(r, id).archived);
   assert.equal(g(r, "rev-parse", "staging"), tip);
 });
+
+test("ADR 0025 §1: intake reads a checkout of staging's tip, not the person's branch; it goes when the lane finishes or the job is removed", async () => {
+  const r = await repo();
+  g(r, "checkout", "-qb", "mine");
+  fs.writeFileSync(path.join(r, "only-mine.txt"), "x\n");
+  g(r, "add", "-A");
+  g(r, "commit", "-qm", "mine");
+  await control.ticket(r, "add a fourth line", quiet);
+  const id = findJob(r, "1").id;
+  const s = await open(r, id, "intake");
+  assert.equal(s.cwd, path.join(r, ".kitchen", "intake", id));
+  assert.equal(g(s.cwd, "rev-parse", "HEAD"), g(r, "rev-parse", "staging"));
+  assert.ok(fs.existsSync(path.join(s.cwd, "app.txt")) && !fs.existsSync(path.join(s.cwd, "only-mine.txt")));
+  assert.match(fs.readFileSync(s.brief, "utf8"), /Never read .* \(the person's checkout\)/);
+  assert.match(s.prompt, new RegExp(`cd ${s.cwd}`));
+  fs.writeFileSync(intakeFile(dirOf(r, id)), "no decision\n");
+  assert.ok("line" in (await finish(r, id)));
+  assert.ok(!fs.existsSync(s.cwd), "a refused intake's checkout is gone");
+  const again = await open(r, id, "intake");
+  assert.ok(fs.existsSync(again.cwd), "made again for the next try");
+  await control.remove(r, id, quiet);
+  assert.ok(!fs.existsSync(again.cwd), "removed with the job");
+  assert.ok(!g(r, "worktree", "list").includes(".kitchen/intake"));
+});
+
+test("ADR 0025 §4: while Build's checks run the job names the command; the log fills as it runs; cleared after", async () => {
+  const r = await repo();
+  fs.writeFileSync(path.join(r, "kitchen.yaml"), `checks: [{ name: slow, run: "echo started; sleep 1; echo done" }]\n`);
+  g(r, "commit", "-qam", "slow check");
+  g(r, "branch", "-f", "staging", "main");
+  const id = await toBuild(r);
+  const s = await open(r, id, "build");
+  fs.writeFileSync(path.join(s.cwd, "app.txt"), "one\ntwo\nthree\nfour\n");
+  g(s.cwd, "commit", "-qam", "four");
+  const done = finish(r, id);
+  const log = path.join(dirOf(r, id), "rounds", "1", "checks.log");
+  let seen: { cmd: string; log: string } | undefined;
+  for (let i = 0; i < 40 && !seen; i++) {
+    await new Promise((res) => setTimeout(res, 25));
+    seen = findJob(r, id).checking;
+  }
+  assert.equal(seen?.cmd, "echo started; sleep 1; echo done");
+  assert.equal(seen?.log, path.join("rounds", "1", "checks.log"));
+  await new Promise((res) => setTimeout(res, 400));
+  assert.equal(fs.readFileSync(log, "utf8"), "$ echo started; sleep 1; echo done\nstarted\n", "written as it arrives");
+  assert.match(((await done) as { line: string }).line, /checks pass → qa/);
+  assert.equal(fs.readFileSync(log, "utf8"), "$ echo started; sleep 1; echo done\nstarted\ndone\n[exit 0]\n\n", "the same file as before");
+  assert.equal(findJob(r, id).checking, undefined);
+});

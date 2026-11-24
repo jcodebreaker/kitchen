@@ -9,7 +9,7 @@
 import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { type AppForCheck, prepareOf, runChecks } from "../checks/run-checks.ts";
+import { type AppForCheck, type OnCheck, prepareOf, runChecks } from "../checks/run-checks.ts";
 import { type Config, checksFor } from "../config.ts";
 import { withFileLock } from "../lock.ts";
 import { composeProject, startApp, stopApp } from "../qa/app.ts";
@@ -144,6 +144,7 @@ async function trialMerge(
   onto: string,
   head: string,
   log: string,
+  onCheck?: OnCheck,
 ): Promise<
   | { ok: true; sha: string; wt: string }
   | { ok: false; why: string; back: boolean; wt: string; cause: "conflict" | "checks"; tail?: string; mergeOnly?: boolean }
@@ -164,7 +165,7 @@ async function trialMerge(
     };
   }
   // Every check, the `when: merge` ones too (ADR 0021); a `needs_app` one gets the app started from this merge.
-  const checks = await runChecks({ dir: wt, checks: checksFor(cfg, "merge"), prepare: prepareOf(cfg), log, app: mergeApp(cfg, job, wt, log) });
+  const checks = await runChecks({ dir: wt, checks: checksFor(cfg, "merge"), prepare: prepareOf(cfg), log, app: mergeApp(cfg, job, wt, log), onCheck });
   if (!checks.ok) {
     const bad = checks.results.find((r) => !r.ok);
     return {
@@ -193,7 +194,13 @@ export async function mergeToStaging(
   cfg: Config,
   job: Job,
   reviewedHead: string,
-  o: { log: string; gh?: Gh; gate?: (t: { onto: string; sha: string; wt: string }) => Promise<string[]>; drove?: { onto: string; sha: string } },
+  o: {
+    log: string;
+    gh?: Gh;
+    gate?: (t: { onto: string; sha: string; wt: string }) => Promise<string[]>;
+    drove?: { onto: string; sha: string };
+    onCheck?: OnCheck;
+  },
 ): Promise<MergeOutcome> {
   const name = cfg.staging.branch;
   assertNotProtected(cfg, name);
@@ -216,7 +223,7 @@ export async function mergeToStaging(
         let sha: string;
         if (o.drove && o.drove.onto === onto) sha = o.drove.sha;
         else {
-          t = await trialMerge(repo, cfg, job, onto, reviewedHead, o.log);
+          t = await trialMerge(repo, cfg, job, onto, reviewedHead, o.log, o.onCheck);
           if (!t.ok)
             return {
               ok: false,

@@ -5,7 +5,7 @@
 //
 // Agents keep a scrubbed environment: no GitHub token in it (Kitchen's merge into staging uses gh's stored login).
 // One orchestrator per repo: .kitchen/run.json names it while it lives; `kitchen run --stop` ends it.
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { claudeBin } from "../agents/find-bin.ts";
@@ -24,6 +24,35 @@ export const ALLOWED_TOOLS = ["Bash", "Read", "Edit", "MultiEdit", "Write", "Glo
 /** Never handed to the session: Kitchen's own git and gh calls use the person's stored logins. */
 export const SCRUBBED = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "GITHUB_PAT", "NPM_TOKEN"];
 
+/** ADR 0025 §3: the oldest Claude Code Kitchen is tested with; `kitchen run` refuses an older one. */
+export const MIN_CLAUDE = "2.1.331";
+
+/** Pure: a < b, for dotted versions ("2.1.9" < "2.1.331"). */
+export function olderThan(a: string, b: string): boolean {
+  const x = a.split(".").map(Number);
+  const y = b.split(".").map(Number);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) < (y[i] ?? 0);
+  return false;
+}
+
+/**
+ * ADR 0025 §3: before a run, `<bin> --version`: why not to start (the binary isn't there, or it is older than
+ * MIN_CLAUDE), or null. A wrapper that prints no version is let through.
+ */
+export function preflight(bin: string[], o: { command?: boolean } = { command: true }): string | null {
+  const name = bin.join(" ");
+  const r = spawnSync(bin[0], [...bin.slice(1), "--version"], { encoding: "utf8", timeout: 30_000, env: scrubbedEnv() });
+  if (r.error)
+    return (r.error as NodeJS.ErrnoException).code === "ENOENT"
+      ? o.command
+        ? `agent.command ${name} not found`
+        : `Claude Code not found (${name}): install it, or name it in kitchen.yaml's agent.command`
+      : `${name} --version failed: ${r.error.message}`;
+  if (r.status !== 0) return `${name} --version failed (exit ${r.status ?? r.signal}): ${`${r.stderr}${r.stdout}`.trim().split("\n").pop() ?? ""}`;
+  const v = /(\d+\.\d+\.\d+)/.exec(r.stdout)?.[1];
+  return v && olderThan(v, MIN_CLAUDE) ? `Claude Code ${v} is older than Kitchen needs (${MIN_CLAUDE}). Update it: claude update` : null;
+}
+
 /** The live orchestrator started by `kitchen run`, or null. */
 export function liveRun(repo: string): RunInfo | null {
   try {
@@ -39,9 +68,12 @@ export function skillCommand(repo: string): string {
   return fs.existsSync(path.join(repo, ".claude", "skills", "kitchen", "SKILL.md")) ? "/kitchen run" : "/kitchen:kitchen run";
 }
 
+/** The agent's argv prefix: agent.command, else the claude binary. */
+export const agentBin = (cfg: Config, bin?: string): string[] => cfg.agent.command ?? [bin ?? claudeBin()];
+
 /** Pure: the headless command (argv). */
 export function orchestratorCommand(repo: string, cfg: Config, o: { bin?: string; maxUsd?: number } = {}): string[] {
-  const bin = cfg.agent.command ?? [o.bin ?? claudeBin()];
+  const bin = agentBin(cfg, o.bin);
   const usd = o.maxUsd ?? cfg.agent.max_usd;
   return [
     ...bin,
@@ -132,6 +164,13 @@ export async function run(repo: string, o: { detach?: boolean; stop?: boolean; p
     out(`orchestrator: already running (pid ${live.pid}, log ${live.log})`);
     return 0;
   }
+  if (cfg.agent.tool === "claude") {
+    const no = preflight(agentBin(cfg), { command: !!cfg.agent.command });
+    if (no) {
+      out(`kitchen run: ${no}. Nothing started.`);
+      return 2;
+    }
+  }
   fs.mkdirSync(kitchenDir(repo), { recursive: true });
   const log = runLog(repo);
   if (o.detach) {
@@ -152,12 +191,21 @@ export async function run(repo: string, o: { detach?: boolean; stop?: boolean; p
         env: process.env,
       },
     );
+    child.on("error", (e) => out(`orchestrator: could not start: ${e.message}`));
     child.unref();
     fs.closeSync(fd);
     out(`orchestrator detached: pid ${child.pid}, log ${log}`);
     return 0;
   }
   const child = spawn(argv[0], argv.slice(1), { cwd: repo, env: scrubbedEnv(), stdio: ["ignore", "pipe", "pipe"] });
+  // A binary that went missing after the preflight: say so, and end like a failed session.
+  const failed = new Promise<number>((resolve) =>
+    child.on("error", (e) => {
+      out(`orchestrator: could not start ${argv[0]}: ${e.message}`);
+      resolve(127);
+    }),
+  );
+  if (child.pid === undefined) return failed;
   const info: RunInfo = { pid: child.pid as number, start: processStart(child.pid as number), at: new Date().toISOString(), log, command: argv };
   writeAtomic(runFile(repo), JSON.stringify(info));
   out(`orchestrator: ${argv.slice(0, 3).join(" ")} … (pid ${child.pid}); the dashboard shows the jobs: kitchen dashboard`);
@@ -183,7 +231,7 @@ export async function run(repo: string, o: { detach?: boolean; stop?: boolean; p
   const stopChild = () => child.kill("SIGTERM");
   process.once("SIGTERM", stopChild);
   process.once("SIGINT", stopChild);
-  const code = await new Promise<number>((resolve) => child.on("close", (c) => resolve(c ?? 1)));
+  const code = await Promise.race([failed, new Promise<number>((resolve) => child.on("close", (c) => resolve(c ?? 1)))]);
   stream.end();
   try {
     if ((JSON.parse(fs.readFileSync(runFile(repo), "utf8")) as RunInfo).pid === info.pid) fs.rmSync(runFile(repo));

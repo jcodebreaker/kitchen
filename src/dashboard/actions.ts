@@ -1,6 +1,6 @@
 // The dashboard's POST actions (ADR 0009). Each is a CLI verb: the same function, so the page can do nothing
 // `kitchen` can't. The body is JSON; text is operator input, capped like a steer. An action that gives the queue work
-// (WAKES) starts a headless orchestrator (`kitchen run --detach`) when none is working the queue.
+// (WAKES) wakes Kitchen as its CLI verb does (ADR 0025 §2, run/wake.ts).
 import path from "node:path";
 import * as control from "../engine/control.ts";
 import { mergeHeld } from "../engine/jobs.ts";
@@ -10,6 +10,7 @@ import { detachCollect, liveCollect } from "../inbox/collect.ts";
 import * as inbox from "../inbox/store.ts";
 import { LANE_NAMES, roleOf, setModel, TOOL_NAMES } from "../models/models.ts";
 import { run } from "../run/orchestrator.ts";
+import { type Starter, wake } from "../run/wake.ts";
 import { orchestrator } from "./data.ts";
 
 export type ActionResult = { ok: boolean; lines: string[] };
@@ -47,7 +48,6 @@ export const setCollector = (f: Collector | null) => {
 };
 const CLI = path.resolve(import.meta.dirname, "..", `cli${path.extname(import.meta.filename)}`);
 
-type Starter = (repo: string, out: Out) => Promise<number> | number;
 let starter: Starter | null = null;
 /** Tests: what starts an orchestrator, instead of a real detached `kitchen run`. null: the real one. */
 export const setRunnerStarter = (f: Starter | null) => {
@@ -155,7 +155,7 @@ export const ACTIONS: Record<string, (repo: string, b: Body, out: Out) => Promis
   "start-runner": (repo, _b, out) => (starter ?? startOrchestrator)(repo, out),
 };
 
-/** Actions after which the queue has work: when one succeeds and no orchestrator works the queue, one is started. */
+/** Actions after which the queue has work: when one succeeds, Kitchen is woken (run/wake.ts). */
 export const WAKES = new Set(["answer", "approve", "follow-up", "resume", "ticket", "inbox-run"]);
 
 export async function act(repo: string, name: string, body: Body): Promise<ActionResult> {
@@ -165,7 +165,7 @@ export async function act(repo: string, name: string, body: Body): Promise<Actio
   if (!f) throw new BadRequest(`no action ${name}`);
   try {
     const ok = (await f(repo, body, out)) === 0;
-    if (ok && WAKES.has(name) && !orchestrator(repo).running) await (starter ?? startOrchestrator)(repo, out);
+    if (ok && WAKES.has(name)) await wake(repo, lines, { start: starter ?? startOrchestrator });
     return { ok, lines };
   } catch (e) {
     if (e instanceof BadRequest) throw e;

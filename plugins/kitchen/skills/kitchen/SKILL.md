@@ -24,8 +24,8 @@ Run every command below from the repo root. (This plugin's skill is `/kitchen:ki
 | the user says | run |
 |---|---|
 | set up Kitchen, first use | `kitchen init` (seconds; see Setup) |
-| "do X", "fix Y", "add Z" (a request for work) | `kitchen ticket "<the request>"` (see Tickets), then offer to run the queue |
-| `run`, start, "go", work the queue, or your prompt is `/kitchen run` | be the orchestrator yourself: Running the queue, below. Never call `kitchen run` for this: it starts another session, and inside one `kitchen run` started it refuses |
+| "do X", "fix Y", "add Z" (a request for work) | `kitchen ticket "<the request>"` (see Tickets), then relay its line: it starts Kitchen in the background when nothing works the queue ("→ intake · Kitchen started"). When the user wants to run the queue in this session instead, `kitchen ticket --no-run "<the request>"` |
+| `run`, start, "go", work the queue, or your prompt is `/kitchen run` | be the orchestrator yourself: Running the queue, below. Never call `kitchen run` for this: it starts another session, and inside one `kitchen run` started it refuses. When `kitchen status` shows an orchestrator already running, say Kitchen is working the queue and don't start another |
 | what's happening, status, progress | `kitchen status`; when a job shows `needs-info(refine: …)`, offer to refine it with them (see Refining a ticket) |
 | "refine 004", "let's clarify 004", or your prompt is `/kitchen refine 004` | Refining a ticket, below |
 | "approve 004", "the criteria are fine" | `kitchen approve <id>` (only a job shown `needs-info(confirm: …)`) |
@@ -45,7 +45,7 @@ Run every command below from the repo root. (This plugin's skill is `/kitchen:ki
 | "watch GitHub issues labelled bug", "the #bugs Slack channel", `/kitchen sources`, add or change a source | The outer loop: sources, below |
 | "use Opus for review", "build on sonnet", which models does it run on | `kitchen models set <intake\|build\|qa\|review> <model>` (a name from `kitchen models`, or a tier: strong, medium, cheap); `kitchen models` to show them. `kitchen models check` costs a little: run it only when the user asks whether the models answer |
 | collect, "what came in", "check the inbox" | `kitchen collect` as a background command (it reads every source, then one triage session proposes tickets), then `kitchen inbox list` |
-| "run p1 and p3", "send the slow-list one" | `kitchen inbox run <proposal ids>` (only proposals the user named) |
+| "run p1 and p3", "send the slow-list one" | `kitchen inbox run <proposal ids>` (only proposals the user named); like `kitchen ticket`, it starts Kitchen when nothing works the queue |
 
 ## Tickets
 

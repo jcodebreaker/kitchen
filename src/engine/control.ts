@@ -10,7 +10,7 @@
 // - approve: a job intake.confirm holds after intake (ADR 0020 §3) goes to Build on intake's criteria.
 // - remove: off the dashboard, any stage: a working lane is stopped (its agent's next tool call is refused by the
 //   guard hook, its result dropped), an unfinished job is rejected, its worktree removed; a merged job is only hidden.
-//   The folder and the branch stay: restore shows it again.
+//   The folder and the branch stay: restore shows it again. Intake's checkout of the base goes too (ADR 0025 §1).
 import fs from "node:fs";
 import path from "node:path";
 import { loadConfig } from "../config.ts";
@@ -22,7 +22,7 @@ import { readIntake } from "./lanes.ts";
 import { BY_YOU, BY_YOU_STOPPED, isActive, type Job, type JobFrom, MoveRefused, move, pausedByYou, STAGES, type Stage } from "./machine.ts";
 import { addMessage, checkText, type Message, type MessageKind } from "./messages.ts";
 import { numOf } from "./refine.ts";
-import { createJob, findJob, jobDirOf, shortTitle, updateJob, worktreeOf, writeAtomic } from "./store.ts";
+import { createJob, findJob, intakeCheckoutOf, jobDirOf, shortTitle, updateJob, worktreeOf, writeAtomic } from "./store.ts";
 
 export type Out = (line: string) => void;
 
@@ -324,7 +324,7 @@ export async function remove(repo: string, ref: string, out: Out): Promise<numbe
   let gone = "";
   if (!merged) {
     const { git } = await import("./git.ts");
-    for (const wt of [job.worktree || worktreeOf(repo, job.id), job.drive?.wt].filter((x): x is string => !!x && x !== repo)) {
+    for (const wt of [job.worktree || worktreeOf(repo, job.id), job.drive?.wt, intakeCheckoutOf(repo, job.id)].filter((x): x is string => !!x && x !== repo)) {
       if (!fs.existsSync(wt)) continue;
       await git(repo, ["worktree", "remove", "--force", wt], { allowFail: true });
       fs.rmSync(wt, { recursive: true, force: true });

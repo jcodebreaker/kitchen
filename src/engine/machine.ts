@@ -100,6 +100,8 @@ export type Job = {
   agentRuns: AgentRunRef[];
   /** Every move so far. Activity streams and the ledger are keyed by it. */
   moves: number;
+  /** ADR 0025 §4: the check command running now (Build's checks, the trial merge's) and its log; absent between them. */
+  checking?: { cmd: string; at: string; log: string };
   /** Why a job that passed stopped at Ready (high risk, a large diff, auto-merge off). */
   held?: string;
   /**
