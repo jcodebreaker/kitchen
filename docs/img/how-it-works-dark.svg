@@ -1,8 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 344" width="920" height="344" role="img" aria-label="How Kitchen works: you tell Claude Code or Codex what you want; the runner moves the job; one fresh worker per step writes into the job folder; the runner proves the work by driving your app through the Toolkit; you read the Report and merge.">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 512" width="920" height="512" role="img" aria-label="How Kitchen works: you tell Claude Code what you want and it files a ticket; the orchestrator session plans waves and moves each job with kitchen job verbs; one fresh agent per lane (intake, build, QA, review) writes into the job folder; QA drives your app with Playwright, following and keeping the verify map; before a job merges, a merge check drives the features the merge touches on the merged result; green lands in staging with its Report, and you merge staging onward.">
 <defs><marker id="hm" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1.5,1.5L8,5L1.5,8.5" fill="none" stroke="#8e8f97" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker>
 <marker id="ha" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1.5,1.5L8,5L1.5,8.5" fill="none" stroke="#ff8a3d" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
 <style>text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Helvetica Neue",Helvetica,Arial,sans-serif}.t{font-size:15px;font-weight:600;fill:#ededf0}.s{font-size:12.5px;fill:#8e8f97}.m{font-size:12px;fill:#8e8f97;font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace}.l{font-size:12px;fill:#8e8f97}.la{font-size:12px;fill:#ff8a3d;font-weight:600}</style>
-<rect width="920" height="344" rx="14" fill="#0f1011"/>
+<rect width="920" height="512" rx="14" fill="#0f1011"/>
 <g><rect x="20" y="26" width="196" height="84" rx="12" fill="#141516" stroke="#2f3035" stroke-width="1"/>
 <text x="36" y="56" class="t">You</text><text x="36" y="77" class="s">say what you want,</text><text x="36" y="94" class="s">in plain words</text></g>
 <g><rect x="248" y="26" width="196" height="84" rx="12" fill="#1a1b1e" stroke="#2f3035" stroke-width="1"/>
@@ -19,11 +19,18 @@
 <text x="492" y="226" class="t">Playwright</text><text x="492" y="247" class="s">starts your app, clicks,</text><text x="492" y="264" class="s">reads, takes screenshots</text></g>
 <g><rect x="704" y="196" width="196" height="84" rx="12" fill="#1a1b1e" stroke="#2f3035" stroke-width="1"/>
 <text x="720" y="226" class="t">Job folder</text><text x="720" y="247" class="m">.kitchen/jobs/&lt;id&gt;/</text><text x="720" y="264" class="s">state and plain evidence</text></g>
+<g><rect x="476" y="366" width="196" height="84" rx="12" fill="#1a1b1e" stroke="#2f3035" stroke-width="1"/>
+<text x="492" y="396" class="t">Verify map</text><text x="492" y="417" class="m">skills/verify-&lt;app&gt;/</text><text x="492" y="434" class="s">one file per feature</text></g>
+<g><rect x="704" y="366" width="196" height="84" rx="12" fill="#1a1b1e" stroke="#2f3035" stroke-width="1"/>
+<text x="720" y="396" class="t">Merge check</text><text x="720" y="417" class="s">drives the touched features</text><text x="720" y="434" class="s">on the merged result</text></g>
 <path d="M221,68H242" fill="none" stroke="#8e8f97" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#hm)"/><path d="M449,68H470" fill="none" stroke="#8e8f97" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#hm)"/><path d="M677,68H698" fill="none" stroke="#8e8f97" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#hm)"/>
 <path d="M574,116V189" fill="none" stroke="#ff8a3d" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ha)"/><text x="584" y="157" class="la">QA checks it</text>
 <path d="M471,238H450" fill="none" stroke="#ff8a3d" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ha)"/>
 <path d="M677,238H698" fill="none" stroke="#8e8f97" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#hm)"/>
 <path d="M802,116V189" fill="none" stroke="#8e8f97" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#hm)"/><text x="812" y="157" class="l">one file each</text>
-<path d="M802,286V312Q802,320 794,320H126Q118,320 118,312V287" fill="none" stroke="#8e8f97" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#hm)"/><text x="460" y="336" text-anchor="middle" class="l">the evidence becomes the Report</text>
+<path d="M574,287V359" fill="none" stroke="#8e8f97" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" marker-start="url(#hm)" marker-end="url(#hm)"/><text x="584" y="327" class="l">QA follows and keeps it</text>
+<path d="M802,286V359" fill="none" stroke="#8e8f97" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#hm)"/><text x="812" y="327" class="l">review passed</text>
+<path d="M677,408H698" fill="none" stroke="#8e8f97" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#hm)"/>
+<path d="M802,456V482Q802,490 794,490H126Q118,490 118,482V287" fill="none" stroke="#ff8a3d" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ha)"/><text x="460" y="506" text-anchor="middle" class="la">green: it lands in staging and the evidence becomes the Report</text>
 <path d="M118,190V117" fill="none" stroke="#8e8f97" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#hm)"/><text x="128" y="157" class="l">you merge staging onward</text>
 </svg>
