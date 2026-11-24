@@ -15,8 +15,10 @@ import { appendLedger } from "../ledger/append.ts";
 import { withFileLock } from "../lock.ts";
 import { PromptSource } from "../sources/prompt.ts";
 import { recordAnswers } from "./clarify.ts";
+import { readIntake } from "./lanes.ts";
 import { BY_YOU, BY_YOU_STOPPED, isActive, type Job, MoveRefused, move, pausedByYou, STAGES, type Stage } from "./machine.ts";
 import { addMessage, checkText, type Message, type MessageKind } from "./messages.ts";
+import { numOf } from "./refine.ts";
 import { createJob, findJob, jobDirOf, updateJob, writeAtomic } from "./store.ts";
 
 export type Out = (line: string) => void;
@@ -69,6 +71,27 @@ export async function fileTicket(repo: string, text: string): Promise<Job> {
   const job = await createJob(repo, { title: t.title, ticket: t.ref, body: t.body, roundLimit: cfg.round_limit });
   appendLedger(repo, { job: job.id, stage: "intake", round: 1, event: "ticket", key: `${job.id}/ticket` });
   return job;
+}
+
+/**
+ * ADR 0020: the later slices of a ticket split with its author (intake's `## Later slices`), filed when the job goes
+ * to Build: each as its own ticket, in order, each after the one before it (the first after this job). Each is
+ * recorded on the job as it is filed, so a re-run files only what isn't yet. Returns the line's tail:
+ * "; filed 007, 008", "; already filed 007, 008", or "".
+ */
+export async function fileSlices(repo: string, job: Job, texts: string[]): Promise<string> {
+  const before = findJob(repo, job.id).slices ?? [];
+  let done = before;
+  for (const text of texts.slice(done.length)) {
+    const after = done.at(-1)?.id ?? job.id;
+    const t = await fileTicket(repo, `${text.replace(/[\s.]+$/, "")}. Comes after job ${numOf(after)}.`);
+    const filed = { text, id: t.id };
+    done = (await updateJob(repo, job.id, (j) => ({ ...j, slices: [...(j.slices ?? []), filed] }))).slices ?? [];
+  }
+  const nums = (xs: { id: string }[]) => xs.map((x) => numOf(x.id)).join(", ");
+  return (
+    (done.length > before.length ? `; filed ${nums(done.slice(before.length))}` : "") + (before.length && texts.length ? `; already filed ${nums(before)}` : "")
+  );
 }
 
 type Control = { pause?: string };
@@ -250,7 +273,10 @@ export async function approve(repo: string, ref: string, out: Out): Promise<numb
     },
   });
   recordAnswers(dir, ["Approved as written."]);
-  out(`${job.id}  approved → build`);
+  // ADR 0020: the split the person just approved, from intake.md as it stands now.
+  const i = readIntake(dir);
+  const filed = i?.decision === "ACCEPT" ? await fileSlices(repo, job, i.slices) : "";
+  out(`${job.id}  approved → build${filed}`);
   return 0;
 }
 

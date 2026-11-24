@@ -17,7 +17,7 @@ import { admitMap, builderMapEdits, mapAt, writeMapChanges } from "../verify/adm
 import { intakeMapSection, qaMapSection, regressSection } from "../verify/brief.ts";
 import { namedBy, readMap, removals, touchedFeatures } from "../verify/map.ts";
 import { CONFIRM_KEY, clarificationsSection, questionsAsked, readRounds, recordQuestion } from "./clarify.ts";
-import { clearControl, fileTicket, moveJob, readControl } from "./control.ts";
+import { clearControl, fileSlices, moveJob, readControl } from "./control.ts";
 import { branchExists, diffSize, git, gitOut, revParse } from "./git.ts";
 import {
   changesOf,
@@ -37,7 +37,7 @@ import { BY_YOU, CATCH_UP_LIMIT, isCatchUp, isLane, type Job, type Lane, outOfCa
 import { markRead, operatorNotes, unreadMessages } from "./messages.ts";
 import { afterSection, queueSection } from "./others.ts";
 import { type Plan, planWave } from "./plan.ts";
-import { confirmQuestion, numOf, refineQuestion } from "./refine.ts";
+import { confirmQuestion, refineQuestion } from "./refine.ts";
 import { writeReport } from "./report.ts";
 import { type CatchUp, catchUpWithStaging, dropTrial, type MergeOutcome, mergeToStaging, stagingTip } from "./staging.ts";
 import { findJob, jobDirOf, kitchenDir, listJobs, roundDir, shortTitle, updateJob, worktreeOf, writeAtomic } from "./store.ts";
@@ -480,22 +480,6 @@ async function moveOn(
   return { id: job.id, from, to: moved.stage, line };
 }
 
-/**
- * ADR 0020: the later slices of a ticket split with its author, each filed as its own ticket in order, each after the
- * one before it (the first after this job). Each is recorded on the job as it is filed, so a retried finish files
- * only what isn't yet. Returns every slice filed for this job.
- */
-async function fileSlices(repo: string, job: Job, texts: string[]): Promise<{ text: string; id: string }[]> {
-  let done = findJob(repo, job.id).slices ?? [];
-  for (const text of texts.slice(done.length)) {
-    const after = done.at(-1)?.id ?? job.id;
-    const t = await fileTicket(repo, `${text.replace(/[\s.]+$/, "")}. Comes after job ${numOf(after)}.`);
-    const filed = { text, id: t.id };
-    done = (await updateJob(repo, job.id, (j) => ({ ...j, slices: [...(j.slices ?? []), filed] }))).slices ?? [];
-  }
-  return done;
-}
-
 export async function finish(repo: string, id: string): Promise<Finished | { refused: string }> {
   const cfg = loadConfig(repo);
   const job = findJob(repo, id);
@@ -534,12 +518,6 @@ export async function finish(repo: string, id: string): Promise<Finished | { ref
       });
     }
     const title = shortTitle(i.title ?? undefined);
-    const before = job.slices?.length ?? 0;
-    const slices = await fileSlices(repo, job, i.slices);
-    const nums = (xs: { id: string }[]) => xs.map((x) => numOf(x.id)).join(", ");
-    const filed =
-      (slices.length > before ? `; filed ${nums(slices.slice(before))}` : "") +
-      (before && i.slices.length ? `; already filed ${nums(slices.slice(0, before))}` : "");
     const accepted = (j: Job) => {
       if (title) j.title = title;
       j.kind = i.kind;
@@ -554,7 +532,7 @@ export async function finish(repo: string, id: string): Promise<Finished | { ref
       const question = confirmQuestion(job, i.criteria, leftOutOf(dir));
       recordQuestion(dir, { key, question });
       await new PromptSource(repo).ask(job, { key, text: question });
-      return moveOn(repo, job, "needs-info", `${job.id}  intake ACCEPT ${i.kind} ${i.risk}: ${i.criteria.length} criteria → waits for your approval${filed}`, {
+      return moveOn(repo, job, "needs-info", `${job.id}  intake ACCEPT ${i.kind} ${i.risk}: ${i.criteria.length} criteria → waits for your approval`, {
         reason: "confirm: approve the criteria",
         patch: (j) => {
           accepted(j);
@@ -562,6 +540,8 @@ export async function finish(repo: string, id: string): Promise<Finished | { ref
         },
       });
     }
+    // ADR 0020: the later slices are filed when the job goes to Build (with the gate, on approve: the split may change).
+    const filed = await fileSlices(repo, job, i.slices);
     return moveOn(repo, job, "build", `${job.id}  intake ACCEPT ${i.kind} ${i.risk}: ${i.criteria.length} criteria → build${filed}`, { patch: accepted });
   }
   const wt = job.worktree || worktreeOf(repo, job.id);
