@@ -180,7 +180,7 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
   const { INBOX_FLAGS } = await import("./inbox/cli.ts");
-  const f = parse(rest, ["repo", "to", "into", "port", "tool", "max-usd", "name", "script", "header", "data", "url", ...INBOX_FLAGS]);
+  const f = parse(rest, ["repo", "to", "into", "port", "tool", "max-usd", "name", "script", "header", "data", "url", "from-schedule", ...INBOX_FLAGS]);
   // Inside a job's worktree (.worktrees/<job>), the main checkout: that is where the jobs live.
   const repo = f.vals.repo?.[0] ? path.resolve(f.vals.repo[0]) : (await import("./cli/here.ts")).kitchenRepo(process.cwd());
   const v = (k: string) => f.vals[k]?.[0];
@@ -257,7 +257,9 @@ async function main(argv: string[]): Promise<number> {
         for (const l of scheduleCheck(repo, import.meta.filename, f.pos.join(" "), v("every") as string, {}, v("into"))) out(l);
         return 0;
       }
-      return waking((o) => control.ticket(repo, f.pos.join(" ") || need(0, '"<text>"'), o, { into: v("into"), check }));
+      // A schedule's tick says so (argvOf): the job records it was filed by its schedule, and how often.
+      const schedule = check ? v("from-schedule") : undefined;
+      return waking((o) => control.ticket(repo, f.pos.join(" ") || need(0, '"<text>"'), o, { into: v("into"), check, schedule }));
     }
     case "schedules":
       for (const l of (await import("./inbox/schedule.ts")).schedulesLines(repo)) out(l);

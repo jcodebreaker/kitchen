@@ -239,6 +239,8 @@ export type NewJob = {
   target?: string;
   /** ADR 0028 §5: filed as a check (`kitchen ticket --check`). */
   check?: boolean;
+  /** ADR 0028 §5: the check's schedule filed it, this often ("day", "hour"…). */
+  schedule?: string;
 };
 
 /** Create a job folder. Numbers are taken under a lock, so two `kitchen ticket`s never share one. */
@@ -271,7 +273,7 @@ export async function createJob(repo: string, o: NewJob): Promise<Job> {
       moves: 0,
       filed: [],
       ...(o.from ? { from: o.from } : {}),
-      ...(o.check ? { check: { forced: true } } : {}),
+      ...(o.check ? { check: { forced: true, ...(o.schedule ? { filedBy: "schedule" as const, every: o.schedule } : {}) } } : {}),
       startedAt: now,
       updatedAt: now,
     };

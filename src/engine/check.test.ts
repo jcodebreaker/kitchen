@@ -355,6 +355,18 @@ test("(g) the schedule that files a check: launchd and systemd files written to 
   const plist = fs.readFileSync(path.join(home, "Library", "LaunchAgents", `${id}.plist`), "utf8");
   for (const a of argvOf(process.execPath, "/k/cli.js", repo, task)) assert.ok(plist.includes(`<string>${a}</string>`), a);
   assert.deepEqual(argvOf("node", "/k/cli.js", repo, task), ["node", "/k/cli.js", "ticket", "--check", "--repo", path.resolve(repo), text]);
+  assert.deepEqual(argvOf("node", "/k/cli.js", repo, task, parseEvery("day")), [
+    "node",
+    "/k/cli.js",
+    "ticket",
+    "--check",
+    "--repo",
+    path.resolve(repo),
+    "--from-schedule",
+    "day",
+    text,
+  ]);
+  assert.ok(plist.includes("<string>--from-schedule</string>"), "the tick says it came from the schedule");
   assert.match(
     plist,
     /<key>StartCalendarInterval<\/key>\n {2}<array>\n {6}<dict><key>Hour<\/key><integer>0<\/integer><key>Minute<\/key><integer>0<\/integer><\/dict>\n {2}<\/array>/,
@@ -375,7 +387,7 @@ test("(g) the schedule that files a check: launchd and systemd files written to 
   assert.match(service, /Description=Kitchen check/);
   assert.match(
     service,
-    new RegExp(`ExecStart=\\S+ /k/cli\\.js ticket --check --repo ${path.resolve(repo).replace(/[.]/g, "\\.")} --into release "check checkout still works"`),
+    new RegExp(`ExecStart=\\S+ /k/cli\\.js ticket --check --repo ${path.resolve(repo).replace(/[.]/g, "\\.")} --into release --from-schedule hour "check checkout still works"`),
   );
   assert.match(fs.readFileSync(path.join(d, `${id}.timer`), "utf8"), /OnCalendar=\*-\*-\* \*:00:00\nPersistent=true/);
   assert.equal(listKept(repo).length, 1, "the same text replaces its schedule");

@@ -43,11 +43,21 @@ export const scheduleId = (repo: string, task: Task = COLLECT) =>
     ? `dev.kitchen.collect.${hash(path.resolve(repo), 10)}`
     : `dev.kitchen.check.${hash(path.resolve(repo), 10)}.${hash(task.text.replace(/\s+/g, " ").trim(), 8)}`;
 
-/** Pure: what the OS runs on each tick. */
-export function argvOf(node: string, cli: string, repo: string, task: Task = COLLECT): string[] {
+/** Pure: what the OS runs on each tick. A check says it came from this schedule, and how often (`--from-schedule day`). */
+export function argvOf(node: string, cli: string, repo: string, task: Task = COLLECT, every?: Every): string[] {
   return task.name === "collect"
     ? [node, cli, "collect", "--repo", path.resolve(repo)]
-    : [node, cli, "ticket", "--check", "--repo", path.resolve(repo), ...(task.into ? ["--into", task.into] : []), task.text.replace(/\s+/g, " ").trim()];
+    : [
+        node,
+        cli,
+        "ticket",
+        "--check",
+        "--repo",
+        path.resolve(repo),
+        ...(task.into ? ["--into", task.into] : []),
+        ...(every ? ["--from-schedule", label(every)] : []),
+        task.text.replace(/\s+/g, " ").trim(),
+      ];
 }
 const what = (t: Task) => (t.name === "collect" ? "Kitchen collect" : "Kitchen check");
 const logOf = (t: Task) => (t.name === "collect" ? "collect.log" : "checks.log");
@@ -109,7 +119,7 @@ export function installSchedule(repo: string, cli: string, every: Every, w: Wher
   const home = w.home ?? os.homedir();
   const run = w.run ?? realRun;
   const id = scheduleId(repo, task);
-  const argv = argvOf(process.execPath, cli, repo, task);
+  const argv = argvOf(process.execPath, cli, repo, task, every);
   const runs = task.name === "collect" ? "collect runs" : `the check "${task.text.slice(0, 60)}" is filed`;
   const PATH = process.env.PATH ?? "/usr/bin:/bin";
   if (platform === "darwin") {

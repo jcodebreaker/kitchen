@@ -55,6 +55,9 @@ export type JobFrom = {
  */
 export type JobCheck = {
   forced?: boolean;
+  /** ADR 0028 §5: filed by a schedule's tick (`kitchen ticket --check --from-schedule <every>`), and how often it runs. */
+  filedBy?: "schedule";
+  every?: string;
   explore?: number;
   run?: string;
   onto?: string;

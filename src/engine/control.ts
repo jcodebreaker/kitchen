@@ -82,10 +82,10 @@ export async function moveJob(
   return j;
 }
 
-export async function ticket(repo: string, text: string, out: Out, o: { into?: string; check?: boolean } = {}): Promise<number> {
+export async function ticket(repo: string, text: string, out: Out, o: { into?: string; check?: boolean; schedule?: string } = {}): Promise<number> {
   let job: Job;
   try {
-    job = await fileTicket(repo, text, { target: o.into, check: o.check });
+    job = await fileTicket(repo, text, { target: o.into, check: o.check, schedule: o.schedule });
   } catch (e) {
     if (!(e instanceof TargetRefused)) throw e;
     out(`kitchen ticket: ${e.message}. Nothing filed.`);
@@ -103,7 +103,11 @@ export class TargetRefused extends Error {}
  * `kitchen inbox run` for a proposal the person chose (ADR 0022: its title and where it came from). `target`: the
  * branch it merges into (ADR 0026), checked here; staging's own name is the default and isn't stored.
  */
-export async function fileTicket(repo: string, text: string, o: { title?: string; from?: JobFrom; target?: string; check?: boolean } = {}): Promise<Job> {
+export async function fileTicket(
+  repo: string,
+  text: string,
+  o: { title?: string; from?: JobFrom; target?: string; check?: boolean; schedule?: string } = {},
+): Promise<Job> {
   const cfg = loadConfig(repo);
   const target = o.target?.trim() && o.target.trim() !== cfg.staging.branch ? o.target.trim() : undefined;
   if (target) {
@@ -112,7 +116,16 @@ export async function fileTicket(repo: string, text: string, o: { title?: string
   }
   const t = PromptSource.ticket(text);
   const title = (o.title && shortTitle(o.title)) || t.title;
-  const job = await createJob(repo, { title, ticket: t.ref, body: t.body, roundLimit: cfg.round_limit, from: o.from, target, check: o.check });
+  const job = await createJob(repo, {
+    title,
+    ticket: t.ref,
+    body: t.body,
+    roundLimit: cfg.round_limit,
+    from: o.from,
+    target,
+    check: o.check,
+    schedule: o.schedule,
+  });
   appendLedger(repo, { job: job.id, stage: "intake", round: 1, event: "ticket", key: `${job.id}/ticket` });
   return job;
 }

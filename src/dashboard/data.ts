@@ -275,7 +275,7 @@ function phasesOf(j: Job, chk: boolean): { k: Phase; nm: string }[] {
   return PHASES.filter((p) => !ks || ks.includes(p.k)).map((p) => ({ k: p.k, nm: p.nm }));
 }
 
-/** ADR 0028 §5: how often a schedule of this repo files this check (its ticket text and target), or null. */
+/** ADR 0028 §5: for a check filed before jobs recorded their schedule, how often a schedule files the same text and target, or null. */
 function everyOf(kept: Kept[], dir: string, j: Job): string | null {
   const ks = kept.filter((k) => k.task.name === "check");
   if (!ks.length) return null;
@@ -294,6 +294,8 @@ export type Snapshot = {
   repo: string;
   /** ADR 0026: the default target (staging.branch); a card names its own only when it differs. */
   target: string;
+  /** ADR 0026 §4: who merges a passing job (staging.merge): Kitchen, or a person through a PR. */
+  merge: "kitchen" | "pr";
   at: string;
   usdToday: number;
   usdTotal: number;
@@ -436,7 +438,7 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
             proposals: j.check?.proposals ?? [],
             explore: j.check?.explore ?? null,
             forced: !!j.check?.forced,
-            every: everyOf(kept, dir, j),
+            every: j.check?.every ?? everyOf(kept, dir, j),
           }
         : null,
       ...(j.keep === false ? { keep: false as const } : {}),
@@ -450,6 +452,7 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
   return {
     repo: path.basename(repo),
     target: cfg?.staging.branch ?? "staging",
+    merge: cfg?.staging.merge ?? "kitchen",
     at: new Date(now).toISOString(),
     usdToday: priced.filter((l) => new Date(l.t).toDateString() === today).reduce((a, l) => a + (l.usd as number), 0),
     usdTotal: priced.reduce((a, l) => a + (l.usd as number), 0),

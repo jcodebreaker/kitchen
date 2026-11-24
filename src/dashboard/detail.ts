@@ -88,6 +88,9 @@ export function ticketText(dir: string): string {
   }
 }
 
+/** ADR 0028 §5: a schedule's interval as the Activity says it: daily, hourly, every 2 hours. */
+const often = (every?: string) => (every === "day" ? "daily" : every === "hour" ? "hourly" : `every ${every ?? "tick"}`);
+
 const EVENTS_PER_SEG = 160;
 /** A move that sends a job back: to a person (intake asking its question is not a failure), or to an earlier lane. */
 const sentBack = (from: Stage, to: string) =>
@@ -208,7 +211,7 @@ export async function detail(repo: string, ref: string): Promise<Detail> {
   // ADR 0022: the first line says where the job came from.
   tl[0]?.evs.unshift({
     c: "sys",
-    t: `${j.from ? `Filed from the Outer loop · ${j.from.label}` : "Filed by you (New ticket)"}${target !== defaultTarget ? ` · into ${target}` : ""}`,
+    t: `${j.from ? `Filed from the Outer loop · ${j.from.label}` : j.check?.filedBy === "schedule" ? `Filed by its schedule (${often(j.check.every)})` : "Filed by you (New ticket)"}${target !== defaultTarget ? ` · into ${target}` : ""}`,
     at: j.startedAt,
   });
   return { id: j.id, tl, ...(isCheck(j) ? checkTab(dir, j) : { crit: critOf(dir, j.round) }), ticket: ticketText(dir) };

@@ -995,6 +995,8 @@ const every=j=>isCk(j)&&j.check&&j.check.every?EVERY[j.check.every]||"Every "+j.
 const ckTag=j=>isCk(j)&&!ended(j)?`<span class="tag kck" title="A check: Kitchen tests ${esc(tgt(j))}, nothing is built or merged">Check${every(j)?" · "+esc(every(j)):""}</span>`:"";
 /* ADR 0028 amendment: KEEP: no. Done when verified; the branch is kept, nothing merged until Promote. */
 const unkept=j=>!!j&&!!j.promotable;
+/* What Promote does next: Kitchen merges, or (staging.merge: pr) a person merges the PR it opens. */
+const promoteWay=j=>"Review, then the merge check, then "+(snap&&snap.merge==="pr"?"a PR into ":"merge into ")+tgt(j);
 const nProb=n=>n+" problem"+(n===1?"":"s");
 /* A finished check's problems, each proposed in the Inbox (0 when it found none or isn't done). */
 const found=j=>isCk(j)&&j.state==="done"&&j.check?j.check.findings||0:0;
@@ -1172,7 +1174,7 @@ function composerHTML(j,where="row"){
 /* Done: Open report, the branch with a copy button, and Ask for changes (opens the composer: the only way to send a follow-up). */
 const asking=new Set();
 function doneBar(j){
-  if(unkept(j))return `<div class="cmp fin"><div class="box"><div class="cbar"><span class="br" title="${esc(j.branch||"")}"><i>Branch</i><code>${esc(j.branch||"")}</code><button type="button" class="ib" data-act="copy-branch" data-id="${esc(j.id)}" title="Copy the branch name" aria-label="Copy the branch name">${I.copy}</button></span>${j.report?`<a class="btn sm" href="${esc(BASE)}/${esc(j.report)}" target="_blank" rel="noopener">${I.doc}Open report</a>`:""}<span class="sp"></span><button type="button" class="btn act sm" data-act="promote" data-id="${esc(j.id)}" title="Keep it after all: Review, then the merge check, then merge into ${esc(tgt(j))} (kitchen promote ${esc(j.num)})">Promote</button></div></div></div>`;
+  if(unkept(j))return `<div class="cmp fin"><div class="box"><div class="cbar"><span class="br" title="${esc(j.branch||"")}"><i>Branch</i><code>${esc(j.branch||"")}</code><button type="button" class="ib" data-act="copy-branch" data-id="${esc(j.id)}" title="Copy the branch name" aria-label="Copy the branch name">${I.copy}</button></span>${j.report?`<a class="btn sm" href="${esc(BASE)}/${esc(j.report)}" target="_blank" rel="noopener">${I.doc}Open report</a>`:""}<span class="sp"></span><button type="button" class="btn act sm" data-act="promote" data-id="${esc(j.id)}" title="Keep it after all: ${esc(promoteWay(j))} (kitchen promote ${esc(j.num)})">Promote</button></div></div></div>`;
   if(isCk(j))return j.report?`<div class="cmp fin"><div class="box"><div class="cbar"><a class="btn pri sm" href="${esc(BASE)}/${esc(j.report)}" target="_blank" rel="noopener">${I.doc}Open report</a><span class="sp"></span></div></div></div>`:"";
   return `<div class="cmp fin"><div class="box"><div class="cbar"><span class="br" title="${esc(j.branch||"")}"><i>Branch</i><code>${esc(j.branch||"")}</code><button type="button" class="ib" data-act="copy-branch" data-id="${esc(j.id)}" title="Copy the branch name" aria-label="Copy the branch name">${I.copy}</button></span>${j.report?`<a class="btn pri sm" href="${esc(BASE)}/${esc(j.report)}" target="_blank" rel="noopener">${I.doc}Open report</a>`:""}<span class="sp"></span><button type="button" class="btn sm" data-act="ask" data-id="${esc(j.id)}" title="Reopen ${esc(j.num)} for round ${j.round+1}">Ask for changes</button></div></div></div>`}
 function readyBar(j){
@@ -1661,7 +1663,7 @@ function bumpRunning(){const n=$('.nav[data-sec="g-run"]');if(!n)return;n.classL
 async function goFrom(jid){if(!IN||inKey!==RK())await loadInbox();const p=IN&&IN.proposals.find(x=>x.job===jid);if(!p){toast("It didn't come in through the Outer loop");return}
   oFilter=null;oOpen=p.id;setLoop("outer");renderOuter();paintLoopNav();const n=$("#o-"+p.id);if(!n)return;
   n.scrollIntoView({block:"center",behavior:RM?"auto":"smooth"});n.classList.remove("hl");void n.offsetWidth;n.classList.add("hl");closeSb()}
-async function promote(id){const j=J(id);if(!j)return;await simple("promote",id,`${j.num} promoted: Review, then the merge check, then merge into ${tgt(j)}`)}
+async function promote(id){const j=J(id);if(!j)return;await simple("promote",id,`${j.num} promoted: ${promoteWay(j)}`)}
 /* ADR 0028: a check's findings, in the Inbox: open the one asked for, or highlight them all. */
 async function goFound(jid,pid){if(!IN||inKey!==RK())await loadInbox();const j=J(jid),ids=pid?[pid]:(j&&j.check&&j.check.proposals)||[];
   oFilter=null;oOpen=pid||null;setLoop("outer");renderOuter();paintLoopNav();
