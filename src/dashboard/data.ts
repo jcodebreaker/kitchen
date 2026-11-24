@@ -246,7 +246,8 @@ export type JobCard = {
   lane: Lane;
   proof: "pass" | "fail" | null;
   held: string | null;
-  merged: { into: string; sha: string } | null;
+  /** Where it merged, and who: a person (here), GitHub (its PR merged there, ADR 0026 §4), or Kitchen (null). */
+  merged: { into: string; sha: string; by: "person" | "github" | null } | null;
   waits: Waits | null;
   /** ADR 0022: where it came from in the outer loop ("GitHub #17", "3 reports"), or null (New ticket). */
   from: string | null;
@@ -256,6 +257,8 @@ export type JobCard = {
 
 export type Snapshot = {
   repo: string;
+  /** ADR 0026: the default target (staging.branch); a card names its own only when it differs. */
+  target: string;
   at: string;
   usdToday: number;
   usdTotal: number;
@@ -378,7 +381,7 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
       lane: laneOf(j),
       proof: j.stage === "rejected" ? null : "criteria" in qaNow ? (qaNow.verdict === "PASS" ? "pass" : "fail") : null, // no QA verdict yet: no pill (the Toolkit's "proven" is gone)
       held: j.held ?? null,
-      merged: j.merged ? { into: j.merged.into, sha: j.merged.sha } : null,
+      merged: j.merged ? { into: j.merged.into, sha: j.merged.sha, by: j.mergedBy ?? null } : null,
       waits: waitsOf(j, dir),
       from: j.from?.label ?? null,
       checking: checkingOf(j, dir),
@@ -389,6 +392,7 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
   const priced = lines.filter((l) => typeof l.usd === "number");
   return {
     repo: path.basename(repo),
+    target: cfg?.staging.branch ?? "staging",
     at: new Date(now).toISOString(),
     usdToday: priced.filter((l) => new Date(l.t).toDateString() === today).reduce((a, l) => a + (l.usd as number), 0),
     usdTotal: priced.reduce((a, l) => a + (l.usd as number), 0),
