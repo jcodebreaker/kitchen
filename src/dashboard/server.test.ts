@@ -76,8 +76,13 @@ test("data.json: the job in its lane, the board's lanes, the agent's live line f
     ["intake", "build", "qa", "review", "merge"],
   );
   assert.equal(d.runner.running, false);
-  const det = (await (await fetch(`${base}/jobs/${findJob(root, "1").id}/detail.json`)).json()) as { tl: { evs: unknown[] }[] };
-  assert.equal(det.tl.at(-1)?.evs.length, 1);
+  const det = (await (await fetch(`${base}/jobs/${findJob(root, "1").id}/detail.json`)).json()) as { tl: { evs: { c: string; t: string }[] }[] };
+  // ADR 0022: the first line says where the job came from, then the agent's stream.
+  assert.deepEqual(
+    det.tl.at(-1)?.evs.map((e) => e.c),
+    ["sys", "tool"],
+  );
+  assert.equal(det.tl[0].evs[0].t, "Filed by you (New ticket)");
 });
 
 test("actions are the CLI's verbs: refused without the token; a steer lands on the thread; a ticket starts an orchestrator", async () => {

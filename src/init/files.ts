@@ -48,6 +48,9 @@ export const GITIGNORE = [
   ".kitchen/run*.jsonl",
   ".kitchen/orchestrator.json",
   ".kitchen/*.lock",
+  ".kitchen/inbox/",
+  ".kitchen/sources/*.state.json",
+  ".kitchen/collect.log",
   ".worktrees/",
 ];
 

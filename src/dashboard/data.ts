@@ -212,6 +212,8 @@ export type JobCard = {
   held: string | null;
   merged: { into: string; sha: string } | null;
   waits: Waits | null;
+  /** ADR 0022: where it came from in the outer loop ("GitHub #17", "3 reports"), or null (New ticket). */
+  from: string | null;
 };
 
 export type Snapshot = {
@@ -322,6 +324,7 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
       held: j.held ?? null,
       merged: j.merged ? { into: j.merged.into, sha: j.merged.sha } : null,
       waits: waitsOf(j, dir),
+      from: j.from?.label ?? null,
     });
   }
   let cfg: Config | null = null;

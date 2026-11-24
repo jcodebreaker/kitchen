@@ -32,6 +32,24 @@ Work
   kitchen pause <id> · stop <id> · resume <id> · reject <id>
   kitchen report [--json]                what the queue did
 
+The outer loop (ADR 0022): sources read by code, triaged into proposals you choose from
+  kitchen sources [list] [--json]        the sources (GitHub issues by label, a Slack channel by emoji) and the built-in
+                                         Kitchen findings, each with its last collect
+  kitchen sources add github <owner/repo> [--label kitchen] [--name n]
+  kitchen sources add slack <channel id> [--channel-name '#bugs'] [--emoji kitchen] [--name n]   (prints the app setup)
+  kitchen sources try github|slack …     read a few items now and show them; saves nothing
+  kitchen sources remove <name> · sources slack-token   (the Slack app's token, kept in your keychain)
+  kitchen collect [--detach] [--no-triage]   read every source, then one triage session proposes tickets
+  kitchen collect --install-schedule [--every 1h] | --remove-schedule   launchd (macOS) or a systemd timer (Linux)
+  kitchen inbox list [--json]            proposals and untriaged items
+  kitchen inbox run <p…>                 the chosen proposals become jobs at intake, highest priority first
+  kitchen inbox hold|bring-back|remove <p> · inbox edit <p> [--title t] [--text t]
+  kitchen inbox add "<text>" [--source s] [--link url] [--by who] [--key k]
+  kitchen inbox propose --item <i>… --title t --text t --kind bug|feature|chore --prio P1|P2|P3 --why w
+                        [--risk r] [--line l] [--step s]… [--evidence f]… [--sha s]      (triage's verbs)
+  kitchen inbox verdict <i…> duplicate|fixed|not-ours --reason r [--of id] · verdict <i…> unclear --question q…
+  kitchen inbox verdict <p> propose      a set-aside one back to Proposed ("Propose anyway")
+
 The orchestrator's verbs (the only way a job moves)
   kitchen job next [--json] [--restart-stranded]   the next wave: lanes to start, what waits and why
   kitchen job start <id> <lane> [--json] [--restart]   open a lane: worktree, brief, the agent's prompt and model
@@ -79,6 +97,12 @@ const COMMAND_HELP: Record<string, string> = {
   job: "kitchen job next|start|finish|show …\n\nThe orchestrator's verbs: the single writer of job state. See kitchen --help.",
   verify:
     "kitchen verify sweep [--url <url>]|maintain [--json] | verify finish <run>\n\nThe verify skill's feature map (ADR 0017).\n  sweep      checks out staging, starts the app and writes a brief that drives every feature in features/README.md order; prints the agent's prompt. Changes nothing.\n             --url <url>: drive that deployed environment instead of starting the app (ADR 0021); recipes that need a reset or seed are reported not run. The URL stays in the run, never in a job.\n  maintain   the same on a branch of staging, with a brief to keep the map honest: prune, merge duplicates, fix drift from each feature's Code:, drive every feature; product regressions become tickets.\n  finish     reads the agent's verdict.json (sweep) or report.json (maintain), writes report.html in .kitchen/verify/<run>/, stops the app; maintain's map fixes (verify skill files only) merge into staging.\nkitchen qa … <run> drives the run's app, like a job's.",
+  inbox:
+    "kitchen inbox list|add|propose|verdict|hold|bring-back|remove|edit|run …\n\nThe outer loop's inbox (ADR 0022): items read from your sources and Kitchen's own findings, the proposals triage made from them, and what you sent to the inner loop. Only these verbs write it; the dashboard calls the same ones. See kitchen --help.",
+  collect:
+    "kitchen collect [--detach] [--no-triage] | collect --install-schedule [--every 1h] | collect --remove-schedule\n\nReads every source by code (GitHub through gh, Slack through your workspace's Kitchen app), adds what is new to the inbox, then starts one headless Claude Code session that triages the new items together (groups, reproduces on staging, proposes or sets aside). It never builds, merges or posts. One collect at a time per repo: a busy one exits 4 without writing. A source that can't be read is reported unavailable and keeps its watermark.\n  --detach            in the background; the log is .kitchen/collect.log\n  --no-triage         read only; the items wait for the next collect\n  --install-schedule  a launchd agent (macOS) or systemd user timer (Linux) that runs it every --every (default 1h)",
+  sources:
+    "kitchen sources [list] | add github <owner/repo> [--label kitchen] | add slack <channel id> [--channel-name '#bugs'] [--emoji kitchen] | try … | remove <name> | slack-token\n\nWhere the outer loop reads reports from (.kitchen/sources/<name>.json). In Claude Code, /kitchen sources sets one up by talking: it tries a read, shows you a few items and saves the source on your yes.",
   qa: "kitchen qa up|down|reset|page|http <id> …\n\nThe QA lane's tools: the app from the job's worktree (reset: down, app.reset, up, for fresh seed data), Playwright screenshots, HTTP transcripts. See kitchen --help.",
 };
 
@@ -123,7 +147,8 @@ async function main(argv: string[]): Promise<number> {
     console.log(`usage: ${h}`);
     return 0;
   }
-  const f = parse(rest, ["repo", "to", "port", "tool", "max-usd", "name", "script", "header", "data", "url"]);
+  const { INBOX_FLAGS } = await import("./inbox/cli.ts");
+  const f = parse(rest, ["repo", "to", "port", "tool", "max-usd", "name", "script", "header", "data", "url", ...INBOX_FLAGS]);
   // Inside a job's worktree (.worktrees/<job>), the main checkout: that is where the jobs live.
   const repo = f.vals.repo?.[0] ? path.resolve(f.vals.repo[0]) : (await import("./cli/here.ts")).kitchenRepo(process.cwd());
   const v = (k: string) => f.vals[k]?.[0];
@@ -227,6 +252,12 @@ async function main(argv: string[]): Promise<number> {
       return qaVerb(repo, f, out);
     case "verify":
       return verifyVerb(repo, f, json, out);
+    case "inbox":
+      return (await import("./inbox/cli.ts")).inboxVerb(repo, f, json, out);
+    case "collect":
+      return (await import("./inbox/cli.ts")).collectVerb(repo, f, import.meta.filename, out);
+    case "sources":
+      return (await import("./inbox/cli.ts")).sourcesVerb(repo, f, json, out);
     default:
       console.error(`kitchen: unknown command ${name}\n\nkitchen --help for the list`);
       return 2;

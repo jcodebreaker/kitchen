@@ -28,6 +28,22 @@ export type RefineReason = (typeof REFINE_REASONS)[number];
 
 export type TicketRef = { source: "prompt" | "github"; id: string; url?: string };
 
+/**
+ * ADR 0022: where a job filed from the outer loop came from: its proposal, the inbox items it covers, and each one's
+ * source (the first is the job's own: `source`, `ref`, `url`). `label` is the chip the dashboard shows ("GitHub #17",
+ * "3 reports"). A job filed with `kitchen ticket` has none.
+ */
+export type JobFrom = {
+  source: string;
+  kind: string;
+  ref: string;
+  url?: string;
+  label: string;
+  proposal: string;
+  items: string[];
+  refs: { source: string; kind: string; ref: string; url?: string }[];
+};
+
 /** One lane agent's run, as `kitchen job start` opened it and `kitchen job finish` closed it. */
 export type AgentRunRef = {
   key: string;
@@ -107,6 +123,8 @@ export type Job = {
   approved?: string;
   /** ADR 0020: the later slices intake listed (`## Later slices`), each filed once as its own ticket: its text and job id. */
   slices?: { text: string; id: string }[];
+  /** ADR 0022: the outer loop's proposal it was filed from, or none (`kitchen ticket`). */
+  from?: JobFrom;
   /** Side effects done once (a PR opened): keys. */
   filed: string[];
   startedAt: string;

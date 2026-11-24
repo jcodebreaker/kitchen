@@ -8,6 +8,7 @@ import path from "node:path";
 import { afterAll, test } from "vitest";
 import { report, stageLabel } from "../cli/commands.ts";
 import { loadConfig } from "../config.ts";
+import { listItems } from "../inbox/store.ts";
 import { readLedger } from "../ledger/append.ts";
 import * as control from "./control.ts";
 import { finish, next, start } from "./jobs.ts";
@@ -90,6 +91,11 @@ test("a ticket through every lane merges into staging: main untouched, the Repor
   assert.match(done.line, /merged into staging/);
   const j = findJob(r, id);
   assert.equal(j.stage, "done");
+  // ADR 0022: the review's non-blocking note is a Kitchen finding in the outer loop's inbox.
+  assert.deepEqual(
+    listItems(r).map((i) => [i.key, i.text]),
+    [[`kitchen:${id}:review:1.F1`, "fine"]],
+  );
   assert.equal(g(r, "show", "staging:app.txt"), "one\ntwo\nthree\nfour");
   assert.equal(g(r, "show", "main:app.txt"), "one\ntwo\nthree");
   assert.equal(j.merged?.sha, g(r, "rev-parse", "staging"));

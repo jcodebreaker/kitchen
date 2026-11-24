@@ -114,6 +114,32 @@ _Avoid_: Release test, full regression
 `kitchen verify maintain`: one agent keeps the Feature map honest (prune, merge duplicates, fix drift from each `Code:`, drive every Feature) on a branch of Staging; a product regression becomes a new Ticket, never a weaker map.
 _Avoid_: Healing, test maintenance
 
+### The outer loop (ADR 0022)
+
+**Inner loop**:
+The queue Kitchen works: intake, build, QA, review, merge check, Staging. Your own Tickets (`kitchen ticket`, New ticket) go straight in.
+_Avoid_: Pipeline, factory floor
+
+**Outer loop**:
+What might be built: Items from Sources, triaged into Proposals a person chooses from. Nothing reaches the Inner loop without their click.
+_Avoid_: Backlog, intake
+
+**Source**:
+Where Kitchen's code reads reports from (`.kitchen/sources/<name>.json`): GitHub issues with a label, a Slack channel's threads marked with an emoji, and the built-in Kitchen findings. Each keeps a watermark; one that can't be read is unavailable, never empty.
+_Avoid_: Integration, connector, feed
+
+**Item**:
+One report as a Source gave it, keyed `source:native_id`, in the inbox (`.kitchen/inbox/<id>/`). The same report edited is a new sighting.
+_Avoid_: Issue, message, ticket
+
+**Collect**:
+`kitchen collect`: read every Source, add what is new, then one triage session reads the new Items together and writes a verdict for each.
+_Avoid_: Sync, import, fetch
+
+**Proposal**:
+Triage's verdict on one or more Items with the same cause: proposed (a Ticket with a priority, P1–P3, and how it was reproduced), unclear, or set aside (duplicate, fixed, not ours). Run makes a proposed one a Job, which keeps where it came from.
+_Avoid_: Suggestion, candidate, draft ticket
+
 ### Learning
 
 **Ledger**:

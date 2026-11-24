@@ -16,10 +16,10 @@ import { withFileLock } from "../lock.ts";
 import { PromptSource } from "../sources/prompt.ts";
 import { recordAnswers } from "./clarify.ts";
 import { readIntake } from "./lanes.ts";
-import { BY_YOU, BY_YOU_STOPPED, isActive, type Job, MoveRefused, move, pausedByYou, STAGES, type Stage } from "./machine.ts";
+import { BY_YOU, BY_YOU_STOPPED, isActive, type Job, type JobFrom, MoveRefused, move, pausedByYou, STAGES, type Stage } from "./machine.ts";
 import { addMessage, checkText, type Message, type MessageKind } from "./messages.ts";
 import { numOf } from "./refine.ts";
-import { createJob, findJob, jobDirOf, updateJob, writeAtomic } from "./store.ts";
+import { createJob, findJob, jobDirOf, shortTitle, updateJob, writeAtomic } from "./store.ts";
 
 export type Out = (line: string) => void;
 
@@ -64,11 +64,15 @@ export async function ticket(repo: string, text: string, out: Out): Promise<numb
   return 0;
 }
 
-/** A new job from a person's ticket text: what `kitchen ticket` does, and Kitchen for an intake's later slices. */
-export async function fileTicket(repo: string, text: string): Promise<Job> {
+/**
+ * A new job from a person's ticket text: what `kitchen ticket` does, Kitchen for an intake's later slices, and
+ * `kitchen inbox run` for a proposal the person chose (ADR 0022: its title and where it came from).
+ */
+export async function fileTicket(repo: string, text: string, o: { title?: string; from?: JobFrom } = {}): Promise<Job> {
   const cfg = loadConfig(repo);
   const t = PromptSource.ticket(text);
-  const job = await createJob(repo, { title: t.title, ticket: t.ref, body: t.body, roundLimit: cfg.round_limit });
+  const title = (o.title && shortTitle(o.title)) || t.title;
+  const job = await createJob(repo, { title, ticket: t.ref, body: t.body, roundLimit: cfg.round_limit, from: o.from });
   appendLedger(repo, { job: job.id, stage: "intake", round: 1, event: "ticket", key: `${job.id}/ticket` });
   return job;
 }

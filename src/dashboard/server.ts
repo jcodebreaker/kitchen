@@ -8,7 +8,10 @@
 //                                  id (not the token): a tab from an earlier launch sees it changed and reloads once
 //   GET  /jobs/<id>/detail.json    one job: stage history with its agents' activity, thread, criteria
 //   GET  /jobs/<id>/report.html    a job's rendered Report
-//   POST /api/<action>             steer, answer, approve, follow-up, pause, stop, resume, reject, ticket, start-runner
+//   GET  /inbox.json               the outer loop (ADR 0022): sources, the collect running now, items, proposals
+//   GET  /inbox/<item>/evidence/<f> a screenshot or transcript triage kept
+//   POST /api/<action>             steer, answer, approve, follow-up, pause, stop, resume, reject, ticket, start-runner,
+//                                  collect, inbox-run, inbox-hold, inbox-unhold, inbox-remove, inbox-edit, inbox-verdict
 //                                  (actions.ts; one that gives the queue work starts an orchestrator when none runs)
 //
 // The page can change state (ADR 0009), so a POST must come from the page this server served:
@@ -23,6 +26,7 @@ import { JOB_ID, jobDirOf, scanJobs } from "../engine/store.ts";
 import { act, BadRequest } from "./actions.ts";
 import { snapshot } from "./data.ts";
 import { detail } from "./detail.ts";
+import { evidenceFile, inboxSnapshot } from "./inbox.ts";
 import { addRepo, type RepoEntry, type RepoList, readRepos, shownPath } from "./repos.ts";
 
 export const DASHBOARD_HTML = path.resolve(import.meta.dirname, "..", "..", "dashboard", "dashboard.html");
@@ -40,7 +44,7 @@ const HEADERS = {
 };
 /** The page's own: its inline script and styles, its own data, data: images, the system's fonts; nothing from elsewhere; never framed. */
 export const PAGE_CSP =
-  "default-src 'none'; connect-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+  "default-src 'none'; connect-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 /** A Report: no script at all. */
 export const REPORT_CSP = "default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
@@ -134,6 +138,19 @@ export function dashboardServer(one: string | null, o: { token?: string; list?: 
       }
       if (!get) return send(405, "text/plain", "GET, HEAD or POST\n", { allow: "GET, HEAD, POST" });
       if (route === "/data.json") return json(200, { ...(await snapshot(repo)), launch });
+      if (route === "/inbox.json") return json(200, inboxSnapshot(repo));
+      if (route.startsWith("/inbox/")) {
+        let rel: string;
+        try {
+          rel = decodeURIComponent(route.slice("/inbox/".length));
+        } catch {
+          return send(400, "text/plain", "bad path\n");
+        }
+        const f = evidenceFile(repo, rel);
+        if (!f) return send(404, "text/plain", "no such evidence\n");
+        const type = /\.png$/i.test(f) ? "image/png" : /\.jpe?g$/i.test(f) ? "image/jpeg" : "text/plain; charset=utf-8";
+        return send(200, type, fs.readFileSync(f), { "content-security-policy": REPORT_CSP });
+      }
       const m = /^\/jobs\/([^/]+)\/(report\.html|detail\.json)$/.exec(route);
       if (m) {
         let id: string;

@@ -10,6 +10,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { prepareOf, runChecks } from "../checks/run-checks.ts";
 import { type Config, checksFor, type LaneRole, loadConfig, modelFor } from "../config.ts";
+import { commentOnMerge } from "../inbox/comment.ts";
+import { addFindings, qaFindings, reviewFindings } from "../inbox/findings.ts";
 import { appendLedger } from "../ledger/append.ts";
 import { skillsForLane } from "../skills/forjob.ts";
 import { PromptSource } from "../sources/prompt.ts";
@@ -600,6 +602,8 @@ export async function finish(repo: string, id: string): Promise<Finished | { ref
     await (await import("../qa/app.ts")).appDown(repo, job.id).catch(() => {});
     const qa = readQa(dir, job.round, criteriaOf(dir));
     if ("refused" in qa) return refuseLane(repo, job, `QA: ${qa.refused}`);
+    // ADR 0022: what QA saw beyond the criteria goes to the outer loop's inbox (Kitchen findings).
+    await addFindings(repo, qaFindings(job.id, job.round, qaDir(dir, job.round)));
     if (qa.verdict === "PASS") {
       const ad = await admitMap(repo, wt, qaDir(dir, job.round), {
         base: job.base,
@@ -638,6 +642,8 @@ export async function finish(repo: string, id: string): Promise<Finished | { ref
       });
     return moveOn(repo, job, "build", `${job.id}  review BLOCKING ${ids.join(", ")} → build (round ${job.round + 1})`);
   }
+  // ADR 0022: the notes that didn't block go to the outer loop's inbox (Kitchen findings).
+  await addFindings(repo, reviewFindings(job.id, job.round, rv.findings));
   // ADR 0018: a catch-up's review reads only what changed since this head.
   await updateJob(repo, job.id, (j) => ({ ...j, reviewed: { head: head as string, round: j.round } }));
   return mergeOrHold(repo, cfg, job, head as string);
@@ -699,14 +705,17 @@ async function mergeOrHold(repo: string, cfg: Config, job: Job, head: string): P
   return mergeFailed(repo, job, m, head);
 }
 
-function merged(repo: string, cfg: Config, job: Job, m: Extract<MergeOutcome, { ok: true }>, extra = "review PASS → "): Promise<Finished> {
-  return moveOn(repo, job, "done", `${job.id}  ${extra}merged into ${cfg.staging.branch} (${m.sha.slice(0, 7)}${m.pr ? `, PR #${m.pr}` : ""})`, {
+async function merged(repo: string, cfg: Config, job: Job, m: Extract<MergeOutcome, { ok: true }>, extra = "review PASS → "): Promise<Finished> {
+  const f = await moveOn(repo, job, "done", `${job.id}  ${extra}merged into ${cfg.staging.branch} (${m.sha.slice(0, 7)}${m.pr ? `, PR #${m.pr}` : ""})`, {
     patch: (j) => {
       j.merged = { into: cfg.staging.branch, sha: m.sha, at: new Date().toISOString(), via: m.via };
       if (m.pr) j.pr = m.pr;
       delete j.drive;
     },
   });
+  // ADR 0022 §5: a job from a GitHub issue says on the issue that it merged (best effort; never closes it).
+  const said = await commentOnMerge(repo, findJob(repo, job.id)).catch(() => []);
+  return said.length ? { ...f, line: `${f.line}; ${said.join("; ")}` } : f;
 }
 
 /** The round's checks were green on the job branch alone (Build's `job finish` ran them). */
