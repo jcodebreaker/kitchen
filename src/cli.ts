@@ -20,7 +20,7 @@ Work
   kitchen ticket "<what you want>"       a ticket; intake writes its criteria
   kitchen run [--detach] [--max-usd n]   a headless orchestrator session works the queue (or /kitchen run in Claude Code)
   kitchen run --stop | --print           end it | print the exact command it runs
-  kitchen status [--json]                one row per job
+  kitchen status [--json] [--all]        one row per job (--all: the removed ones too)
   kitchen dashboard                      every repo's jobs in one browser page, on 127.0.0.1:7357: lanes, live activity,
                                          steering; run it in another repo to add that one (--forget removes it)
   kitchen dashboard --private [--port n] this repo alone, on its own server, not added to the list
@@ -30,7 +30,30 @@ Work
   kitchen approve <id>                   a job held for your approval after intake (intake.confirm) → build
   kitchen steer <id> "<text>"            a message the job's next agent reads
   kitchen pause <id> · stop <id> · resume <id> · reject <id>
+  kitchen remove <id> · restore <id>     off the dashboard, any stage (a working lane is stopped, an unfinished job
+                                         rejected, its worktree removed; a merged one only hidden) · back in view
   kitchen report [--json]                what the queue did
+  kitchen models [--json] [--tool claude|codex]   each lane's model and the choices the tool has (ADR 0023)
+  kitchen models set <lane> <model|tier> [--tool t]   intake, build, qa or review; written to kitchen.yaml
+  kitchen models check                   one tiny request per chosen model, through the tool (costs a fraction of a cent)
+
+The outer loop (ADR 0022): sources read by code, triaged into proposals you choose from
+  kitchen sources [list] [--json]        the sources (GitHub issues by label, a Slack channel by emoji) and the built-in
+                                         Kitchen findings, each with its last collect
+  kitchen sources add github <owner/repo> [--label kitchen] [--name n]
+  kitchen sources add slack <channel id> [--channel-name '#bugs'] [--emoji kitchen] [--name n]   (prints the app setup)
+  kitchen sources try github|slack …     read a few items now and show them; saves nothing
+  kitchen sources remove <name> · sources slack-token   (the Slack app's token, kept in your keychain)
+  kitchen collect [--detach] [--no-triage]   read every source, then one triage session proposes tickets
+  kitchen collect --install-schedule [--every 1h] | --remove-schedule   launchd (macOS) or a systemd timer (Linux)
+  kitchen inbox list [--json]            proposals and untriaged items
+  kitchen inbox run <p…>                 the chosen proposals become jobs at intake, highest priority first
+  kitchen inbox hold|bring-back|remove <p> · inbox edit <p> [--title t] [--text t]
+  kitchen inbox add "<text>" [--source s] [--link url] [--by who] [--key k]
+  kitchen inbox propose --item <i>… --title t --text t --kind bug|feature|chore --prio P1|P2|P3 --why w
+                        [--risk r] [--line l] [--step s]… [--evidence f]… [--sha s]      (triage's verbs)
+  kitchen inbox verdict <i…> duplicate|fixed|not-ours --reason r [--of id] · verdict <i…> unclear --question q…
+  kitchen inbox verdict <p> propose      a set-aside one back to Proposed ("Propose anyway")
 
 The orchestrator's verbs (the only way a job moves)
   kitchen job next [--json] [--restart-stranded]   the next wave: lanes to start, what waits and why
@@ -67,6 +90,9 @@ const COMMAND_HELP: Record<string, string> = {
   feedback:
     'kitchen feedback <id> ["<text>"] [--to <stage>]\n\nAnswers a job that needs you, or sends a ready or done job back to Build with your text.\n  --to <stage>   for a needs-human job: intake, build, qa or review',
   reject: "kitchen reject <id>\n\nCloses a job without merging it.",
+  remove:
+    "kitchen remove <id>\n\nTakes a job off the dashboard, kitchen status and the queue, whatever its stage. A lane working on it is stopped (its agent is refused from its next tool call, its result dropped); a job not merged is rejected and its worktree removed (the branch and the job folder stay); a merged job is only hidden, staging untouched. kitchen status --all lists it; kitchen restore <id> shows it again.",
+  restore: "kitchen restore <id>\n\nA removed job back in view, as it was left (rejected or merged).",
   refine:
     "kitchen refine <id>\n\nFor a job intake sent to be refined with you (needs-info, refine): writes .kitchen/jobs/<id>/refine/brief.md (the ticket, intake's reason and readings, your earlier answers, the verify map's features, the repo's glossary and ADRs) and prints its path. A Claude Code or Codex session follows it with you (/kitchen refine <id>): one question at a time, then kitchen feedback <id> \"<the refined ticket>\" sends it back to intake.",
   approve:
@@ -79,6 +105,14 @@ const COMMAND_HELP: Record<string, string> = {
   job: "kitchen job next|start|finish|show …\n\nThe orchestrator's verbs: the single writer of job state. See kitchen --help.",
   verify:
     "kitchen verify sweep [--url <url>]|maintain [--json] | verify finish <run>\n\nThe verify skill's feature map (ADR 0017).\n  sweep      checks out staging, starts the app and writes a brief that drives every feature in features/README.md order; prints the agent's prompt. Changes nothing.\n             --url <url>: drive that deployed environment instead of starting the app (ADR 0021); recipes that need a reset or seed are reported not run. The URL stays in the run, never in a job.\n  maintain   the same on a branch of staging, with a brief to keep the map honest: prune, merge duplicates, fix drift from each feature's Code:, drive every feature; product regressions become tickets.\n  finish     reads the agent's verdict.json (sweep) or report.json (maintain), writes report.html in .kitchen/verify/<run>/, stops the app; maintain's map fixes (verify skill files only) merge into staging.\nkitchen qa … <run> drives the run's app, like a job's.",
+  models:
+    "kitchen models [--json] [--tool claude|codex] | models set <lane> <model|tier> [--tool t] | models check\n\nEach lane's model for the tool (ADR 0023) and what you can choose: Claude Code's aliases (fable, opus, sonnet, haiku) and, with ANTHROPIC_API_KEY set, every model Anthropic's models API lists; Codex's providers from ~/.codex/config.toml and their GET /models. set writes models.<tool>.<lane> in kitchen.yaml; it applies from the next lane a job starts. check sends one tiny request per chosen model through the tool itself and says which answer: the only Kitchen command that spends money outside a run.",
+  inbox:
+    "kitchen inbox list|add|propose|verdict|hold|bring-back|remove|edit|run …\n\nThe outer loop's inbox (ADR 0022): items read from your sources and Kitchen's own findings, the proposals triage made from them, and what you sent to the inner loop. Only these verbs write it; the dashboard calls the same ones. See kitchen --help.",
+  collect:
+    "kitchen collect [--detach] [--no-triage] | collect --install-schedule [--every 1h] | collect --remove-schedule\n\nReads every source by code (GitHub through gh, Slack through your workspace's Kitchen app), adds what is new to the inbox, then starts one headless Claude Code session that triages the new items together (groups, reproduces on staging, proposes or sets aside). It never builds, merges or posts. One collect at a time per repo: a busy one exits 4 without writing. A source that can't be read is reported unavailable and keeps its watermark.\n  --detach            in the background; the log is .kitchen/collect.log\n  --no-triage         read only; the items wait for the next collect\n  --install-schedule  a launchd agent (macOS) or systemd user timer (Linux) that runs it every --every (default 1h)",
+  sources:
+    "kitchen sources [list] | add github <owner/repo> [--label kitchen] | add slack <channel id> [--channel-name '#bugs'] [--emoji kitchen] | try … | remove <name> | slack-token\n\nWhere the outer loop reads reports from (.kitchen/sources/<name>.json). In Claude Code, /kitchen sources sets one up by talking: it tries a read, shows you a few items and saves the source on your yes.",
   qa: "kitchen qa up|down|reset|page|http <id> …\n\nThe QA lane's tools: the app from the job's worktree (reset: down, app.reset, up, for fresh seed data), Playwright screenshots, HTTP transcripts. See kitchen --help.",
 };
 
@@ -123,7 +157,8 @@ async function main(argv: string[]): Promise<number> {
     console.log(`usage: ${h}`);
     return 0;
   }
-  const f = parse(rest, ["repo", "to", "port", "tool", "max-usd", "name", "script", "header", "data", "url"]);
+  const { INBOX_FLAGS } = await import("./inbox/cli.ts");
+  const f = parse(rest, ["repo", "to", "port", "tool", "max-usd", "name", "script", "header", "data", "url", ...INBOX_FLAGS]);
   // Inside a job's worktree (.worktrees/<job>), the main checkout: that is where the jobs live.
   const repo = f.vals.repo?.[0] ? path.resolve(f.vals.repo[0]) : (await import("./cli/here.ts")).kitchenRepo(process.cwd());
   const v = (k: string) => f.vals[k]?.[0];
@@ -202,7 +237,7 @@ async function main(argv: string[]): Promise<number> {
       );
     }
     case "status":
-      return cmd.status(repo, out, { json });
+      return cmd.status(repo, out, { json, all: f.flags.has("--all") });
     case "report":
       return cmd.report(repo, out, { json });
     case "resume":
@@ -211,6 +246,10 @@ async function main(argv: string[]): Promise<number> {
       return control.feedback(repo, need(0, "<id>"), f.pos.slice(1).join(" "), out, { to: v("to") });
     case "reject":
       return control.reject(repo, need(0, "<id>"), out);
+    case "remove":
+      return control.remove(repo, need(0, "<id>"), out);
+    case "restore":
+      return control.restore(repo, need(0, "<id>"), out);
     case "approve":
       return control.approve(repo, need(0, "<id>"), out);
     case "refine":
@@ -227,6 +266,14 @@ async function main(argv: string[]): Promise<number> {
       return qaVerb(repo, f, out);
     case "verify":
       return verifyVerb(repo, f, json, out);
+    case "models":
+      return modelsVerb(repo, f, json, out);
+    case "inbox":
+      return (await import("./inbox/cli.ts")).inboxVerb(repo, f, json, out);
+    case "collect":
+      return (await import("./inbox/cli.ts")).collectVerb(repo, f, import.meta.filename, out);
+    case "sources":
+      return (await import("./inbox/cli.ts")).sourcesVerb(repo, f, json, out);
     default:
       console.error(`kitchen: unknown command ${name}\n\nkitchen --help for the list`);
       return 2;
@@ -271,6 +318,36 @@ async function jobVerb(repo: string, f: Flags, json: boolean, out: (l: string) =
     return 0;
   }
   throw new Error(`kitchen job: next, start, finish or show (got ${verb ?? "nothing"})`);
+}
+
+async function modelsVerb(repo: string, f: Flags, json: boolean, out: (l: string) => void): Promise<number> {
+  const m = await import("./models/models.ts");
+  const [verb, lane, value] = f.pos;
+  const tool = f.vals.tool?.[0];
+  if (tool && tool !== "claude" && tool !== "codex") throw new Error("--tool is claude or codex");
+  if (verb === "set") {
+    const role = lane ? m.roleOf(lane) : null;
+    if (!role || !value) throw new Error("kitchen models set <intake|build|qa|review> <model or tier>");
+    const r = m.setModel(repo, role, value, tool as "claude" | "codex" | undefined);
+    out(`${m.TOOL_NAMES[r.tool]} · ${m.LANE_NAMES[r.role]} runs on ${r.model} from the next lane a job starts (kitchen.yaml models.${r.tool}.${r.role})`);
+    return 0;
+  }
+  if (verb === "check") {
+    const rs = await m.checkModels(repo);
+    if (json) out(JSON.stringify(rs, null, 2));
+    else for (const r of rs) out(`${r.ok ? "ok  " : "FAIL"}  ${r.model} (${r.lanes.join(", ")})${r.ok ? "" : `: ${r.why}`}`);
+    return rs.every((r) => r.ok) ? 0 : 1;
+  }
+  if (verb !== undefined) throw new Error(`kitchen models: set or check, or nothing to list (got ${verb})`);
+  const l = await m.listModels(repo, { tool: tool as "claude" | "codex" | undefined });
+  if (json) {
+    out(JSON.stringify(l, null, 2));
+    return 0;
+  }
+  out(`${m.TOOL_NAMES[l.tool]}: ${l.lanes.map((x) => `${x.lane} ${x.model}${x.want !== x.model ? ` (${x.want})` : ""}`).join(" · ")}`);
+  out(`choices: ${l.choices.map((c) => c.id).join(", ")}; tiers: ${l.tiers.join(", ")}`);
+  for (const n of l.notes) out(`note: ${n}`);
+  return 0;
 }
 
 async function verifyVerb(repo: string, f: Flags, json: boolean, out: (l: string) => void): Promise<number> {

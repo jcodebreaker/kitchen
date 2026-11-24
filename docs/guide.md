@@ -127,6 +127,14 @@ Every job that merged, stopped at Ready or needs you has `.kitchen/jobs/<id>/rep
 
 Merge `staging` into your base when you are happy with it. Kitchen never does.
 
+## 6. The outer loop: reports in, you choose what runs
+
+`kitchen ticket` and New ticket go straight to the queue (the inner loop). The outer loop is for what *might* be built: reports Kitchen collects, triages and proposes, and you choose from (ADR 0022).
+
+- **Sources**, read by Kitchen's code (no tokens spent): GitHub issues with a label (`kitchen sources add github <owner/repo> --label kitchen`, through your `gh` login) and Slack threads marked with an emoji (`kitchen sources add slack <channel id> --channel-name '#bugs' --emoji kitchen`; it prints how to create your workspace's own Kitchen app from `slack-app-manifest.json` and store its token in your keychain with `kitchen sources slack-token`). In Claude Code, `/kitchen sources` does it by talking, with a test read first (`kitchen sources try …`). Kitchen's own findings (QA notes outside a job's criteria, a passing review's notes, failed sweep or upkeep recipes) come in by themselves.
+- **Collect** (`kitchen collect`, the dashboard's Collect, or `kitchen collect --install-schedule [--every 1h]`: launchd on macOS, a systemd timer on Linux) reads every source, adds what is new (each item keyed `source:id`; an edited report is a new sighting, never a duplicate), then starts one headless triage session that reads the new items together, groups them by cause, reproduces candidates on `staging` with the verify map and `kitchen qa`, and gives each a verdict through `kitchen inbox propose|verdict`: proposed (with priority P1–P3 and its reason), duplicate, fixed, not ours or unclear. It never builds, merges, closes an issue or posts. One collect at a time; a source that can't be read is "unavailable" and keeps its watermark.
+- **You choose**: the dashboard's Outer loop (Inbox, Held, each source) or `kitchen inbox list` / `run <p…>` / `hold` / `bring-back` / `remove` / `edit`. Run files the proposals as jobs at intake, highest priority first; each keeps where it came from ("from GitHub #17"). When a job from a GitHub issue merges into staging, Kitchen comments the merge on the issue, and nothing else.
+
 ## Commands
 
 ```
@@ -136,15 +144,18 @@ kitchen run [--detach] [--max-usd n] | run --stop | run --print
 kitchen status [--json] · kitchen report [--json] · kitchen dashboard [--forget] [--private] [--port n] · kitchen skills
 kitchen feedback <id> ["<text>"] [--to intake|build|qa|review|regress]
 kitchen refine <id> · approve <id>
-kitchen steer <id> "<text>" · pause <id> · stop <id> · resume <id> · reject <id>
+kitchen steer <id> "<text>" · pause <id> · stop <id> · resume <id> · reject <id> · remove <id> · restore <id>
 kitchen job next|start|finish|show …     the orchestrator's verbs
 kitchen qa up|down|reset|page|http <id> …   the QA lane's tools (<id>: a job, or a verify run)
 kitchen verify sweep|maintain [--json] · verify finish <run>   the verify map's runs
+kitchen sources [list|add|try|remove|slack-token] · collect [--detach] [--install-schedule|--remove-schedule]
+kitchen inbox list|run|hold|bring-back|remove|edit|add|propose|verdict …   the outer loop (ADR 0022)
 ```
 
 - Run them in the repo, or inside a job's worktree (`.worktrees/<id>`, where lane agents work): there they act on the main checkout's jobs, so QA's `kitchen qa up <id>` works from its worktree. A git worktree of your own elsewhere is its own repo.
 - `steer`: a message for the job's next agent; it is quoted into that lane's brief as operator notes and marked read by it.
 - `pause`: the job parks when its current lane finishes. `stop`: it parks now, and the working agent's result is dropped (its `finish` is refused). `resume`: back where it paused.
+- `remove`: off the dashboard, `kitchen status` and the queue, whatever the stage. A lane working on it is stopped (Kitchen's guard hook refuses its agent's next tool call; its `finish` is refused), a job not merged is rejected and its worktree removed (the branch and the job folder stay), a merged job is only hidden (staging is never touched). `kitchen status --all` lists removed jobs; `kitchen restore` shows one again, as it was left. The dashboard's Remove (a row's hover icon, the panel's header) waits five seconds for its Undo before it is sent.
 - `feedback`: answers `needs-info` (back to intake, with your answer in the clarifications) or `needs-human` (back to the stage it stopped in, or `--to`); on a ready or merged job it starts a follow-up round.
 - `refine`: for a job intake sent to be refined with you: writes `.kitchen/jobs/<id>/refine/brief.md` and prints its path, for a Claude Code or Codex session to follow with you (`/kitchen refine <id>`). `approve`: a job `intake.confirm` holds after intake goes to Build on its criteria.
 

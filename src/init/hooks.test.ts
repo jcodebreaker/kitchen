@@ -96,6 +96,11 @@ test("guard-worktree: worktrees only under .worktrees/; a bound lane agent write
   assert.equal(fs.readFileSync(path.join(repo, ".kitchen", "agents", "agent-1"), "utf8"), id);
   assert.match(String(hook("guard-worktree.py", write(path.join(repo, "server.js"), "agent-1"), env)), /outside job 001-add-x's places/);
   assert.equal(hook("guard-worktree.py", write(path.join(job, "intake.md"), "agent-1"), env), null);
+  // kitchen remove: the job is archived, so the bound agent is refused every call (it stops); the session isn't.
+  fs.writeFileSync(path.join(job, "job.json"), JSON.stringify({ id, running: null, worktree: wt, archived: { at: "t", by: "person" } }));
+  assert.match(String(hook("guard-worktree.py", write(path.join(wt, "server.js"), "agent-1"), env)), /the person removed job 001-add-x\. Stop now/);
+  assert.match(String(hook("guard-worktree.py", { ...bash("npm test", wt), agent_id: "agent-1" }, env)), /Stop now/);
+  assert.equal(hook("guard-worktree.py", write(path.join(repo, "notes.md")), env), null);
 });
 
 test("the activity hook: a bound agent's calls land in its lane's stream, as stream-json tool_use / tool_result", () => {

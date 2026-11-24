@@ -26,7 +26,8 @@ export type Seg = {
 };
 export type MsgEv =
   | { c: "you"; t: string; at: string; kind: Message["kind"]; status: string; sent: boolean }
-  | { c: "ask"; t: string; at: string; who: string };
+  | { c: "ask"; t: string; at: string; who: string }
+  | { c: "sys"; t: string; at: string };
 export type Detail = { id: string; tl: Seg[]; crit: { id: string; text: string; st: "ok" | "bad" | "wait"; e: string }[]; ticket: string };
 
 /** ticket.md's body: everything after the `# <title>` line, at most 4,000 characters. */
@@ -121,5 +122,7 @@ export async function detail(repo: string, ref: string): Promise<Detail> {
     const i = seg.evs.findIndex((e) => !!e.at && e.at > m.at);
     seg.evs.splice(i < 0 ? seg.evs.length : i, 0, { c: "you", t: m.text, at: m.at, kind: m.kind, status: msgStatus(m), sent: m.status === "sent" });
   }
+  // ADR 0022: the first line says where the job came from.
+  tl[0]?.evs.unshift({ c: "sys", t: j.from ? `Filed from the Outer loop · ${j.from.label}` : "Filed by you (New ticket)", at: j.startedAt });
   return { id: j.id, tl, crit: critOf(dir, j.round), ticket: ticketText(dir) };
 }

@@ -35,11 +35,16 @@ Run every command below from the repo root. (This plugin's skill is `/kitchen:ki
 | continue a paused or stopped job | `kitchen resume <id>` |
 | answer a job's question, "try again with …", follow up on a ready or merged job | `kitchen feedback <id> "<their answer>"` |
 | drop a job | `kitchen reject <id>` |
+| "remove 005", "get rid of it", "I don't want it on the dashboard" (any stage, even while it builds) | `kitchen remove <id>`: stops a working lane, rejects an unfinished job, removes its worktree; a merged one is only hidden. `kitchen restore <id>` brings it back in view |
 | "show me the jobs", "open the dashboard" | `kitchen dashboard` as a background command, then give the user the address it prints (http://127.0.0.1:7357/#<repo>; when a dashboard already runs it adds this repo, prints `already open: …` and exits) |
 | run the queue headless, in the background | `kitchen run --detach` (a separate Claude Code session runs this skill) |
 | how is Kitchen doing | `kitchen report` |
 | "sweep", check every feature before a release, "is staging good to ship" | a verify run: see The verify map, below (`kitchen verify sweep`) |
 | "maintain the map", tidy or audit the verify skill, the map looks stale | a verify run: `kitchen verify maintain` |
+| "watch GitHub issues labelled bug", "the #bugs Slack channel", `/kitchen sources`, add or change a source | The outer loop: sources, below |
+| "use Opus for review", "build on sonnet", which models does it run on | `kitchen models set <intake\|build\|qa\|review> <model>` (a name from `kitchen models`, or a tier: strong, medium, cheap); `kitchen models` to show them. `kitchen models check` costs a little: run it only when the user asks whether the models answer |
+| collect, "what came in", "check the inbox" | `kitchen collect` as a background command (it reads every source, then one triage session proposes tickets), then `kitchen inbox list` |
+| "run p1 and p3", "send the slow-list one" | `kitchen inbox run <proposal ids>` (only proposals the user named) |
 
 ## Tickets
 
@@ -140,9 +145,36 @@ status` shows the job as `needs-info(refine: <reason>)`. Lane agents never ask; 
    refined ticket; Kitchen files the later ones as their own tickets. Don't `kitchen ticket` them yourself.
 5. Offer to run the queue.
 
+An unclear proposal in the outer loop (`/kitchen refine p4`, a `p` id): the same conversation, from the proposal
+(`kitchen inbox list --json`: its title, text, questions and the reports it covers). After the user's yes:
+`kitchen inbox edit <p> --title "…" --text "<the refined ticket>"`, then `kitchen inbox verdict <p> propose`. It
+then waits in Proposed for the user to run it.
+
 A job shown `needs-info(confirm: …)` waits for the user to approve intake's criteria (`intake.confirm` in
 `kitchen.yaml`): show the user its `criteria` and `leftOut` from `kitchen job show <id> --json`, then on their
 word `kitchen approve <id>`, or `kitchen feedback <id> "<what to change>"`.
+
+## The outer loop: sources
+
+Reports come in from sources Kitchen reads by code (ADR 0022): GitHub issues with a label (through `gh`), and Slack
+threads marked with an emoji (through the workspace's own Kitchen app). `kitchen collect` reads them into the inbox,
+then one triage session groups, reproduces on staging and proposes tickets; the user chooses what runs (the
+dashboard's Outer loop, or `kitchen inbox run`). Kitchen's own findings come in by themselves.
+
+When the user wants a source (`/kitchen sources`, "watch issues labelled bug", "the #bugs channel"):
+1. Work out which: GitHub (`owner/repo` and the label; `gh repo view --json nameWithOwner` for this repo) or Slack
+   (the channel's ID, `C…`: in Slack, the channel name → About → Channel ID; and the emoji, default `kitchen`).
+   Other tools (Linear, Sentry, email) aren't sources yet: say so.
+2. Test-read before saving: `kitchen sources try github <owner/repo> --label <label>` or `kitchen sources try slack
+   <channel id> --channel-name '#bugs' --emoji <emoji>`. Show the user the items it printed. For Slack, a first try
+   fails until the app exists: relay the setup steps it prints, one at a time, and wait for the user (they create
+   the app from the manifest, install it, then run `kitchen sources slack-token` themselves to store the token;
+   never ask them to paste the token into the chat).
+3. On the user's yes, the same flags with `add` in place of `try` (`--name <name>` when they gave one). Relay its line.
+4. Offer `kitchen collect --install-schedule` (hourly; `--every 30m`) so it collects on its own.
+
+`/kitchen sources edit <name>`: show `.kitchen/sources/<name>.json` and change it with `kitchen sources add … --name
+<name> --replace` after a new try. `kitchen sources remove <name>` drops one (its items stay).
 
 ## Talking to a job
 

@@ -4,7 +4,7 @@
 // written by the activity hook). Read-only.
 import fs from "node:fs";
 import path from "node:path";
-import { type Config, loadConfig, modelFor } from "../config.ts";
+import { type Config, LANE_ROLES, loadConfig, modelFor } from "../config.ts";
 import { diffSize } from "../engine/git.ts";
 import { heartbeatFile } from "../engine/jobs.ts";
 import { criteriaOf, leftOutOf, readIntake, readQa, readReview } from "../engine/lanes.ts";
@@ -81,6 +81,7 @@ export function laneOf(j: Pick<Job, "stage" | "pausedFrom" | "escalatedFrom" | "
   const s = workStage(j);
   return s === "build" || s === "qa" || s === "review" ? s : s === "regress" ? "review" : "intake";
 }
+const LANE_SHORT = { intake: "intake", builder: "build", qa: "QA", reviewer: "review" } as const;
 /** Who works in each lane, as its header says. */
 export function laneWho(cfg: Config | null): Record<Lane, string> {
   const m = (role: "intake" | "builder" | "qa" | "reviewer", fallback: string) => (cfg ? modelFor(cfg, role) : fallback);
@@ -212,6 +213,8 @@ export type JobCard = {
   held: string | null;
   merged: { into: string; sha: string } | null;
   waits: Waits | null;
+  /** ADR 0022: where it came from in the outer loop ("GitHub #17", "3 reports"), or null (New ticket). */
+  from: string | null;
 };
 
 export type Snapshot = {
@@ -220,10 +223,14 @@ export type Snapshot = {
   usdToday: number;
   usdTotal: number;
   tool: string | null;
+  /** ADR 0023: each lane's model for the active tool (the orchestrator line says it; a click changes it). */
+  models: { role: string; lane: string; model: string }[];
   runner: { running: boolean; text: string };
   phases: { k: Phase; nm: string }[];
   lanes: { k: Lane; nm: string; who: string }[];
   jobs: JobCard[];
+  /** Jobs the person removed in the last day (kitchen remove): hidden, named so the outer loop can say "Removed". */
+  removed: { id: string; at: string }[];
   corrupt: string[];
 };
 
@@ -257,12 +264,17 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
   const orch = orchestrator(repo, now);
   const jobs: JobCard[] = [];
   const corrupt: string[] = [];
+  const removed: { id: string; at: string }[] = [];
   for (const e of scanJobs(repo)) {
     if (!e.job || !JOB_ID.test(e.job.id)) {
       corrupt.push(e.id);
       continue;
     }
     const j = e.job;
+    if (j.archived) {
+      if (now - Date.parse(j.archived.at) < 86_400_000) removed.push({ id: j.id, at: j.archived.at });
+      continue;
+    }
     const dir = jobDirOf(repo, j.id);
     const crit = critOf(dir, j.round);
     const qaNow = readQa(dir, j.round, criteriaOf(dir));
@@ -322,6 +334,7 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
       held: j.held ?? null,
       merged: j.merged ? { into: j.merged.into, sha: j.merged.sha } : null,
       waits: waitsOf(j, dir),
+      from: j.from?.label ?? null,
     });
   }
   let cfg: Config | null = null;
@@ -337,10 +350,12 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
     usdToday: priced.filter((l) => new Date(l.t).toDateString() === today).reduce((a, l) => a + (l.usd as number), 0),
     usdTotal: priced.reduce((a, l) => a + (l.usd as number), 0),
     tool: cfg?.agent.tool ?? null,
+    models: cfg ? LANE_ROLES.map((role) => ({ role, lane: LANE_SHORT[role], model: modelFor(cfg as Config, role) })) : [],
     runner: orch,
     phases: PHASES.map((p) => ({ k: p.k, nm: p.nm })),
     lanes: LANES.map((l) => ({ k: l.k, nm: l.nm, who: who[l.k] })),
     jobs: jobs.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+    removed,
     corrupt,
   };
 }

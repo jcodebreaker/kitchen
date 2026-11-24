@@ -16,6 +16,7 @@ import { readFeatureVerdict } from "../engine/lanes.ts";
 import type { Job } from "../engine/machine.ts";
 import { mergeToStaging, stagingTip } from "../engine/staging.ts";
 import { writeAtomic } from "../engine/store.ts";
+import { addFindings, runFindings } from "../inbox/findings.ts";
 import { appDown, appUp } from "../qa/app.ts";
 import { KITCHEN_IDENTITY, mapAt } from "./admit.ts";
 import { allFeaturesSection } from "./brief.ts";
@@ -156,6 +157,7 @@ function deployedSection(r: RunInfo): string {
 /** Close a run: read the agent's result, write the report, stop the app, remove the checkout (evidence stays). */
 export async function finishRun(repo: string, id: string, out: Out): Promise<number> {
   const r = readRun(repo, id);
+  if ((r.kind as string) === "triage") throw new Error(`${id} is a collect's triage checkout: kitchen collect closes it`);
   await appDown(repo, id).catch(() => {});
   return r.kind === "sweep" ? finishSweep(repo, r, out) : finishMaintain(repo, r, out);
 }
@@ -202,6 +204,8 @@ async function finishSweep(repo: string, r: RunInfo, out: Out): Promise<number> 
     ),
   );
   await dropCheckout(repo, r.id);
+  // ADR 0022: each broken feature is a Kitchen finding in the outer loop's inbox.
+  await addFindings(repo, runFindings("sweep", r.id, v.features));
   for (const f of v.features) out(`${f.result.padEnd(4)}  ${f.id}: ${f.note}`);
   const notRun = v.features.filter((f) => f.result === "NOT_RUN").length;
   out(
@@ -284,6 +288,7 @@ async function finishMaintain(repo: string, r: RunInfo, out: Out): Promise<numbe
     }
   }
   const rows = (rep.features ?? []).map((f) => ({ id: f.id, result: f.result, note: f.note, evidence: f.evidence ?? [] }));
+  await addFindings(repo, runFindings("maintain", r.id, rows));
   const extra = [
     rep.summary ? `<h2>Summary</h2><p>${esc(rep.summary)}</p>` : "",
     rep.removals?.length ? `<h2>Removed from the map</h2><ul>${rep.removals.map((x) => `<li>${esc(x.item)}: ${esc(x.why)}</li>`).join("")}</ul>` : "",

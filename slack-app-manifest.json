@@ -1,0 +1,21 @@
+{
+  "_metadata": { "major_version": 1, "minor_version": 1 },
+  "display_information": {
+    "name": "Kitchen",
+    "description": "Reads the threads you mark with :kitchen: into Kitchen's outer loop. Reads only; never posts.",
+    "background_color": "#1d1d1f"
+  },
+  "features": {
+    "bot_user": { "display_name": "Kitchen", "always_online": false }
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": ["channels:history", "groups:history", "reactions:read", "users:read"]
+    }
+  },
+  "settings": {
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false,
+    "token_rotation_enabled": false
+  }
+}

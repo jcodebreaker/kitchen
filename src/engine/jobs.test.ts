@@ -8,6 +8,7 @@ import path from "node:path";
 import { afterAll, test } from "vitest";
 import { report, stageLabel } from "../cli/commands.ts";
 import { loadConfig } from "../config.ts";
+import { listItems } from "../inbox/store.ts";
 import { readLedger } from "../ledger/append.ts";
 import * as control from "./control.ts";
 import { finish, next, start } from "./jobs.ts";
@@ -90,6 +91,11 @@ test("a ticket through every lane merges into staging: main untouched, the Repor
   assert.match(done.line, /merged into staging/);
   const j = findJob(r, id);
   assert.equal(j.stage, "done");
+  // ADR 0022: the review's non-blocking note is a Kitchen finding in the outer loop's inbox.
+  assert.deepEqual(
+    listItems(r).map((i) => [i.key, i.text]),
+    [[`kitchen:${id}:review:1.F1`, "fine"]],
+  );
   assert.equal(g(r, "show", "staging:app.txt"), "one\ntwo\nthree\nfour");
   assert.equal(g(r, "show", "main:app.txt"), "one\ntwo\nthree");
   assert.equal(j.merged?.sha, g(r, "rev-parse", "staging"));
@@ -424,4 +430,53 @@ test("ADR 0020 §3: intake.confirm holds an accepted job for your approval; feed
   assert.deepEqual([j.stage, j.kind, typeof j.approved], ["build", "feature", "string"]);
   assert.equal(await control.approve(r, id, quiet), 1, "only while it waits");
   assert.match((await build(r, id)).line, /→ qa/);
+});
+
+test("kitchen remove: a job in Build has its lane stopped, is rejected, archived and its worktree removed; the plan, status and finish leave it be; restore shows it again", async () => {
+  const r = await repo();
+  const id = await toBuild(r);
+  const s = await open(r, id, "build");
+  assert.ok(fs.existsSync(s.cwd));
+  const lines: string[] = [];
+  assert.equal(await control.remove(r, id, (l) => lines.push(l)), 0);
+  assert.match(lines[0], /removed \(the build agent was stopped\), rejected, its worktree removed/);
+  const j = findJob(r, id);
+  assert.equal(j.stage, "rejected");
+  assert.equal(j.archived?.by, "person");
+  assert.equal(j.running, null);
+  assert.equal(j.agentRuns.at(-1)?.ok, false, "the lane's run is closed");
+  assert.ok(!fs.existsSync(s.cwd), "the worktree is gone");
+  assert.ok(g(r, "branch", "--list", j.branch), "the branch stays");
+  assert.ok(fs.existsSync(dirOf(r, id)), "the job folder stays");
+  // The agent's late finish is refused quietly; the plan and status don't show it; --all does; report counts it.
+  const f = await finish(r, id);
+  assert.ok("refused" in f && /removed by the person/.test(f.refused));
+  assert.ok(!next(r).start.some((x) => x.id === id) && !next(r).you.some((x) => x.id === id));
+  const plain: string[] = [];
+  report(r, (l) => plain.push(l));
+  assert.match(plain[0], /jobs 1: .* rejected 1/);
+  const st: string[] = [];
+  (await import("../cli/commands.ts")).status(r, (l) => st.push(l));
+  assert.ok(!st.some((l) => l.startsWith(id)));
+  st.length = 0;
+  (await import("../cli/commands.ts")).status(r, (l) => st.push(l), { all: true });
+  assert.ok(st.some((l) => l.startsWith(id) && l.endsWith("(removed)")));
+  assert.equal(await control.restore(r, id, quiet), 0);
+  assert.equal(findJob(r, id).archived, undefined);
+  assert.equal(findJob(r, id).stage, "rejected", "restored as it was left");
+});
+
+test("kitchen remove on a merged job only hides it: staging untouched", async () => {
+  const r = await repo();
+  const id = await toBuild(r);
+  await build(r, id);
+  await qa(r, id, "PASS");
+  await review(r, id);
+  const tip = g(r, "rev-parse", "staging");
+  const lines: string[] = [];
+  await control.remove(r, id, (l) => lines.push(l));
+  assert.match(lines[0], /removed from view \(it stays merged into staging\)/);
+  assert.equal(findJob(r, id).stage, "done");
+  assert.ok(findJob(r, id).archived);
+  assert.equal(g(r, "rev-parse", "staging"), tip);
 });

@@ -28,7 +28,14 @@ const Check = z.union([
 ]);
 export type CheckSpec = { name: string; run: string; timeoutSec: number; when: "build" | "merge"; needsApp: boolean };
 
-const DEFAULT_MODELS: Record<"claude" | "codex", Record<ModelTier, string>> = {
+export type Tool = "claude" | "codex";
+export const TOOLS: readonly Tool[] = ["claude", "codex"];
+const Profile = z
+  .object({ intake: z.string().min(1), builder: z.string().min(1), qa: z.string().min(1), reviewer: z.string().min(1) })
+  .partial()
+  .strict();
+
+const DEFAULT_MODELS: Record<Tool, Record<ModelTier, string>> = {
   claude: { strong: "opus", medium: "sonnet", cheap: "haiku" },
   codex: { strong: "gpt-5.6-terra", medium: "gpt-5.6-terra", cheap: "gpt-5.6-luna" },
 };
@@ -59,12 +66,19 @@ export const ConfigSchema = z
     round_limit: z.number().int().min(1).max(20).default(3),
     /** At most this many lane agents at once (the orchestrator's wave width). */
     parallel: z.number().int().min(1).max(16).default(4),
+    /**
+     * Each lane's model (ADR 0023): a tier (strong, medium, cheap) or a model name. One profile per tool
+     * (`claude: { … }`, `codex: { … }`), so switching agent.tool keeps each tool's choices; the flat keys (the older
+     * form) mean the active tool's profile, and its own profile wins over them.
+     */
     models: z
       .object({
         intake: z.string().default("strong"),
         builder: z.string().default("strong"),
         qa: z.string().default("medium"),
         reviewer: z.string().default("medium"),
+        claude: Profile.optional(),
+        codex: Profile.optional(),
       })
       .strict()
       .prefault({}),
@@ -248,14 +262,22 @@ export function loadConfig(repo: string): Config {
   return parseConfig(fs.existsSync(f) ? fs.readFileSync(f, "utf8") : "");
 }
 
-/** The model a lane's agent runs on: its tier mapped through the tool's tier table, or a literal model name. */
-export function modelFor(cfg: Config, role: LaneRole): string {
-  const want = cfg.models[role];
-  return (TIERS as readonly string[]).includes(want) ? tierModel(cfg, want as ModelTier) : want;
+/** ADR 0023: a tool's profile, as written: the flat keys (the active tool's), then the tool's own profile over them. */
+export function profileOf(cfg: Pick<Config, "models" | "agent">, tool: Tool = cfg.agent.tool): Record<LaneRole, string> {
+  const { claude: _c, codex: _x, ...flat } = cfg.models;
+  const base = tool === cfg.agent.tool ? flat : { intake: "strong", builder: "strong", qa: "medium", reviewer: "medium" };
+  return { ...base, ...(cfg.models[tool] ?? {}) } as Record<LaneRole, string>;
 }
 
-export function tierModel(cfg: Config, tier: ModelTier): string {
-  return { ...DEFAULT_MODELS[cfg.agent.tool], ...cfg.agent.models }[tier] as string;
+/** The model a lane's agent runs on: its tier mapped through the tool's tier table, or a literal model name. */
+export function modelFor(cfg: Pick<Config, "models" | "agent">, role: LaneRole, tool: Tool = cfg.agent.tool): string {
+  const want = profileOf(cfg, tool)[role];
+  return (TIERS as readonly string[]).includes(want) ? tierModel(cfg, want as ModelTier, tool) : want;
+}
+
+export function tierModel(cfg: Pick<Config, "agent">, tier: ModelTier, tool: Tool = cfg.agent.tool): string {
+  // agent.models maps the tiers of the tool kitchen.yaml names; another tool's tiers are its defaults.
+  return { ...DEFAULT_MODELS[tool], ...(tool === cfg.agent.tool ? cfg.agent.models : {}) }[tier] as string;
 }
 
 /** The checks that run at a point: `build` after every Build round (and on the trial merge); `merge` all of them. */

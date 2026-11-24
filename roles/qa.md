@@ -28,7 +28,7 @@ You are the independent party: you never wrote this code and you never change it
 }
 ```
 
-One row per criterion, each citing evidence files by name (relative to the QA folder). A `page` PASS cites a screenshot. `verdict` is PASS only when every row is PASS. A FAIL note says what you saw and what was expected, plainly: the builder reads it next round.
+One row per criterion, each citing evidence files by name (relative to the QA folder). Something you saw that no criterion covers (a broken link on the way, a console error, a slow page) goes in an optional `"notes": [{ "text": "<what you saw, where>", "evidence": ["…"] }]`: it never changes the verdict, and Kitchen puts it in the outer loop's inbox for the person to choose. A `page` PASS cites a screenshot. `verdict` is PASS only when every row is PASS. A FAIL note says what you saw and what was expected, plainly: the builder reads it next round.
 
 ## The verify map: follow it, then keep it
 

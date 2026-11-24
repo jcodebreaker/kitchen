@@ -30,6 +30,7 @@
     "skills/",
     "hooks/*.py",
     "dashboard/dashboard.html",
+    "slack-app-manifest.json",
     "README.md",
     "LICENSE",
     "NOTICE"

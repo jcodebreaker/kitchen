@@ -5,6 +5,7 @@
    (staging's scratch merges) or <repo>/.claude/worktrees/ (Claude Code's own). Honours `cd X &&` and `git -C X`.
 2. A lane agent (a subagent bound to a Kitchen job, see kitchen_jobs.py) may write files only inside its job's
    worktree, its job folder and the temp folders. The intake lane has no worktree: only its job folder.
+3. A lane agent whose job the person removed (`kitchen remove`, job.json `archived`) is refused every call: it stops.
 
 Its own errors never block a tool call: anything unexpected exits 0 with no output.
 
@@ -211,9 +212,25 @@ def write_check(payload):
     )
 
 
+def removed_check(payload):
+    """The deny reason when this lane agent's job was removed by the person (`kitchen remove`), else None."""
+    repo = os.path.normpath(os.environ.get("CLAUDE_PROJECT_DIR") or payload.get("cwd") or os.getcwd())
+    job_id, job = bound_job(payload, repo)
+    if job_id and job and job.get("archived"):
+        return ("Stopped by Kitchen: the person removed job %s. Stop now: make no more changes and reply with one line, "
+                "\"removed\"." % job_id)
+    return None
+
+
 def main():
     try:
         payload = json.loads(sys.stdin.read() or "{}")
+        gone = removed_check(payload)
+        if gone:
+            print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
+                                                     "permissionDecision": "deny",
+                                                     "permissionDecisionReason": gone}}))
+            return
         if payload.get("tool_name") in ("Edit", "MultiEdit", "Write", "NotebookEdit"):
             reason = write_check(payload)
             if reason:

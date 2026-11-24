@@ -7,7 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import { withFileLock } from "../lock.ts";
-import { type Job, STAGES, type TicketRef } from "./machine.ts";
+import { type Job, type JobFrom, STAGES, type TicketRef } from "./machine.ts";
 
 export const kitchenDir = (repo: string) => path.join(repo, ".kitchen");
 export const jobsDir = (repo: string) => path.join(repo, ".kitchen", "jobs");
@@ -224,7 +224,7 @@ export function findJob(repo: string, ref: string): Job {
   return hit;
 }
 
-export type NewJob = { title: string; ticket: TicketRef; body: string; roundLimit: number; now?: Date };
+export type NewJob = { title: string; ticket: TicketRef; body: string; roundLimit: number; now?: Date; from?: JobFrom };
 
 /** Create a job folder. Numbers are taken under a lock, so two `kitchen ticket`s never share one. */
 export async function createJob(repo: string, o: NewJob): Promise<Job> {
@@ -254,6 +254,7 @@ export async function createJob(repo: string, o: NewJob): Promise<Job> {
       agentRuns: [],
       moves: 0,
       filed: [],
+      ...(o.from ? { from: o.from } : {}),
       startedAt: now,
       updatedAt: now,
     };

@@ -120,7 +120,7 @@ svg{flex:none;display:block}
 
 .rw{border-bottom:1px solid var(--line);position:relative}
 .rw.you::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--act)}
-.row{display:grid;grid-template-columns:18px 42px minmax(0,1fr) auto 108px 76px 28px;column-gap:12px;align-items:center;padding:11px 16px 11px 20px;cursor:default;outline-offset:-2px;transition:background .12s}
+.row{display:grid;grid-template-columns:18px 42px minmax(0,1fr) auto 108px 76px 56px;column-gap:12px;align-items:center;padding:11px 16px 11px 20px;cursor:default;outline-offset:-2px;transition:background .12s}
 .row:hover{background:var(--hover)}
 .rw.sel .row{background:var(--hover)}
 .rw.open .row{background:var(--press)}
@@ -135,6 +135,11 @@ svg{flex:none;display:block}
 .rw.gone .ttl{color:var(--faint)}
 .rw.end .acts{opacity:0;transition:opacity .12s}
 .rw.end .row:hover .acts,.rw.end .row:focus-within .acts,.rw.end.sel .acts{opacity:1}
+.row .acts{display:flex;justify-content:flex-end;gap:0}
+.row .acts .rmj{opacity:0;transition:opacity .12s}
+.row:hover .acts .rmj,.row:focus-within .acts .rmj,.rw.sel .acts .rmj{opacity:1}
+.row .acts .rmj:hover{color:var(--fail)}
+.ph .rmj{margin-right:2px}.ph .rmj:hover{color:var(--fail)}
 .tag{font:400 11px var(--sans);border:1px solid var(--line2);border-radius:10px;padding:0 6px;color:var(--faint);margin-left:8px;vertical-align:1px}
 .sub{margin-top:3px;font-size:12.5px;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:18px}
 .sub.q{color:var(--fg2);white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
@@ -428,6 +433,15 @@ a.btn{text-decoration:none}
 .qbox input{display:block;width:100%;border:0;outline:0;background:none;padding:7px 10px;line-height:1.45}
 .qbox input::placeholder{color:var(--faint)}
 .foot2 .mono{font-size:11.5px}
+.mline{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px;text-decoration-color:var(--line2)}
+.mline:hover{color:var(--fg2);text-decoration-color:var(--mute)}
+.mline b{font-weight:500;color:var(--fg2)}
+.mpop{position:fixed;width:300px}
+.mrows{display:grid;gap:6px;margin:2px 0 10px}
+.mrow{display:grid;grid-template-columns:56px 1fr;align-items:center;gap:8px;color:var(--mute)}
+.mrow select{font:12.5px var(--sans);color:var(--fg);background:var(--bg);border:1px solid var(--line2);border-radius:6px;padding:3px 6px;min-width:0}
+.mrow select:focus{outline:0;border-color:var(--fg);box-shadow:0 0 0 3px color-mix(in srgb,var(--fg) 10%,transparent)}
+.mnote{font-size:11.5px;color:var(--faint)}
 .row .tm{white-space:nowrap}
 .tm i{font:400 12px var(--sans);font-style:normal;color:var(--faint)}
 [data-tm] i{font-style:normal}
@@ -460,13 +474,209 @@ a.btn{text-decoration:none}
 :root[data-theme="dark"]{--logo:url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByb2xlPSJpbWciIGFyaWEtbGFiZWw9IktpdGNoZW46IHRoZSBjb29rLCBzbWFsbCBzaXplcyI+PHN0eWxlPi5pbmt7ZmlsbDojZWRlZGYwfS5pbmtze2ZpbGw6bm9uZTtzdHJva2U6I2VkZWRmMDtzdHJva2UtbGluZWNhcDpyb3VuZDtzdHJva2UtbGluZWpvaW46cm91bmR9LmFjY3N7ZmlsbDpub25lO3N0cm9rZTojZmY4YTNkO3N0cm9rZS1saW5lY2FwOnJvdW5kO3N0cm9rZS1saW5lam9pbjpyb3VuZH08L3N0eWxlPjxjaXJjbGUgY2xhc3M9ImluayIgY3g9IjMyIiBjeT0iOC41MDAiIHI9IjQiLz48cGF0aCBjbGFzcz0iaW5rcyIgc3Ryb2tlLXdpZHRoPSI3IiBkPSJNOSwxOC41MDBINTVNNC41MDAsMzVIN001NywzNUg1OS41MDAiLz48cGF0aCBjbGFzcz0iaW5rIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiIGQ9Ik0xNCwyNkg1MEEzLDMgMCAwIDEgNTMsMjlWNDRBMTUsMTUgMCAwIDEgMzgsNTlIMjZBMTUsMTUgMCAwIDEgMTEsNDRWMjlBMywzIDAgMCAxIDE0LDI2Wk0yMy41MDAsMzUuNTAwYTUsNSAwIDEgMCAwLjAxMCwwWk00MC41MDAsMzUuNTAwYTUsNSAwIDEgMCAwLjAxMCwwWiIvPjwvc3ZnPg==")}
 /* logo:end */
 
+
+/* ── outer loop (ADR 0022): what might be built. Items come in, triage proposes, you choose what runs. ── */
+.top [hidden],#foot[hidden]{display:none!important}
+.btn:disabled{opacity:.45;cursor:default}
+.btn:disabled:hover{background:var(--raise)}
+.btn:disabled:active{transform:none}
+.btn .spin{transform-origin:7px 7px}
+.btn .cnt{font-variant-numeric:tabular-nums;opacity:.7;font-weight:500}
+
+/* the New box: paste anything, it lands in New */
+.newbox{padding:14px 20px 16px}
+.newbox .cmp{max-width:none}
+.newbox .box textarea{min-height:42px;max-height:220px;padding:11px 12px 4px}
+.newbox .cbar{gap:6px}
+.newbox kbd{font:500 11px var(--sans);border:1px solid var(--line2);border-radius:4px;padding:0 4px;color:var(--mute);background:var(--band)}
+.newbox .send{margin-left:2px}
+
+/* rows: same grid language as the job list */
+.orw{border-bottom:1px solid var(--line);position:relative;overflow:hidden}
+.orow{display:grid;grid-template-columns:18px minmax(0,1fr) 34px 52px;column-gap:12px;align-items:start;padding:11px 16px 11px 20px;cursor:default;outline-offset:-2px;transition:background .12s}
+.orow:hover{background:var(--hover)}
+.orw.picked .orow{background:color-mix(in srgb,var(--fg) 3.5%,transparent)}
+.orw.picked .orow:hover{background:var(--hover)}
+.orw.open .orow,.orw.open .orow:hover{background:var(--press)}
+.orow .olead{grid-column:1;padding-top:1px}
+.orow .mn{grid-column:2;min-width:0}
+.orow .prio{grid-column:3}
+.orow .tm{grid-column:4;text-align:right;color:var(--faint);font-size:12px;padding-top:1px;white-space:nowrap}
+.orw .ttl .ed{color:var(--faint);font-weight:400;font-size:12px;margin-left:6px}
+.orw.dim .ttl{font-weight:400;color:var(--fg2)}
+
+/* checkbox, drawn to the dashboard's own shapes */
+.ck{appearance:none;-webkit-appearance:none;width:16px;height:16px;margin:2px 0 0;border:1.5px solid var(--line2);border-radius:5px;background:var(--raise);display:grid;place-items:center;cursor:pointer;transition:background .12s,border-color .12s}
+.ck:hover{border-color:var(--mute)}
+.ck:checked{background:var(--fg);border-color:var(--fg)}
+.ck:checked::after{content:"";width:8px;height:4px;border:solid var(--bg);border-width:0 0 1.75px 1.75px;transform:translateY(-1px) rotate(-45deg)}
+.ck.part::after{content:"";width:8px;height:1.75px;background:var(--fg2);border-radius:1px}
+.ck.part{border-color:var(--mute)}
+.ghead .ck{margin:0}
+
+/* priority: one quiet chip, P1 carries the weight */
+.prio{justify-self:end;font:600 11px/18px var(--sans);padding:0 6px;border-radius:6px;margin-top:1px;cursor:help;background:color-mix(in srgb,var(--fg) 6%,transparent);color:var(--mute);font-variant-numeric:tabular-nums}
+.prio.p1{background:color-mix(in srgb,var(--fg) 11%,transparent);color:var(--fg)}
+.prio.p3{background:none;box-shadow:inset 0 0 0 1px var(--line2);color:var(--faint)}
+.prio.none{background:none;color:var(--faint);font-weight:400}
+
+/* second line: where it came from, then what triage saw */
+.oline{display:flex;align-items:center;gap:6px;margin-top:5px;min-width:0;font-size:12.5px;color:var(--mute);white-space:nowrap}
+.src{display:inline-flex;align-items:center;gap:4px;font:500 11.5px/18px var(--sans);padding:0 6px 0 5px;border-radius:6px;border:1px solid var(--line2);color:var(--fg2);background:var(--raise);flex:none;white-space:nowrap}
+.src svg{color:var(--mute)}
+.src.n{padding:0 6px;color:var(--mute);border-style:dashed}
+.oline .evd{display:inline-flex;align-items:center;gap:5px;min-width:0;overflow:hidden;text-overflow:ellipsis;margin-left:4px}
+.oline .evd span{overflow:hidden;text-overflow:ellipsis}
+.oline .evd svg{color:var(--ok)}
+.oline .evd.q{color:var(--faint)}
+.oline .shim{margin-left:4px}
+
+/* row actions: on hover, over the row's right side; always in the expanded row */
+.oacts{position:absolute;right:104px;top:7px;display:flex;gap:2px;opacity:0;pointer-events:none;transition:opacity .12s;background:var(--hover);border-radius:8px;padding:2px;box-shadow:-14px 0 12px -2px var(--hover)}
+.orw:not(.open) .orow:hover .oacts,.orw:not(.open) .orow:focus-within .oacts{opacity:1;pointer-events:auto}
+.orw.picked .oacts{background:var(--hover)}
+.oacts .btn{height:24px}
+
+/* the raw words of a New item */
+.raw{white-space:pre-line;font-size:13.5px;line-height:1.45;color:var(--fg);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;text-wrap:pretty}
+.raw::before{content:"“"}.raw::after{content:"”"}
+.olead .gl{color:var(--faint);display:grid}
+
+/* expanded proposal */
+.oex{padding:4px 20px 18px 50px;display:grid;grid-template-columns:minmax(0,1fr) 216px;gap:18px 28px;animation:drop .22s var(--ease);background:var(--press)}
+.oex .oh{font-size:12px;color:var(--faint);font-weight:500;margin:0 0 7px;display:flex;gap:6px;align-items:baseline}
+.oex .oh .n{font-weight:400}
+.oex .blk+.blk{margin-top:16px}
+.oex p.why{margin:0;color:var(--fg2);font-size:13px;line-height:1.5}
+.oex p.why b{font-weight:600;color:var(--fg)}
+.qi{border-left:2px solid var(--line2);padding:1px 0 1px 11px;margin:0 0 10px}
+.qi:last-child{margin-bottom:0}
+.qi q{white-space:pre-line;display:-webkit-box;-webkit-line-clamp:8;-webkit-box-orient:vertical;overflow:hidden;color:var(--fg);font-size:13px;line-height:1.5;quotes:"“" "”"}
+.qi .qm{display:flex;gap:6px;align-items:center;margin-top:3px;font-size:12px;color:var(--faint)}
+.qi .qm a{color:var(--mute);text-decoration:none}.qi .qm a:hover{text-decoration:underline;text-underline-offset:2px}
+.steps{margin:0;padding:0;list-style:none;counter-reset:s;font-size:13px;line-height:1.5;color:var(--fg2)}
+.steps li{counter-increment:s;display:grid;grid-template-columns:18px 1fr;gap:4px}
+.steps li::before{content:counter(s);font:500 11px/19px var(--mono);color:var(--faint)}
+.steps li+li{margin-top:3px}
+.oex dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:5px 12px;font-size:12.5px}
+.oex dt{color:var(--faint)}.oex dd{margin:0;color:var(--fg2);min-width:0;overflow-wrap:anywhere}
+.oex dd.mono{font-size:11.5px}
+.oex .exbar{grid-column:1/-1;display:flex;gap:6px;align-items:center;border-top:1px solid var(--line2);padding-top:12px;margin-top:-2px}
+.oex .exbar .sp{flex:1}
+.oex .exbar .hint{font-size:12px;color:var(--faint)}
+.btn.warn{color:var(--fail)}
+.btn.warn:hover{background:color-mix(in srgb,var(--fail) 10%,transparent);color:var(--fail)}
+
+/* edit in place */
+.oedit input{width:100%;font:500 14px var(--sans);letter-spacing:-.006em;border:1px solid var(--fg);border-radius:7px;padding:4px 8px;margin:-5px 0 -1px -9px;background:var(--raise);outline:0;box-shadow:0 0 0 3px color-mix(in srgb,var(--fg) 10%,transparent)}
+.oex .tbox{border:1px solid var(--line2);border-radius:8px;background:var(--raise)}
+.oex .tbox:focus-within{border-color:var(--fg);box-shadow:0 0 0 3px color-mix(in srgb,var(--fg) 10%,transparent)}
+.oex .tbox textarea{display:block;width:100%;border:0;outline:0;background:none;resize:none;padding:8px 10px;line-height:1.5;min-height:84px;font-size:13px}
+.oex .ttext{margin:0;color:var(--fg2);font-size:13px;line-height:1.5}
+
+/* triage's screenshot */
+.shot{display:block;text-decoration:none;color:inherit;width:216px;border-radius:9px;border:1px solid var(--line2);overflow:hidden;background:var(--raise);box-shadow:0 1px 2px rgba(0,0,0,.05);cursor:zoom-in}
+.shot .bar{display:flex;align-items:center;gap:3px;height:16px;padding:0 6px;background:var(--band);border-bottom:1px solid var(--line)}
+.shot .bar i{width:5px;height:5px;border-radius:3px;background:var(--line2)}
+.shot .bar span{margin-left:6px;font:500 8.5px var(--mono);color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.shot img{display:block;width:100%;height:auto;max-height:160px;object-fit:cover;object-position:top}
+.evf{display:block;font-size:11.5px;color:var(--mute);text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.evf:hover{color:var(--fg);text-decoration:underline;text-underline-offset:2px}
+.unav{color:var(--warn,var(--fail))}
+.recipe .unavl{margin:9px 0 0 24px;font-size:12.5px;color:var(--fail);line-height:1.45}
+.top h2{white-space:nowrap}
+@container main (max-width:600px){ .top.outer #newB{display:none} .top .olg{display:none} .top #tgOuter .btn{padding:0 9px} }
+.sbar{background:color-mix(in srgb,var(--ok) 9%,var(--bg));border-bottom-color:color-mix(in srgb,var(--ok) 25%,var(--line))}
+.sbar b{font-weight:600;color:var(--fg)}
+.sbar .ib{width:24px;height:24px}
+.orow .tm .btn{margin-top:-3px}
+/* a source chip in the Inner loop is a link back to the Outer loop */
+button.tag.from,button.pl.from{cursor:pointer;transition:color .12s,box-shadow .12s,border-color .12s}
+button.tag.from:hover{color:var(--fg);border-color:var(--mute);text-decoration:underline;text-underline-offset:2px}
+button.pl.from:hover{color:var(--fg);box-shadow:inset 0 0 0 1px var(--mute)}
+/* back from a job: its ticket, highlighted */
+.orw.hl .orow{animation:hl 2.6s ease-out}
+@keyframes hl{0%,35%{background:var(--act-bg);box-shadow:inset 2px 0 0 var(--act)}}
+/* after Run: the Running badge bumps */
+.nav.bump2 .bdg{animation:bdg 1.6s var(--ease)}
+.nav.bump2{animation:navhl 1.6s ease-out}
+@keyframes bdg{0%{transform:scale(1)}15%{transform:scale(1.35);background:var(--fg);color:var(--bg)}45%{transform:scale(1);background:var(--fg);color:var(--bg)}}
+@keyframes navhl{0%,40%{background:var(--press);color:var(--fg)}}
+/* no duplicates: the Needs-you count lives in the sidebar only */
+#sum{display:none!important}
+.cap{font-size:11.5px;color:var(--faint);margin-top:6px;font-family:var(--mono)}
+
+/* sections */
+.ghead .gl{color:var(--mute);display:grid}
+button.ghead{width:100%;text-align:left;font:inherit;font-weight:500;color:inherit}
+button.ghead:hover{background:var(--hover)}
+.ghead .chev{color:var(--faint);transition:transform .18s var(--ease);display:grid}
+.ghead .chev.on{transform:rotate(90deg)}
+.ghead .prog{margin-left:auto;font-weight:400;font-size:12px;display:flex;align-items:center;gap:7px;color:var(--mute)}
+.vd{font:500 11px/18px var(--sans);padding:0 7px;border-radius:6px;background:color-mix(in srgb,var(--fg) 6%,transparent);color:var(--mute);white-space:nowrap;flex:none}
+.vwhy{margin-top:4px;font-size:12.5px;color:var(--mute);line-height:1.45;text-wrap:pretty}
+
+/* moves: out of the list (Run selected, Hold, Remove), and into it */
+.orw.out{transition:height .26s var(--ease),opacity .2s,transform .26s var(--ease);opacity:0;transform:translateX(24px)}
+.orw.in{animation:oin .5s var(--ease)}
+@keyframes oin{0%{background:var(--press);opacity:0;transform:translateY(-4px)}40%{opacity:1;transform:none}}
+
+/* the job's source in the inner loop */
+.tag.from{border-style:solid;color:var(--mute)}
+.pl.from{background:none;box-shadow:inset 0 0 0 1px var(--line2);color:var(--mute);font-weight:500}
+
+@container main (max-width:680px){
+  .orow{grid-template-columns:18px minmax(0,1fr) 34px;padding:12px 12px 12px 16px}
+  .orow .tm{display:none}
+  .oacts{display:none}
+  .oex{grid-template-columns:minmax(0,1fr);padding:4px 16px 16px 46px}
+  .oline .evd{display:none}
+}
+@media (prefers-reduced-motion:reduce){.orw.out{transition:none}}
+
+/* sidebar sources: name, and under it the last collect and what it brought */
+.nav.srcn{align-items:flex-start;padding:5px 8px}
+.nav.srcn .si{margin-top:1px}
+.nav.srcn .sn{display:flex;flex-direction:column;min-width:0;line-height:1.3}
+.nav.srcn .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nav.srcn .sm{font-size:11.5px;color:var(--faint);font-weight:400;white-space:nowrap}
+#spop{margin-top:2px}
+/* a source's recipe, on top of the list filtered to it */
+.recipe{padding:14px 20px;border-bottom:1px solid var(--line);background:var(--band)}
+.recipe .rh{display:flex;align-items:center;gap:8px}
+.recipe .rh .gl{color:var(--mute);display:grid}
+.recipe .rh b{font-weight:600;letter-spacing:-.01em}
+.recipe .rh .rm{margin-left:auto;font-size:12px;color:var(--faint)}
+.recipe dl{margin:9px 0 0 24px;display:grid;grid-template-columns:auto 1fr;gap:3px 12px;font-size:12.5px}
+.recipe dt{color:var(--faint)}.recipe dd{margin:0;color:var(--fg2)}
+.recipe .rf{margin:9px 0 0 24px;font-size:12px;color:var(--faint);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.recipe .rf code{font:12px var(--mono);color:var(--fg);background:var(--raise);border:1px solid var(--line2);border-radius:6px;padding:1px 4px 1px 8px;display:inline-flex;align-items:center;gap:2px}
+.recipe .rf .ib{width:22px;height:22px;border-radius:5px}
+.recipe .rf .mono{font-size:11.5px}
+.stale{padding:9px 20px 9px 50px;font-size:12.5px;color:var(--mute);border-bottom:1px solid var(--line)}
+/* New ticket: a sheet, straight to intake */
+.sheetbox{max-width:620px;padding:16px}
+.sheetbox .cmp{max-width:none}
+.shh{display:flex;flex-direction:column;gap:3px;margin-bottom:4px}
+.shh b{font-size:15px;font-weight:600;letter-spacing:-.01em}
+.shh span{font-size:12.5px;color:var(--mute)}
+.shh code{font:11.5px var(--mono);background:var(--hover);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.sheetbox .box textarea{min-height:110px;max-height:320px}
+.sheetbox kbd{font:500 11px var(--sans);border:1px solid var(--line2);border-radius:4px;padding:0 4px;color:var(--mute);background:var(--band)}
+.cmp.nope .box,#shF.nope .box{animation:nope .3s}
 </style>
 </head>
 <body>
 <div class="app">
   <nav class="side" id="side" aria-label="Project">
     <div class="ws"><span class="logo" role="img" aria-label="Kitchen"></span><span class="nm" id="wsName">kitchen</span></div>
-    <div class="lbl first">Jobs</div>
+    <div class="lbl first">Outer loop</div>
+    <button class="nav" data-osec="o-inbox"><span class="si" id="nInI"></span>Inbox<span class="bdg" id="sInbox"></span></button>
+    <button class="nav" data-osec="o-held"><span class="si" id="nHeldI"></span>Held<span class="bdg" id="sHeld"></span></button>
+    <div id="srcL"></div>
+    <button class="nav addr" id="addS" aria-haspopup="dialog" aria-expanded="false"><span class="si" id="nAddSI"></span>Add a source…</button>
+    <div class="rpop" id="spop" role="dialog" aria-label="Add a source" hidden><b>Add a source</b><p>In Claude Code, say <code>/kitchen sources</code> and what to watch: “GitHub issues labelled bug”, “the #bugs Slack channel”.</p><p>It reads a few as a test, shows you, and saves the source when you say yes. Collect reads it from then on.</p></div>
+    <div class="lbl">Inner loop</div>
     <button class="nav" data-sec="g-you" onclick="jump('g-you')"><span class="si" id="nYouI"></span>Needs you<span class="bdg act" id="sYou"></span></button>
     <button class="nav" data-sec="g-run" onclick="jump('g-run')"><span class="si" id="nRunI"></span><span id="sRunN">Running</span><span class="bdg" id="sRun"></span></button>
     <button class="nav" data-sec="g-done" onclick="jump('g-done')"><span class="si" id="nDoneI"></span>Done<span class="bdg" id="sDone"></span></button>
@@ -481,21 +691,25 @@ a.btn{text-decoration:none}
   <main class="main">
     <div class="top">
       <button class="ib sbt" id="sbB" onclick="toggleSidebar()" aria-label="Hide sidebar" title="Hide sidebar (⌃⌘S)" aria-controls="side"></button>
-      <div class="ttlg"><h2>Jobs</h2><button class="tsub" id="sum" onclick="jump('g-you')" hidden></button></div>
+      <div class="ttlg"><h2 id="tTitle">Inner loop</h2><button class="tsub" id="sum" onclick="jump('g-you')" hidden></button></div>
       <span class="sp"></span>
-      <div class="tg"><span class="cost mono num" id="tCost"></span></div>
-      <div class="tg"><div class="segc" role="radiogroup" aria-label="View"><button id="vList" role="radio" onclick="setView('list')">List</button><button id="vBoard" role="radio" onclick="setView('board')">Board</button></div></div>
+      <div class="tg" id="tgCost"><span class="cost mono num" id="tCost"></span></div>
+      <div class="tg" id="tgView"><div class="segc" role="radiogroup" aria-label="View"><button id="vList" role="radio" onclick="setView('list')">List</button><button id="vBoard" role="radio" onclick="setView('board')">Board</button></div></div>
+      <div class="tg" id="tgOuter" hidden><button class="btn" id="triB"></button><button class="btn" id="runB" disabled></button></div>
       <div class="tg"><button class="ib" onclick="palette()" aria-label="Search and commands" title="Search and commands (⌘K)"><span id="kI"></span></button>
-      <button class="btn pri" onclick="newTicket()">New<span class="lg">ticket</span></button></div>
+      <button class="btn pri" id="newB" onclick="newTicket()">New<span class="lg">ticket</span></button></div>
     </div>
     <div class="scroll" id="scroll">
       <div id="list"></div>
       <div class="foot2" id="foot"></div>
     </div>
+    <div class="rpop mpop" id="mpop" role="dialog" aria-label="Each lane's model" hidden></div>
   </main>
   <aside class="panel" id="panel" aria-label="Job detail"><div class="pin" id="pin"></div></aside>
 </div>
 <div class="toast" id="toast" role="status"></div>
+<div class="pal" id="sheet" onclick="if(event.target===this)sheet(false)"><div class="palbox sheetbox" role="dialog" aria-label="New ticket"><form class="cmp" id="shF"><div class="shh"><b>New ticket</b><span>It goes straight to intake, like <code>kitchen ticket</code>. One line is enough; the intake agent asks if it needs more.</span></div><div class="box"><textarea id="shT" rows="4" placeholder="What should change? Paste a thread, an email or a stack trace if it helps…" aria-label="New ticket"></textarea><div class="cbar"><span class="hint"><kbd>⌘↵</kbd> to file · Esc to close</span><span class="sp"></span><button type="button" class="btn ghost sm" onclick="sheet(false)">Cancel</button><button type="submit" class="btn pri sm">File ticket</button></div></div></form></div></div>
+
 <div class="pal" id="pal" onclick="if(event.target===this)palette(false)"><div class="palbox"><input id="palin" placeholder="Message an agent, open a job, run a command…" autocomplete="off"><div class="pallist" id="pallist"></div></div></div>
 
 <script>
@@ -533,7 +747,7 @@ const sv=(d,w=16)=>`<svg width="${w}" height="${w}" viewBox="0 0 16 16" fill="no
 const I={
   msg:sv('<path d="M2.5 4.5a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H8l-3.2 2.4V11.5h-.3a2 2 0 0 1-2-2z"/>'),
   up:sv('<path d="M8 12.5v-9M4 7l4-4 4 4"/>',14), pause:sv('<path d="M5.5 3.5v9M10.5 3.5v9"/>',14), play:sv('<path d="M5 3.2l7.5 4.8L5 12.8z"/>',14),
-  stop:sv('<rect x="4" y="4" width="8" height="8" rx="1.5"/>',14), x:sv('<path d="M4 4l8 8M12 4l-8 8"/>'), back:sv('<path d="M10 3L5 8l5 5"/>'),
+  stop:sv('<rect x="4" y="4" width="8" height="8" rx="1.5"/>',14), trash:sv('<path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.6 4.5l.6 8.4a1 1 0 0 0 1 .9h3.6a1 1 0 0 0 1-.9l.6-8.4"/>',14), x:sv('<path d="M4 4l8 8M12 4l-8 8"/>'), back:sv('<path d="M10 3L5 8l5 5"/>'),
   search:sv('<circle cx="7" cy="7" r="4.2"/><path d="M10.2 10.2L13.5 13.5"/>'), gear:sv('<circle cx="8" cy="8" r="2"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M12.4 3.6L11 5M5 11l-1.4 1.4"/>'),
   box:sv('<path d="M2.5 5L8 2.5 13.5 5v6L8 13.5 2.5 11zM2.5 5L8 7.5 13.5 5M8 7.5v6"/>'),
   copy:sv('<rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 3.5v-.5a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 3v5A1.5 1.5 0 0 0 4 9.5h.5"/>',14),
@@ -620,7 +834,7 @@ async function poll(g){
     if(offline){offline=false;toast("Back in touch with Kitchen")}
     snap=d;
     const before=new Map(jobs.map(j=>[j.id,j]));
-    jobs=d.jobs.map(fromSnap);
+    jobs=d.jobs.filter(x=>!hideJobs.has(x.id)).map(fromSnap);
     for(const j of jobs){const b=before.get(j.id);
       if(b&&!ended(b)&&ended(j)&&j.state==="done"){fresh.add(j.id);toast(`${j.num} ${j.stage==="ready"?"is ready for you":"is merged into staging"}`,"View",()=>openJob(j.id));setTimeout(()=>{fresh.delete(j.id);replaceRow(J(j.id))},20000)}
       if(b&&(b.phase!==j.phase||b.state!==j.state))just.add(j.id);
@@ -721,7 +935,7 @@ function rowHTML(j){
   return `<div class="rw ${g} ${g==="done"?"end":""} ${j.state==="rejected"?"gone":""} ${open===j.id?"open":""} ${sel===j.id?"sel":""} ${just.has(j.id)?"flash":""}" id="rw-${esc(j.id)}" style="view-transition-name:r-${esc(j.id)}">
     <div class="row" tabindex="0" role="button" data-row="${esc(j.id)}">
       <span class="ic">${icon(j)}</span><span class="id mono">${esc(j.num)}</span>
-      <div class="mn"><div class="ttl"><span class="idn mono">${esc(j.num)}</span>${esc(j.title)}</div>${sub}</div>${mid}${tm}${acts}
+      <div class="mn"><div class="ttl"><span class="idn mono">${esc(j.num)}</span>${esc(j.title)}${fromTag(j)}</div>${sub}</div>${mid}${tm}${withRemove(acts,j)}
     </div>${ex?`<div class="inl">${composerHTML(j)}</div>`:""}</div>`;
 }
 /* ───────── board (ADR 0013, dashboard/mockups/board-apple.html) ───────── */
@@ -730,9 +944,11 @@ const LANE_CLS={you:"ny",ready:"ready"};
 const doneT=j=>Date.parse(j.doneAt||j.updatedAt||0)||0;
 function inLane(k){const a=jobs.filter(j=>j.lane===k);return k==="ready"||k==="done"?a.sort((x,y)=>doneT(y)-doneT(x)):a}
 const RISK={low:"low",medium:"med",high:"high"};
+const fromTxt=j=>"from "+j.from;
+const fromTag=j=>j.from?`<button type="button" class="tag from" data-act="from" data-id="${esc(j.id)}" title="Show the ticket it came from, in the Outer loop">${esc(fromTxt(j))}</button>`:"";
 function pillsHTML(j){
   const p=j.proof;
-  return (j.risk?`<span class="pl ${j.risk==="high"?"high":""}" title="Risk: ${esc(j.risk)}">${RISK[j.risk]||esc(j.risk)}</span>`:"")
+  return (j.from?`<button type="button" class="pl from" data-act="from" data-id="${esc(j.id)}" title="Show the ticket it came from, in the Outer loop">${esc(fromTxt(j))}</button>`:"")+(j.risk?`<span class="pl ${j.risk==="high"?"high":""}" title="Risk: ${esc(j.risk)}">${RISK[j.risk]||esc(j.risk)}</span>`:"")
     +(p?`<span class="pl ${p==="pass"?"pass":p==="fail"?"fail":""}" title="${p==="fail"?"Verdict of the last round":p==="pass"?"QA: every criterion checked against the running app":"No QA verdict yet"}">${p}</span>`:"")
     +(j.state==="rejected"?'<span class="pl">rejected</span>':j.pausedBy==="stop"?'<span class="pl">stopped</span>':j.state==="paused"?`<span class="pl high">${j.pausedBy?"paused":"waiting"}</span>`:"");
 }
@@ -785,6 +1001,7 @@ function queueWords(runnerRunning,run){
 }
 /* queue-words:end */
 function renderList(){
+  paintTop();if(LOOP==="outer"){renderOuter();return}
   keepFocus(()=>{
     const o=order(),you=o.filter(j=>group(j)==="you"),run=o.filter(j=>group(j)==="run"),done=o.filter(j=>group(j)==="done");
     const idle=snap&&!snap.runner.running&&jobs.some(j=>(j.state==="run"||(j.state==="paused"&&!j.pausedBy)));
@@ -803,10 +1020,10 @@ function renderCounts(){
   const you=jobs.filter(j=>group(j)==="you"),run=jobs.filter(j=>group(j)==="run"),done=jobs.filter(j=>group(j)==="done");
   const nyou=`${you.length} need${you.length===1?"s":""} you`;
   $("#sum").hidden=!you.length;$("#sum").textContent=nyou;
-  $("#sYou").textContent=you.length||"";$("#nYouI").innerHTML=you.length?S.you:S.wait; /* orange only when something needs you */$("#sRun").textContent=run.length||"";{const q=queueWords(!!snap.runner.running,run);$("#sRunN").textContent=q.group;$("#nRunI").innerHTML=q.busy?SB.run:S.wait}$("#sDone").textContent=done.length||"";
+  renderOCounts();$("#sYou").textContent=you.length||"";$("#nYouI").innerHTML=you.length?S.you:S.wait; /* orange only when something needs you */$("#sRun").textContent=run.length||"";{const q=queueWords(!!snap.runner.running,run);$("#sRunN").textContent=q.group;$("#nRunI").innerHTML=q.busy?SB.run:S.wait}$("#sDone").textContent=done.length||"";
   $("#wsName").textContent=snap.repo;const allYou=you.length+otherYou();document.title=(allYou?`(${allYou}) `:"")+"Kitchen · "+snap.repo;
   $("#tCost").textContent="$"+snap.usdToday.toFixed(2)+" today";$("#tCost").title="$"+snap.usdToday.toFixed(2)+" today, $"+snap.usdTotal.toFixed(2)+" in all, by kitchen run's orchestrator sessions (an in-session /kitchen run is billed to that session)";
-  $("#foot").innerHTML=`Orchestrator: ${esc(snap.runner.text)}${snap.runner.running?"":`. Jobs move only while <span class="mono">kitchen run</span> (or <span class="mono">/kitchen run</span> in Claude Code) works the queue.`}${snap.corrupt.length?` · Unreadable job folders: ${esc(snap.corrupt.join(", "))}`:""}`;
+  $("#foot").innerHTML=`${modelLine()}Orchestrator: ${esc(snap.runner.text)}${snap.runner.running?"":`. Jobs move only while <span class="mono">kitchen run</span> (or <span class="mono">/kitchen run</span> in Claude Code) works the queue.`}${snap.corrupt.length?` · Unreadable job folders: ${esc(snap.corrupt.join(", "))}`:""}`;
 }
 function replaceRow(j){if(!j)return;const n=$("#rw-"+CSS.escape(j.id));if(n)keepFocus(()=>{n.outerHTML=view==="board"?cardHTML(j):rowHTML(j);just.delete(j.id);sigs[j.id]=sigOf(j);grow()})}
 function keepFocus(fn){
@@ -846,7 +1063,7 @@ async function copyCmd(c){try{await navigator.clipboard.writeText(c);toast("Copi
 async function approve(id){const j=J(id);if(!j)return;if(expanded===id)expanded=null;await simple("approve",id,`${j.num} approved: it goes to Build`)}
 async function copyBranch(id){const b=(J(id)||{}).branch||"";try{await navigator.clipboard.writeText(b);toast("Copied: "+b)}catch(e){toast("The branch: "+b)}}
 async function startRunner(){const r=await post("start-runner",{});toast(r.ok?(said(r.lines)||"Kitchen started").replace(/^orchestrator detached: /,"Kitchen started: "):said(r.lines)||"Not started");refreshSoon()}
-function grow(){$$(".box textarea").forEach(t=>{t.style.height="auto";t.style.height=Math.min(160,t.scrollHeight)+"px"})}
+function grow(){$$(".box textarea[data-draft]").forEach(t=>{t.style.height="auto";t.style.height=Math.min(160,t.scrollHeight)+"px"})}
 document.addEventListener("input",e=>{const t=e.target;if(!t.dataset)return;
   if(t.dataset.draft){drafts[t.dataset.draft]=t.value;$$(`textarea[data-draft="${t.dataset.draft}"]`).forEach(o=>{if(o!==t)o.value=t.value});grow()}});
 function useChip(id,b){drafts[id]=b.textContent;const f=b.closest(".cmp"),t=f.querySelector("textarea");$$(`textarea[data-draft="${id}"]`).forEach(o=>o.value=drafts[id]);grow();t.focus()}
@@ -868,7 +1085,7 @@ async function post(verb,body){
   }catch(e){return {ok:false,lines:["Kitchen's dashboard server is not answering"]}}
 }
 const said=lines=>(lines.at(-1)||"").replace(/^\S+\s\s/,"");
-function refreshSoon(){clearTimeout(refreshSoon.t);refreshSoon.t=setTimeout(async()=>{const g=gen;try{const d=await getJSON(BASE+"/data.json");if(g!==gen)return;snap=d;const before=new Map(jobs.map(j=>[j.id,j]));jobs=d.jobs.map(fromSnap);paint(before);if(open&&J(open)){const dd=await getJSON(`${BASE}/jobs/${encodeURIComponent(open)}/detail.json`);if(g!==gen)return;const old=details[open];details[open]=dd;panelUpdate(old,dd)}}catch(e){}},120)}
+function refreshSoon(){clearTimeout(refreshSoon.t);refreshSoon.t=setTimeout(async()=>{const g=gen;try{const d=await getJSON(BASE+"/data.json");if(g!==gen)return;snap=d;const before=new Map(jobs.map(j=>[j.id,j]));jobs=d.jobs.filter(x=>!hideJobs.has(x.id)).map(fromSnap);paint(before);if(open&&J(open)){const dd=await getJSON(`${BASE}/jobs/${encodeURIComponent(open)}/detail.json`);if(g!==gen)return;const old=details[open];details[open]=dd;panelUpdate(old,dd)}}catch(e){}},120)}
 function clearDraft(id){drafts[id]="";$$(`textarea[data-draft="${id}"]`).forEach(o=>o.value="");grow()}
 const sureRefine=new Set();
 async function send(id){
@@ -893,6 +1110,14 @@ async function simple(verb,id,okMsg){const j=J(id);const r=await post(verb,{id:j
 const pause=id=>simple("pause",id,`${J(id).num}: ${J(id).runnerOn?"pausing after the current step":"paused"}`);
 const resume=id=>simple("resume",id,`${J(id).num} resumed`);
 async function stopJob(id){const j=J(id);if(await simple("stop",id,`${j.num} stopped`))toast(`${j.num} stopped`,"Undo",()=>resume(id))}
+/* Remove (kitchen remove): off the dashboard, any stage. Like Reject, held for the toast's five seconds, then sent. */
+const hideJobs=new Set();
+const rmBtn=j=>`<button type="button" class="ib rmj" data-act="remove-job" data-id="${esc(j.id)}" title="Remove from the dashboard${j.state==="done"?" (it stays merged)":j.state==="run"?" (stops its agent)":""}" aria-label="Remove ${esc(j.num)}">${I.trash}</button>`;
+const withRemove=(acts,j)=>acts?acts.replace(/<\/span>$/,rmBtn(j)+"</span>"):`<span class="acts">${rmBtn(j)}</span>`;
+function removeJob(id){const j=J(id);if(!j)return;let undone=false;
+  hideJobs.add(id);if(open===id)closePanel();if(expanded===id)expanded=null;structural(()=>{jobs=jobs.filter(x=>x.id!==id)});
+  toast(`${j.num} removed${j.state==="run"&&j.runnerOn?": its agent stops":j.state==="done"?" from view: it stays merged":""}`,"Undo",()=>{undone=true;hideJobs.delete(id);refreshSoon()});
+  setTimeout(async()=>{if(undone)return;const r=await post("remove",{id:j.id});hideJobs.delete(id);if(!r.ok)toast(said(r.lines)||"Not removed");refreshSoon()},5000)}
 /* Reject has no engine undo, so the page holds it for the toast's five seconds and sends it after. */
 function reject(id){const j=J(id);let undone=false;
   const prev=[j.state,j.lane];j.state="rejected";j.lane="done";if(expanded===id)expanded=null;structural(()=>{});
@@ -945,7 +1170,7 @@ function renderPanel(scrollEnd){
   const ctl=g==="run"?`<span class="ctl"><button type="button" class="btn sm" data-act="${j.state==="paused"?"resume":"pause"}" data-id="${esc(j.id)}">${j.state==="paused"?I.play+"Resume":I.pause+"Pause"}</button>${j.state==="paused"?"":`<button type="button" class="btn ghost sm stop" data-act="stop" data-id="${esc(j.id)}" title="Stop this job (you can resume it later)">${I.stop}Stop</button>`}</span><span class="div" aria-hidden="true"></span>`:"";
   const sub=[j.kind,j.risk?j.risk+" risk":""].filter(Boolean).join(" · ");
   keepFocus(()=>{$("#pin").innerHTML=`
-    <div class="ph"><button class="ib back" onclick="closePanel()" aria-label="Back">${I.back}</button><span class="mono">${esc(j.num)}</span><span>·</span><span>${esc(sub)}</span><span class="sp"></span>${ctl}<button class="ib" onclick="closePanel()" aria-label="Close" title="Close (Esc)">${I.x}</button></div>
+    <div class="ph"><button class="ib back" onclick="closePanel()" aria-label="Back">${I.back}</button><span class="mono">${esc(j.num)}</span><span>·</span><span>${esc(sub)}</span><span class="sp"></span>${ctl}${rmBtn(j)}<button class="ib" onclick="closePanel()" aria-label="Close" title="Close (Esc)">${I.x}</button></div>
     <div class="pscroll" id="pscroll"><h1>${esc(j.title)}</h1>${(t=>t&&t!==j.title?`<p class="tkt" title="The ticket, as it was filed">${esc(t)}</p>`:"")(details[j.id]&&details[j.id].ticket)}
       <div class="meta"><span class="st ${j.state==="you"?"you":""}" id="pst">${icon(j)}${esc(statusOf(j))}</span><span class="mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span><span class="age" title="Since the ticket came in">age <span class="mono num" id="pt">${clock(secsOf(j))}</span></span><span class="mono num" id="pc">${costTxt(j)}</span>${j.report?`<a href="${esc(BASE)}/${esc(j.report)}" target="_blank" rel="noopener">Open report</a>`:""}${j.pr?`<span>PR #${j.pr}</span>`:""}</div>
       <div class="ptrk ${ss.length>6?"many":""}">${trackHTML(j)}<div class="lbls">${ss.length>6?`<span class="cur ${j.state==="you"?"you":""}">${ended(j)&&j.state==="done"?"All "+ss.length+" steps done":"Step "+(i+1)+" of "+ss.length+" · "+esc(ss[i]?ss[i].nm:"")}</span>`:ss.map((s,k)=>`<span class="${k===i&&!ended(j)?"cur "+(j.state==="you"?"you":""):""}">${esc(s.nm)}</span>`).join("")}</div></div>
@@ -970,9 +1195,9 @@ setInterval(()=>{
 
 /* ───────── misc ───────── */
 let toastT;function toast(msg,label,fn){const t=$("#toast");t.innerHTML=`<span>${esc(msg)}</span>${label?`<button>${esc(label)}</button>`:""}`;if(label)t.querySelector("button").onclick=()=>{fn();t.classList.remove("on")};t.classList.add("on");clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove("on"),5000)}
-function newTicket(){palette(true,"ticket")}
+function newTicket(){sheet(true)}
 async function copyRun(){try{await navigator.clipboard.writeText("kitchen run --detach");toast("Copied: kitchen run --detach. Run it in the repo")}catch(e){toast("Run this in the repo: kitchen run --detach")}}
-function jump(id){const n=$("#"+id);if(n)n.scrollIntoView({behavior:RM?"auto":"smooth",block:"start"});if($(".app").classList.contains("sbopen")){$(".app").classList.remove("sbopen");sbLabel()}}
+function jump(id){if(LOOP!=="inner")setLoop("inner");const n=$("#"+id);if(n)n.scrollIntoView({behavior:RM?"auto":"smooth",block:"start"});if($(".app").classList.contains("sbopen")){$(".app").classList.remove("sbopen");sbLabel()}}
 /* No sidebar item is selected on its own (nothing reads as "needs you" when nothing does): a click highlights the
    item it jumped to, and the highlight clears once the person scrolls away themselves. */
 function pick(id){$$(".nav[data-sec]").forEach(b=>{const on=b.dataset.sec===id;b.classList.toggle("on",on);b.toggleAttribute("aria-current",on)})}
@@ -1017,7 +1242,7 @@ document.addEventListener("keydown",e=>{
   if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==="k"){e.preventDefault();palette(!$("#pal").classList.contains("on"));return}
   if($("#pal").classList.contains("on")){if(e.key==="Escape")palette(false);else if(e.key==="ArrowDown"){e.preventDefault();palI=Math.min(palItems.length-1,palI+1);paintPal()}else if(e.key==="ArrowUp"){e.preventDefault();palI=Math.max(0,palI-1);paintPal()}else if(e.key==="Enter"){e.preventDefault();runPal(palI)}return}
   if(t.dataset&&t.dataset.draft){const id=t.dataset.draft; if(e.key==="Enter"&&!e.shiftKey&&!e.isComposing){e.preventDefault();send(id)} else if(e.key==="Escape"){t.blur();if(expanded){expanded=null;renderList()}} return}
-  if(typingIn||e.metaKey||e.ctrlKey||e.altKey)return;
+  if(typingIn||e.metaKey||e.ctrlKey||e.altKey||LOOP==="outer")return;
   const o=order().map(j=>j.id),i=o.indexOf(sel);
   if(e.key==="j"||e.key==="ArrowDown"){e.preventDefault();sel=o[Math.min(o.length-1,i+1)];if(open){open=sel;renderPanel(true);refreshSoon()}renderList();const n=$("#rw-"+CSS.escape(sel||""));if(n)n.scrollIntoView({block:"nearest"})}
   else if(e.key==="k"||e.key==="ArrowUp"){e.preventDefault();sel=o[Math.max(0,i-1)];if(open){open=sel;renderPanel(true);refreshSoon()}renderList();const n=$("#rw-"+CSS.escape(sel||""));if(n)n.scrollIntoView({block:"nearest"})}
@@ -1031,7 +1256,7 @@ document.addEventListener("keydown",e=>{
 document.addEventListener("click",e=>{
   const b=e.target.closest("[data-act]");
   if(b){const id=b.dataset.id,a=b.dataset.act;e.stopPropagation();
-    if(a==="message")message(id);else if(a==="pause")pause(id);else if(a==="resume")resume(id);else if(a==="stop")stopJob(id);else if(a==="reject")reject(id);else if(a==="chip")useChip(id,b);else if(a==="copy")copyRun();else if(a==="start-runner")startRunner();else if(a==="ask")askChanges(id,true);else if(a==="ask-cancel")askChanges(id,false);else if(a==="copy-branch")copyBranch(id);else if(a==="copy-cmd")copyCmd(b.dataset.cmd);else if(a==="approve")approve(id);
+    if(a==="message")message(id);else if(a==="pause")pause(id);else if(a==="resume")resume(id);else if(a==="stop")stopJob(id);else if(a==="reject")reject(id);else if(a==="chip")useChip(id,b);else if(a==="copy")copyRun();else if(a==="start-runner")startRunner();else if(a==="ask")askChanges(id,true);else if(a==="ask-cancel")askChanges(id,false);else if(a==="copy-branch")copyBranch(id);else if(a==="copy-cmd")copyCmd(b.dataset.cmd);else if(a==="approve")approve(id);else if(a==="from")goFrom(id);else if(a==="remove-job")removeJob(id);
     return}
   const r=e.target.closest("[data-row]");if(r)openJob(r.dataset.row);
 });
@@ -1067,9 +1292,284 @@ document.addEventListener("keydown",e=>{if(MODE!=="repos")return;
   if((e.metaKey||e.ctrlKey)&&!e.altKey&&!e.shiftKey&&/^[1-9]$/.test(e.key)){const r=repos[+e.key-1];if(r){e.preventDefault();switchRepo(r.key)}}},true);
 addEventListener("hashchange",()=>{const k=decodeURIComponent(location.hash.slice(1));if(k&&k!==CUR)switchRepo(k)});
 
+/* ───────── outer loop (ADR 0022): sources read by Kitchen's code, Collect reads them and triages, you choose what runs ─────────
+   Read from /inbox.json; every change is a POST to an inbox verb (collect, inbox-run, -hold, -unhold, -remove, -edit, -verdict). */
+let LOOP="inner";try{const l=localStorage.getItem("kitchen.loop");if(l==="outer")LOOP="outer"}catch(e){}
+try{if(/[?&]outer\b/.test(location.search))LOOP="outer";if(/[?&]inner\b/.test(location.search))LOOP="inner"}catch(e){}
+let IN=null,inKey=null,picked=new Set(),oOpen=null,oEdit=null,asideOpen=false,collecting=null,oFresh=new Set(),oFilter=null,sentBar=null,starting=0,before=null;
+const rmPending=new Set();
+/* The repo the outer loop shows: the switcher's, or the one repo of a --private dashboard. */
+const RK=()=>MODE==="one"?"one":CUR;
+const OI={
+  tray:sv('<path d="M2.5 9.5l1.6-5.2A1.2 1.2 0 0 1 5.2 3.5h5.6a1.2 1.2 0 0 1 1.1.8l1.6 5.2v2.8a1.2 1.2 0 0 1-1.2 1.2H3.7a1.2 1.2 0 0 1-1.2-1.2z"/><path d="M2.5 9.5h3l1 1.5h3l1-1.5h3"/>'),
+  held:sv('<circle cx="8" cy="8" r="6"/><path d="M6.4 5.8v4.4M9.6 5.8v4.4"/>'),
+  prop:sv('<path d="M6.5 4.5h7M6.5 8h7M6.5 11.5h7"/><path d="M2.5 4.4l.9.9 1.6-1.8M2.5 7.9l.9.9 1.6-1.8"/><circle cx="3.4" cy="11.5" r=".9"/>'),
+  collect:sv('<path d="M8 2.5v7M5 6.8L8 9.8l3-3"/><path d="M2.5 10v1.8a1.7 1.7 0 0 0 1.7 1.7h7.6a1.7 1.7 0 0 0 1.7-1.7V10"/>',14),
+  gh:`<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8 .2a8 8 0 0 0-2.5 15.6c.4 0 .5-.2.5-.4v-1.5c-2.2.5-2.7-1-2.7-1-.4-.9-.9-1.2-.9-1.2-.7-.5.1-.5.1-.5.8.1 1.2.8 1.2.8.7 1.3 1.9.9 2.3.7.1-.5.3-.9.5-1.1-1.8-.2-3.6-.9-3.6-4 0-.9.3-1.6.8-2.1-.1-.2-.4-1 .1-2.1 0 0 .7-.2 2.2.8a7.4 7.4 0 0 1 4 0c1.5-1 2.2-.8 2.2-.8.4 1.1.2 1.900.1 2.1.5.6.8 1.3.8 2.1 0 3.1-1.9 3.8-3.6 4 .3.3.6.8.6 1.5v2.2c0 .2.1.5.6.4A8 8 0 0 0 8 .2z"/></svg>`,
+  slack:sv('<path d="M6.2 2.5L5 13.5M11 2.5L9.8 13.5M2.8 6h11M2.2 10.2h11"/>',12),
+  kit:sv('<circle cx="8" cy="3.2" r="1.3"/><path d="M3.5 6h9M4.5 8h7v3a3 3 0 0 1-3 3h-1a3 3 0 0 1-3-3z"/>',12),
+  chev:sv('<path d="M6 4l4 4-4 4"/>',12),
+  check:`<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 6.3l2.3 2.3 4.7-5"/></svg>`,
+  spin:`<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-opacity=".25" stroke-width="1.75"/><path class="spin" d="M8 2a6 6 0 0 1 6 6" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/></svg>`,
+};
+const big=g=>g.replace(/width="12" height="12"/,'width="16" height="16"');
+const PRI={P1:0,P2:1,P3:2};
+const P=id=>IN&&IN.proposals.find(p=>p.id===id);
+const stOf=p=>rmPending.has(p.id)?"removed":p.state;
+const NOITEM={id:"?",at:new Date(0).toISOString(),text:"",src:{source:"?",kind:"kitchen",label:"an item"}};
+const item=id=>(IN&&IN.items.find(i=>i.id===id))||NOITEM;
+const SRC=name=>IN&&IN.sources.find(s=>s.name===name);
+/* the source filter: a sidebar source row shows only what came from it */
+const inF=p=>!oFilter||p.items.some(i=>item(i).src.source===oFilter);
+const byPrio=(a,b)=>(a.verdict==="unclear")-(b.verdict==="unclear")||(PRI[a.prio]??3)-(PRI[b.prio]??3);
+const opens=()=>IN?IN.proposals.filter(p=>stOf(p)==="open"&&inF(p)).sort(byPrio):[];
+const runnable=()=>opens().filter(p=>p.verdict!=="unclear");
+/* Sent to the Inner loop; one whose job was removed shows "Removed" for a day, then drops. */
+const sent=()=>IN?IN.proposals.filter(p=>stOf(p)==="run"&&p.job&&inF(p)&&!goneLong(p)).sort((a,b)=>b.job.localeCompare(a.job)):[];
+/* a job removed from the Inner loop: its row says Removed for a day (data.json's removed list), then drops */
+const goneLong=p=>!!snap&&!J(p.job)&&!((snap.removed||[]).some(r=>r.id===p.job&&since(r.at)<86400));
+const helds=()=>IN?IN.proposals.filter(p=>stOf(p)==="held"&&inF(p)):[];
+const asides=()=>IN?IN.proposals.filter(p=>stOf(p)==="aside"&&inF(p)):[];
+const latest=p=>Math.max(...p.items.map(i=>Date.parse(item(i).at)));
+const wait=ms=>new Promise(r=>setTimeout(r,ms));
+const srcIcon=s=>s&&s.kind==="github"?OI.gh:s&&s.kind==="slack"?OI.slack:OI.kit;
+/* "GitHub #17", "Slack #bugs · ben", "QA finding in 003", "Review note in 002" */
+const chipTxt=s=>s.kind==="slack"&&s.by?`${s.label} · ${s.by}`:s.label;
+/* One chip per source; several reports from one channel are one chip and a count. */
+function srcChips(p){const its=p.items.map(item),g=new Map();
+  for(const i of its){const k=i.src.label;g.set(k,[...(g.get(k)||[]),i])}
+  return [...g].map(([l,xs])=>`<span class="src" title="${esc(xs[0].src.url||"")}">${srcIcon(xs[0].src)}${esc(xs.length>1?l:chipTxt(xs[0].src))}</span>`).join("")+(its.length>1?`<span class="src n">${its.length} reports</span>`:"")}
+
+/* /inbox.json: on a repo switch, then every few seconds (faster while a collect runs, whoever started it). */
+async function loadInbox(){const k=RK();try{const d=await getJSON(BASE+"/inbox.json");if(k!==RK())return;const first=inKey!==k;IN=d;inKey=k;
+  if(first){picked.clear();oFilter=null}else for(const id of [...picked]){const p=P(id);if(!p||stOf(p)!=="open")picked.delete(id)}
+  const was=collecting;collecting=d.collect?{ids:d.collect.items||[],phase:d.collect.phase,text:d.collect.text,src:d.collect.source}:starting&&performance.now()-starting<15000?{ids:[],phase:"read",text:"Collecting…",src:null}:null;
+  if(d.collect)starting=0;
+  if(was&&!collecting)collected();else if(collecting&&!before)before=new Set(d.proposals.map(p=>p.id));
+  /* repaint only when something changed, and never under an edit in progress */
+  const sig=JSON.stringify([d.proposals,d.items.length,d.fresh,d.sources,collecting&&[collecting.text,collecting.ids],snap&&snap.jobs.map(j=>j.id+j.stage)]);
+  if(LOOP==="outer"&&!oEdit&&(first||sig!==loadInbox.sig||oFresh.size))renderOuter();else{renderOCounts();paintTop()}loadInbox.sig=sig}catch(e){}}
+async function pollInbox(){if(RK())await loadInbox();setTimeout(pollInbox,collecting?1200:4000)}
+/* A collect ended: what it proposed and set aside. */
+function collected(){const nw=IN.proposals.filter(p=>before&&!before.has(p.id));before=null;nw.forEach(p=>oFresh.add(p.id));
+  const np=nw.filter(p=>p.state==="open").length,na=nw.filter(p=>p.state==="aside").length,lc=IN.lastCollect,got=lc?lc.added:0;
+  toast(nw.length?`Collected: ${np} proposed${na?`, ${na} set aside`:""}`:got?`Collected ${got}: not triaged yet`:"Collected: nothing new",na&&!asideOpen?"Show set aside":null,()=>{asideOpen=true;renderOuter();const n=$("#o-aside");if(n)n.scrollIntoView({behavior:RM?"auto":"smooth",block:"start"})})}
+function setLoop(l,then){if(LOOP!==l){LOOP=l;try{localStorage.setItem("kitchen.loop",l)}catch(e){}open=null;expanded=null;renderPanel();renderList();$("#scroll").scrollTo(0,0)}paintLoopNav(then);}
+/* The sidebar marks where you are: Inbox, Held or a source in the Outer loop; Inner loop items mark themselves when clicked. */
+function paintLoopNav(on){const o=LOOP==="outer";
+  $$(".nav[data-osec]").forEach(b=>{const x=o&&!oFilter&&b.dataset.osec===(on||"o-inbox");b.classList.toggle("on",x);b.toggleAttribute("aria-current",x)});
+  $$(".nav[data-src]").forEach(b=>{const x=o&&b.dataset.src===oFilter;b.classList.toggle("on",x);b.toggleAttribute("aria-current",x)});
+  if(o)$$(".nav[data-sec]").forEach(b=>{b.classList.remove("on");b.removeAttribute("aria-current")})}
+function goOuter(sec){oFilter=null;const was=LOOP;setLoop("outer",sec);if(was==="outer")renderOuter();paintLoopNav(sec);
+  const n=sec&&sec!=="o-inbox"&&$("#"+sec);if(n)n.scrollIntoView({behavior:RM?"auto":"smooth",block:"start"});else $("#scroll").scrollTo({top:0,behavior:RM?"auto":"smooth"});closeSb()}
+function goSource(name){oFilter=name;oOpen=null;const was=LOOP;setLoop("outer");if(was==="outer")renderOuter();paintLoopNav();$("#scroll").scrollTo(0,0);closeSb()}
+function closeSb(){if($(".app").classList.contains("sbopen")){$(".app").classList.remove("sbopen");sbLabel()}}
+
+/* toolbar: Outer loop has Collect and Run selected; Inner loop keeps cost, List | Board and New ticket */
+function paintTop(){
+  const o=LOOP==="outer";$("#tTitle").textContent=o?"Outer loop":"Inner loop";
+  $("#tgCost").hidden=o;$("#tgView").hidden=o;$("#foot").hidden=o;$("#tgOuter").hidden=!o;$("#newB").hidden=o;$(".top").classList.toggle("outer",o);
+  const n=[...picked].filter(id=>P(id)&&stOf(P(id))==="open").length,rb=$("#runB");
+  rb.disabled=!n;rb.classList.toggle("pri",!!n);rb.innerHTML=`${I.play}Run<span class="olg"> selected</span>${n?` <span class="cnt">${n}</span>`:""}`;
+  rb.title=n?`Send ${n} ticket${n>1?"s":""} to the Inner loop: they start at Intake, highest priority first`:"Select proposed tickets to run them";
+  const cb=$("#triB"),ns=IN?IN.sources.length:0;
+  cb.disabled=!!collecting||!IN;cb.innerHTML=collecting?`${OI.spin}<span class="olg">${esc(collecting.text)}</span>`:`${OI.collect}<span class="olg">Collect</span>`;
+  cb.title=ns>1?`Read every source, then triage what is new together: group, reproduce on staging, propose (kitchen collect)`:"No sources yet: Collect triages Kitchen's own findings. Add a source with /kitchen sources in Claude Code";
+}
+/* sidebar: Inbox = proposed and ready to run; Held; each source with its last collect and how many it brought */
+function renderOCounts(){if(!IN)return;const f=oFilter;oFilter=null;
+  $("#sInbox").textContent=runnable().length||"";$("#sHeld").textContent=helds().length||"";oFilter=f;
+  $("#srcL").innerHTML=IN.sources.map(s=>{const cur=collecting&&collecting.src===s.name;
+    const meta=cur?`<span class="shim">Collecting…</span>`:s.builtin&&!s.lastAt?"built in":s.status==="unavailable"?`<span class="unav">unavailable</span>`:!s.lastAt?"not collected yet":`${since(s.lastAt)<60?"now":short(since(s.lastAt))} · ${s.lastNew?s.lastNew+" new":"nothing new"}`;
+    return `<button class="nav srcn" data-src="${esc(s.name)}" title="${esc(s.status==="unavailable"?"Unavailable: "+(s.error||""):s.reads)}"><span class="si">${big(srcIcon(s))}</span><span class="sn"><span class="nm">${esc(s.label)}</span><span class="sm">${meta}</span></span></button>`}).join("");
+  paintLoopNav()}
+
+/* ── rows ── */
+const prioHTML=p=>p.prio?`<span class="prio ${p.prio.toLowerCase()}" title="${esc(p.prio)}: ${esc(p.why||"")}">${esc(p.prio)}</span>`:`<span class="prio none" title="No priority yet">—</span>`;
+const ago2=t=>{const x=since(new Date(t).toISOString());return x<60?"now":short(x)};
+/* triage's screenshot, served from the inbox (kitchen inbox propose --evidence) */
+function shotHTML(k,cap){if(!k)return "";const u=BASE+"/inbox/"+k.split("/").map(encodeURIComponent).join("/");
+  return `<div class="blk"><div class="oh">Screenshot</div><a class="shot" href="${esc(u)}" target="_blank" rel="noopener" title="Open the screenshot"><div class="bar"><i></i><i></i><i></i><span>${esc(cap||"staging")}</span></div><img src="${esc(u)}" alt="${esc(cap||"Screenshot from triage")}" loading="lazy"></a></div>`}
+function filesHTML(ev){const fs=(ev.files||[]).filter(f=>f!==ev.shot);if(!fs.length)return "";
+  return `<div class="blk"><div class="oh">Evidence</div>${fs.map(f=>`<a class="evf mono" href="${esc(BASE+"/inbox/"+f.split("/").map(encodeURIComponent).join("/"))}" target="_blank" rel="noopener">${esc(f.split("/").pop().replace(/^p\d+-\d+-/,""))}</a>`).join("")}</div>`}
+function quotesHTML(p){return p.items.map(item).map(i=>`<div class="qi"><q>${esc(i.text.replace(/\n{2,}/g,"\n"))}</q><div class="qm">${srcIcon(i.src)}${i.src.url?`<a href="${esc(i.src.url)}" target="_blank" rel="noopener">${esc(chipTxt(i.src))}</a>`:esc(chipTxt(i.src))} · <span class="mono">${esc(new Date(i.at).toLocaleString([], {weekday:"short",hour:"2-digit",minute:"2-digit",hour12:false}))}</span></div></div>`).join("")}
+function expHTML(p){
+  const ed=oEdit===p.id,ev=p.ev||{};
+  const left=`${p.why?`<div class="blk"><p class="why"><b>${esc(p.prio)}</b> · ${esc(p.why)}</p></div>`:""}
+    <div class="blk"><div class="oh">The ticket${ed?"":` <span class="n">· what the intake agent reads</span>`}</div>${ed?`<div class="tbox"><textarea id="oTx" rows="3">${esc(p.text)}</textarea></div>`:`<p class="ttext">${esc(p.text)}</p>`}</div>
+    <div class="blk"><div class="oh">Covers ${p.items.length} report${p.items.length>1?"s":""}</div>${quotesHTML(p)}</div>
+    ${ev.steps&&ev.steps.length?`<div class="blk"><div class="oh">${p.kind==="bug"?"How triage reproduced it":p.kind==="chore"?"What triage found":"What exists today"}</div><ol class="steps">${ev.steps.map(s=>`<li>${esc(s)}</li>`).join("")}</ol></div>`:""}`;
+  const right=`${shotHTML(ev.shot,ev.cap)}${filesHTML(ev)}<div class="blk"><dl><dt>Kind</dt><dd>${esc(p.kind||"—")}</dd><dt>Risk</dt><dd>${esc(p.risk||"—")}</dd><dt>Checked</dt><dd class="mono">${esc(ev.sha||"—")}</dd><dt>Ticket</dt><dd class="mono">${esc(p.id)}</dd></dl></div>`;
+  const bar=ed?`<div class="exbar"><span class="hint">Your words replace triage's; the items stay linked</span><span class="sp"></span><button class="btn sm ghost" data-oact="edit-cancel" data-pid="${p.id}">Cancel</button><button class="btn sm pri" data-oact="edit-save" data-pid="${p.id}">Save</button></div>`
+    :stOf(p)==="run"?""
+    :stOf(p)==="held"?`<div class="exbar"><span class="sp"></span><button class="btn sm ghost warn" data-oact="remove" data-pid="${p.id}">Remove</button><button class="btn sm" data-oact="unhold" data-pid="${p.id}">Bring back</button></div>`
+    :`<div class="exbar"><button class="btn sm ghost" data-oact="hold" data-pid="${p.id}">Hold</button><button class="btn sm ghost" data-oact="edit" data-pid="${p.id}">Edit</button><button class="btn sm ghost warn" data-oact="remove" data-pid="${p.id}">Remove</button><span class="sp"></span><button class="btn sm pri" data-oact="run-one" data-pid="${p.id}">${I.play}Run this</button></div>`;
+  return `<div class="oex"><div>${left}</div><div>${right}</div>${bar}</div>`}
+function propHTML(p){
+  const un=p.verdict==="unclear",on=picked.has(p.id),ex=oOpen===p.id,ed=oEdit===p.id;
+  const lead=un?`<span class="olead"><span class="gl" title="Needs refining with you first">${S.wait}</span></span>`:`<span class="olead"><input type="checkbox" class="ck" data-oact="pick" data-pid="${p.id}" aria-label="Select ${esc(p.title)}" ${on?"checked":""}></span>`;
+  const ttl=ed?`<div class="oedit"><input id="oTt" value="${esc(p.title)}" aria-label="Title"></div>`:`<div class="ttl">${esc(p.title)}${p.edited?`<span class="ed">edited</span>`:""}</div>`;
+  const cmd="/kitchen refine "+p.id;
+  const line=un?`<div class="oline">${srcChips(p)}</div><div class="wt"><div class="wh">Refine with you <i>· unclear</i></div><ul>${(p.questions||[]).map(q=>`<li>${esc(q)}</li>`).join("")}</ul><div class="cmd"><code>${esc(cmd)}<button type="button" class="ib" data-act="copy-cmd" data-cmd="${esc(cmd)}" title="Copy ${esc(cmd)}" aria-label="Copy ${esc(cmd)}">${I.copy}</button></code><span>Run in Claude Code or Codex</span></div></div>`
+    :`<div class="oline">${srcChips(p)}<span class="evd ${p.ev&&/^(Reproduced|Found)/.test(p.ev.line)?"":"q"}">${p.ev&&/^(Reproduced|Found)/.test(p.ev.line)?OI.check:""}<span>${esc(p.ev?p.ev.line:"")}</span></span></div>`;
+  const acts=`<span class="oacts"><button class="btn sm ghost" data-oact="hold" data-pid="${p.id}" title="Keep it, out of the way">Hold</button>${un?"":`<button class="btn sm ghost" data-oact="edit" data-pid="${p.id}">Edit</button>`}<button class="btn sm ghost warn" data-oact="remove" data-pid="${p.id}">Remove</button></span>`;
+  return `<div class="orw ${on?"picked":""} ${ex?"open":""} ${oFresh.has(p.id)?"in":""}" id="o-${p.id}">
+    <div class="orow" ${un?"":`tabindex="0" role="button" aria-expanded="${ex}" data-orow="${p.id}"`}>${lead}<div class="mn">${ttl}${line}</div>${un?`<span class="prio none" title="Unclear: no priority until it is refined">—</span>`:prioHTML(p)}<span class="tm mono num" title="Latest report ${esc(new Date(latest(p)).toLocaleString())}">${ago2(latest(p))}</span>${ed?"":acts}</div>
+    ${ex&&!un?expHTML(p):""}</div>`}
+/* An item a collect is reading right now: its raw words, its source, and what is happening to it. */
+function rawHTML(i,status){
+  return `<div class="orw ${oFresh.has(i.id)?"in":""}" id="o-${i.id}"><div class="orow"><span class="olead"><span class="gl">${OI.spin}</span></span><div class="mn"><div class="raw">${esc(i.text.replace(/\s*\n+\s*/g," · "))}</div>
+    <div class="oline"><span class="src">${srcIcon(i.src)}${esc(chipTxt(i.src))}</span>${status?`<span class="shim">${esc(status)}</span>`:""}</div></div><span></span><span class="tm mono num">${ago2(Date.parse(i.at))}</span></div></div>`}
+const VD={duplicate:p=>"Duplicate of "+(p.of||"another"),fixed:()=>"Fixed on staging","not-ours":()=>"Not ours"};
+function asideHTML(p){const i=item(p.items[0]);
+  return `<div class="orw dim ${oFresh.has(p.id)?"in":""}" id="o-${p.id}"><div class="orow"><span class="olead"><span class="gl">${S.skip}</span></span><div class="mn"><div class="ttl">${esc(p.title)}</div>
+    <div class="oline"><span class="vd">${esc((VD[p.verdict]||(()=>p.verdict))(p))}</span><span class="src">${srcIcon(i.src)}${esc(chipTxt(i.src))}</span></div><div class="vwhy">${esc(p.vwhy||"")}</div></div><span></span><span class="tm mono num">${ago2(Date.parse(i.at))}</span>
+    <span class="oacts"><button class="btn sm ghost" data-oact="propose-anyway" data-pid="${p.id}" title="Triage got it wrong: propose it">Propose anyway</button></span></div></div>`}
+/* Sent to the Inner loop: each one with its job number and where it is now; View opens it there. */
+function sentHTML(p){const j=J(p.job),st=j?(j.state==="done"?doneWords(j):j.state==="rejected"?"Rejected":j.state==="you"?"Needs you":stp(j).nm):snap?"Removed":"Intake",ex=oOpen===p.id;
+  return `<div class="orw dim ${ex?"open":""} ${oFresh.has(p.id)?"in":""}" id="o-${p.id}"><div class="orow" tabindex="0" role="button" aria-expanded="${ex}" data-orow="${p.id}"><span class="olead"><span class="gl">${!j?S.skip:j.state==="done"?S.ok:j.state==="rejected"?S.skip:S.run}</span></span><div class="mn"><div class="ttl">${esc(p.title)}</div>
+    <div class="oline">${srcChips(p)}<span class="evd q"><span><span class="mono">${esc(num(p.job))}</span> · ${esc(st)}</span></span></div></div>${prioHTML(p)}<span class="tm">${j?`<button class="btn sm" data-oact="view-job" data-job="${esc(p.job)}" title="Open ${esc(num(p.job))} in the Inner loop">View</button>`:""}</span></div>${ex?expHTML(p):""}</div>`}
+function sentBarHTML(){if(!sentBar)return "";const ids=sentBar.map(num);
+  return `<div class="rbar sbar" role="status">${S.run}<span><b>${ids.length} sent to the Inner loop</b> · ${ids.join(", ")} at Intake</span><span class="sp" style="flex:1"></span><button class="btn pri sm" data-oact="view-sent">Show in Inner loop</button><button class="ib" data-oact="sent-x" aria-label="Dismiss" title="Dismiss">${I.x}</button></div>`}
+function heldHTML(p){const ex=oOpen===p.id;
+  return `<div class="orw dim ${ex?"open":""} ${oFresh.has(p.id)?"in":""}" id="o-${p.id}"><div class="orow" tabindex="0" role="button" aria-expanded="${ex}" data-orow="${p.id}"><span class="olead"><span class="gl">${OI.held}</span></span><div class="mn"><div class="ttl">${esc(p.title)}</div>
+    <div class="oline">${srcChips(p)}<span class="evd q"><span>Held by you · ${!p.heldAt||since(p.heldAt)<60?"just now":esc(ago2(Date.parse(p.heldAt)))+" ago"}</span></span></div></div>${prioHTML(p)}<span class="tm mono num">${ago2(latest(p))}</span>
+    <span class="oacts"><button class="btn sm" data-oact="unhold" data-pid="${p.id}" title="Back to Proposed">Bring back</button></span></div>${ex?expHTML(p):""}</div>`}
+/* A source's recipe, at the top when the list is filtered to it. */
+function recipeHTML(s){const cmd="/kitchen sources edit "+s.name;
+  const when=!s.lastAt?"Not collected yet":`Collected ${since(s.lastAt)<60?"just now":short(since(s.lastAt))+" ago"} · ${s.lastNew?s.lastNew+" new":"nothing new"}`;
+  return `<div class="recipe"><div class="rh"><span class="gl">${big(srcIcon(s))}</span><b>${esc(s.label)}</b><span class="rm">${esc(when)}</span></div>
+    ${s.status==="unavailable"?`<div class="unavl">Unavailable at the last collect: ${esc(s.error||"it didn't answer")}. Nothing was read and its watermark stayed; the next collect tries again.</div>`:""}
+    <dl><dt>Reads</dt><dd>${esc(s.reads)}</dd>${s.tool?`<dt>With</dt><dd>${esc(s.tool)}</dd>`:""}${s.skip?`<dt>Skips</dt><dd>${esc(s.skip)}</dd>`:""}</dl>
+    ${s.builtin?`<div class="rf">Built in: Kitchen's lanes add these as they finish.</div>`:`<div class="rf cmd"><span>Edit in Claude Code:</span><code>${esc(cmd)}<button type="button" class="ib" data-act="copy-cmd" data-cmd="${esc(cmd)}" title="Copy ${esc(cmd)}" aria-label="Copy ${esc(cmd)}">${I.copy}</button></code><span class="mono">${esc(s.recipe)}</span></div>`}</div>`}
+
+function renderOuter(){
+  $("#scroll").classList.remove("bd");
+  if(!RK()){ $("#list").innerHTML="";return }
+  if(inKey!==RK()){IN=null;$("#list").innerHTML="";loadInbox();paintTop();return}
+  if(!IN){paintTop();return}
+  const ps=opens(),hd=helds(),as=asides(),rn=runnable(),np=rn.filter(p=>picked.has(p.id)).length,sn=sent();
+  const allCk=`<input type="checkbox" class="ck ${np&&np<rn.length?"part":""}" data-oact="pick-all" aria-label="Select every proposed ticket" ${np&&np===rn.length?"checked":""}>`;
+  const inc=collecting?collecting.ids.map(item).filter(i=>i!==NOITEM&&(!oFilter||i.src.source===oFilter)):[];
+  const stale=!collecting&&IN.fresh.length?IN.fresh.map(item).filter(i=>i!==NOITEM&&(!oFilter||i.src.source===oFilter)):[];
+  const s=oFilter&&SRC(oFilter);
+  $("#list").innerHTML=sentBarHTML()+(s?recipeHTML(s):"")+
+    (inc.length?`<section id="o-inc"><div class="ghead"><span class="gl">${OI.spin}</span> Coming in <span class="n num">${inc.length}</span></div>${inc.map(i=>rawHTML(i,collecting.phase==="triage"?"Triaging…":"Collected")).join("")}</section>`:"")+
+    `<section id="o-prop"><div class="ghead">${rn.length?allCk:`<span class="gl">${OI.prop}</span>`} Proposed <span class="n num">${ps.length}</span><span class="hint">Nothing runs until you choose it</span></div>${ps.map(propHTML).join("")||`<div class="empty">${s?"Nothing proposed from this source.":IN.sources.length>1?"Nothing proposed. Collect reads your sources and proposes what to build.":"Nothing proposed. Add a source (in the sidebar), then Collect reads it and proposes what to build."}</div>`}
+    ${stale.length?`<div class="stale">Not triaged yet (${stale.length}): ${stale.map(i=>esc(chipTxt(i.src))).slice(0,3).join(", ")}${stale.length>3?"…":""}. Collect triages them.</div>`:""}</section>
+    ${sn.length?`<section id="o-sent"><div class="ghead"><span class="gl">${SB.run}</span> In the Inner loop <span class="n num">${sn.length}</span><span class="hint">Sent from here; View follows one there</span></div>${sn.map(sentHTML).join("")}</section>`:""}
+    ${s&&!hd.length?"":`<section id="o-held"><div class="ghead"><span class="gl">${OI.held}</span> Held <span class="n num">${hd.length}</span><span class="hint">Kept, out of the way</span></div>${hd.map(heldHTML).join("")||'<div class="empty">Nothing held.</div>'}</section>`}
+    ${s&&!as.length?"":`<section id="o-aside"><button class="ghead" data-oact="aside" aria-expanded="${asideOpen}"><span class="chev ${asideOpen?"on":""}">${OI.chev}</span> Set aside <span class="n num">${as.length}</span><span class="hint">Duplicate, fixed or not ours · a wrong call costs one click</span></button>${asideOpen?as.map(asideHTML).join("")||'<div class="empty">Nothing set aside.</div>':""}</section>`}`;
+  if(oEdit){const e=$("#oTt");if(e&&document.activeElement!==$("#oTx"))e.focus()}
+  oFresh.clear();renderOCounts();paintTop();
+}
+
+/* ── verbs: each a POST to the inbox's engine verb (the same functions as kitchen inbox / kitchen collect) ── */
+function animOut(ids){const ns=ids.map(id=>$("#o-"+id)).filter(Boolean);if(RM||!ns.length)return Promise.resolve();
+  ns.forEach(n=>{n.style.height=n.offsetHeight+"px"});void document.body.offsetHeight;ns.forEach(n=>{n.classList.add("out");n.style.height="0px"});return wait(280)}
+const jobOf=l=>(/→\s+(\d{3,}-[\w-]+)/.exec(l)||[])[1];
+async function runIds(ids){
+  const ps=ids.map(P).filter(p=>p&&stOf(p)==="open"&&p.verdict!=="unclear").sort(byPrio);if(!ps.length)return;
+  const r=await post("inbox-run",{ids:ps.map(p=>p.id)});
+  if(!r.ok){toast(said(r.lines)||"Not sent");loadInbox();return}
+  await animOut(ps.map(p=>p.id));
+  const made=r.lines.map(jobOf).filter(Boolean);ps.forEach(p=>{picked.delete(p.id);if(oOpen===p.id)oOpen=null;oFresh.add(p.id)});
+  sentBar=made;await loadInbox();renderOuter();$("#scroll").scrollTo({top:0,behavior:RM?"auto":"smooth"});refreshSoon();
+  setTimeout(bumpRunning,320);
+}
+async function hold(id){const p=P(id);const r=await post("inbox-hold",{id});if(!r.ok){toast(said(r.lines)||"Not held");return}
+  await animOut([id]);picked.delete(id);if(oOpen===id)oOpen=null;await loadInbox();
+  toast(`Held: ${p.title}`,"Undo",async()=>{await post("inbox-unhold",{id});oFresh.add(id);loadInbox()})}
+async function unhold(id){const p=P(id);const r=await post("inbox-unhold",{id});if(!r.ok){toast(said(r.lines)||"Not brought back");return}oOpen=null;oFresh.add(id);await loadInbox();toast(`Back in Proposed: ${p.title}`)}
+/* Remove: held for the toast's five seconds, then sent (like Reject in the Inner loop). */
+async function removeP(id){const p=P(id);let undone=false;await animOut([id]);rmPending.add(id);picked.delete(id);if(oOpen===id)oOpen=null;renderOuter();
+  toast(`Removed. Its ${p.items.length>1?p.items.length+" reports stay":"report stays"} in the inbox`,"Undo",()=>{undone=true;rmPending.delete(id);oFresh.add(id);renderOuter()});
+  setTimeout(async()=>{if(undone)return;const r=await post("inbox-remove",{id});rmPending.delete(id);if(!r.ok)toast(said(r.lines)||"Not removed");loadInbox()},5000)}
+async function proposeAnyway(id){const r=await post("inbox-verdict",{id,verdict:"propose"});if(!r.ok){toast(said(r.lines)||"Not proposed");return}oFresh.add(id);await loadInbox();toast("Moved to Proposed")}
+/* Collect: Kitchen reads every source, then one triage session reads everything new together. */
+async function collect(){
+  if(collecting||!IN)return;
+  const r=await post("collect",{});if(!r.ok){toast(said(r.lines)||"Collect didn't start");return}
+  starting=performance.now();before=new Set(IN.proposals.map(p=>p.id));collecting={ids:[],phase:"read",text:"Collecting…",src:null};renderOuter();setTimeout(loadInbox,600);
+}
+/* After Run: the sidebar's Running badge bumps, so the eye goes to where the jobs are. */
+function bumpRunning(){const n=$('.nav[data-sec="g-run"]');if(!n)return;n.classList.remove("bump2");void n.offsetWidth;n.classList.add("bump2")}
+/* An inner-loop job's source chip: back to the ticket it came from, in the Outer loop, open and highlighted. */
+async function goFrom(jid){if(!IN||inKey!==RK())await loadInbox();const p=IN&&IN.proposals.find(x=>x.job===jid);if(!p){toast("It didn't come in through the Outer loop");return}
+  oFilter=null;oOpen=p.id;setLoop("outer");renderOuter();paintLoopNav();const n=$("#o-"+p.id);if(!n)return;
+  n.scrollIntoView({block:"center",behavior:RM?"auto":"smooth"});n.classList.remove("hl");void n.offsetWidth;n.classList.add("hl");closeSb()}
+function oToggle(id){oOpen=oOpen===id?null:id;if(oEdit&&oEdit!==oOpen)oEdit=null;renderOuter();const n=$("#o-"+id);if(n&&oOpen)n.scrollIntoView({block:"nearest",behavior:RM?"auto":"smooth"})}
+async function oEditSave(id){const t=$("#oTt").value.trim(),x=$("#oTx").value.trim();
+  const r=await post("inbox-edit",{id,title:t||undefined,text:x||undefined});if(!r.ok){toast(said(r.lines)||"Not saved");return}
+  oEdit=null;await loadInbox();toast("Saved. The intake agent reads your words")}
+
+/* ── New ticket (Inner loop): straight to intake, as `kitchen ticket` ── */
+function sheet(on=true){const s=$("#sheet");s.classList.toggle("on",on);if(on){const t=$("#shT");t.value="";growSh();setTimeout(()=>t.focus(),20)}}
+function growSh(){const t=$("#shT");t.style.height="auto";t.style.height=Math.min(320,Math.max(110,t.scrollHeight))+"px"}
+async function fileTicket(){const t=$("#shT").value.trim();if(!t){const f=$("#shF");f.classList.remove("nope");void f.offsetWidth;f.classList.add("nope");$("#shT").focus();return}
+  const r=await post("ticket",{text:t});if(!r.ok){toast(said(r.lines)||"Not filed");return}
+  const id=(/ticket\s+(\d{3,}-[\w-]+)/.exec(r.lines.join("\n"))||[])[1];
+  sheet(false);if(id)just.add(id);refreshSoon();setTimeout(bumpRunning,320);toast(id?`Filed as ${num(id)}: the intake agent is reading it`:"Filed: the intake agent is reading it",id?"Open":null,()=>openJob(id))}
+$("#shF").addEventListener("submit",e=>{e.preventDefault();fileTicket()});
+$("#shT").addEventListener("input",growSh);
+$("#shT").addEventListener("keydown",e=>{if(e.key==="Enter"&&(e.metaKey||e.ctrlKey)){e.preventDefault();fileTicket()}else if(e.key==="Escape"){e.preventDefault();sheet(false)}});
+
+/* ── Add a source: the popover says how (Claude Code does the setup) ── */
+function addSource(force){const p=$("#spop"),show=force!==undefined?force:p.hidden,b=$("#addS");p.style.top=(b.offsetTop+b.offsetHeight+4)+"px";p.hidden=!show;$("#addS").setAttribute("aria-expanded",String(show))}
+$("#addS").addEventListener("click",e=>{e.stopPropagation();addSource()});
+document.addEventListener("click",e=>{if(!e.target.closest("#spop,#addS"))addSource(false)});
+$("#srcL").addEventListener("click",e=>{const b=e.target.closest("[data-src]");if(b)goSource(b.dataset.src)});
+
+document.addEventListener("click",e=>{if(LOOP!=="outer")return;
+  const b=e.target.closest("[data-oact]");
+  if(b){const a=b.dataset.oact,id=b.dataset.pid;e.stopPropagation();
+    if(a==="pick"){b.checked?picked.add(id):picked.delete(id);renderOuter();return}
+    if(a==="pick-all"){const rn=runnable();if(rn.every(p=>picked.has(p.id)))rn.forEach(p=>picked.delete(p.id));else rn.forEach(p=>picked.add(p.id));renderOuter();return}
+    if(a==="hold")hold(id);else if(a==="unhold")unhold(id);else if(a==="remove")removeP(id);
+    else if(a==="edit"){oEdit=id;oOpen=id;renderOuter()}else if(a==="edit-cancel"){oEdit=null;renderOuter()}else if(a==="edit-save")oEditSave(id);
+    else if(a==="run-one")runIds([id]);else if(a==="propose-anyway")proposeAnyway(id);
+    else if(a==="view-job"){const jid=b.dataset.job;setLoop("inner");openJob(jid)}
+    else if(a==="view-sent"){const ids=sentBar||[];sentBar=null;ids.forEach(id=>just.add(id));setLoop("inner");jump("g-run")}
+    else if(a==="sent-x"){sentBar=null;renderOuter()}
+    else if(a==="aside"){asideOpen=!asideOpen;renderOuter()}
+    return}
+  const r=e.target.closest("[data-orow]");if(r&&!e.target.closest("input,textarea,a,.oacts"))oToggle(r.dataset.orow);
+},true);
+document.addEventListener("keydown",e=>{if(LOOP!=="outer")return;const t=e.target;
+  if((t.id==="oTt"||t.id==="oTx")&&e.key==="Enter"&&(t.id==="oTt"||e.metaKey)){e.preventDefault();oEditSave(oEdit);return}
+  if(t.dataset&&t.dataset.orow&&(e.key==="Enter"||e.key===" ")){e.preventDefault();oToggle(t.dataset.orow);return}
+  if(t.dataset&&t.dataset.orow&&e.key==="x"){const id=t.dataset.orow;if(stOf(P(id))==="open"){picked.has(id)?picked.delete(id):picked.add(id);renderOuter();const n=$(`[data-orow="${id}"]`);if(n)n.focus()}return}
+  if(e.key==="Escape"&&!$("#pal").classList.contains("on")&&!$("#sheet").classList.contains("on")){if(!$("#spop").hidden)addSource(false);else if(oEdit){oEdit=null;renderOuter()}else if(oOpen){oOpen=null;renderOuter()}}
+},true);
+$("#triB").addEventListener("click",collect);
+$("#runB").addEventListener("click",()=>runIds([...picked]));
+$$(".nav[data-osec]").forEach(b=>b.addEventListener("click",()=>goOuter(b.dataset.osec)));
+
+/* ───────── models (ADR 0023): the orchestrator line says the tool and each lane's model; a click changes them ───────── */
+const TOOLN={claude:"Claude Code",codex:"Codex"};
+let MODELS=null,mAt=0;
+function modelLine(){if(!snap||!snap.models||!snap.models.length)return "";
+  return `<button type="button" class="mline" data-mline aria-haspopup="dialog" aria-expanded="${!$("#mpop").hidden}" title="Each lane's model: change one">${esc(TOOLN[snap.tool]||snap.tool||"")} · ${snap.models.map(m=>`${esc(m.lane)} <b>${esc(m.model)}</b>`).join(" · ")}</button> · `}
+async function modelsPop(show){const p=$("#mpop");show=show===undefined?p.hidden:show;p.hidden=!show;$$("[data-mline]").forEach(b=>b.setAttribute("aria-expanded",String(show)));if(!show)return;
+  paintModels();placeModels();if(!MODELS||performance.now()-mAt>60000||MODELS.k!==RK()){try{const d=await getJSON(BASE+"/models.json");MODELS={...d,k:RK()};mAt=performance.now();paintModels();placeModels()}catch(e){}}}
+function placeModels(){const p=$("#mpop"),b=$("[data-mline]");if(!b||p.hidden)return;const r=b.getBoundingClientRect();
+  p.style.left=Math.max(8,Math.min(r.left,innerWidth-p.offsetWidth-8))+"px";p.style.bottom=(innerHeight-r.top+6)+"px"}
+function paintModels(){const p=$("#mpop");if(p.hidden||!snap)return;const L=MODELS&&MODELS.k===RK()?MODELS:null;
+  const opts=m=>{const ids=[...new Set([...(L?L.choices.map(c=>c.id):[]),m.model])];
+    return ids.map(id=>`<option value="${esc(id)}" ${id===m.model?"selected":""}>${esc(id)}</option>`).join("")+`<optgroup label="Tiers">${(L?L.tiers:["strong","medium","cheap"]).map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join("")}</optgroup>`};
+  p.innerHTML=`<b>Models · ${esc(TOOLN[snap.tool]||snap.tool)}</b><p>Each lane's model. A change is written to kitchen.yaml and applies from the next lane a job starts.</p>
+    <div class="mrows">${snap.models.map(m=>`<label class="mrow"><span>${esc(m.lane)}</span><select data-mlane="${esc(m.role)}" aria-label="${esc(m.lane)} model">${opts(m)}</select></label>`).join("")}</div>
+    ${L&&L.notes.length?`<p class="mnote">${L.notes.map(esc).join("<br>")}</p>`:L?"":`<p class="mnote">Reading what ${esc(TOOLN[snap.tool]||"the tool")} can run…</p>`}
+    <p class="mnote">Which ones answer: <code>kitchen models check</code> (one tiny request each, a fraction of a cent).</p>`}
+document.addEventListener("click",e=>{if(e.target.closest("[data-mline]")){e.stopPropagation();modelsPop();return}if(!e.target.closest("#mpop"))modelsPop(false)},true);
+document.addEventListener("change",async e=>{const s=e.target.closest("[data-mlane]");if(!s)return;s.disabled=true;
+  const r=await post("models-set",{lane:s.dataset.mlane,model:s.value});s.disabled=false;toast(said(r.lines)||(r.ok?"Changed":"Not changed"));
+  if(r.ok){const m=snap.models.find(x=>x.role===s.dataset.mlane),t=(/runs on (\S+)/.exec(r.lines.join(" "))||[])[1];if(m&&t)m.model=t;paintModels();refreshSoon()}});
+document.addEventListener("keydown",e=>{if(e.key==="Escape"&&!$("#mpop").hidden){e.stopImmediatePropagation();modelsPop(false)}},true);
+
 /* ───────── boot ───────── */
-$("#nYouI").innerHTML=S.wait;$("#nRunI").innerHTML=SB.run;$("#nDoneI").innerHTML=SB.done;$("#nAddI").innerHTML=SB.add;$("#thB").innerHTML=SB.look;$("#sbB").innerHTML=SB.side;$("#kI").innerHTML=I.search;sbLabel();
-renderList();poll(gen);pollDetail();
+$("#nYouI").innerHTML=S.wait;$("#nRunI").innerHTML=SB.run;$("#nDoneI").innerHTML=SB.done;$("#nAddI").innerHTML=SB.add;$("#thB").innerHTML=SB.look;$("#sbB").innerHTML=SB.side;$("#kI").innerHTML=I.search;$("#nInI").innerHTML=OI.tray;$("#nHeldI").innerHTML=OI.held;$("#nAddSI").innerHTML=SB.add;sbLabel();paintLoopNav();
+renderList();poll(gen);pollDetail();pollInbox();
 </script>
 </body>
 </html>

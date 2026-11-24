@@ -43,8 +43,9 @@ export function orchestratorLine(repo: string): string {
   }
 }
 
-export function status(repo: string, out: Out, opts: { json?: boolean } = {}): number {
-  const jobs = scanJobs(repo);
+export function status(repo: string, out: Out, opts: { json?: boolean; all?: boolean } = {}): number {
+  // A job the person removed shows only with --all, marked (removed).
+  const jobs = scanJobs(repo).filter((e) => opts.all || !e.job?.archived);
   if (opts.json) {
     out(
       JSON.stringify(
@@ -62,6 +63,7 @@ export function status(repo: string, out: Out, opts: { json?: boolean } = {}): n
                   merged: e.job.merged ?? null,
                   report: fs.existsSync(path.join(jobDirOf(repo, e.id), "report.html")) ? path.join(jobDirOf(repo, e.id), "report.html") : null,
                   updatedAt: e.job.updatedAt,
+                  ...(e.job.archived ? { removed: e.job.archived.at } : {}),
                 },
               ]
             : [],
@@ -74,7 +76,8 @@ export function status(repo: string, out: Out, opts: { json?: boolean } = {}): n
   }
   out(orchestratorLine(repo));
   if (!jobs.length) out("Nothing cooking.");
-  for (const e of jobs) out(e.job ? statusLine(e.job, jobDirOf(repo, e.id)) : `${e.id.padEnd(28)} corrupt(${e.corrupt})`);
+  for (const e of jobs)
+    out(e.job ? `${statusLine(e.job, jobDirOf(repo, e.id))}${e.job.archived ? "  (removed)" : ""}` : `${e.id.padEnd(28)} corrupt(${e.corrupt})`);
   return 0;
 }
 
