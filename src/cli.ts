@@ -31,6 +31,9 @@ Work
   kitchen steer <id> "<text>"            a message the job's next agent reads
   kitchen pause <id> · stop <id> · resume <id> · reject <id>
   kitchen report [--json]                what the queue did
+  kitchen models [--json] [--tool claude|codex]   each lane's model and the choices the tool has (ADR 0023)
+  kitchen models set <lane> <model|tier> [--tool t]   intake, build, qa or review; written to kitchen.yaml
+  kitchen models check                   one tiny request per chosen model, through the tool (costs a fraction of a cent)
 
 The outer loop (ADR 0022): sources read by code, triaged into proposals you choose from
   kitchen sources [list] [--json]        the sources (GitHub issues by label, a Slack channel by emoji) and the built-in
@@ -97,6 +100,8 @@ const COMMAND_HELP: Record<string, string> = {
   job: "kitchen job next|start|finish|show …\n\nThe orchestrator's verbs: the single writer of job state. See kitchen --help.",
   verify:
     "kitchen verify sweep [--url <url>]|maintain [--json] | verify finish <run>\n\nThe verify skill's feature map (ADR 0017).\n  sweep      checks out staging, starts the app and writes a brief that drives every feature in features/README.md order; prints the agent's prompt. Changes nothing.\n             --url <url>: drive that deployed environment instead of starting the app (ADR 0021); recipes that need a reset or seed are reported not run. The URL stays in the run, never in a job.\n  maintain   the same on a branch of staging, with a brief to keep the map honest: prune, merge duplicates, fix drift from each feature's Code:, drive every feature; product regressions become tickets.\n  finish     reads the agent's verdict.json (sweep) or report.json (maintain), writes report.html in .kitchen/verify/<run>/, stops the app; maintain's map fixes (verify skill files only) merge into staging.\nkitchen qa … <run> drives the run's app, like a job's.",
+  models:
+    "kitchen models [--json] [--tool claude|codex] | models set <lane> <model|tier> [--tool t] | models check\n\nEach lane's model for the tool (ADR 0023) and what you can choose: Claude Code's aliases (fable, opus, sonnet, haiku) and, with ANTHROPIC_API_KEY set, every model Anthropic's models API lists; Codex's providers from ~/.codex/config.toml and their GET /models. set writes models.<tool>.<lane> in kitchen.yaml; it applies from the next lane a job starts. check sends one tiny request per chosen model through the tool itself and says which answer: the only Kitchen command that spends money outside a run.",
   inbox:
     "kitchen inbox list|add|propose|verdict|hold|bring-back|remove|edit|run …\n\nThe outer loop's inbox (ADR 0022): items read from your sources and Kitchen's own findings, the proposals triage made from them, and what you sent to the inner loop. Only these verbs write it; the dashboard calls the same ones. See kitchen --help.",
   collect:
@@ -252,6 +257,8 @@ async function main(argv: string[]): Promise<number> {
       return qaVerb(repo, f, out);
     case "verify":
       return verifyVerb(repo, f, json, out);
+    case "models":
+      return modelsVerb(repo, f, json, out);
     case "inbox":
       return (await import("./inbox/cli.ts")).inboxVerb(repo, f, json, out);
     case "collect":
@@ -302,6 +309,36 @@ async function jobVerb(repo: string, f: Flags, json: boolean, out: (l: string) =
     return 0;
   }
   throw new Error(`kitchen job: next, start, finish or show (got ${verb ?? "nothing"})`);
+}
+
+async function modelsVerb(repo: string, f: Flags, json: boolean, out: (l: string) => void): Promise<number> {
+  const m = await import("./models/models.ts");
+  const [verb, lane, value] = f.pos;
+  const tool = f.vals.tool?.[0];
+  if (tool && tool !== "claude" && tool !== "codex") throw new Error("--tool is claude or codex");
+  if (verb === "set") {
+    const role = lane ? m.roleOf(lane) : null;
+    if (!role || !value) throw new Error("kitchen models set <intake|build|qa|review> <model or tier>");
+    const r = m.setModel(repo, role, value, tool as "claude" | "codex" | undefined);
+    out(`${m.TOOL_NAMES[r.tool]} · ${m.LANE_NAMES[r.role]} runs on ${r.model} from the next lane a job starts (kitchen.yaml models.${r.tool}.${r.role})`);
+    return 0;
+  }
+  if (verb === "check") {
+    const rs = await m.checkModels(repo);
+    if (json) out(JSON.stringify(rs, null, 2));
+    else for (const r of rs) out(`${r.ok ? "ok  " : "FAIL"}  ${r.model} (${r.lanes.join(", ")})${r.ok ? "" : `: ${r.why}`}`);
+    return rs.every((r) => r.ok) ? 0 : 1;
+  }
+  if (verb !== undefined) throw new Error(`kitchen models: set or check, or nothing to list (got ${verb})`);
+  const l = await m.listModels(repo, { tool: tool as "claude" | "codex" | undefined });
+  if (json) {
+    out(JSON.stringify(l, null, 2));
+    return 0;
+  }
+  out(`${m.TOOL_NAMES[l.tool]}: ${l.lanes.map((x) => `${x.lane} ${x.model}${x.want !== x.model ? ` (${x.want})` : ""}`).join(" · ")}`);
+  out(`choices: ${l.choices.map((c) => c.id).join(", ")}; tiers: ${l.tiers.join(", ")}`);
+  for (const n of l.notes) out(`note: ${n}`);
+  return 0;
 }
 
 async function verifyVerb(repo: string, f: Flags, json: boolean, out: (l: string) => void): Promise<number> {

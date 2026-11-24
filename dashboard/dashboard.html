@@ -428,6 +428,15 @@ a.btn{text-decoration:none}
 .qbox input{display:block;width:100%;border:0;outline:0;background:none;padding:7px 10px;line-height:1.45}
 .qbox input::placeholder{color:var(--faint)}
 .foot2 .mono{font-size:11.5px}
+.mline{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px;text-decoration-color:var(--line2)}
+.mline:hover{color:var(--fg2);text-decoration-color:var(--mute)}
+.mline b{font-weight:500;color:var(--fg2)}
+.mpop{position:fixed;width:300px}
+.mrows{display:grid;gap:6px;margin:2px 0 10px}
+.mrow{display:grid;grid-template-columns:56px 1fr;align-items:center;gap:8px;color:var(--mute)}
+.mrow select{font:12.5px var(--sans);color:var(--fg);background:var(--bg);border:1px solid var(--line2);border-radius:6px;padding:3px 6px;min-width:0}
+.mrow select:focus{outline:0;border-color:var(--fg);box-shadow:0 0 0 3px color-mix(in srgb,var(--fg) 10%,transparent)}
+.mnote{font-size:11.5px;color:var(--faint)}
 .row .tm{white-space:nowrap}
 .tm i{font:400 12px var(--sans);font-style:normal;color:var(--faint)}
 [data-tm] i{font-style:normal}
@@ -689,6 +698,7 @@ button.ghead:hover{background:var(--hover)}
       <div id="list"></div>
       <div class="foot2" id="foot"></div>
     </div>
+    <div class="rpop mpop" id="mpop" role="dialog" aria-label="Each lane's model" hidden></div>
   </main>
   <aside class="panel" id="panel" aria-label="Job detail"><div class="pin" id="pin"></div></aside>
 </div>
@@ -1008,7 +1018,7 @@ function renderCounts(){
   renderOCounts();$("#sYou").textContent=you.length||"";$("#nYouI").innerHTML=you.length?S.you:S.wait; /* orange only when something needs you */$("#sRun").textContent=run.length||"";{const q=queueWords(!!snap.runner.running,run);$("#sRunN").textContent=q.group;$("#nRunI").innerHTML=q.busy?SB.run:S.wait}$("#sDone").textContent=done.length||"";
   $("#wsName").textContent=snap.repo;const allYou=you.length+otherYou();document.title=(allYou?`(${allYou}) `:"")+"Kitchen · "+snap.repo;
   $("#tCost").textContent="$"+snap.usdToday.toFixed(2)+" today";$("#tCost").title="$"+snap.usdToday.toFixed(2)+" today, $"+snap.usdTotal.toFixed(2)+" in all, by kitchen run's orchestrator sessions (an in-session /kitchen run is billed to that session)";
-  $("#foot").innerHTML=`Orchestrator: ${esc(snap.runner.text)}${snap.runner.running?"":`. Jobs move only while <span class="mono">kitchen run</span> (or <span class="mono">/kitchen run</span> in Claude Code) works the queue.`}${snap.corrupt.length?` · Unreadable job folders: ${esc(snap.corrupt.join(", "))}`:""}`;
+  $("#foot").innerHTML=`${modelLine()}Orchestrator: ${esc(snap.runner.text)}${snap.runner.running?"":`. Jobs move only while <span class="mono">kitchen run</span> (or <span class="mono">/kitchen run</span> in Claude Code) works the queue.`}${snap.corrupt.length?` · Unreadable job folders: ${esc(snap.corrupt.join(", "))}`:""}`;
 }
 function replaceRow(j){if(!j)return;const n=$("#rw-"+CSS.escape(j.id));if(n)keepFocus(()=>{n.outerHTML=view==="board"?cardHTML(j):rowHTML(j);just.delete(j.id);sigs[j.id]=sigOf(j);grow()})}
 function keepFocus(fn){
@@ -1521,6 +1531,28 @@ document.addEventListener("keydown",e=>{if(LOOP!=="outer")return;const t=e.targe
 $("#triB").addEventListener("click",collect);
 $("#runB").addEventListener("click",()=>runIds([...picked]));
 $$(".nav[data-osec]").forEach(b=>b.addEventListener("click",()=>goOuter(b.dataset.osec)));
+
+/* ───────── models (ADR 0023): the orchestrator line says the tool and each lane's model; a click changes them ───────── */
+const TOOLN={claude:"Claude Code",codex:"Codex"};
+let MODELS=null,mAt=0;
+function modelLine(){if(!snap||!snap.models||!snap.models.length)return "";
+  return `<button type="button" class="mline" data-mline aria-haspopup="dialog" aria-expanded="${!$("#mpop").hidden}" title="Each lane's model: change one">${esc(TOOLN[snap.tool]||snap.tool||"")} · ${snap.models.map(m=>`${esc(m.lane)} <b>${esc(m.model)}</b>`).join(" · ")}</button> · `}
+async function modelsPop(show){const p=$("#mpop");show=show===undefined?p.hidden:show;p.hidden=!show;$$("[data-mline]").forEach(b=>b.setAttribute("aria-expanded",String(show)));if(!show)return;
+  paintModels();placeModels();if(!MODELS||performance.now()-mAt>60000||MODELS.k!==RK()){try{const d=await getJSON(BASE+"/models.json");MODELS={...d,k:RK()};mAt=performance.now();paintModels();placeModels()}catch(e){}}}
+function placeModels(){const p=$("#mpop"),b=$("[data-mline]");if(!b||p.hidden)return;const r=b.getBoundingClientRect();
+  p.style.left=Math.max(8,Math.min(r.left,innerWidth-p.offsetWidth-8))+"px";p.style.bottom=(innerHeight-r.top+6)+"px"}
+function paintModels(){const p=$("#mpop");if(p.hidden||!snap)return;const L=MODELS&&MODELS.k===RK()?MODELS:null;
+  const opts=m=>{const ids=[...new Set([...(L?L.choices.map(c=>c.id):[]),m.model])];
+    return ids.map(id=>`<option value="${esc(id)}" ${id===m.model?"selected":""}>${esc(id)}</option>`).join("")+`<optgroup label="Tiers">${(L?L.tiers:["strong","medium","cheap"]).map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join("")}</optgroup>`};
+  p.innerHTML=`<b>Models · ${esc(TOOLN[snap.tool]||snap.tool)}</b><p>Each lane's model. A change is written to kitchen.yaml and applies from the next lane a job starts.</p>
+    <div class="mrows">${snap.models.map(m=>`<label class="mrow"><span>${esc(m.lane)}</span><select data-mlane="${esc(m.role)}" aria-label="${esc(m.lane)} model">${opts(m)}</select></label>`).join("")}</div>
+    ${L&&L.notes.length?`<p class="mnote">${L.notes.map(esc).join("<br>")}</p>`:L?"":`<p class="mnote">Reading what ${esc(TOOLN[snap.tool]||"the tool")} can run…</p>`}
+    <p class="mnote">Which ones answer: <code>kitchen models check</code> (one tiny request each, a fraction of a cent).</p>`}
+document.addEventListener("click",e=>{if(e.target.closest("[data-mline]")){e.stopPropagation();modelsPop();return}if(!e.target.closest("#mpop"))modelsPop(false)},true);
+document.addEventListener("change",async e=>{const s=e.target.closest("[data-mlane]");if(!s)return;s.disabled=true;
+  const r=await post("models-set",{lane:s.dataset.mlane,model:s.value});s.disabled=false;toast(said(r.lines)||(r.ok?"Changed":"Not changed"));
+  if(r.ok){const m=snap.models.find(x=>x.role===s.dataset.mlane),t=(/runs on (\S+)/.exec(r.lines.join(" "))||[])[1];if(m&&t)m.model=t;paintModels();refreshSoon()}});
+document.addEventListener("keydown",e=>{if(e.key==="Escape"&&!$("#mpop").hidden){e.stopImmediatePropagation();modelsPop(false)}},true);
 
 /* ───────── boot ───────── */
 $("#nYouI").innerHTML=S.wait;$("#nRunI").innerHTML=SB.run;$("#nDoneI").innerHTML=SB.done;$("#nAddI").innerHTML=SB.add;$("#thB").innerHTML=SB.look;$("#sbB").innerHTML=SB.side;$("#kI").innerHTML=I.search;$("#nInI").innerHTML=OI.tray;$("#nHeldI").innerHTML=OI.held;$("#nAddSI").innerHTML=SB.add;sbLabel();paintLoopNav();

@@ -41,6 +41,7 @@ Run every command below from the repo root. (This plugin's skill is `/kitchen:ki
 | "sweep", check every feature before a release, "is staging good to ship" | a verify run: see The verify map, below (`kitchen verify sweep`) |
 | "maintain the map", tidy or audit the verify skill, the map looks stale | a verify run: `kitchen verify maintain` |
 | "watch GitHub issues labelled bug", "the #bugs Slack channel", `/kitchen sources`, add or change a source | The outer loop: sources, below |
+| "use Opus for review", "build on sonnet", which models does it run on | `kitchen models set <intake\|build\|qa\|review> <model>` (a name from `kitchen models`, or a tier: strong, medium, cheap); `kitchen models` to show them. `kitchen models check` costs a little: run it only when the user asks whether the models answer |
 | collect, "what came in", "check the inbox" | `kitchen collect` as a background command (it reads every source, then one triage session proposes tickets), then `kitchen inbox list` |
 | "run p1 and p3", "send the slow-list one" | `kitchen inbox run <proposal ids>` (only proposals the user named) |
 

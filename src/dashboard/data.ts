@@ -4,7 +4,7 @@
 // written by the activity hook). Read-only.
 import fs from "node:fs";
 import path from "node:path";
-import { type Config, loadConfig, modelFor } from "../config.ts";
+import { type Config, LANE_ROLES, loadConfig, modelFor } from "../config.ts";
 import { diffSize } from "../engine/git.ts";
 import { heartbeatFile } from "../engine/jobs.ts";
 import { criteriaOf, leftOutOf, readIntake, readQa, readReview } from "../engine/lanes.ts";
@@ -81,6 +81,7 @@ export function laneOf(j: Pick<Job, "stage" | "pausedFrom" | "escalatedFrom" | "
   const s = workStage(j);
   return s === "build" || s === "qa" || s === "review" ? s : s === "regress" ? "review" : "intake";
 }
+const LANE_SHORT = { intake: "intake", builder: "build", qa: "QA", reviewer: "review" } as const;
 /** Who works in each lane, as its header says. */
 export function laneWho(cfg: Config | null): Record<Lane, string> {
   const m = (role: "intake" | "builder" | "qa" | "reviewer", fallback: string) => (cfg ? modelFor(cfg, role) : fallback);
@@ -222,6 +223,8 @@ export type Snapshot = {
   usdToday: number;
   usdTotal: number;
   tool: string | null;
+  /** ADR 0023: each lane's model for the active tool (the orchestrator line says it; a click changes it). */
+  models: { role: string; lane: string; model: string }[];
   runner: { running: boolean; text: string };
   phases: { k: Phase; nm: string }[];
   lanes: { k: Lane; nm: string; who: string }[];
@@ -340,6 +343,7 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
     usdToday: priced.filter((l) => new Date(l.t).toDateString() === today).reduce((a, l) => a + (l.usd as number), 0),
     usdTotal: priced.reduce((a, l) => a + (l.usd as number), 0),
     tool: cfg?.agent.tool ?? null,
+    models: cfg ? LANE_ROLES.map((role) => ({ role, lane: LANE_SHORT[role], model: modelFor(cfg as Config, role) })) : [],
     runner: orch,
     phases: PHASES.map((p) => ({ k: p.k, nm: p.nm })),
     lanes: LANES.map((l) => ({ k: l.k, nm: l.nm, who: who[l.k] })),

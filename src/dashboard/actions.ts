@@ -7,6 +7,7 @@ import { MAX_MESSAGE } from "../engine/messages.ts";
 import { findJob } from "../engine/store.ts";
 import { detachCollect, liveCollect } from "../inbox/collect.ts";
 import * as inbox from "../inbox/store.ts";
+import { LANE_NAMES, roleOf, setModel, TOOL_NAMES } from "../models/models.ts";
 import { run } from "../run/orchestrator.ts";
 import { orchestrator } from "./data.ts";
 
@@ -123,6 +124,15 @@ export const ACTIONS: Record<string, (repo: string, b: Body, out: Out) => Promis
   "inbox-verdict": async (repo, b, out) => {
     if (b.verdict !== "propose") throw new BadRequest('verdict: "propose" (the page only proposes anyway)');
     out(`${(await inbox.verdict(repo, [pidOf(b)], { verdict: "propose" })).id} proposed`);
+    return 0;
+  },
+  /** ADR 0023: one lane's model, `kitchen models set`: kitchen.yaml, from the next lane a job starts. */
+  "models-set": (repo, b, out) => {
+    const role = typeof b.lane === "string" ? roleOf(b.lane) : null;
+    if (!role) throw new BadRequest("lane: intake, build, qa or review");
+    if (typeof b.model !== "string" || !b.model.trim()) throw new BadRequest("model: a model name or a tier");
+    const r = setModel(repo, role, b.model);
+    out(`${TOOL_NAMES[r.tool]} · ${LANE_NAMES[r.role]} runs on ${r.model} from the next lane a job starts`);
     return 0;
   },
   /** Start Kitchen: `kitchen run --detach` (none is started while an orchestrator works the queue). */
