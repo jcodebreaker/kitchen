@@ -27,13 +27,18 @@ export function stageLabel(j: Job): string {
 export function statusLine(j: Job, jobDir: string): string {
   const report = fs.existsSync(path.join(jobDir, "report.html")) ? `  ${path.join(jobDir, "report.html")}` : "";
   const into = j.target ? ` into ${j.target}` : "";
-  const merged = j.merged
-    ? `merged${into} ${j.merged.sha.slice(0, 7)}`
-    : j.pr
-      ? `PR #${j.pr.number}${prOpen(j) ? ` open${into}` : ""}`
-      : into
-        ? `→ ${j.target}`
-        : "";
+  // ADR 0028: a check says what it found, never a merge.
+  const merged = j.check?.result
+    ? j.check.result
+    : j.stage === "done" && j.verified
+      ? `${j.verified.words} (kitchen promote ${j.id})`
+      : j.merged
+        ? `merged${into} ${j.merged.sha.slice(0, 7)}`
+        : j.pr
+          ? `PR #${j.pr.number}${prOpen(j) ? ` open${into}` : ""}`
+          : into
+            ? `→ ${j.target}`
+            : "";
   return `${j.id.padEnd(28)} ${j.title.slice(0, 34).padEnd(34)} ${stageLabel(j).padEnd(16)} round ${roundsUsed(j)}/${j.roundLimit}  moved ${ago(j.updatedAt)}${merged ? `  ${merged}` : ""}${report}`;
 }
 

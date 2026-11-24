@@ -16,8 +16,9 @@ You decide whether Kitchen takes this ticket, what kind of work it is, how risky
   - `ACCEPT`: a change to this repo you can describe as checkable behaviour.
   - `NEEDS-INFO`: you can't tell what done looks like without one answer from the author, and a one-line answer settles it. Ask exactly one question, the one that unblocks the most. After two questions, prefer to decide and rescope.
   - `REFINE`: a one-line answer won't do; the ticket needs a conversation with its author before anyone builds it. See Refine, below.
-  - `REJECT`: not a change to this software, harmful, or asks Kitchen to do something other than change code (push, deploy, reveal secrets).
-- **KIND**: `feature` (new behaviour), `bug` (should already work and doesn't), `ui` (the point is what a person sees), `chore` (no behaviour change).
+  - `REJECT`: not about this software, harmful, or asks Kitchen to do something it never does (push, deploy, reveal secrets).
+- **KIND**: `feature` (new behaviour), `bug` (should already work and doesn't), `ui` (the point is what a person sees), `chore` (no behaviour change), `check` (test, confirm or explore without changing anything; see Checks, below).
+- **KEEP**: `no` when the ticket asks for code only to verify something now and not to keep it ("write a harness that proves the import handles 10k rows"); Kitchen builds it, QA checks it, and it is not reviewed or merged unless the person promotes it later. `yes` (the default; leave the line out) for everything else, including a test that should stay ("add a regression test for …"). A `check` has no KEEP.
 - **RISK**
   - `low`: a small change in one place; no schema change, auth, payments or migrations.
   - `medium`: new behaviour across several files, a schema or data change, several screens.
@@ -63,6 +64,27 @@ Never list a slice the author didn't agree to, or one you only considered: that 
 
 When unsure between `NEEDS-INFO` and `REFINE`: if you can write the one question and every likely answer lets you write the criteria, ask it.
 
+## Checks: test without changing code
+
+A ticket that asks to test, confirm or explore what is already there ("check checkout still works", "go through the loan flow on staging and see what breaks") is a `check`: QA drives staging as it is, nothing is built, and each problem found is proposed to the person as a bug. When the brief says the person filed it as a check (`kitchen ticket --check`), it is one: write `KIND: check`.
+
+- Criteria say what to check, in the usual forms (`page`, `http`, `cmd`, `test`), traced to the ticket's words. Never criteria for a change: a check changes nothing.
+- An exploring ticket ("try the loan flow and see what breaks") gets `EXPLORE: <minutes>` (20 when it names no time) instead of fixed criteria: QA drives freely for that long and reports what it finds. Criteria may still be added for what the ticket names exactly.
+- "Write tests for X" is not a check: it changes code (a `chore`, kept).
+- RISK and SURFACES may be left out (a check is `low`); no FILES, AFTER or CHANGES, except FILES naming the code the check is about, which helps QA find the map's recipes.
+
+```
+DECISION: ACCEPT
+TITLE: Check the loan flow on staging
+KIND: check
+EXPLORE: 20
+LEFT OUT: nothing
+REASON: asks to try the loan flow and report what breaks; nothing to change
+
+## Criteria
+- C1 (page): on /loans, ana's loans are listed with due dates
+```
+
 ## Other jobs: one job per piece of work
 
 Other agents build the jobs under "Other jobs in the queue" at the same time as this one. Two jobs promising the same thing build it twice and conflict when they merge. So, for each part of this ticket:
@@ -88,7 +110,9 @@ Every requirement of the ticket is covered by a criterion, and every criterion t
 ```
 DECISION: ACCEPT | NEEDS-INFO | REFINE | REJECT
 TITLE: <a short title, at most 60 characters>
-KIND: feature | bug | ui | chore
+KIND: feature | bug | ui | chore | check
+KEEP: no   <only for code built just to verify something now; leave out otherwise>
+EXPLORE: <minutes, only for a check that explores>
 RISK: low | medium | high
 SURFACES: ui, security | ui | security | none
 FILES: server.js, lib/loans.js

@@ -19,7 +19,20 @@ import { withFileLock } from "../lock.ts";
 import { PromptSource } from "../sources/prompt.ts";
 import { recordAnswers } from "./clarify.ts";
 import { readIntake } from "./lanes.ts";
-import { BY_YOU, BY_YOU_STOPPED, isActive, type Job, type JobFrom, MoveRefused, move, pausedByYou, STAGES, type Stage } from "./machine.ts";
+import {
+  BY_YOU,
+  BY_YOU_STOPPED,
+  isActive,
+  isCheck,
+  type Job,
+  type JobFrom,
+  MoveRefused,
+  move,
+  pausedByYou,
+  promotable,
+  STAGES,
+  type Stage,
+} from "./machine.ts";
 import { addMessage, checkText, type Message, type MessageKind } from "./messages.ts";
 import { numOf } from "./refine.ts";
 import { realGh, refuseTarget } from "./staging.ts";
@@ -69,16 +82,16 @@ export async function moveJob(
   return j;
 }
 
-export async function ticket(repo: string, text: string, out: Out, o: { into?: string } = {}): Promise<number> {
+export async function ticket(repo: string, text: string, out: Out, o: { into?: string; check?: boolean } = {}): Promise<number> {
   let job: Job;
   try {
-    job = await fileTicket(repo, text, { target: o.into });
+    job = await fileTicket(repo, text, { target: o.into, check: o.check });
   } catch (e) {
     if (!(e instanceof TargetRefused)) throw e;
     out(`kitchen ticket: ${e.message}. Nothing filed.`);
     return 1;
   }
-  out(`ticket ${job.id}  "${job.title}"${job.target ? `  into ${job.target}` : ""}  → intake`);
+  out(`${o.check ? "check" : "ticket"} ${job.id}  "${job.title}"${job.target ? `  ${o.check ? "on" : "into"} ${job.target}` : ""}  → intake`);
   return 0;
 }
 
@@ -90,7 +103,7 @@ export class TargetRefused extends Error {}
  * `kitchen inbox run` for a proposal the person chose (ADR 0022: its title and where it came from). `target`: the
  * branch it merges into (ADR 0026), checked here; staging's own name is the default and isn't stored.
  */
-export async function fileTicket(repo: string, text: string, o: { title?: string; from?: JobFrom; target?: string } = {}): Promise<Job> {
+export async function fileTicket(repo: string, text: string, o: { title?: string; from?: JobFrom; target?: string; check?: boolean } = {}): Promise<Job> {
   const cfg = loadConfig(repo);
   const target = o.target?.trim() && o.target.trim() !== cfg.staging.branch ? o.target.trim() : undefined;
   if (target) {
@@ -99,7 +112,7 @@ export async function fileTicket(repo: string, text: string, o: { title?: string
   }
   const t = PromptSource.ticket(text);
   const title = (o.title && shortTitle(o.title)) || t.title;
-  const job = await createJob(repo, { title, ticket: t.ref, body: t.body, roundLimit: cfg.round_limit, from: o.from, target });
+  const job = await createJob(repo, { title, ticket: t.ref, body: t.body, roundLimit: cfg.round_limit, from: o.from, target, check: o.check });
   appendLedger(repo, { job: job.id, stage: "intake", round: 1, event: "ticket", key: `${job.id}/ticket` });
   return job;
 }
@@ -277,12 +290,42 @@ export async function feedback(repo: string, ref: string, text: string, out: Out
       return 1;
     }
     await say("follow-up");
-    await moveJob(repo, job.id, "build", { who: "person" });
-    out(`${job.id}  follow-up → build (round ${job.round + 1})`);
+    // ADR 0028: a check is run again (QA on the target's tip as it is now), never built.
+    const to = isCheck(job) ? "qa" : "build";
+    await moveJob(repo, job.id, to, { who: "person" });
+    out(`${job.id}  follow-up → ${to === "qa" ? "qa: the check runs again" : "build"} (round ${job.round + 1})`);
     return 0;
   }
   out(`${job.id}  is ${stateWords(job)}: ${isActive(job.stage) || job.stage === "paused" ? `use kitchen steer ${job.id} "…"` : "nothing to answer"}`);
   return 1;
+}
+
+/**
+ * ADR 0028 amendment, `kitchen promote <id>`: a job verified and not merged (KEEP: no) takes the rest of the way:
+ * Review → merge check → merge into its target (or its PR, with staging.merge: pr). The branch QA verified is what
+ * the review reads; a fresh round budget.
+ */
+export async function promote(repo: string, ref: string, out: Out): Promise<number> {
+  const job = findJob(repo, ref);
+  if (job.archived) {
+    out(`${job.id}  was removed (kitchen restore shows it again)`);
+    return 1;
+  }
+  if (!promotable(job)) {
+    out(`${job.id}  is ${job.merged ? "merged already" : stateWords(job)}: promote takes a job verified and not merged (KEEP: no)`);
+    return 1;
+  }
+  await moveJob(repo, job.id, "review", {
+    who: "person",
+    reason: "promoted by you",
+    check: (j) => (promotable(j) ? null : `${j.id} is no longer verified and waiting`),
+    patch: (j) => {
+      delete j.keep;
+      j.promoted = new Date().toISOString();
+    },
+  });
+  out(`${job.id}  promoted → review (then the merge check and the merge into ${job.target ?? loadConfig(repo).staging.branch})`);
+  return 0;
 }
 
 /** `kitchen approve <id>`: the person approves intake's criteria for a job intake.confirm holds; it goes to Build. */
@@ -296,7 +339,8 @@ export async function approve(repo: string, ref: string, out: Out): Promise<numb
     return 1;
   }
   const dir = jobDirOf(repo, job.id);
-  await moveJob(repo, job.id, "build", {
+  const check = isCheck(job);
+  await moveJob(repo, job.id, check ? "qa" : "build", {
     who: "person",
     reason: "approved by you",
     check: (j) => (waiting(j) ? null : `${j.id} is no longer waiting for your approval`),
@@ -307,8 +351,8 @@ export async function approve(repo: string, ref: string, out: Out): Promise<numb
   recordAnswers(dir, ["Approved as written."]);
   // ADR 0020: the split the person just approved, from intake.md as it stands now.
   const i = readIntake(dir);
-  const filed = i?.decision === "ACCEPT" ? await fileSlices(repo, job, i.slices) : "";
-  out(`${job.id}  approved → build${filed}`);
+  const filed = i?.decision === "ACCEPT" && !check ? await fileSlices(repo, job, i.slices) : "";
+  out(`${job.id}  approved → ${check ? "qa (a check)" : "build"}${filed}`);
   return 0;
 }
 

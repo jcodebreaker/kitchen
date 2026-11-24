@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { readMapChanges } from "../verify/admit.ts";
 import { criteriaOf, leftOutOf, qaDir, readQa, readReview, regressDir } from "./lanes.ts";
-import { type Job, prOpen } from "./machine.ts";
+import { isCheck, type Job, prOpen } from "./machine.ts";
 import { readMessages } from "./messages.ts";
 import { findJob, JOB_ID, jobDirOf, roundDir, writeAtomic } from "./store.ts";
 
@@ -32,38 +32,52 @@ function evidenceHtml(dir: string, f: string, named = false): string {
 export function renderReport(repo: string, job: Job, o: { diff?: { p: string; a: number; d: number }[]; checks?: string; named?: boolean } = {}): string {
   const dir = jobDirOf(repo, job.id);
   const crit = criteriaOf(dir);
-  const qa = readQa(dir, job.round, crit);
+  const check = isCheck(job);
+  const qa = readQa(dir, job.round, crit, { check });
   const review = readReview(dir, job.round);
   const qd = qaDir(dir, job.round);
   const status =
-    job.stage === "done" && job.merged
-      ? `${job.mergedBy === "person" ? `Merged by you on ${esc(job.merged.at.slice(0, 10))} into` : job.mergedBy === "github" ? `Merged on GitHub on ${esc(job.merged.at.slice(0, 10))} into` : "Merged into"} ${esc(job.merged.into)} (${esc(job.merged.sha.slice(0, 7))}${job.merged.via === "github" && job.pr ? `, PR #${job.pr.number}` : ""})`
-      : prOpen(job) && job.pr
-        ? `PR #${job.pr.number} open${job.target ? ` into ${esc(job.target)}` : ""} · waiting for review`
-        : job.stage === "ready"
-          ? `Ready for you: ${esc(job.held ?? "a person merges it")}`
-          : `${esc(job.stage)}${job.pausedReason ? `: ${esc(job.pausedReason)}` : ""}`;
-  const check: string[] = [];
-  if (job.held) check.push(job.mergedBy === "person" ? `Kitchen held it for you (${esc(job.held)}); you merged it.` : esc(job.held));
+    check && job.stage === "done" && job.check?.result
+      ? `${esc(job.check.result)}${job.check.onto ? ` (${esc(job.check.onto.slice(0, 7))}) · nothing changed` : ""}`
+      : job.stage === "done" && job.verified
+        ? `${esc(job.verified.words)}: QA passed on <code>${esc(job.branch)}</code> (${esc(job.verified.head.slice(0, 7))}); the branch stays, <code>kitchen promote ${esc(job.id)}</code> reviews and merges it`
+        : job.stage === "done" && job.merged
+          ? `${job.mergedBy === "person" ? `Merged by you on ${esc(job.merged.at.slice(0, 10))} into` : job.mergedBy === "github" ? `Merged on GitHub on ${esc(job.merged.at.slice(0, 10))} into` : "Merged into"} ${esc(job.merged.into)} (${esc(job.merged.sha.slice(0, 7))}${job.merged.via === "github" && job.pr ? `, PR #${job.pr.number}` : ""})`
+          : prOpen(job) && job.pr
+            ? `PR #${job.pr.number} open${job.target ? ` into ${esc(job.target)}` : ""} · waiting for review`
+            : job.stage === "ready"
+              ? `Ready for you: ${esc(job.held ?? "a person merges it")}`
+              : `${esc(job.stage)}${job.pausedReason ? `: ${esc(job.pausedReason)}` : ""}`;
+  const checks: string[] = [];
+  if (job.held) checks.push(job.mergedBy === "person" ? `Kitchen held it for you (${esc(job.held)}); you merged it.` : esc(job.held));
   if ("findings" in review)
-    for (const f of review.findings.filter((x) => !x.blocks)) check.push(`Review note ${esc(f.id)}${f.at ? ` (${esc(f.at)})` : ""}: ${esc(f.why)}`);
+    for (const f of review.findings.filter((x) => !x.blocks)) checks.push(`Review note ${esc(f.id)}${f.at ? ` (${esc(f.at)})` : ""}: ${esc(f.why)}`);
   // ADR 0020: the reading was settled with you, not picked by intake.
   for (const r of job.refined ?? [])
-    check.push(`Refined with you on ${esc(r.at.slice(0, 10))} (${esc(r.reason)}): the criteria come from your refined ticket. Check they say what you agreed.`);
+    checks.push(
+      `Refined with you on ${esc(r.at.slice(0, 10))} (${esc(r.reason)}): the criteria come from your refined ticket. Check they say what you agreed.`,
+    );
   // ADR 0020: the later slices of a ticket split with you, which Kitchen filed as their own tickets.
   if (job.slices?.length)
-    check.push(
+    checks.push(
       `Split with you: the rest is filed as ${job.slices.map((x) => `${esc(JOB_ID.exec(x.id)?.[1] ?? x.id)} “${esc(titleOf(repo, x.id) ?? x.text)}”`).join(", ")}.`,
     );
-  if (job.approved) check.push(`Criteria approved by you on ${esc(job.approved.slice(0, 10))}, before the build.`);
+  if (job.approved) checks.push(`Criteria approved by you on ${esc(job.approved.slice(0, 10))}, before the build.`);
   const leftOut = leftOutOf(dir);
-  if (leftOut) check.push(`Left out by intake (not in your ticket; file it separately if you want it): ${esc(leftOut)}`);
+  if (leftOut) checks.push(`Left out by intake (not in your ticket; file it separately if you want it): ${esc(leftOut)}`);
   // ADR 0017 §4: every earlier check this job changed on purpose (its CHANGES: line), as it was and as it is now.
   for (const c of readMapChanges(dir))
-    check.push(`Changed earlier check (${esc(c.by)}): ${esc(c.item)}: was “${esc(c.was)}”, now ${c.now === "(removed)" ? "removed" : `“${esc(c.now)}”`}`);
+    checks.push(`Changed earlier check (${esc(c.by)}): ${esc(c.item)}: was “${esc(c.was)}”, now ${c.now === "(removed)" ? "removed" : `“${esc(c.now)}”`}`);
   // ADR 0027 §3: the change moved on; the map didn't learn what QA wrote.
-  if (job.mapSkipped) check.push(`map update skipped: ${esc(job.mapSkipped)}. QA's map files are still in <code>rounds/*/qa/map/</code> of this job's folder.`);
-  if (job.risk === "high") check.push("High risk: read the diff yourself before you merge it anywhere else.");
+  if (job.mapSkipped)
+    checks.push(`map update skipped: ${esc(job.mapSkipped)}. QA's map files are still in <code>rounds/*/qa/map/</code> of this job's folder.`);
+  if (job.risk === "high" && !check) checks.push("High risk: read the diff yourself before you merge it anywhere else.");
+  // ADR 0028: what a check found, each proposed in the Inbox for the person to Run, Hold or set aside.
+  if ("findings" in qa && qa.findings.length)
+    checks.push(
+      `Found ${qa.findings.length} problem${qa.findings.length === 1 ? "" : "s"}${job.check?.proposals?.length ? `, proposed in the Inbox as ${esc(job.check.proposals.join(", "))}` : ""}: ${qa.findings.map((f) => `<b>${esc(f.title)}</b>${f.criterion ? ` (${esc(f.criterion)})` : ""}: ${esc(f.seen)}`).join("; ")}`,
+    );
+  if (job.check?.map) checks.push(esc(job.check.map));
   const rows = crit
     .map((c) => {
       const r = "criteria" in qa ? qa.criteria.find((x) => x.id === c.id) : undefined;
@@ -94,20 +108,37 @@ img{max-width:100%;border:1px solid var(--line);border-radius:6px}figure{margin:
 pre{background:var(--card);padding:8px;border-radius:6px;overflow:auto;font-size:12px;white-space:pre-wrap}.box{background:var(--card);border-radius:8px;padding:10px 14px}
 </style></head><body><main>
 <h1>${esc(job.id)} · ${esc(job.title)}</h1>
-<p class="st">${status} · ${esc(job.kind ?? "?")} · risk ${esc(job.risk ?? "?")} · round ${job.round} · branch <code>${esc(job.branch)}</code></p>
+<p class="st">${status} · ${esc(job.kind ?? "?")} · risk ${esc(job.risk ?? "?")} · round ${job.round} · ${check ? `checked ${esc(job.target ?? "staging")} as it is: no branch` : `branch <code>${esc(job.branch)}</code>`}</p>
 <h2>What you must check</h2>
-<div class="box">${check.length ? `<ul>${check.map((c) => `<li>${c}</li>`).join("")}</ul>` : "<p>Nothing beyond the proof below.</p>"}</div>
+<div class="box">${checks.length ? `<ul>${checks.map((c) => `<li>${c}</li>`).join("")}</ul>` : "<p>Nothing beyond the proof below.</p>"}</div>
 <h2>Criteria, checked against the running app</h2>
 <table>${rows || "<tr><td>No criteria.</td></tr>"}</table>
 ${"refused" in qa ? `<p class="bad">QA: ${esc(qa.refused)}</p>` : ""}
 ${drives(dir, job.round, o.named)}
-<h2>Review</h2>${"summary" in review && review.summary ? `<p>${esc(review.summary)}</p>` : ""}${findings}
+${
+  check
+    ? findingsHtml(qa, qd, o.named)
+    : `<h2>Review</h2>${"summary" in review && review.summary ? `<p>${esc(review.summary)}</p>` : ""}${findings}
 <h2>Checks</h2><pre>${esc(o.checks ?? readChecks(dir, job.round))}</pre>
-<h2>What changed</h2>${diff}
+<h2>What changed</h2>${diff}`
+}
 ${thread.length ? `<h2>Your messages</h2><ul>${thread.map((m) => `<li>${esc(m.at.slice(0, 16).replace("T", " "))} ${esc(m.kind)}: ${esc(m.text)}</li>`).join("")}</ul>` : ""}
 <p class="st">Evidence files: ${esc(path.relative(repo, qd))}/</p>
 </main></body></html>
 `;
+}
+
+/** ADR 0028: a check's problems, each as the proposed bug (what was seen, the repro, the evidence). */
+function findingsHtml(qa: ReturnType<typeof readQa>, qd: string, named = false): string {
+  if (!("findings" in qa)) return "";
+  if (qa.verdict === "BLOCKED") return `<h2>The check couldn't run</h2><p class="bad">${esc(qa.blocked ?? "")}</p>`;
+  if (!qa.findings.length) return "<h2>Problems found</h2><p>None.</p>";
+  return `<h2>Problems found</h2>${qa.findings
+    .map(
+      (f) =>
+        `<h3>${esc(f.title)}${f.criterion ? ` <small>(${esc(f.criterion)})</small>` : ""}</h3><p>${esc(f.seen)}</p><ol>${f.repro.map((s) => `<li>${esc(s)}</li>`).join("")}</ol>${f.evidence.map((e) => evidenceHtml(qd, e, named)).join("")}`,
+    )
+    .join("")}`;
 }
 
 function titleOf(repo: string, id: string): string | null {

@@ -93,6 +93,8 @@ export const ACTIONS: Record<string, (repo: string, b: Body, out: Out) => Promis
   },
   /** ADR 0020 §3: a job held after intake (intake.confirm) goes to Build on intake's criteria. */
   approve: (repo, b, out) => control.approve(repo, idOf(b), out),
+  /** ADR 0028 amendment: a job verified and not merged (KEEP: no) → Review → merge check → merge (`kitchen promote`). */
+  promote: (repo, b, out) => control.promote(repo, idOf(b), out),
   reject: (repo, b, out) => control.reject(repo, idOf(b), out),
   /** Off the dashboard, any stage (kitchen remove); the page holds it five seconds for its Undo before sending. */
   remove: (repo, b, out) => control.remove(repo, idOf(b), out),
@@ -158,7 +160,7 @@ export const ACTIONS: Record<string, (repo: string, b: Body, out: Out) => Promis
 };
 
 /** Actions after which the queue has work: when one succeeds, Kitchen is woken (run/wake.ts). */
-export const WAKES = new Set(["answer", "approve", "follow-up", "resume", "ticket", "inbox-run"]);
+export const WAKES = new Set(["answer", "approve", "follow-up", "resume", "ticket", "inbox-run", "promote"]);
 
 export async function act(repo: string, name: string, body: Body): Promise<ActionResult> {
   const lines: string[] = [];

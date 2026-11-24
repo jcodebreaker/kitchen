@@ -8,7 +8,7 @@ import { type Config, LANE_ROLES, loadConfig, modelFor, targetOf } from "../conf
 import { diffSize } from "../engine/git.ts";
 import { heartbeatFile, syncPrs } from "../engine/jobs.ts";
 import { criteriaOf, leftOutOf, readIntake, readQa, readReview } from "../engine/lanes.ts";
-import { BY_YOU_STOPPED, isActive, type Job, PR_OPEN_WORDS, pausedByYou, prOpen, type Stage } from "../engine/machine.ts";
+import { BY_YOU_STOPPED, isActive, isCheck, type Job, PR_OPEN_WORDS, pausedByYou, prOpen, promotable, type Stage } from "../engine/machine.ts";
 import { JOB_ID, jobDirOf, scanJobs } from "../engine/store.ts";
 import { type LedgerLine, readLedger } from "../ledger/append.ts";
 import { liveRun } from "../run/orchestrator.ts";
@@ -138,11 +138,11 @@ export function waitsOf(j: Job, dir: string): Waits | null {
 
 export type Crit = { id: string; text: string; st: "ok" | "bad" | "wait"; e: string };
 /** The job's criteria (intake's) with QA's latest results. */
-export function critOf(dir: string, round: number): Crit[] {
+export function critOf(dir: string, round: number, o: { check?: boolean } = {}): Crit[] {
   const crit = criteriaOf(dir);
   let rows: { id: string; result: string; note: string; evidence: string[] }[] = [];
   for (let r = round; r >= 1 && !rows.length; r--) {
-    const qa = readQa(dir, r, crit);
+    const qa = readQa(dir, r, crit, o);
     if ("criteria" in qa) rows = qa.criteria;
   }
   return crit.map((c) => {
@@ -253,6 +253,18 @@ export type JobCard = {
   from: string | null;
   /** ADR 0025 §4: the check command running now, since when, its log (in the job folder) and its last line; null between checks. */
   checking: { cmd: string; at: string; log: string; last: string } | null;
+  /**
+   * ADR 0028: a check ticket (`kind: "check"`): tested on its target's tip, never built. `result`: the words once done
+   * ("Checked on staging · 4 of 4 pass", "Found 2 problems"); `findings`: the problems found, and the inbox proposals
+   * they became; `explore`: minutes when it explores. Null for any other job.
+   */
+  check: { result: string | null; findings: number; proposals: string[]; explore: number | null; forced: boolean } | null;
+  /** ADR 0028 amendment: false for intake's `KEEP: no` (built to verify, not merged unless promoted); absent otherwise. */
+  keep?: false;
+  /** Verified and not merged: the words ("Verified · not merged"), or null. */
+  verified: string | null;
+  /** It can be promoted now (`kitchen promote`, the `promote` action): done, KEEP: no, not merged. */
+  promotable: boolean;
 };
 
 export type Snapshot = {
@@ -323,8 +335,9 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
       continue;
     }
     const dir = jobDirOf(repo, j.id);
-    const crit = critOf(dir, j.round);
-    const qaNow = readQa(dir, j.round, criteriaOf(dir));
+    const chk = isCheck(j);
+    const crit = critOf(dir, j.round, { check: chk });
+    const qaNow = readQa(dir, j.round, criteriaOf(dir), { check: chk });
     const rv = readReview(dir, j.round);
     const review =
       "findings" in rv
@@ -345,9 +358,9 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
       paused: j.stage === "paused" ? `paused${j.pausedFrom ? ` (from ${j.pausedFrom})` : ""}` : null,
       reason: j.pausedReason ?? null,
       risk: j.risk,
-      kind: j.kind,
       round: j.round - (catchUps.get(j.id) ?? 0),
       roundLimit: j.roundLimit,
+      kind: chk ? "check" : j.kind,
       verdict: "criteria" in qaNow ? qaNow.verdict : null,
       criteria: crit.filter((c) => c.st !== "wait").map((c) => ({ id: c.id, result: c.st === "ok" ? "PASS" : "FAIL" })),
       review,
@@ -379,12 +392,31 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
       files: await changesOf(j, now),
       doneAt: j.doneAt ?? null,
       lane: laneOf(j),
-      proof: j.stage === "rejected" ? null : "criteria" in qaNow ? (qaNow.verdict === "PASS" ? "pass" : "fail") : null, // no QA verdict yet: no pill (the Toolkit's "proven" is gone)
+      proof:
+        j.stage === "rejected" || ("criteria" in qaNow && qaNow.verdict === "BLOCKED")
+          ? null
+          : "criteria" in qaNow
+            ? qaNow.verdict === "PASS"
+              ? "pass"
+              : "fail"
+            : null, // no QA verdict yet: no pill (the Toolkit's "proven" is gone)
       held: j.held ?? null,
       merged: j.merged ? { into: j.merged.into, sha: j.merged.sha, by: j.mergedBy ?? null } : null,
       waits: waitsOf(j, dir),
       from: j.from?.label ?? null,
       checking: checkingOf(j, dir),
+      check: chk
+        ? {
+            result: j.check?.result ?? null,
+            findings: j.check?.findings ?? 0,
+            proposals: j.check?.proposals ?? [],
+            explore: j.check?.explore ?? null,
+            forced: !!j.check?.forced,
+          }
+        : null,
+      ...(j.keep === false ? { keep: false as const } : {}),
+      verified: j.stage === "done" ? (j.verified?.words ?? null) : null,
+      promotable: promotable(j),
     });
   }
   const who = laneWho(cfg);

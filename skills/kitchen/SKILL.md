@@ -18,6 +18,9 @@ Run commands from the repo root. If `kitchen` is not on PATH, use
 |---|---|
 | set up Kitchen, first use | `kitchen init` (seconds; see Setup) |
 | "do X", "fix Y", "add Z" (a request for work) | `kitchen ticket "<the request>"` (see Tickets), then relay its line: it starts Kitchen in the background when nothing works the queue ("→ intake · Kitchen started"). When the user wants to run the queue in this session instead, `kitchen ticket --no-run "<the request>"` |
+| test, confirm or explore without changing code: "check checkout still works", "go through the loan flow and see what breaks" | `kitchen ticket --check "<the request>"`: QA drives staging as it is; nothing is built or merged. It ends "Checked on staging · N of N pass" or "Found N problems", each problem a proposal in `kitchen inbox list` |
+| "check X every day", "run that check nightly" | `kitchen ticket --check --every day "<the check>"` (hour, 2h, 30m…); `--every off "<the same text>"` removes it; `kitchen schedules` lists them |
+| "promote 006", "keep that harness after all" (a job `kitchen status` shows `Verified · not merged`) | `kitchen promote <id>`: Review, the merge check, then the merge into its target (or its PR) |
 | work aimed at another branch: "do X on feature/checkout", "this goes into release/2.1" | `kitchen ticket --into <branch> "<the request>"`: the job starts from that branch and merges into it, not staging. The branch must exist (Kitchen never creates it); with `staging.merge: kitchen` the base branch, main and master are refused |
 | `run`, start, "go", work the queue, or your prompt is `/kitchen run` | be the orchestrator yourself: Running the queue, below. Never call `kitchen run` for this: it starts another session, and inside one `kitchen run` started it refuses. When `kitchen status` shows an orchestrator already running, say Kitchen is working the queue and don't start another |
 | what's happening, status, progress | `kitchen status`; when a job shows `needs-info(refine: …)`, offer to refine it with them (see Refining a ticket) |
@@ -104,7 +107,12 @@ only through `kitchen job` verbs, which refuse any illegal move. The Agent tool 
    yourself.
 4. Between waves, read nothing else: steering reaches the next agent through `kitchen job start`. Then go to 1.
 
-When the plan is `drained`, report: what merged and into which branch (with the short shas), which PRs wait for
+A check (ADR 0028) goes intake → qa → done: its QA lane drives the target's tip as it is, and finishing it
+proposes each problem it found in the inbox. A `KEEP: no` job stops at done after QA, "Verified · not merged",
+until the user runs `kitchen promote`. Neither needs anything else from you: start the lanes `next` lists.
+
+When the plan is `drained`, report: what merged and into which branch (with the short shas), what each check found (its result words and the
+proposals), what was verified and not merged, which PRs wait for
 review (with their links), what stopped at Ready and why, and what needs the user (`kitchen status`). Then stop. Never merge `staging` into the base branch or main,
 never push either: that is the user's.
 

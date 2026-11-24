@@ -133,7 +133,7 @@ export const JobSchema = z.looseObject({
   catchUps: Count.optional(),
   risk: Risk.nullable(),
   surfaces: z.array(z.enum(["ui", "security"])),
-  kind: z.enum(["feature", "bug", "ui", "chore"]).nullable(),
+  kind: z.enum(["feature", "bug", "ui", "chore", "check"]).nullable(),
   base: z.string(),
   branch: z.string(),
   worktree: z.string(),
@@ -229,7 +229,17 @@ export function findJob(repo: string, ref: string): Job {
   return hit;
 }
 
-export type NewJob = { title: string; ticket: TicketRef; body: string; roundLimit: number; now?: Date; from?: JobFrom; target?: string };
+export type NewJob = {
+  title: string;
+  ticket: TicketRef;
+  body: string;
+  roundLimit: number;
+  now?: Date;
+  from?: JobFrom;
+  target?: string;
+  /** ADR 0028 §5: filed as a check (`kitchen ticket --check`). */
+  check?: boolean;
+};
 
 /** Create a job folder. Numbers are taken under a lock, so two `kitchen ticket`s never share one. */
 export async function createJob(repo: string, o: NewJob): Promise<Job> {
@@ -261,6 +271,7 @@ export async function createJob(repo: string, o: NewJob): Promise<Job> {
       moves: 0,
       filed: [],
       ...(o.from ? { from: o.from } : {}),
+      ...(o.check ? { check: { forced: true } } : {}),
       startedAt: now,
       updatedAt: now,
     };
