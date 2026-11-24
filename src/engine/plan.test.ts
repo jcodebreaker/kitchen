@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
-import { type Job, MOVES, MoveRefused, move, outOfRounds, refuse, STAGES } from "./machine.ts";
+import { isCatchUp, type Job, MOVES, MoveRefused, move, outOfCatchUps, outOfRounds, refuse, roundsUsed, STAGES } from "./machine.ts";
 import { planWave, waitsFor } from "./plan.ts";
 
 const job = (n: number, o: Partial<Job> = {}): Job => ({
@@ -49,6 +49,24 @@ test("rounds: QA or review sending a job back starts the next round; a follow-up
   const again = move(merged, "build");
   assert.deepEqual([again.round, again.roundStart, again.doneAt], [4, 4, undefined]);
   assert.equal(move(job(1, { stage: "build", running: { lane: "build", at: "x", key: "k" } }), "qa").running, null, "a move closes the lane");
+});
+
+test("ADR 0018: a catch-up opens a round folder but spends no round; three in a row are the limit; a real round or landing clears them", () => {
+  const c1 = move(job(1, { stage: "review" }), "build", { catchUp: true });
+  assert.deepEqual([c1.round, roundsUsed(c1), c1.catchUps], [2, 1, 1]);
+  const c3 = move(move({ ...c1, stage: "regress" }, "build", { catchUp: true }), "qa");
+  const c4 = move({ ...c3, stage: "review" }, "build", { catchUp: true });
+  assert.deepEqual([c4.round, roundsUsed(c4), c4.catchUps, outOfCatchUps(c4)], [4, 1, 3, true]);
+  const real = move({ ...c4, stage: "qa" }, "build");
+  assert.deepEqual([real.round, roundsUsed(real), real.catchUps], [5, 2, undefined]);
+  assert.equal(move({ ...c4, stage: "review" }, "done").catchUps, undefined, "landing clears them");
+  assert.equal(move(move({ ...c4, stage: "review" }, "needs-human"), "build").catchUps, undefined, "a person taking it back clears them");
+  // Who decides: a conflict always; red checks only when green on the branch alone and staging has new commits.
+  assert.equal(isCatchUp({ cause: "conflict", greenAlone: false, stagingAhead: true }), true);
+  assert.equal(isCatchUp({ cause: "checks", greenAlone: true, stagingAhead: true }), true);
+  assert.equal(isCatchUp({ cause: "checks", greenAlone: false, stagingAhead: true }), false);
+  assert.equal(isCatchUp({ cause: "checks", greenAlone: true, stagingAhead: false }), false);
+  assert.equal(isCatchUp({ greenAlone: true, stagingAhead: true }), false, "a weakened map is a round");
 });
 
 test("a wave: intake first and never held for room, then downstream first in the room parallel leaves; running lanes take room", () => {

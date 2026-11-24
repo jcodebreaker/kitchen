@@ -84,7 +84,10 @@ export function report(repo: string, out: Out, opts: { json?: boolean } = {}): n
   const lines = readLedger(repo);
   const by = (s: string) => jobs.filter((j) => j.stage === s).length;
   const ended = jobs.filter((j) => j.stage === "done" || j.stage === "ready");
-  const firstPass = ended.filter((j) => j.round === 1).length;
+  // ADR 0018: a catch-up (staging moved under the job) opens a round folder but is no round of work. The ledger marks them.
+  const catchUps = lines.filter((l) => l.event === "move" && l.detail?.catchUp);
+  const real = (j: Job) => j.round - catchUps.filter((l) => l.job === j.id).length;
+  const firstPass = ended.filter((j) => real(j) === 1).length;
   const secs = ended.map((j) => (Date.parse(j.doneAt ?? j.updatedAt) - Date.parse(j.startedAt)) / 1000).sort((a, b) => a - b);
   const r = {
     jobs: jobs.length,
@@ -94,11 +97,12 @@ export function report(repo: string, out: Out, opts: { json?: boolean } = {}): n
     rejected: by("rejected"),
     inFlight: jobs.filter((j) => ["intake", "build", "qa", "review", "regress"].includes(j.stage)).length,
     firstPass,
-    roundsMean: ended.length ? ended.reduce((a, j) => a + j.round, 0) / ended.length : 0,
+    roundsMean: ended.length ? ended.reduce((a, j) => a + real(j), 0) / ended.length : 0,
+    caughtUp: catchUps.length,
     medianMinutes: secs.length ? Math.round(secs[Math.floor(secs.length / 2)] / 60) : 0,
     escalations: lines.filter((l) => l.event === "move" && l.result === "needs-human").length,
     qaFails: lines.filter((l) => l.event === "move" && l.stage === "qa" && l.result === "build").length,
-    reviewBlocks: lines.filter((l) => l.event === "move" && l.stage === "review" && l.result === "build").length,
+    reviewBlocks: lines.filter((l) => l.event === "move" && l.stage === "review" && l.result === "build" && !l.detail?.catchUp).length,
   };
   if (opts.json) {
     out(JSON.stringify(r, null, 2));
@@ -108,6 +112,6 @@ export function report(repo: string, out: Out, opts: { json?: boolean } = {}): n
     `jobs ${r.jobs}: merged into staging ${r.merged} · ready for you ${r.ready} · needs you ${r.needsYou} · rejected ${r.rejected} · in flight ${r.inFlight}`,
   );
   out(`first pass ${r.firstPass}/${ended.length} · mean rounds ${r.roundsMean.toFixed(1)} · median ${r.medianMinutes} min from ticket to ready or merged`);
-  out(`sent back: QA ${r.qaFails} · review ${r.reviewBlocks} · to a person ${r.escalations}`);
+  out(`sent back: QA ${r.qaFails} · review ${r.reviewBlocks} · to a person ${r.escalations} · caught up with staging ${r.caughtUp} times`);
   return 0;
 }

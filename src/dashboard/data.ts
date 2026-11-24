@@ -234,9 +234,12 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
   const lines = readLedger(repo);
   const lastLine = new Map<string, LedgerLine>();
   const moves = new Map<string, LedgerLine[]>();
+  /** ADR 0018: catch-ups per job; a card counts only real rounds. */
+  const catchUps = new Map<string, number>();
   for (const l of lines) {
     lastLine.set(l.job, l);
     if (l.event === "move") moves.set(l.job, [...(moves.get(l.job) ?? []), l].slice(-2));
+    if (l.event === "move" && l.detail?.catchUp) catchUps.set(l.job, (catchUps.get(l.job) ?? 0) + 1);
   }
   const orch = orchestrator(repo, now);
   const jobs: JobCard[] = [];
@@ -271,7 +274,7 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
       reason: j.pausedReason ?? null,
       risk: j.risk,
       kind: j.kind,
-      round: j.round,
+      round: j.round - (catchUps.get(j.id) ?? 0),
       roundLimit: j.roundLimit,
       verdict: "criteria" in qaNow ? qaNow.verdict : null,
       criteria: crit.filter((c) => c.st !== "wait").map((c) => ({ id: c.id, result: c.st === "ok" ? "PASS" : "FAIL" })),
