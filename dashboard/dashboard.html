@@ -790,7 +790,7 @@ function renderCounts(){
   const you=jobs.filter(j=>group(j)==="you"),run=jobs.filter(j=>group(j)==="run"),done=jobs.filter(j=>group(j)==="done");
   const nyou=`${you.length} need${you.length===1?"s":""} you`;
   $("#sum").innerHTML=(you.length?(view==="board"?`<button class="a" onclick="jump('g-you')">${nyou}</button>`:`<span class="a">${nyou}</span>`):`<span class="none">Nothing needs you</span><span class="zero">0 need you</span>`)+`<i class="qn">·</i><span class="qn">${queueWords(!!snap.runner.running,run).count}</span><i class="rdy">·</i><span class="rdy"><b>${done.filter(j=>j.state==="done").length}</b> done</span>`;
-  $("#sYou").textContent=you.length||"";$("#sRun").textContent=run.length;$("#sRunN").textContent=queueWords(!!snap.runner.running,run).group;$("#sDone").textContent=done.length;
+  $("#sYou").textContent=you.length||"";$("#nYouI").innerHTML=you.length?S.you:S.wait; /* orange only when something needs you */$("#sRun").textContent=run.length;$("#sRunN").textContent=queueWords(!!snap.runner.running,run).group;$("#sDone").textContent=done.length;
   $("#wsName").textContent=snap.repo;const allYou=you.length+otherYou();document.title=(allYou?`(${allYou}) `:"")+"Kitchen · "+snap.repo;
   $("#tCost").textContent="$"+snap.usdToday.toFixed(2)+" today";$("#tCost").title="Spent today by kitchen run's orchestrator sessions (an in-session /kitchen run is billed to that session)";$("#sCost").textContent="$"+snap.usdTotal.toFixed(2);$("#sCost").parentElement.title="Spent in all by kitchen run's orchestrator sessions";
   $("#foot").innerHTML=`Orchestrator: ${esc(snap.runner.text)}${snap.runner.running?"":`. Jobs move only while <span class="mono">kitchen run</span> (or <span class="mono">/kitchen run</span> in Claude Code) works the queue.`}${snap.corrupt.length?` · Unreadable job folders: ${esc(snap.corrupt.join(", "))}`:""}`;
@@ -857,11 +857,15 @@ async function post(verb,body){
 const said=lines=>(lines.at(-1)||"").replace(/^\S+\s\s/,"");
 function refreshSoon(){clearTimeout(refreshSoon.t);refreshSoon.t=setTimeout(async()=>{const g=gen;try{const d=await getJSON(BASE+"/data.json");if(g!==gen)return;snap=d;const before=new Map(jobs.map(j=>[j.id,j]));jobs=d.jobs.map(fromSnap);paint(before);if(open&&J(open)){const dd=await getJSON(`${BASE}/jobs/${encodeURIComponent(open)}/detail.json`);if(g!==gen)return;const old=details[open];details[open]=dd;panelUpdate(old,dd)}}catch(e){}},120)}
 function clearDraft(id){drafts[id]="";$$(`textarea[data-draft="${id}"]`).forEach(o=>o.value="");grow()}
+const sureRefine=new Set();
 async function send(id){
   const j=J(id); if(!j)return; const text=(drafts[id]||"").trim(), g=wgroup(j);
   if(!text&&!(g==="you"&&j.stage==="needs-human")){nope(id);return}
   const verb=g==="you"?"answer":g==="done"?"follow-up":"steer";
   if(verb==="follow-up"&&!asking.has(id)){nope(id);return}
+  /* ADR 0020: an answer here is read as the refined ticket. Say so once, and send only on a second press. */
+  if(j.waits&&j.waits.for==="refine"&&!sureRefine.has(id)){sureRefine.add(id);toast(`This goes to intake as ${j.num}'s refined ticket. To refine it with Claude, run /kitchen refine ${j.num} in Claude Code.`,"Send anyway",()=>send(id));return}
+  sureRefine.delete(id);
   clearDraft(id);
   const d=details[id];
   if(d&&open===id){const last=d.tl.at(-1);if(last){last.evs.push({c:"you",t:text,at:new Date().toISOString(),kind:verb,status:"Sending…"});if(tab==="activity")renderPanel()}}

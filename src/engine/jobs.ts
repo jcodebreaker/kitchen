@@ -502,13 +502,8 @@ export async function finish(repo: string, id: string): Promise<Finished | { ref
         return moveOn(repo, job, "needs-human", `${job.id}  intake asked a third question → needs-human`, {
           reason: `intake still can't decide after 2 answers: ${what}`,
         });
-      // ADR 0020: one refinement per reason. After it, intake decides on what the author said.
-      if (i.decision === "REFINE" && job.refined?.some((r) => r.reason === i.reason))
-        return refuseLane(
-          repo,
-          job,
-          `the author already refined this ticket for "${i.reason}" (their answer is in Clarifications): decide on it now: ACCEPT on the reading they gave, or NEEDS-INFO for one missing fact`,
-        );
+      // ADR 0020: a reply that doesn't settle the readings may be sent back to refine; the two-question limit above
+      // ends it at a person, never at intake guessing.
       const key = `${job.id}/m${job.moves}`;
       const question = i.decision === "REFINE" ? refineQuestion(job, i.reason, i.items) : i.question;
       recordQuestion(dir, { key, question });

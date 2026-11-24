@@ -351,12 +351,14 @@ test("ADR 0020: REFINE waits for you marked refine; your refined ticket goes bac
   assert.equal(await refine(r, id, quiet), 1, "nothing to refine in intake");
   const again = await open(r, id, "intake");
   assert.match(fs.readFileSync(again.brief, "utf8"), /Refine with you \(readings\)[\s\S]*> Problem: … In: the red flag \(A\)/);
+  // A reply that settles nothing (on 2026-11-23 a pasted chat line) goes back to refine, never to a guess.
   fs.writeFileSync(intakeFile(dirOf(r, id)), REFINE());
-  assert.match((await fin(r, id)).line, /already refined this ticket for "readings"/);
-  assert.equal(findJob(r, id).stage, "intake");
+  assert.equal((await fin(r, id)).to, "needs-info");
+  assert.equal(findJob(r, id).waits?.for, "refine");
+  await control.feedback(r, id, "Say yes to take the recommendation", quiet);
   await open(r, id, "intake");
-  fs.writeFileSync(intakeFile(dirOf(r, id)), INTAKE());
-  assert.equal((await fin(r, id)).to, "build");
+  fs.writeFileSync(intakeFile(dirOf(r, id)), REFINE());
+  assert.equal((await fin(r, id)).to, "needs-human", "after two refinements a person decides");
 });
 
 test("ADR 0020 §3: intake.confirm holds an accepted job for your approval; feedback sends it back to intake, approve to build", async () => {

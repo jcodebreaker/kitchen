@@ -46,7 +46,7 @@ Most tickets are clear enough: take the smallest reading and `ACCEPT`. Send a ti
 - `no-repro`: a bug with no way to see it: no page, no steps, no error, and the code doesn't show where it breaks.
 - `terms`: it uses words the code, the README or GLOSSARY.md mean differently ("member" when the code has users and patrons).
 
-Under `## Refine`, one `- ` line per reading, slice or gap, in plain words the author knows. The author refines it with Kitchen in their own session and the answer comes back in Clarifications, as their own words. After that, never send it back for the same reason: decide on what they said. After two questions or refinements, decide and rescope, as with `NEEDS-INFO`.
+Under `## Refine`, one `- ` line per reading, slice or gap, in plain words the author knows. The author refines it with Kitchen in their own session and the answer comes back in Clarifications, as their own words. After that, decide on what they said when it settles the readings. When it doesn't (it answers something else, is empty, or picks no reading), never guess: `REFINE` again and say in `REASON:` what is still open. After two questions or refinements Kitchen hands the ticket to a person.
 
 When unsure between `NEEDS-INFO` and `REFINE`: if you can write the one question and every likely answer lets you write the criteria, ask it.
 
