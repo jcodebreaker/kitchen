@@ -3,6 +3,7 @@
 // (WAKES) starts a headless orchestrator (`kitchen run --detach`) when none is working the queue.
 import path from "node:path";
 import * as control from "../engine/control.ts";
+import { mergeHeld } from "../engine/jobs.ts";
 import { MAX_MESSAGE } from "../engine/messages.ts";
 import { findJob } from "../engine/store.ts";
 import { detachCollect, liveCollect } from "../inbox/collect.ts";
@@ -77,6 +78,18 @@ export const ACTIONS: Record<string, (repo: string, b: Body, out: Out) => Promis
     const text = textOf(b);
     if (!text.trim()) throw new BadRequest("text: say what to change");
     return control.feedback(repo, id, text, out);
+  },
+  /**
+   * Merge into staging: a job held at Ready, through the same gate as an auto-merge (`kitchen merge`). When the merge
+   * touches features it waits for the merge check lane: an orchestrator is started then, as after any action that
+   * gives the queue work.
+   */
+  merge: async (repo, b, out) => {
+    const r = await mergeHeld(repo, idOf(b));
+    out("refused" in r ? r.refused : r.line);
+    if ("refused" in r) return 1;
+    if (r.to === "regress" && !orchestrator(repo).running) await (starter ?? startOrchestrator)(repo, out);
+    return 0;
   },
   /** ADR 0020 §3: a job held after intake (intake.confirm) goes to Build on intake's criteria. */
   approve: (repo, b, out) => control.approve(repo, idOf(b), out),

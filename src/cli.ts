@@ -28,6 +28,8 @@ Work
   kitchen refine <id>                    a job intake sent to be refined with you: the brief for Claude Code or Codex
                                          (/kitchen refine <id>), which grills the ticket with you, then sends it back
   kitchen approve <id>                   a job held for your approval after intake (intake.confirm) → build
+  kitchen merge <id>                     a job held at Ready (ready(held)) into staging: the same checks as an
+                                         auto-merge, on staging only, never main
   kitchen steer <id> "<text>"            a message the job's next agent reads
   kitchen pause <id> · stop <id> · resume <id> · reject <id>
   kitchen remove <id> · restore <id>     off the dashboard, any stage (a working lane is stopped, an unfinished job
@@ -95,6 +97,8 @@ const COMMAND_HELP: Record<string, string> = {
   restore: "kitchen restore <id>\n\nA removed job back in view, as it was left (rejected or merged).",
   refine:
     "kitchen refine <id>\n\nFor a job intake sent to be refined with you (needs-info, refine): writes .kitchen/jobs/<id>/refine/brief.md (the ticket, intake's reason and readings, your earlier answers, the verify map's features, the repo's glossary and ADRs) and prints its path. A Claude Code or Codex session follows it with you (/kitchen refine <id>): one question at a time, then kitchen feedback <id> \"<the refined ticket>\" sends it back to intake.",
+  merge:
+    "kitchen merge <id>\n\nFor a job held at Ready for you (kitchen status shows ready(held)): merges it into staging through the same gate as an auto-merge, without the hold. The reviewed head is merged onto staging's tip in a scratch worktree, every check runs there (the when: merge ones too), and when the merge touches features on the verify map the job goes to Merge check first (the orchestrator drives them, then it lands). A conflict or red checks send it back to Build; staging checked out or the branch moved leave it at Ready. On GitHub it goes through its PR into staging. Never into main or the base branch.",
   approve:
     'kitchen approve <id>\n\nFor a job held after intake for your approval (intake: { confirm: true } in kitchen.yaml): sends it to Build on intake\'s criteria. To change them instead: kitchen feedback <id> "<what to change>".',
   report: "kitchen report [--json]\n\nWhat the queue did: merged, ready, sent back, rounds, time.",
@@ -252,6 +256,11 @@ async function main(argv: string[]): Promise<number> {
       return control.restore(repo, need(0, "<id>"), out);
     case "approve":
       return control.approve(repo, need(0, "<id>"), out);
+    case "merge": {
+      const r = await (await import("./engine/jobs.ts")).mergeHeld(repo, need(0, "<id>"));
+      out("refused" in r ? r.refused : r.to === "regress" ? `${r.line}; the orchestrator drives them (kitchen run), then it lands` : r.line);
+      return "refused" in r ? 1 : 0;
+    }
     case "refine":
       return (await import("./engine/refine.ts")).refine(repo, need(0, "<id>"), out);
     case "steer":

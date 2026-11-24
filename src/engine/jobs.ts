@@ -433,6 +433,8 @@ async function jobFiles(repo: string, job: Job): Promise<string[]> {
 }
 
 export type Finished = { id: string; from: Lane; to: Stage | null; line: string };
+/** Who moves a job: the orchestrator after a lane, or the person (`kitchen merge`). */
+type Who = "orchestrator" | "person";
 
 async function refuseLane(repo: string, job: Job, why: string): Promise<Finished> {
   const dir = jobDirOf(repo, job.id);
@@ -478,11 +480,11 @@ async function moveOn(
   job: Job,
   to: Stage,
   line: string,
-  o: { reason?: string; patch?: (j: Job) => void; catchUp?: boolean } = {},
+  o: { reason?: string; patch?: (j: Job) => void; catchUp?: boolean; who?: Who } = {},
 ): Promise<Finished> {
   const from = job.running?.lane ?? (job.stage as Lane);
   await closeRun(repo, job, true, line);
-  let moved = await moveJob(repo, job.id, to, { reason: o.reason, who: "orchestrator", patch: o.patch, catchUp: o.catchUp });
+  let moved = await moveJob(repo, job.id, to, { reason: o.reason, who: o.who ?? "orchestrator", patch: o.patch, catchUp: o.catchUp });
   if (isLane(to) && readControl(jobDirOf(repo, job.id)).pause) {
     await clearControl(repo, job.id);
     moved = await moveJob(repo, job.id, "paused", { reason: BY_YOU, who: "person" });
@@ -664,8 +666,7 @@ async function dropDrive(repo: string, job: Job) {
 }
 
 /** Review passed: merge into staging, or stop at Ready for a person (high risk, a large diff, auto-merge off). */
-async function mergeOrHold(repo: string, cfg: Config, job: Job, head: string): Promise<Finished> {
-  const dir = jobDirOf(repo, job.id);
+async function mergeOrHold(repo: string, cfg: Config, job: Job, head: string): Promise<Finished | { refused: string }> {
   const size = await diffSize(repo, job.base, head);
   const hot = size.files.map((f) => f.p).filter((p) => cfg.high_paths.some((g) => matchPath(g, p)));
   const hold = !cfg.staging.auto_merge
@@ -678,11 +679,35 @@ async function mergeOrHold(repo: string, cfg: Config, job: Job, head: string): P
           ? `${size.lines} changed lines, over ${cfg.staging.max_lines}: a person reviews a change this big`
           : null;
   if (hold) return moveOn(repo, job, "ready", `${job.id}  review PASS → ready (${hold})`, { patch: (j) => Object.assign(j, { held: hold }) });
+  return gateMerge(repo, cfg, job, head);
+}
+
+/**
+ * `kitchen merge <id>`: a person merges a job held at Ready. The same gate as an auto-merge (the map backstop, the
+ * trial merge on staging's tip, every check, the merge check lane when features are touched, compare-and-swap, the
+ * PR on GitHub, the issue comment), without the hold: the person said yes. A conflict or red checks go back to
+ * Build as after a review; what only blocks the move (staging checked out, the branch moved) leaves it at Ready.
+ */
+export async function mergeHeld(repo: string, id: string): Promise<Finished | { refused: string }> {
+  const cfg = loadConfig(repo);
+  const job = findJob(repo, id);
+  if (job.archived) return { refused: `${job.id} was removed (kitchen restore shows it again)` };
+  if (job.stage !== "ready") return { refused: `${job.id} is ${job.stage}: kitchen merge takes a job held at Ready (kitchen status shows it ready(held))` };
+  const head = job.reviewed?.head ?? (await revParse(repo, job.branch));
+  if (!head) return { refused: `${job.id} has no branch ${job.branch} to merge` };
+  return gateMerge(repo, cfg, job, head, "person");
+}
+
+/** The merge gate after the hold: an auto-merge (the orchestrator) or a person's yes (`kitchen merge`). */
+async function gateMerge(repo: string, cfg: Config, job: Job, head: string, who: Who = "orchestrator"): Promise<Finished | { refused: string }> {
+  const dir = jobDirOf(repo, job.id);
+  const by = who === "person" ? ({ by: "person" } as const) : {};
   // The backstop for ADR 0017 §4: whatever path a map change took into the branch, it may not weaken an earlier check.
   const changes = changesOf(dir);
   const weak = removals((await mapAt(repo, job.base)).features, (await mapAt(repo, head)).features).filter((r) => !namedBy(r, changes));
   if (weak.length)
     return mergeFailed(repo, job, {
+      who,
       back: true,
       why: `the branch weakens the verify map without a CHANGES: line naming it (${weak
         .slice(0, 3)
@@ -691,27 +716,35 @@ async function mergeOrHold(repo: string, cfg: Config, job: Job, head: string): P
     });
   const log = path.join(roundDir(dir, job.round), "merge.log");
   const m = await mergeToStaging(repo, cfg, job, head, { log, gate: (t) => touchedBy(repo, t) });
-  if (m.ok) return merged(repo, cfg, job, m);
+  const said = who === "person" ? "you said merge" : "review PASS";
+  if (m.ok) return merged(repo, cfg, job, m, `${said} → `, who);
   if (m.drive) {
     await git(repo, ["update-ref", driveRef(job.id), m.drive.sha]);
-    const drive = { ...m.drive, head };
-    return moveOn(
-      repo,
-      job,
-      "regress",
-      `${job.id}  review PASS → regress: drive ${m.drive.features.join(", ")} on ${cfg.staging.branch} with this job merged`,
-      {
-        patch: (j) => Object.assign(j, { drive }),
-      },
-    );
+    const drive = { ...m.drive, head, ...by };
+    return moveOn(repo, job, "regress", `${job.id}  ${said} → regress: drive ${m.drive.features.join(", ")} on ${cfg.staging.branch} with this job merged`, {
+      who,
+      patch: (j) => Object.assign(j, { drive }),
+    });
   }
-  return mergeFailed(repo, job, m, head);
+  // Nothing to build again (staging checked out, the branch moved): a held job stays held, and the person hears why.
+  if (who === "person" && !m.back) return { refused: `${job.id} not merged: ${m.why}` };
+  return mergeFailed(repo, job, { ...m, who }, head);
 }
 
-async function merged(repo: string, cfg: Config, job: Job, m: Extract<MergeOutcome, { ok: true }>, extra = "review PASS → "): Promise<Finished> {
+async function merged(
+  repo: string,
+  cfg: Config,
+  job: Job,
+  m: Extract<MergeOutcome, { ok: true }>,
+  extra = "review PASS → ",
+  who: Who = "orchestrator",
+): Promise<Finished> {
   const f = await moveOn(repo, job, "done", `${job.id}  ${extra}merged into ${cfg.staging.branch} (${m.sha.slice(0, 7)}${m.pr ? `, PR #${m.pr}` : ""})`, {
+    who,
     patch: (j) => {
       j.merged = { into: cfg.staging.branch, sha: m.sha, at: new Date().toISOString(), via: m.via };
+      // A person's yes lands now, or after the merge check lane it needed (its trial merge carries the yes).
+      if (who === "person" || j.drive?.by === "person") j.mergedBy = "person";
       if (m.pr) j.pr = m.pr;
       delete j.drive;
     },
@@ -738,9 +771,10 @@ function greenAlone(dir: string, round: number): boolean {
 async function mergeFailed(
   repo: string,
   job: Job,
-  m: { why: string; back: boolean; cause?: "conflict" | "checks"; onto?: string; tail?: string; mergeOnly?: boolean },
+  m: { why: string; back: boolean; cause?: "conflict" | "checks"; onto?: string; tail?: string; mergeOnly?: boolean; who?: Who },
   head?: string,
 ): Promise<Finished> {
+  const who = m.who ?? "orchestrator";
   const dir = jobDirOf(repo, job.id);
   const cfg = loadConfig(repo);
   // The red check's last lines go with it: the next builder reads them (an e2e suite's failure says what broke).
@@ -754,6 +788,7 @@ async function mergeFailed(
         "needs-human",
         `${job.id}  merge into ${cfg.staging.branch} failed: ${m.why}, ${CATCH_UP_LIMIT} catch-ups already → needs-human`,
         {
+          who,
           reason: `${cfg.staging.branch} keeps moving under it (${CATCH_UP_LIMIT} catch-ups)`,
           patch: (j) => delete j.drive,
         },
@@ -763,11 +798,13 @@ async function mergeFailed(
       job,
       "build",
       `${job.id}  merge into ${cfg.staging.branch} failed: ${m.why} → build (catch-up ${(job.catchUps ?? 0) + 1} of ${CATCH_UP_LIMIT}, no round spent)`,
-      { catchUp: true, patch: (j) => delete j.drive },
+      { who, catchUp: true, patch: (j) => delete j.drive },
     );
   }
-  if (m.back && !outOfRounds(job))
+  // From Ready (a person's merge) the round starts a fresh budget, as a follow-up does.
+  if (m.back && (job.stage === "ready" || !outOfRounds(job)))
     return moveOn(repo, job, "build", `${job.id}  merge into ${cfg.staging.branch} failed: ${m.why} → build (round ${job.round + 1})`, {
+      who,
       patch: (j) => delete j.drive,
     });
   return moveOn(repo, job, "ready", `${job.id}  review PASS, not merged: ${m.why} → ready`, {
@@ -813,7 +850,11 @@ async function finishRegress(repo: string, cfg: Config, job: Job): Promise<Finis
     await git(repo, ["update-ref", driveRef(job.id), m.drive.sha]);
     const line = `${job.id}  regress PASS, but ${cfg.staging.branch} moved meanwhile: drive ${m.drive.features.join(", ")} again on the new merge`;
     await closeRun(repo, job, true, line);
-    await updateJob(repo, job.id, (j) => ({ ...j, running: null, drive: { ...(m.drive as NonNullable<typeof m.drive>), head: d.head } }));
+    await updateJob(repo, job.id, (j) => ({
+      ...j,
+      running: null,
+      drive: { ...(m.drive as NonNullable<typeof m.drive>), head: d.head, ...(d.by ? { by: d.by } : {}) },
+    }));
     return { id: job.id, from: "regress", to: null, line };
   }
   await dropDrive(repo, job);

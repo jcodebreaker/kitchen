@@ -35,12 +35,12 @@ export function renderReport(repo: string, job: Job, o: { diff?: { p: string; a:
   const qd = qaDir(dir, job.round);
   const status =
     job.stage === "done" && job.merged
-      ? `Merged into ${esc(job.merged.into)} (${esc(job.merged.sha.slice(0, 7))}${job.merged.via === "github" && job.pr ? `, PR #${job.pr}` : ""})`
+      ? `${job.mergedBy === "person" ? `Merged by you on ${esc(job.merged.at.slice(0, 10))} into` : "Merged into"} ${esc(job.merged.into)} (${esc(job.merged.sha.slice(0, 7))}${job.merged.via === "github" && job.pr ? `, PR #${job.pr}` : ""})`
       : job.stage === "ready"
         ? `Ready for you: ${esc(job.held ?? "a person merges it")}`
         : `${esc(job.stage)}${job.pausedReason ? `: ${esc(job.pausedReason)}` : ""}`;
   const check: string[] = [];
-  if (job.held) check.push(esc(job.held));
+  if (job.held) check.push(job.mergedBy === "person" ? `Kitchen held it for you (${esc(job.held)}); you merged it.` : esc(job.held));
   if ("findings" in review)
     for (const f of review.findings.filter((x) => !x.blocks)) check.push(`Review note ${esc(f.id)}${f.at ? ` (${esc(f.at)})` : ""}: ${esc(f.why)}`);
   // ADR 0020: the reading was settled with you, not picked by intake.

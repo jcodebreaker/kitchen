@@ -10,6 +10,7 @@ import { afterAll, beforeAll, test } from "vitest";
 import * as control from "../engine/control.ts";
 import { findJob, jobDirOf } from "../engine/store.ts";
 import { setRunnerStarter } from "./actions.ts";
+import { laneOf, stateOf } from "./data.ts";
 import { dashboardServer } from "./server.ts";
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kitchen-dash-"));
@@ -59,6 +60,12 @@ test("the page carries this launch's token; no Toolkit, no Setup endpoint", asyn
   assert.equal((await fetch(`${base}/setup.json`)).status, 404);
 });
 
+test("a job held at Ready needs you until you act: Needs you, not Done", () => {
+  assert.equal(stateOf({ stage: "ready" }), "you");
+  assert.equal(laneOf({ stage: "ready" }), "you");
+  assert.equal(stateOf({ stage: "done" }), "done");
+});
+
 test("data.json: the job in its lane, the board's lanes, the agent's live line from its stream", async () => {
   const d = (await (await fetch(`${base}/data.json`)).json()) as {
     lanes: { k: string }[];
@@ -67,7 +74,7 @@ test("data.json: the job in its lane, the board's lanes, the agent's live line f
   };
   assert.deepEqual(
     d.lanes.map((l) => l.k),
-    ["you", "intake", "build", "qa", "review", "ready", "done"],
+    ["you", "intake", "build", "qa", "review", "done"],
   );
   assert.deepEqual([d.jobs[0].stage, d.jobs[0].lane], ["intake", "intake"]);
   assert.deepEqual([d.jobs[0].live?.vb, d.jobs[0].live?.tg], ["Read", "server.js"]);

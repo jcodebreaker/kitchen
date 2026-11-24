@@ -3,7 +3,8 @@
 // Read from .kitchen/ only.
 import fs from "node:fs";
 import path from "node:path";
-import { isActive, type Job, STAGES, type Stage } from "../engine/machine.ts";
+import { loadConfig } from "../config.ts";
+import { CATCH_UP_LIMIT, isActive, type Job, STAGES, type Stage } from "../engine/machine.ts";
 import { type Message, readMessages } from "../engine/messages.ts";
 import { findJob, jobDirOf } from "../engine/store.ts";
 import { type LedgerLine, readLedger } from "../ledger/append.ts";
@@ -51,6 +52,12 @@ const sentBack = (from: Stage, to: string) =>
   to === "rejected" ||
   (isActive(from) && isActive(to as Stage) && STAGES.indexOf(to as Stage) < STAGES.indexOf(from));
 
+/** How a wait at Ready ended, as its segment says: the person merged it, or the merge check went first. */
+const READY_ENDS: Partial<Record<string, string>> = {
+  done: "You merged it into staging",
+  regress: "You said merge: the merge check drives the features it touches first",
+};
+
 const msgStatus = (m: Message) =>
   m.kind === "answer"
     ? "Answer sent"
@@ -68,27 +75,44 @@ export async function detail(repo: string, ref: string): Promise<Detail> {
   const tl: Seg[] = [];
   let stage: Stage = "intake";
   let start = j.startedAt;
+  /** ADR 0018: catch-ups in a row so far; a catch-up is a normal step (staging moved), never drawn as a failure. */
+  let caught = 0;
+  let staging = "staging";
+  try {
+    staging = loadConfig(repo).staging.branch;
+  } catch {}
   const close = (m: number, end: string | null, to: string | null, l?: LedgerLine) => {
+    const catchUp = !!l?.detail?.catchUp;
     const evs = liveStreams(dir, m).flatMap((f) => activityOf(f.file, roots));
     const runs = j.agentRuns.filter((r) => r.key.includes(`/m${m}/`));
-    const waited = stage === "needs-human" || stage === "needs-info" || stage === "paused";
+    const waited = stage === "needs-human" || stage === "needs-info" || stage === "paused" || stage === "ready";
     const who = waited ? "you" : [...new Set(runs.map((r) => `${r.role}${r.model ? ` · ${r.model}` : ""}`))].join(", ");
-    const bad = to !== null && sentBack(stage, to);
+    const bad = to !== null && !catchUp && sentBack(stage, to);
     const reason = typeof l?.detail?.reason === "string" ? l.detail.reason : "";
     tl.push({
       stage,
       nm: STAGE_NAMES[stage],
-      st: stage === "paused" ? "paused" : end === null ? "run" : bad ? "bad" : to === "paused" && l?.detail?.who === "person" ? "skip" : "ok",
+      st:
+        stage === "paused" ? "paused" : end === null ? "run" : catchUp ? "back" : bad ? "bad" : to === "paused" && l?.detail?.who === "person" ? "skip" : "ok",
       round: l?.round ?? j.round,
       who,
       start,
       end,
-      sum: (bad && reason ? reason : (runs.at(-1)?.line ?? reason)).slice(0, 220),
+      sum: (catchUp
+        ? `Caught up with ${staging} (${caught} of ${CATCH_UP_LIMIT}) · no round spent`
+        : stage === "ready" && to && READY_ENDS[to]
+          ? READY_ENDS[to]
+          : bad && reason
+            ? reason
+            : (runs.at(-1)?.line ?? reason)
+      ).slice(0, 220),
       evs: evs.slice(-EVENTS_PER_SEG),
       calls: evs.filter((e) => e.c === "tool").length,
     });
   };
   moves.forEach((l, i) => {
+    if (l.detail?.catchUp) caught++;
+    else if (l.result === "build") caught = 0;
     close(i, l.t, l.result, l);
     stage = l.result as Stage;
     start = l.t;
@@ -105,16 +129,14 @@ export async function detail(repo: string, ref: string): Promise<Detail> {
         c: "ask",
         t: questionOf(j, dir) ?? "",
         at: j.updatedAt,
-        who: agentOf(j.stage === "needs-human" ? (j.escalatedFrom ?? "intake") : "intake") ?? "Kitchen",
+        // Held at Ready: Kitchen asks (the lanes passed); else the agent that stopped.
+        who: j.stage === "ready" ? "Kitchen" : (agentOf(j.stage === "needs-human" ? (j.escalatedFrom ?? "intake") : "intake") ?? "Kitchen"),
       });
     } else if (state === "paused") {
       last.st = "paused";
       last.sum = j.pausedReason?.includes("stopped") ? "Stopped by you" : "Paused by you";
     } else if (state === "rejected") last.st = "skip";
-    else if (j.stage === "ready") {
-      last.st = "you";
-      last.sum = j.held ?? "Ready for you to merge";
-    } else if (!j.running) last.sum = "Waiting for its lane to start";
+    else if (!j.running) last.sum = "Waiting for its lane to start";
   }
   for (const m of readMessages(dir)) {
     const seg = [...tl].reverse().find((s) => s.start <= m.at) ?? tl[0];

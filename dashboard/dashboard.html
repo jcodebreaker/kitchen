@@ -50,26 +50,49 @@ svg{flex:none;display:block}
 
 /* ── sidebar ── */
 .side{width:216px;flex:none;padding:12px 10px;display:flex;flex-direction:column;gap:1px}
-.ws{display:flex;align-items:center;gap:9px;padding:6px 8px 12px;font-weight:600;letter-spacing:-.01em;min-width:0}
+.ws{display:flex;align-items:center;gap:9px;padding:6px 8px;margin-bottom:6px;font-weight:600;letter-spacing:-.01em;min-width:0;border-radius:6px}
 .ws .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.logo{width:22px;height:22px;flex:none;background:var(--logo) center/contain no-repeat}
+.logo{width:22px;height:22px;flex:none;background:var(--logo) center/contain no-repeat;position:relative}
+/* The repo name is the repo picker (ADR 0019); on a --private dashboard it is plain text. */
+button.ws{width:100%;text-align:left;transition:background .12s}
+button.ws:hover{background:var(--hover)}
+button.ws:active,button.ws[aria-expanded="true"]{background:var(--press)}
+.ws .chev{color:var(--faint);display:grid;margin-left:-4px}
+button.ws:hover .chev,button.ws[aria-expanded="true"] .chev{color:var(--mute)}
+/* another repo needs you: a dot on the logo, so that attention isn't lost behind the menu */
+.ws.dot .logo::after{content:"";position:absolute;top:-2px;right:-3px;width:8px;height:8px;border-radius:4px;background:var(--act);box-shadow:0 0 0 2px var(--side)}
+button.ws.dot:hover .logo::after{box-shadow:0 0 0 2px var(--hover)}
+button.ws.dot:active .logo::after,button.ws.dot[aria-expanded="true"] .logo::after{box-shadow:0 0 0 2px var(--press)}
+.rmenu{position:absolute;left:10px;width:300px;z-index:40;background:var(--raise);border:1px solid var(--line2);border-radius:10px;box-shadow:var(--shadow);padding:5px;animation:drop .16s var(--ease)}
+.rmh{font-size:12px;color:var(--faint);padding:5px 8px 4px}
+.rmi{display:flex;align-items:center;gap:8px;width:100%;padding:5px 8px;border-radius:6px;text-align:left;color:var(--fg)}
+.rmi:hover,.rmi:focus-visible{background:var(--hover);outline:none}
+.rmi .mk{width:16px;flex:none;display:grid;place-items:center;color:var(--fg)}
+.rmi .rt{display:flex;flex-direction:column;flex:1;min-width:0;line-height:1.3}
+.rmi .nm{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rmi .pa{font-size:11px;color:var(--faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rmi kbd{flex:none;min-width:20px;text-align:right;font:500 11.5px var(--sans);color:var(--faint)}
+.rmi.add{color:var(--mute)}.rmi.add .mk{color:var(--faint)}
+.rmsep{height:1px;background:var(--line);margin:5px 4px}
+.rmhint{padding:0 8px 6px 32px;font-size:12px;line-height:1.5;color:var(--fg2)}
+.rmhint p{margin:0 0 6px}.rmhint p:last-child{margin:0}
+.rmhint code{font:11.5px var(--mono);color:var(--fg);background:var(--hover);border:1px solid var(--line);padding:0 5px;border-radius:4px;white-space:nowrap}
 .nav{display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:6px;color:var(--mute);width:100%;text-align:left;transition:background .12s}
 .nav:hover{background:var(--hover);color:var(--fg)}
 .nav.on{background:var(--press);color:var(--fg);font-weight:500}
 /* counts are macOS-style badges, shown only when non-zero; Needs you's is the one in the attention color */
-.nav .bdg{margin-left:auto;min-width:20px;height:18px;padding:0 6px;border-radius:9px;font:600 11px/18px var(--sans);text-align:center;font-variant-numeric:tabular-nums;background:color-mix(in srgb,var(--fg) 7%,transparent);color:var(--mute)}
+.nav .bdg,.rmi .bdg{margin-left:auto;min-width:20px;height:18px;padding:0 6px;border-radius:9px;font:600 11px/18px var(--sans);text-align:center;font-variant-numeric:tabular-nums;background:color-mix(in srgb,var(--fg) 7%,transparent);color:var(--mute)}
 .nav .bdg:empty{display:none}
-.nav .bdg.act{background:var(--act);color:var(--on-act)}
+.nav .bdg.act,.rmi .bdg.act{background:var(--act);color:var(--on-act)}
 .nav.on .bdg:not(.act){background:color-mix(in srgb,var(--fg) 10%,transparent);color:var(--fg2)}
 /* sidebar icons are one color; only Needs you turns orange, and only when something needs you */
 .nav .si{color:var(--mute);display:grid}
 .nav:hover .si,.nav.on .si{color:var(--fg)}
-.nav.repo .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .nav.addr,.nav.addr .si{color:var(--faint)}
 .side .lbl{font-size:12px;color:var(--faint);padding:16px 8px 6px}
 .side .lbl.first{padding-top:4px}
 .side .foot{margin-top:auto;padding:8px 0 0;display:flex;align-items:center}
-/* Add a repo: the hint, in a popover under its row */
+/* Add a source: the hint, in a popover under its row */
 .rpop{position:absolute;left:10px;width:290px;z-index:40;background:var(--raise);border:1px solid var(--line2);border-radius:10px;box-shadow:var(--shadow);padding:10px 12px;font-size:12.5px;line-height:1.5;color:var(--fg2);animation:drop .16s var(--ease)}
 .rpop b{display:block;font-weight:600;color:var(--fg);margin-bottom:4px}
 .rpop p{margin:0 0 8px}.rpop p:last-child{margin:0}
@@ -193,8 +216,9 @@ svg{flex:none;display:block}
 .chead .n{font-size:13px;color:var(--faint)}
 .chead .who{margin-left:auto;font-size:11.5px;color:var(--faint);overflow:hidden;text-overflow:ellipsis;min-width:0}
 .chead .dot{width:7px;height:7px;border-radius:4px;align-self:center;flex:none}
-.col.ny .dot{background:var(--act)} .col.ready .dot{background:var(--ok)}
+.col.ny .dot{background:var(--act)}
 .col.ny:not(.nil) .nm,.col.ny:not(.nil) .n{color:var(--act-fg)}
+.col.ny{flex:1.4 0 300px;max-width:380px}
 .col.nil:not(.ny){flex:0 0 44px;padding:6px 0;align-items:center}
 .col.nil:not(.ny) .chead{writing-mode:vertical-rl;padding:12px 0;gap:8px;color:var(--mute)}
 .col.nil:not(.ny) .chead .nm{font-weight:500}
@@ -239,6 +263,7 @@ svg{flex:none;display:block}
 .cq{font-size:12.5px;line-height:1.45;color:var(--fg2);display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
 .card.ny .btn.act{height:26px;font-size:12.5px;padding:0 13px;border-radius:8px;align-self:flex-start;margin:1px 0 2px}
 .card.ny .tka{flex-wrap:wrap;margin:1px 0 2px}
+.card.ny .tka.rdy{gap:2px;margin-left:-4px;flex-wrap:wrap}.card .tka.rdy .ib{width:26px;height:26px}.card.ny .tka.rdy .btn{font-size:12px;height:26px;margin:0}.card.ny .tka.rdy .btn.act{padding:0 9px}.card .tka.rdy .btn.ghost{padding:0 5px}
 button.a{font-weight:600}button.a:hover{text-decoration:underline;text-underline-offset:3px}
 
 /* inline composer under a row */
@@ -274,7 +299,7 @@ button.a{font-weight:600}button.a:hover{text-decoration:underline;text-underline
 .br i{font-style:normal;font-size:12px;color:var(--faint);flex:none}
 .br code{font:12px var(--mono);color:var(--fg2);background:var(--band);border:1px solid var(--line);border-radius:6px;padding:2px 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .br .ib{width:26px;height:26px}
-a.btn{text-decoration:none}
+a.btn{text-decoration:none}a.btn:not(.pri):not(.act){color:var(--fg)}
 @keyframes nope{25%{transform:translateX(-3px)}75%{transform:translateX(3px)}}
 
 /* ── panel ── */
@@ -669,7 +694,14 @@ button.ghead:hover{background:var(--hover)}
 <body>
 <div class="app">
   <nav class="side" id="side" aria-label="Project">
-    <div class="ws"><span class="logo" role="img" aria-label="Kitchen"></span><span class="nm" id="wsName">kitchen</span></div>
+    <button class="ws" id="wsB" aria-haspopup="menu" aria-expanded="false" aria-controls="rmenu" title="Switch repo"><span class="logo" role="img" aria-label="Kitchen"></span><span class="nm" id="wsName">kitchen</span><span class="chev" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 6.5L8 10l3.5-3.5"/></svg></span></button>
+    <div class="rmenu" id="rmenu" role="menu" aria-label="Repos on this dashboard" hidden>
+      <div class="rmh" aria-hidden="true">Repos on this dashboard</div>
+      <div id="rmL" role="group"></div>
+      <div class="rmsep" role="separator"></div>
+      <button class="rmi add" id="rmAdd" role="menuitem" tabindex="-1" aria-expanded="false" aria-controls="rmHint"><span class="mk" id="rmAddI"></span>Add a repo…</button>
+      <div class="rmhint" id="rmHint" hidden><p>In the repo, run <code>kitchen dashboard</code>. It joins this page instead of opening a new port.</p><p>Remove one: <code>kitchen dashboard --forget</code></p></div>
+    </div>
     <div class="lbl first">Outer loop</div>
     <button class="nav" data-osec="o-inbox"><span class="si" id="nInI"></span>Inbox<span class="bdg" id="sInbox"></span></button>
     <button class="nav" data-osec="o-held"><span class="si" id="nHeldI"></span>Held<span class="bdg" id="sHeld"></span></button>
@@ -680,12 +712,6 @@ button.ghead:hover{background:var(--hover)}
     <button class="nav" data-sec="g-you" onclick="jump('g-you')"><span class="si" id="nYouI"></span>Needs you<span class="bdg act" id="sYou"></span></button>
     <button class="nav" data-sec="g-run" onclick="jump('g-run')"><span class="si" id="nRunI"></span><span id="sRunN">Running</span><span class="bdg" id="sRun"></span></button>
     <button class="nav" data-sec="g-done" onclick="jump('g-done')"><span class="si" id="nDoneI"></span>Done<span class="bdg" id="sDone"></span></button>
-    <div id="repoG" hidden>
-      <div class="lbl">Repos</div>
-      <div id="repoL"></div>
-      <button class="nav addr" id="addR" onclick="addRepo()" aria-haspopup="dialog" aria-expanded="false"><span class="si" id="nAddI"></span>Add a repo…</button>
-      <div class="rpop" id="rpop" role="dialog" aria-label="Add a repo" hidden><b>Add a repo</b><p>In the repo, run <code>kitchen dashboard</code>. It joins this page instead of opening a new port.</p><p>Remove one: <code>kitchen dashboard --forget</code></p></div>
-    </div>
     <div class="foot"><button class="ib" id="thB" onclick="toggleTheme()" aria-label="Appearance" title="Appearance"></button></div>
   </nav>
   <main class="main">
@@ -771,7 +797,7 @@ S.rejected=S.skip; S.done=S.ok;
 const SB={
   run:`<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="6" opacity=".35"/><path d="M8 2a6 6 0 0 1 6 6"/></svg>`,
   done:`<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M5.4 8.2l1.8 1.8 3.4-3.7"/></svg>`,
-  repo:`<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M2 4.6A1.6 1.6 0 0 1 3.6 3h2.6l1.5 1.6h4.7A1.6 1.6 0 0 1 14 6.2v5.2a1.6 1.6 0 0 1-1.6 1.6H3.6A1.6 1.6 0 0 1 2 11.4z"/></svg>`,
+  check:sv('<path d="M3.5 8.4l2.9 2.9 6.1-6.3"/>',14),
   add:sv('<path d="M8 3.5v9M3.5 8h9"/>'),
   side:`<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2.25"/><path d="M6.25 2.75v10.5"/></svg>`,
   look:`<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="5.75"/><path d="M8 2.25a5.75 5.75 0 0 0 0 11.5z" fill="currentColor" stroke="none"/></svg>`,
@@ -836,7 +862,8 @@ async function poll(g){
     const before=new Map(jobs.map(j=>[j.id,j]));
     jobs=d.jobs.filter(x=>!hideJobs.has(x.id)).map(fromSnap);
     for(const j of jobs){const b=before.get(j.id);
-      if(b&&!ended(b)&&ended(j)&&j.state==="done"){fresh.add(j.id);toast(`${j.num} ${j.stage==="ready"?"is ready for you":"is merged into staging"}`,"View",()=>openJob(j.id));setTimeout(()=>{fresh.delete(j.id);replaceRow(J(j.id))},20000)}
+      if(b&&!ended(b)&&ended(j)&&j.state==="done"){fresh.add(j.id);toast(`${j.num} is merged into staging`,"View",()=>openJob(j.id));setTimeout(()=>{fresh.delete(j.id);replaceRow(J(j.id))},20000)}
+      if(b&&!held(b)&&held(j))toast(`${j.num} is ready for you: merge it into staging, or ask for changes`,"View",()=>openJob(j.id));
       if(b&&(b.phase!==j.phase||b.state!==j.state))just.add(j.id);
       if(b&&b.live&&j.live&&b.live.at===j.live.at&&b.live.t===j.live.t)j.liveShown=b.liveShown; else if(j.live&&b)startTyping(j);
     }
@@ -908,8 +935,17 @@ function trackHTML(j){
 }
 function chgHTML(j,bump){const A=j.files.reduce((a,f)=>a+f.a,0),D=j.files.reduce((a,f)=>a+f.d,0);
   return `<span class="chg${bump?" bump":""}" id="chg-${esc(j.id)}">${j.files.length&&group(j)==="run"?`${j.files.length} file${j.files.length>1?"s":""}${dfHTML(A,D)}`:""}</span>`}
-/* A finished job: merged into staging by Kitchen, or held at Ready for a person (high risk, a large diff). */
-const doneWords=j=>j.stage==="ready"?"Ready for you":"Merged into staging";
+/* A finished job is merged into staging. One held at Ready (high risk, a big diff…) is not finished: it needs you. */
+const doneWords=()=>"Merged into staging";
+const held=j=>j.stage==="ready";
+/* Held at Ready: its report, Merge into staging (kitchen merge: the same checks as an auto-merge), or Ask for changes
+   (another round). One set per surface: the row and the card carry these; the panel its bar (readyBar). */
+const mergeBtn=j=>`<button type="button" class="btn act sm" data-act="merge" data-id="${esc(j.id)}" title="Merge ${esc(j.num)} into staging: the same checks as an auto-merge, on staging only, never main (kitchen merge ${esc(j.num)})">Merge into staging</button>`;
+const reportBtn=j=>j.report?`<a class="btn sm" data-act="report" href="${esc(BASE)}/${esc(j.report)}" target="_blank" rel="noopener">${I.doc}Open report</a>`:"";
+const askBtn=(j,on)=>`<button type="button" class="btn sm" data-act="${on?"ask-cancel":"ask"}" data-id="${esc(j.id)}" title="${on?"Close":`Send ${esc(j.num)} back for round ${j.round+1} with your words`}">${on?"Close":"Ask for changes"}</button>`;
+const readyBtns=(j,on)=>`<span class="tka">${reportBtn(j)}${mergeBtn(j)}${askBtn(j,on)}</span>`;
+/* The Board card's narrower set, on one line: the report as an icon, Merge first, Ask for changes quiet. */
+const readyCardBtns=j=>`<span class="tka rdy">${j.report?`<a class="ib" data-act="report" href="${esc(BASE)}/${esc(j.report)}" target="_blank" rel="noopener" title="Open report" aria-label="Open report">${I.doc}</a>`:""}${mergeBtn(j)}<button type="button" class="btn ghost sm" data-act="ask" data-id="${esc(j.id)}" title="Send ${esc(j.num)} back for round ${j.round+1} with your words">Ask for changes</button></span>`;
 function finLabel(j){if(stopped(j))return "Stopped by you";return j.state==="done"?doneWords(j):"Rejected"}
 /* Kitchen's own messages name commands in backticks: shown as code. */
 const md=t=>esc(t).replace(/`([^`]+)`/g,"<code>$1</code>");
@@ -926,6 +962,7 @@ function rowHTML(j){
   const g=group(j),ex=expanded===j.id;
   let sub="",mid="",tm="",acts="";
   if(g==="you"&&j.waits){sub=waitHTML(j)+(j.waits.for==="confirm"?approveBtns(j,ex):"");mid=j.waits.for==="confirm"?"":`<button class="btn sm rep" data-act="message" data-id="${esc(j.id)}">${ex?"Close":"Reply"}</button>`;tm=`<span class="tm mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`}
+  else if(g==="you"&&held(j)){sub=`<div class="sub q">${md(j.q)}</div>`+readyBtns(j,ex&&asking.has(j.id));tm=`<span class="tm mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`}
   else if(g==="you"){sub=`<div class="sub q">${md(j.q)}</div>`;mid=`<button class="btn act sm rep" data-act="message" data-id="${esc(j.id)}">${ex?"Close":"Reply"}</button>`;tm=`<span class="tm mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`}
   else if(g==="run"){sub=`<div class="sub" id="lv-${esc(j.id)}">${liveHTML(j)}</div>`;mid=chgHTML(j)+trackHTML(j);tm=`<span class="tm mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`;
     acts=`<span class="acts"><button class="ib" title="Message ${esc(agent(j))} (R)" aria-label="Message agent" data-act="message" data-id="${esc(j.id)}">${I.msg}</button></span>`}
@@ -940,9 +977,9 @@ function rowHTML(j){
 }
 /* ───────── board (ADR 0013, dashboard/mockups/board-apple.html) ───────── */
 const lanes=()=>snap?snap.lanes:[];
-const LANE_CLS={you:"ny",ready:"ready"};
+const LANE_CLS={you:"ny"};
 const doneT=j=>Date.parse(j.doneAt||j.updatedAt||0)||0;
-function inLane(k){const a=jobs.filter(j=>j.lane===k);return k==="ready"||k==="done"?a.sort((x,y)=>doneT(y)-doneT(x)):a}
+function inLane(k){const a=jobs.filter(j=>j.lane===k);return k==="done"?a.sort((x,y)=>doneT(y)-doneT(x)):a}
 const RISK={low:"low",medium:"med",high:"high"};
 const fromTxt=j=>"from "+j.from;
 const fromTag=j=>j.from?`<button type="button" class="tag from" data-act="from" data-id="${esc(j.id)}" title="Show the ticket it came from, in the Outer loop">${esc(fromTxt(j))}</button>`:"";
@@ -974,7 +1011,8 @@ function cardHTML(j){
   const l=j.lane,end=ended(j)||l==="done",idt="#"+j.num;
   const cls=`${l==="you"?"ny":""} ${end?"end":""} ${j.state==="done"?"rdy":""} ${j.state==="rejected"||j.pausedBy==="stop"?"gone":""} ${open===j.id?"open":""} ${sel===j.id?"sel":""} ${just.has(j.id)?"flash":""}`;
   const bot=l==="you"
-    ?j.waits?waitHTML(j)+(j.waits.for==="confirm"?approveBtns(j,false):`<span class="tka"><button class="btn sm" data-act="message" data-id="${esc(j.id)}">Reply</button></span>`)
+    ?held(j)?`<div class="cq">${md(j.q)}</div>${readyCardBtns(j)}`
+    :j.waits?waitHTML(j)+(j.waits.for==="confirm"?approveBtns(j,false):`<span class="tka"><button class="btn sm" data-act="message" data-id="${esc(j.id)}">Reply</button></span>`)
     :`<div class="cq">${md(j.q)}</div><button class="btn act sm" data-act="message" data-id="${esc(j.id)}">Reply</button>`
     :`<div class="cbot"><div class="evl" id="lv-${esc(j.id)}">${evLine(j)}</div>${j.state==="rejected"?"":`<button class="ib" title="${j.state==="done"?"Follow up":"Message "+esc(agent(j))} (R)" aria-label="${j.state==="done"?"Follow up":"Message agent"}" data-act="message" data-id="${esc(j.id)}">${I.msg}</button>`}</div>`;
   return `<div class="rw card ${cls}" id="rw-${esc(j.id)}" style="view-transition-name:r-${esc(j.id)}" tabindex="0" role="button" data-row="${esc(j.id)}">
@@ -984,7 +1022,7 @@ function cardHTML(j){
 function boardHTML(){
   if(!snap)return ""; /* the lanes come with the first snapshot */
   return `<div class="board" id="g-run">${lanes().map(l=>{const cs=inLane(l.k),c=LANE_CLS[l.k]||"";
-    return `<section class="col ${c} ${cs.length?"":"nil"}" ${l.k==="you"?'id="g-you"':l.k==="ready"?'id="g-done"':""} aria-label="${esc(l.nm)}"><div class="chead">${c?'<i class="dot"></i>':""}<span class="nm">${esc(l.nm)}</span><span class="n num">${cs.length}</span><span class="who">${esc(l.who)}</span></div>
+    return `<section class="col ${c} ${cs.length?"":"nil"}" ${l.k==="you"?'id="g-you"':l.k==="done"?'id="g-done"':""} aria-label="${esc(l.nm)}"><div class="chead">${c?'<i class="dot"></i>':""}<span class="nm">${esc(l.nm)}</span><span class="n num">${cs.length}</span><span class="who">${esc(l.who)}</span></div>
       <div class="cards">${cs.map(cardHTML).join("")||(l.k==="you"?'<div class="nilt">Nothing needs you.</div>':"")}</div></section>`}).join("")}</div>`;
 }
 /* cards outside the visible board must not take part in a view transition (their snapshots are not clipped) */
@@ -1039,6 +1077,11 @@ function composerHTML(j,where="row"){
   const g=wgroup(j),a=agent(j),eng=!j.agent;
   if(j.state==="rejected")return "";
   const cf=j.waits&&j.waits.for==="confirm",rf=j.waits&&j.waits.for==="refine";
+  /* Held at Ready: no reply box. Its buttons sit on the row and the card; the panel shows its bar. Ask for changes
+     opens this composer as a follow-up (another round). */
+  if(held(j)&&!asking.has(j.id))return where==="panel"?readyBar(j):"";
+  if(held(j))return `<form class="cmp" data-cmp="${esc(j.id)}"><div class="box"><textarea rows="1" data-draft="${esc(j.id)}" data-where="${where}" placeholder="What should change in ${esc(j.num)}?" aria-label="What should change in ${esc(j.num)}?" maxlength="4000">${esc(drafts[j.id]||"")}</textarea>
+    <div class="cbar"><span class="hint">This starts round ${j.round+1} instead of merging</span><span class="sp"></span>${where==="panel"?`<button type="button" class="btn ghost sm" data-act="ask-cancel" data-id="${esc(j.id)}">Cancel</button>`:""}<button class="send" type="submit" aria-label="Send" title="Send (Enter)">${I.up}</button></div></div></form>`;
   const ph=cf?"What should change in the criteria?":rf?`Answer here, or refine it in Claude Code…`:g==="you"?`Reply to ${a}…`:j.state==="paused"?`Leave a note for ${a}…`:g==="run"?`Message ${a}: redirect it, add context, ask…`:`What should change in ${j.num}?`;
   const hint=cf?"Approve builds it on these criteria; a change goes back to intake":rf?"Your answer goes back to intake as your own words":g==="you"?`${Agent(j)} is waiting for you`:g==="done"?"This starts round "+(j.round+1):j.state==="paused"?"Paused. It reads this when you resume":g==="run"?"The job's next agent reads this when its lane starts":"Starts round "+(j.round+1);
   const chips=g==="run"&&j.state!=="paused"?["What are you doing right now?","Add a test for this","Keep the diff minimal"]:[];
@@ -1056,10 +1099,22 @@ function composerHTML(j,where="row"){
 const asking=new Set();
 function doneBar(j){
   return `<div class="cmp fin"><div class="box"><div class="cbar"><span class="br" title="${esc(j.branch||"")}"><i>Branch</i><code>${esc(j.branch||"")}</code><button type="button" class="ib" data-act="copy-branch" data-id="${esc(j.id)}" title="Copy the branch name" aria-label="Copy the branch name">${I.copy}</button></span>${j.report?`<a class="btn pri sm" href="${esc(BASE)}/${esc(j.report)}" target="_blank" rel="noopener">${I.doc}Open report</a>`:""}<span class="sp"></span><button type="button" class="btn sm" data-act="ask" data-id="${esc(j.id)}" title="Reopen ${esc(j.num)} for round ${j.round+1}">Ask for changes</button></div></div></div>`}
+function readyBar(j){
+  return `<div class="cmp fin"><div class="box"><div class="cbar"><span class="br" title="${esc(j.branch||"")}"><i>Branch</i><code>${esc(j.branch||"")}</code><button type="button" class="ib" data-act="copy-branch" data-id="${esc(j.id)}" title="Copy the branch name" aria-label="Copy the branch name">${I.copy}</button></span><span class="sp"></span>${readyBtns(j,false)}</div></div></div>`}
 function askChanges(id,on){const j=J(id);if(!j)return;on?asking.add(id):asking.delete(id);
-  if(open===id)renderPanel();else{expanded=id;renderList()}
+  if(on&&view==="board"&&open!==id)openJob(id);
+  else if(open===id)renderPanel();else{expanded=on||!held(j)?id:null;renderList()}
   if(on){const t=$(`textarea[data-draft="${id}"][data-where="${open===id?"panel":"row"}"]`);if(t)t.focus()}}
 async function copyCmd(c){try{await navigator.clipboard.writeText(c);toast("Copied: "+c+". Run it in Claude Code or Codex")}catch(e){toast("Run in Claude Code or Codex: "+c)}}
+/* Merge into staging (kitchen merge): the gate runs now (a trial merge, the checks); the answer says where it went. */
+const merging=new Set();
+async function mergeJob(id){const j=J(id);if(!j||merging.has(id))return;merging.add(id);
+  $$(`[data-act="merge"][data-id="${CSS.escape(id)}"]`).forEach(x=>{x.disabled=true;x.textContent="Merging…"});
+  toast(`Merging ${j.num}: the checks run on staging with it merged…`);
+  const r=await post("merge",{id:j.id});merging.delete(id);
+  const ln=r.lines.find(l=>l.startsWith(j.id))||"";
+  toast(!r.ok?`${j.num} ${said(r.lines)||"not merged"}`:/→ regress/.test(ln)?`${j.num} goes to the merge check: Kitchen drives the features it touches, then merges it`:/→ build/.test(ln)?`${j.num} not merged: ${ln.replace(/^.*failed: /,"").replace(/ → build.*$/,"")}. Back to Build`:/→ needs-human/.test(ln)?`${j.num} not merged: it needs you`:`${j.num} merged into staging`,"View",()=>openJob(id));
+  refreshSoon()}
 async function approve(id){const j=J(id);if(!j)return;if(expanded===id)expanded=null;await simple("approve",id,`${j.num} approved: it goes to Build`)}
 async function copyBranch(id){const b=(J(id)||{}).branch||"";try{await navigator.clipboard.writeText(b);toast("Copied: "+b)}catch(e){toast("The branch: "+b)}}
 async function startRunner(){const r=await post("start-runner",{});toast(r.ok?(said(r.lines)||"Kitchen started").replace(/^orchestrator detached: /,"Kitchen started: "):said(r.lines)||"Not started");refreshSoon()}
@@ -1070,6 +1125,7 @@ function useChip(id,b){drafts[id]=b.textContent;const f=b.closest(".cmp"),t=f.qu
 function message(id){
   const j=J(id); if(!j)return;
   if(view==="board"&&open!==id)openJob(id);
+  if(held(j)&&open!==id){askChanges(id,!(asking.has(id)&&expanded===id));return}
   if(open===id){expanded=null;renderList();const t=$(`[data-draft="${id}"][data-where="panel"]`)||$(`[data-where="panel"][data-q]`);if(t)t.focus();return}
   expanded=expanded===id?null:id;sel=id;renderList();
   const t=$(`textarea[data-draft="${id}"][data-where="row"]`);if(t){t.focus();t.closest(".rw").scrollIntoView({block:"nearest"})}
@@ -1090,8 +1146,8 @@ function clearDraft(id){drafts[id]="";$$(`textarea[data-draft="${id}"]`).forEach
 const sureRefine=new Set();
 async function send(id){
   const j=J(id); if(!j)return; const text=(drafts[id]||"").trim(), g=wgroup(j);
-  if(!text&&!(g==="you"&&j.stage==="needs-human")){nope(id);return}
-  const verb=g==="you"?"answer":g==="done"?"follow-up":"steer";
+  if(!text&&j.stage!=="needs-human"){nope(id);return}
+  const verb=held(j)||g==="done"?"follow-up":g==="you"?"answer":"steer";
   if(verb==="follow-up"&&!asking.has(id)){nope(id);return}
   /* ADR 0020: an answer here is read as the refined ticket. Say so once, and send only on a second press. */
   if(j.waits&&j.waits.for==="refine"&&!sureRefine.has(id)){sureRefine.add(id);toast(`This goes to intake as ${j.num}'s refined ticket. To refine it with Claude, run /kitchen refine ${j.num} in Claude Code.`,"Send anyway",()=>send(id));return}
@@ -1134,7 +1190,7 @@ function segHTML(j,s,i,n){
   return `<button class="sg ${can?"exp":""}" ${can?`onclick="togSeg(${i})"`:"tabindex=-1"}>${S[state]||S.wait}<b>${esc(s.nm)}</b><span class="who">${esc(who)}</span><span class="du mono num" ${liveT?`id="segt" data-start="${esc(s.start)}"`:""}>${liveT?clock(elapsed(s.start)):dur}</span></button>
     ${s.sk&&s.sk.length?`<div class="sgsk" title="Skills quoted into this step's prompt">${s.sk.map(n=>`<span class="mono" title="${esc(n)}">${esc(n.split(":").pop())}</span>`).join("")}</div>`:""}
     ${s.sum?`<div class="sgsum ${s.st==="bad"?"bad":""}">${esc(s.sum)}</div>`:""}
-    ${isOpen&&(s.evs.length||last)?`<div class="evs" ${last?'id="evs"':""}>${s.evs.map(e=>evHTML(e)).join("")}</div>`:""}`;
+    ${isOpen&&(s.evs.length||(last&&s.st==="run"&&j.runnerOn))?`<div class="evs" ${last?'id="evs"':""}>${s.evs.map(e=>evHTML(e)).join("")}</div>`:""}`;
 }
 function tabBody(j){
   const d=details[j.id];
@@ -1146,7 +1202,7 @@ function tabBody(j){
 /* The Checks count comes with every poll (data.ts checks), never from a detail fetched at another stage. */
 function tabsHTML(j){const ck=j.checks||{ok:j.crit.filter(c=>c.st==="ok").length,total:j.crit.length};
   return [["activity","Activity",""],["checks","Checks",ck.total?ck.ok+"/"+ck.total:""],["changes","Changes",j.files.length||""]].map(([k,n,c])=>`<button class="tab ${tab===k?"on":""}" onclick="setTab('${k}')">${n}${c!==""?`<span class="n num">${c}</span>`:""}</button>`).join("")}
-function statusOf(j){return j.state==="you"?"Needs you":j.state==="run"?(j.runnerOn?stp(j).nm+(j.round>1?" · round "+j.round:""):"Waiting · "+stp(j).nm):j.state==="paused"?(j.pausedBy==="stop"?"Stopped in ":"Paused in ")+stp(j).nm:j.state==="done"?doneWords(j):"Rejected"}
+function statusOf(j){return j.state==="you"?(held(j)?"Ready for you":"Needs you"):j.state==="run"?(j.runnerOn?stp(j).nm+(j.round>1?" · round "+j.round:""):"Waiting · "+stp(j).nm):j.state==="paused"?(j.pausedBy==="stop"?"Stopped in ":"Paused in ")+stp(j).nm:j.state==="done"?doneWords(j):"Rejected"}
 function paintHead(){const j=J(open);if(!j)return;const t=$("#tabs");if(t)t.innerHTML=tabsHTML(j);const st=$("#pst");if(st)st.innerHTML=icon(j)+esc(statusOf(j));if(tab!=="activity"){const b=$("#tabbody");if(b)b.innerHTML=tabBody(j)}}
 function panelUpdate(old,d){
   if(!old||tab!=="activity"){renderPanel();return}
@@ -1154,7 +1210,7 @@ function panelUpdate(old,d){
   if(shape(old)!==shape(d)){renderPanel();return}
   const a=old.tl.at(-1),b=d.tl.at(-1);
   if(!a||!b){renderPanel();return}
-  const box=$("#evs"),sc=$("#pscroll");if(!box){renderPanel();return}
+  const box=$("#evs"),sc=$("#pscroll");if(!box){if(b.evs.length!==a.evs.length)renderPanel();else paintHead();return}
   // The call that was running may have finished: repaint the last one, then append the new.
   const prevN=a.evs.length;
   if(prevN&&JSON.stringify(a.evs[prevN-1])!==JSON.stringify(b.evs[prevN-1])){renderPanel();return}
@@ -1172,7 +1228,7 @@ function renderPanel(scrollEnd){
   keepFocus(()=>{$("#pin").innerHTML=`
     <div class="ph"><button class="ib back" onclick="closePanel()" aria-label="Back">${I.back}</button><span class="mono">${esc(j.num)}</span><span>·</span><span>${esc(sub)}</span><span class="sp"></span>${ctl}${rmBtn(j)}<button class="ib" onclick="closePanel()" aria-label="Close" title="Close (Esc)">${I.x}</button></div>
     <div class="pscroll" id="pscroll"><h1>${esc(j.title)}</h1>${(t=>t&&t!==j.title?`<p class="tkt" title="The ticket, as it was filed">${esc(t)}</p>`:"")(details[j.id]&&details[j.id].ticket)}
-      <div class="meta"><span class="st ${j.state==="you"?"you":""}" id="pst">${icon(j)}${esc(statusOf(j))}</span><span class="mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span><span class="age" title="Since the ticket came in">age <span class="mono num" id="pt">${clock(secsOf(j))}</span></span><span class="mono num" id="pc">${costTxt(j)}</span>${j.report?`<a href="${esc(BASE)}/${esc(j.report)}" target="_blank" rel="noopener">Open report</a>`:""}${j.pr?`<span>PR #${j.pr}</span>`:""}</div>
+      <div class="meta"><span class="st ${j.state==="you"?"you":""}" id="pst">${icon(j)}${esc(statusOf(j))}</span><span class="mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span><span class="age" title="Since the ticket came in">age <span class="mono num" id="pt">${clock(secsOf(j))}</span></span><span class="mono num" id="pc">${costTxt(j)}</span>${j.report&&(asking.has(j.id)||!(held(j)||j.state==="done"))?`<a href="${esc(BASE)}/${esc(j.report)}" target="_blank" rel="noopener">Open report</a>`:""}${j.pr?`<span>PR #${j.pr}</span>`:""}</div>
       <div class="ptrk ${ss.length>6?"many":""}">${trackHTML(j)}<div class="lbls">${ss.length>6?`<span class="cur ${j.state==="you"?"you":""}">${ended(j)&&j.state==="done"?"All "+ss.length+" steps done":"Step "+(i+1)+" of "+ss.length+" · "+esc(ss[i]?ss[i].nm:"")}</span>`:ss.map((s,k)=>`<span class="${k===i&&!ended(j)?"cur "+(j.state==="you"?"you":""):""}">${esc(s.nm)}</span>`).join("")}</div></div>
       <div class="tabs" id="tabs">${tabsHTML(j)}</div><div id="tabbody">${tabBody(j)}</div></div>
     <div class="pcmp" ${composerHTML(j,"panel")?"":'style="display:none"'}>${composerHTML(j,"panel")}</div>`});
@@ -1212,9 +1268,9 @@ function toggleSidebar(){const a=$(".app");
   sbLabel()}
 try{if(localStorage.getItem("kitchen.sidebar")==="hidden")$(".app").classList.add("nosb")}catch(e){}
 document.addEventListener("keydown",e=>{if(e.ctrlKey&&e.metaKey&&e.key.toLowerCase()==="s"){e.preventDefault();toggleSidebar()}
-  else if(e.key==="Escape"&&!$("#rpop").hidden){e.stopImmediatePropagation();addRepo(false);$("#addR").focus()}
+  else if(e.key==="Escape"&&$("#rmenu")&&!$("#rmenu").hidden){e.stopImmediatePropagation();repoMenu(false);$("#wsB").focus()}
   else if(e.key==="Escape"&&$(".app").classList.contains("sbopen")){e.stopImmediatePropagation();$(".app").classList.remove("sbopen");sbLabel();$("#sbB").focus()}},true);
-document.addEventListener("click",e=>{if(!e.target.closest("#rpop,#addR"))addRepo(false);
+document.addEventListener("click",e=>{if(!e.target.closest("#rmenu,#wsB"))repoMenu(false);
   const a=$(".app");if(a.classList.contains("sbopen")&&!e.target.closest("#side,#sbB")){a.classList.remove("sbopen");sbLabel()}});
 function toggleTheme(){const r=document.documentElement,dark=r.dataset.theme?r.dataset.theme==="dark":matchMedia("(prefers-color-scheme: dark)").matches;r.dataset.theme=dark?"light":"dark";try{localStorage.setItem("kitchen.theme",r.dataset.theme)}catch(e){}}
 let palI=0,palItems=[],palMode="cmd";
@@ -1223,7 +1279,7 @@ function paintPal(){const q=$("#palin").value.toLowerCase();
   if(palMode==="ticket"){const t=$("#palin").value.trim();palItems=t?[{t:"File a ticket: "+t,h:"Enter",f:async()=>{const r=await post("ticket",{text:t});toast(r.ok?said(r.lines).replace(/\s+→ intake$/,"")+" · filed":said(r.lines)||"Not filed");refreshSoon()}}]:[];
     $("#pallist").innerHTML=palItems.map((x,i)=>`<button class="pali ${i===palI?"on":""}" onclick="runPal(${i})"><em>${esc(x.t)}</em><span>${x.h}</span></button>`).join("")||`<div class="none" style="padding:14px 16px">One line is enough; the intake agent asks if it needs more. Kitchen run picks it up.</div>`;return}
   const live=order().filter(j=>(!ended(j)||stopped(j)));
-  palItems=[...live.map(j=>({t:(j.state==="you"?"Reply to ":"Message ")+j.num+" · "+j.title,h:j.state==="you"?"needs you":stp(j).nm,f:()=>{openJob(j.id);setTimeout(()=>message(j.id),60)}})),
+  palItems=[...live.map(j=>held(j)?{t:"Open "+j.num+" · "+j.title,h:"ready for you",f:()=>openJob(j.id)}:{t:(j.state==="you"?"Reply to ":"Message ")+j.num+" · "+j.title,h:j.state==="you"?"needs you":stp(j).nm,f:()=>{openJob(j.id);setTimeout(()=>message(j.id),60)}}),
     ...live.filter(j=>j.state==="run").map(j=>({t:"Pause "+j.num+" · "+j.title,h:"after its step",f:()=>pause(j.id)})),
     ...live.filter(j=>j.state==="paused").map(j=>({t:"Resume "+j.num+" · "+j.title,h:"paused",f:()=>resume(j.id)})),
     ...order().filter(ended).map(j=>({t:"Open "+j.num+" · "+j.title,h:j.state==="done"?"done":j.state,f:()=>openJob(j.id)})),
@@ -1256,7 +1312,7 @@ document.addEventListener("keydown",e=>{
 document.addEventListener("click",e=>{
   const b=e.target.closest("[data-act]");
   if(b){const id=b.dataset.id,a=b.dataset.act;e.stopPropagation();
-    if(a==="message")message(id);else if(a==="pause")pause(id);else if(a==="resume")resume(id);else if(a==="stop")stopJob(id);else if(a==="reject")reject(id);else if(a==="chip")useChip(id,b);else if(a==="copy")copyRun();else if(a==="start-runner")startRunner();else if(a==="ask")askChanges(id,true);else if(a==="ask-cancel")askChanges(id,false);else if(a==="copy-branch")copyBranch(id);else if(a==="copy-cmd")copyCmd(b.dataset.cmd);else if(a==="approve")approve(id);else if(a==="from")goFrom(id);else if(a==="remove-job")removeJob(id);
+    if(a==="message")message(id);else if(a==="pause")pause(id);else if(a==="resume")resume(id);else if(a==="stop")stopJob(id);else if(a==="reject")reject(id);else if(a==="chip")useChip(id,b);else if(a==="copy")copyRun();else if(a==="start-runner")startRunner();else if(a==="ask")askChanges(id,true);else if(a==="ask-cancel")askChanges(id,false);else if(a==="copy-branch")copyBranch(id);else if(a==="copy-cmd")copyCmd(b.dataset.cmd);else if(a==="approve")approve(id);else if(a==="merge")mergeJob(id);else if(a==="from")goFrom(id);else if(a==="remove-job")removeJob(id);
     return}
   const r=e.target.closest("[data-row]");if(r)openJob(r.dataset.row);
 });
@@ -1264,7 +1320,7 @@ document.addEventListener("submit",e=>{const f=e.target.closest("form[data-cmp]"
 
 /* ───────── repos: one server, many repos (ADR 0019) ───────── */
 let reposAt=0;
-/* The list, at most every 3 s: the switcher, the other-repos badge, and which repo the page shows. */
+/* The list, at most every 3 s: the repo menu, the other-repos dot, and which repo the page shows. */
 async function loadRepos(force){
   if(!force&&performance.now()-reposAt<3000&&repos.length)return;
   try{const d=await getJSON("/repos.json");reposAt=performance.now();repos=d.repos;reposLast=d.last||null}catch(e){return}
@@ -1274,20 +1330,41 @@ async function loadRepos(force){
   otherBadge();paintRepos();
 }
 const otherYou=()=>repos.filter(r=>r.key!==CUR).reduce((a,r)=>a+r.you,0);
-/* The sidebar toggle carries a dot when the sidebar is out of sight and another repo needs you. */
-function otherBadge(){const n=otherYou();$("#sbB").classList.toggle("dot",!!n)}
-/* Repos group: every repo on this dashboard, Mail-mailbox style. Badge: its Needs-you count (orange), else its running count. */
-function paintRepos(){const g=$("#repoG");g.hidden=MODE!=="repos"||!repos.length;if(g.hidden)return;
-  $("#repoL").innerHTML=repos.map((r,i)=>{const b=r.you?`<span class="bdg act" title="${r.you} need${r.you===1?"s":""} you">${r.you}</span>`:r.running?`<span class="bdg" title="${r.running} running">${r.running}</span>`:"";
-    return `<button class="nav repo${r.key===CUR?" on":""}" data-repo="${esc(r.key)}" ${r.key===CUR?'aria-current="page"':""} title="${esc(r.path)}${i<9?" · ⌘"+(i+1):""}"><span class="si">${SB.repo}</span><span class="nm">${esc(r.name)}</span>${b}</button>`}).join("")}
-function addRepo(force){const p=$("#rpop"),show=force!==undefined?force:p.hidden;p.hidden=!show;$("#addR").setAttribute("aria-expanded",String(show))}
+/* Another repo needs you: a dot on the repo name (the picker), and on the sidebar toggle when the sidebar is out of sight. */
+function otherBadge(){const n=otherYou();$("#sbB").classList.toggle("dot",!!n);const w=$("#wsB");if(!w)return;
+  w.classList.toggle("dot",!!n);w.title=n===1?"1 job in another repo needs you":n?`${n} jobs in other repos need you`:"Switch repo"}
+/* The repo menu, under the repo name: every repo on this dashboard. Badge: its Needs-you count (orange), else its running count. */
+function paintRepos(){if(MODE!=="repos")return;
+  const h=repos.map((r,i)=>{const on=r.key===CUR,b=r.you?`<span class="bdg act" title="${r.you} need${r.you===1?"s":""} you">${r.you}</span>`:r.running?`<span class="bdg" title="${r.running} running">${r.running}</span>`:"";
+    return `<button class="rmi" role="menuitemradio" aria-checked="${on}" tabindex="-1" data-repo="${esc(r.key)}" title="${esc(r.path)}"><span class="mk">${on?SB.check:""}</span><span class="rt"><span class="nm">${esc(r.name)}</span><span class="pa mono">${esc(r.path)}</span></span>${b}${i<9?`<kbd>⌘${i+1}</kbd>`:""}</button>`}).join("");
+  if(h===paintRepos.last)return;paintRepos.last=h;
+  const f=document.activeElement&&document.activeElement.dataset.repo;$("#rmL").innerHTML=h;
+  if(f){const n=$(`#rmL [data-repo="${CSS.escape(f)}"]`);if(n)n.focus()}}
+/* Opens or closes the menu; from the keyboard, focus lands on the current repo. */
+function repoMenu(show,focus){const m=$("#rmenu"),b=$("#wsB");if(!m||!b)return;show=show===undefined?m.hidden:show;
+  if(show&&m.hidden){m.style.top=(b.offsetTop+b.offsetHeight+4)+"px";paintRepos();hintRepo(false)}
+  m.hidden=!show;b.setAttribute("aria-expanded",String(show));
+  if(show&&focus)(m.querySelector('[aria-checked="true"]')||m.querySelector(".rmi")).focus()}
+function hintRepo(show){$("#rmHint").hidden=!show;$("#rmAdd").setAttribute("aria-expanded",String(show))}
 /* Points the page at a repo: its routes, its address; nothing of the last repo's list stays. */
 function setRepo(k){CUR=k;BASE="/r/"+encodeURIComponent(k);gen++;if(location.hash.slice(1)!==k)history.replaceState(null,"","#"+k)}
 function switchRepo(k){if(k===CUR||!repos.some(r=>r.key===k))return;
   setRepo(k);open=null;expanded=null;drafts={};sel=null;snap=null;jobs=[];details={};sigs={};pending={};fresh.clear();just.clear();typing.clear();
   paint.runner=undefined; // the next snapshot redraws the whole board, even when the new repo has no jobs
   renderList();renderPanel();otherBadge();paintRepos();poll(gen)}
-$("#repoL").addEventListener("click",e=>{const b=e.target.closest("[data-repo]");if(b){switchRepo(b.dataset.repo);$(".app").classList.remove("sbopen")}});
+if(MODE!=="repos"){const b=$("#wsB"),d=document.createElement("div");d.className="ws";d.append(b.querySelector(".logo"),$("#wsName"));b.replaceWith(d);$("#rmenu").remove()}
+else{$("#wsB").addEventListener("click",e=>repoMenu(undefined,e.detail===0));
+  $("#rmenu").addEventListener("click",e=>{const r=e.target.closest("[data-repo]");
+    if(r){repoMenu(false);$("#wsB").focus();switchRepo(r.dataset.repo);$(".app").classList.remove("sbopen");return}
+    if(e.target.closest("#rmAdd"))hintRepo($("#rmHint").hidden)});
+  /* Keys while the menu is open: arrows move, Enter picks (the button's own click), Tab leaves; Escape is with the sidebar's keys. */
+  document.addEventListener("keydown",e=>{const m=$("#rmenu"),b=$("#wsB"),t=e.target,act=e.key==="Enter"||e.key===" ";
+    if(m.hidden){if(t!==b)return;if(e.key==="ArrowDown"||e.key==="ArrowUp"){e.preventDefault();e.stopImmediatePropagation();repoMenu(true,true)}else if(act)e.stopImmediatePropagation();return}
+    const it=$$("#rmenu .rmi"),i=it.indexOf(t);
+    if(/^(ArrowDown|ArrowUp|Home|End)$/.test(e.key)){e.preventDefault();e.stopImmediatePropagation();
+      const n=e.key==="Home"?0:e.key==="End"?it.length-1:i<0?(e.key==="ArrowDown"?0:it.length-1):(i+(e.key==="ArrowDown"?1:-1)+it.length)%it.length;it[n].focus()}
+    else if(e.key==="Tab")repoMenu(false);
+    else if(act&&(i>=0||t===b))e.stopImmediatePropagation()},true)}
 document.addEventListener("keydown",e=>{if(MODE!=="repos")return;
   if((e.metaKey||e.ctrlKey)&&!e.altKey&&!e.shiftKey&&/^[1-9]$/.test(e.key)){const r=repos[+e.key-1];if(r){e.preventDefault();switchRepo(r.key)}}},true);
 addEventListener("hashchange",()=>{const k=decodeURIComponent(location.hash.slice(1));if(k&&k!==CUR)switchRepo(k)});
@@ -1568,7 +1645,7 @@ document.addEventListener("change",async e=>{const s=e.target.closest("[data-mla
 document.addEventListener("keydown",e=>{if(e.key==="Escape"&&!$("#mpop").hidden){e.stopImmediatePropagation();modelsPop(false)}},true);
 
 /* ───────── boot ───────── */
-$("#nYouI").innerHTML=S.wait;$("#nRunI").innerHTML=SB.run;$("#nDoneI").innerHTML=SB.done;$("#nAddI").innerHTML=SB.add;$("#thB").innerHTML=SB.look;$("#sbB").innerHTML=SB.side;$("#kI").innerHTML=I.search;$("#nInI").innerHTML=OI.tray;$("#nHeldI").innerHTML=OI.held;$("#nAddSI").innerHTML=SB.add;sbLabel();paintLoopNav();
+$("#nYouI").innerHTML=S.wait;$("#nRunI").innerHTML=SB.run;$("#nDoneI").innerHTML=SB.done;if($("#rmAddI"))$("#rmAddI").innerHTML=SB.add;$("#thB").innerHTML=SB.look;$("#sbB").innerHTML=SB.side;$("#kI").innerHTML=I.search;$("#nInI").innerHTML=OI.tray;$("#nHeldI").innerHTML=OI.held;$("#nAddSI").innerHTML=SB.add;sbLabel();paintLoopNav();
 renderList();poll(gen);pollDetail();pollInbox();
 </script>
 </body>

@@ -26,6 +26,7 @@ Run commands from the repo root. If `kitchen` is not on PATH, use
 | "hold 005", "pause it after this step" | `kitchen pause <id>` |
 | "stop 005 now" | `kitchen stop <id>` |
 | continue a paused or stopped job | `kitchen resume <id>` |
+| "merge 002", "ship 002 to staging" (a job `kitchen status` shows `ready(held)`) | `kitchen merge 002`: the same checks as an auto-merge (a trial merge on staging's tip, every check, the merge check when it touches features), into staging only, never main; a conflict or red checks send it back to Build |
 | answer a job's question, "try again with …", follow up on a ready or merged job | `kitchen feedback <id> "<their answer>"` |
 | drop a job | `kitchen reject <id>` |
 | "remove 005", "get rid of it", "I don't want it on the dashboard" (any stage, even while it builds) | `kitchen remove <id>`: stops a working lane, rejects an unfinished job, removes its worktree; a merged one is only hidden. `kitchen restore <id>` brings it back in view |
