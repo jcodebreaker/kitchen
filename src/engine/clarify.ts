@@ -70,6 +70,11 @@ export function recordAnswers(jobDir: string, answers: string[], o: { replace?: 
   save(jobDir, rounds);
 }
 
+/** ADR 0020: a confirm round (intake's criteria shown for approval) ends in its key with this; it is no question asked. */
+export const CONFIRM_KEY = "/confirm";
+/** Pure: the questions intake asked (refinements count; approval rounds don't), for its two-question rule. */
+export const questionsAsked = (rounds: Round[]) => rounds.filter((r) => !r.key.endsWith(CONFIRM_KEY)).length;
+
 /** Pure: the thread as a section of the ticket, or "" when nothing was asked. */
 export function clarificationsSection(rounds: Round[]): string {
   if (!rounds.length) return "";

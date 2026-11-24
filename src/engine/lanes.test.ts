@@ -28,6 +28,20 @@ test("intake.md: ACCEPT needs criteria with a check kind; NEEDS-INFO needs its q
   assert.ok("refused" in parseIntake("DECISION: maybe\n"));
 });
 
+test("intake.md REFINE (ADR 0020): a REASON from the four and at least one line under ## Refine", () => {
+  assert.deepEqual(
+    parseIntake("DECISION: REFINE\nTITLE: Overdue\nREASON: too big: three jobs\n\n## Refine\n- 1: the flag\n- 2: the page\n\n## Notes\n- not this\n"),
+    {
+      decision: "REFINE",
+      reason: "too-big",
+      items: ["1: the flag", "2: the page"],
+      title: "Overdue",
+    },
+  );
+  assert.match(String((parseIntake("DECISION: REFINE\nREASON: vague\n## Refine\n- A\n") as { refused: string }).refused), /REASON: readings \| too-big/);
+  assert.match(String((parseIntake("DECISION: REFINE\nREASON: readings\n") as { refused: string }).refused), /## Refine/);
+});
+
 test("the QA verdict: every criterion has a row; every row cites evidence that exists; a page PASS cites a screenshot; PASS only when every row passes", () => {
   const job = path.join(root, "job");
   const qa = qaDir(job, 1);

@@ -43,7 +43,7 @@ It checks what it needs, finds your checks and how to start your app, installs g
 kitchen ticket "<what you want>"
 ```
 
-Plain words are enough. Intake turns them into criteria, or asks you one question.
+Plain words are enough. Intake turns them into criteria, asks you one question, or — when the ticket can be read more than one way — asks you to refine it with it in Claude Code.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/term-ticket-dark.webp">

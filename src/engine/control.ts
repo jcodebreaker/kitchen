@@ -7,6 +7,7 @@
 // - stop: parks the job now. A lane agent still working finds its `kitchen job finish` refused, so its result is dropped.
 // - resume: back to the stage it paused in.
 // - feedback: answers a job that needs you, or sends a ready or done job back to Build with your words.
+// - approve: a job intake.confirm holds after intake (ADR 0020 §3) goes to Build on intake's criteria.
 import fs from "node:fs";
 import path from "node:path";
 import { loadConfig } from "../config.ts";
@@ -187,8 +188,15 @@ export async function feedback(repo: string, ref: string, text: string, out: Out
     new PromptSource(repo).reply(job, t.text);
     recordAnswers(dir, [t.text]);
     await say("answer");
-    await moveJob(repo, job.id, "intake", { who: "person" });
-    out(`${job.id}  answered → intake`);
+    // ADR 0020: a refinement is recorded with its reason, so intake doesn't send the job back for the same one.
+    const w = job.waits;
+    await moveJob(repo, job.id, "intake", {
+      who: "person",
+      patch: (j) => {
+        if (w?.for === "refine") j.refined = [...(j.refined ?? []), { reason: w.reason, at: new Date().toISOString() }];
+      },
+    });
+    out(`${job.id}  ${w?.for === "refine" ? "refined" : w?.for === "confirm" ? "changes sent" : "answered"} → intake`);
     return 0;
   }
   if (job.stage === "needs-human") {
@@ -214,6 +222,30 @@ export async function feedback(repo: string, ref: string, text: string, out: Out
   }
   out(`${job.id}  is ${stateWords(job)}: ${isActive(job.stage) || job.stage === "paused" ? `use kitchen steer ${job.id} "…"` : "nothing to answer"}`);
   return 1;
+}
+
+/** `kitchen approve <id>`: the person approves intake's criteria for a job intake.confirm holds; it goes to Build. */
+export async function approve(repo: string, ref: string, out: Out): Promise<number> {
+  const job = findJob(repo, ref);
+  const waiting = (j: Job) => j.stage === "needs-info" && j.waits?.for === "confirm";
+  if (!waiting(job)) {
+    out(
+      `${job.id}  isn't waiting for your approval (it is ${job.waits?.for === "refine" ? "waiting to be refined with you: kitchen refine" : stateWords(job)}): approve is for a job held after intake (intake.confirm)`,
+    );
+    return 1;
+  }
+  const dir = jobDirOf(repo, job.id);
+  await moveJob(repo, job.id, "build", {
+    who: "person",
+    reason: "approved by you",
+    check: (j) => (waiting(j) ? null : `${j.id} is no longer waiting for your approval`),
+    patch: (j) => {
+      j.approved = new Date().toISOString();
+    },
+  });
+  recordAnswers(dir, ["Approved as written."]);
+  out(`${job.id}  approved → build`);
+  return 0;
 }
 
 export async function reject(repo: string, ref: string, out: Out): Promise<number> {

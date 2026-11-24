@@ -22,6 +22,10 @@ export const WAITING: readonly Stage[] = ["needs-info", "needs-human", "paused",
 
 export type Risk = "low" | "medium" | "high";
 export type Kind = "feature" | "bug" | "ui" | "chore";
+/** Why intake sends a ticket to be refined with its author (ADR 0020 §1). */
+export const REFINE_REASONS = ["readings", "too-big", "no-repro", "terms"] as const;
+export type RefineReason = (typeof REFINE_REASONS)[number];
+
 export type TicketRef = { source: "prompt" | "github"; id: string; url?: string };
 
 /** One lane agent's run, as `kitchen job start` opened it and `kitchen job finish` closed it. */
@@ -91,6 +95,16 @@ export type Job = {
   mapCommits?: string[];
   /** Where it was merged: staging's new tip, how (local or the PR). */
   merged?: { into: string; sha: string; at: string; via: "local" | "github" };
+  /**
+   * ADR 0020: what a needs-info job waits for beyond an answer. `refine`: intake sent the ticket to be refined with
+   * its author (`kitchen refine`); `confirm`: intake accepted it and `intake.confirm` holds it for `kitchen approve`.
+   * Cleared when the job leaves needs-info.
+   */
+  waits?: { for: "refine"; reason: RefineReason; at: string } | { for: "confirm"; at: string };
+  /** ADR 0020: each refinement the author answered (the reason intake gave), oldest first. */
+  refined?: { reason: RefineReason; at: string }[];
+  /** ADR 0020 §3: when the author approved intake's criteria (`kitchen approve`). */
+  approved?: string;
   /** Side effects done once (a PR opened): keys. */
   filed: string[];
   startedAt: string;
@@ -101,7 +115,7 @@ export type Job = {
 /** The moves the table allows: from → to. */
 export const MOVES: Record<Stage, readonly Stage[]> = {
   intake: ["build", "needs-info", "needs-human", "rejected", "paused"],
-  "needs-info": ["intake", "rejected"],
+  "needs-info": ["intake", "build", "rejected"],
   build: ["qa", "needs-human", "rejected", "paused"],
   qa: ["review", "build", "needs-human", "rejected", "paused"],
   review: ["build", "regress", "ready", "done", "needs-human", "rejected", "paused"],
@@ -155,6 +169,7 @@ export function move(j: Job, to: Stage, o: { reason?: string; now?: Date; catchU
   const n: Job = { ...j, stage: to, moves: j.moves + 1, updatedAt: now, running: null };
   delete n.pausedReason;
   delete n.tries;
+  delete n.waits;
   if (to === "build" && BACK_TO_BUILD.includes(j.stage)) {
     n.round = j.round + 1;
     // A catch-up (ADR 0018): a new round folder, the same budget. Anything else back to Build is a real round.

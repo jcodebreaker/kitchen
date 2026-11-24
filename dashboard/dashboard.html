@@ -302,6 +302,7 @@ a.btn{text-decoration:none}
 .ev.agent,.ev.ask{padding:2px 0}
 .ev .whoo{display:block;font-size:12px;color:var(--faint);margin-bottom:2px}
 .ev.agent p,.ev.ask p{margin:0;color:var(--fg);line-height:1.5}
+.ev.ask p{white-space:pre-line}
 .ev.ask{border:1px solid var(--act-line);background:var(--act-bg);border-radius:10px;padding:10px 12px;margin:2px 0}
 .ev.ask .whoo{color:var(--act-fg);font-weight:500}
 .ev.you{align-self:flex-end;max-width:88%;display:flex;flex-direction:column;align-items:flex-end;gap:3px;margin:4px 0}
@@ -411,6 +412,20 @@ a.btn{text-decoration:none}
 /* A Needs-you row that waits on you: its one action sits under the reason, so the title and reason keep the row's width. */
 .row .mn .tka{display:flex;margin-top:8px}
 #sTk{text-align:right;line-height:1.3}
+/* ADR 0020: a Needs-you job that waits to be refined with you, or for your approval of intake's criteria */
+.wt{margin-top:4px;font-size:12.5px;line-height:1.45;color:var(--fg2);min-width:0}
+.wt .wh{color:var(--act-fg);font-weight:600}
+.wt .wh i{font-style:normal;font-weight:400;color:var(--mute)}
+.wt ul{margin:3px 0 0;padding:0;list-style:none}
+.wt li{position:relative;padding-left:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wt li::before{content:"";position:absolute;left:3px;top:.68em;width:4px;height:4px;border-radius:50%;background:var(--faint)}
+.wt .lo{color:var(--mute);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wt .cmd{display:flex;align-items:center;gap:6px;margin-top:7px;flex-wrap:wrap}
+.wt .cmd code{font:12px var(--mono);color:var(--fg);background:var(--raise);border:1px solid var(--line2);border-radius:6px;padding:1px 4px 1px 8px;display:inline-flex;align-items:center;gap:2px}
+.wt .cmd .ib{width:22px;height:22px;border-radius:5px;color:var(--mute)}
+.wt .cmd span{font-size:12px;color:var(--faint)}
+.card .wt li{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.card .wt .lo{white-space:normal}
 .sub.q code,.ev.ask p code,.card .cq code,.card .evl code{font:11.5px var(--mono);background:var(--raise);border:1px solid var(--line2);border-radius:4px;padding:0 4px}
 @container main (max-width:680px){ .rbar{padding:9px 12px 9px 16px} }
 /* logo:start (scripts/brand/gen-icons.mjs writes this block: logo B, the cook, 16px cut) */
@@ -610,7 +625,7 @@ async function pollDetail(){
   }
   setTimeout(pollDetail,1500);
 }
-function sigOf(j){return [j.state,j.phase,j.stage,j.lane,j.round,j.q,j.pausedBy,j.title,j.report,j.files.length,j.runnerOn,j.movedAt,j.failed,j.risk,j.proof,fresh.has(j.id),expanded===j.id].join("|")}
+function sigOf(j){return [JSON.stringify(j.waits),j.state,j.phase,j.stage,j.lane,j.round,j.q,j.pausedBy,j.title,j.report,j.files.length,j.runnerOn,j.movedAt,j.failed,j.risk,j.proof,fresh.has(j.id),expanded===j.id].join("|")}
 function paint(before){
   const order0=[...before.keys()].join(),order1=jobs.map(j=>j.id).join();
   const groups=j=>j?(view==="board"?j.lane:group(j)):"";
@@ -674,10 +689,19 @@ function finLabel(j){if(stopped(j))return "Stopped by you";return j.state==="don
 /* Kitchen's own messages name commands in backticks: shown as code. */
 const md=t=>esc(t).replace(/`([^`]+)`/g,"<code>$1</code>");
 function icon(j){return S[j.state==="done"?"ok":j.state==="rejected"?"skip":j.state==="run"&&!j.runnerOn?"paused":j.state]}
+/* ADR 0020: what a refine or confirm job waits for, under its title: intake's readings and the command for Claude Code
+   or Codex, or intake's criteria and what it left out. Its buttons sit under it (.tka). */
+function waitHTML(j){const w=j.waits;if(!w)return "";
+  const li=xs=>`<ul>${xs.map(x=>`<li title="${esc(x)}">${esc(x)}</li>`).join("")}</ul>`;
+  if(w.for==="refine"){const c="/kitchen refine "+j.num;
+    return `<div class="wt"><div class="wh">Refine with you <i>· ${esc(w.reason.replace("-"," "))}</i></div>${w.items.length?li(w.items.slice(0,4)):""}<div class="cmd"><code>${esc(c)}<button type="button" class="ib" data-act="copy-cmd" data-cmd="${esc(c)}" title="Copy ${esc(c)}" aria-label="Copy ${esc(c)}">${I.copy}</button></code><span>Run in Claude Code or Codex</span></div></div>`}
+  return `<div class="wt"><div class="wh">Approve the criteria</div>${li(w.items)}<div class="lo" title="${esc(w.leftOut||"nothing")}">Left out: ${esc(w.leftOut||"nothing")}</div></div>`}
+const approveBtns=(j,ex)=>`<span class="tka"><button type="button" class="btn act sm" data-act="approve" data-id="${esc(j.id)}" title="Build it on these criteria (kitchen approve ${esc(j.num)})">Approve</button><button type="button" class="btn sm" data-act="message" data-id="${esc(j.id)}">${ex?"Close":"Ask for changes"}</button></span>`;
 function rowHTML(j){
   const g=group(j),ex=expanded===j.id;
   let sub="",mid="",tm="",acts="";
-  if(g==="you"){sub=`<div class="sub q">${md(j.q)}</div>`;mid=`<button class="btn act sm rep" data-act="message" data-id="${esc(j.id)}">${ex?"Close":"Reply"}</button>`;tm=`<span class="tm mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`}
+  if(g==="you"&&j.waits){sub=waitHTML(j)+(j.waits.for==="confirm"?approveBtns(j,ex):"");mid=j.waits.for==="confirm"?"":`<button class="btn sm rep" data-act="message" data-id="${esc(j.id)}">${ex?"Close":"Reply"}</button>`;tm=`<span class="tm mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`}
+  else if(g==="you"){sub=`<div class="sub q">${md(j.q)}</div>`;mid=`<button class="btn act sm rep" data-act="message" data-id="${esc(j.id)}">${ex?"Close":"Reply"}</button>`;tm=`<span class="tm mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`}
   else if(g==="run"){sub=`<div class="sub" id="lv-${esc(j.id)}">${liveHTML(j)}</div>`;mid=chgHTML(j)+trackHTML(j);tm=`<span class="tm mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`;
     acts=`<span class="acts"><button class="ib" title="Message ${esc(agent(j))} (R)" aria-label="Message agent" data-act="message" data-id="${esc(j.id)}">${I.msg}</button></span>`}
   else{mid=`<span class="fin ${fresh.has(j.id)?"new":""}">${fresh.has(j.id)?"Just finished · ":""}${finLabel(j)}</span>`;tm=`<span class="tm mono num">${costTxt(j)}</span>`;
@@ -723,7 +747,8 @@ function cardHTML(j){
   const l=j.lane,end=ended(j)||l==="done",idt="#"+j.num;
   const cls=`${l==="you"?"ny":""} ${end?"end":""} ${j.state==="done"?"rdy":""} ${j.state==="rejected"||j.pausedBy==="stop"?"gone":""} ${open===j.id?"open":""} ${sel===j.id?"sel":""} ${just.has(j.id)?"flash":""}`;
   const bot=l==="you"
-    ?`<div class="cq">${md(j.q)}</div><button class="btn act sm" data-act="message" data-id="${esc(j.id)}">Reply</button>`
+    ?j.waits?waitHTML(j)+(j.waits.for==="confirm"?approveBtns(j,false):`<span class="tka"><button class="btn sm" data-act="message" data-id="${esc(j.id)}">Reply</button></span>`)
+    :`<div class="cq">${md(j.q)}</div><button class="btn act sm" data-act="message" data-id="${esc(j.id)}">Reply</button>`
     :`<div class="cbot"><div class="evl" id="lv-${esc(j.id)}">${evLine(j)}</div>${j.state==="rejected"?"":`<button class="ib" title="${j.state==="done"?"Follow up":"Message "+esc(agent(j))} (R)" aria-label="${j.state==="done"?"Follow up":"Message agent"}" data-act="message" data-id="${esc(j.id)}">${I.msg}</button>`}</div>`;
   return `<div class="rw card ${cls}" id="rw-${esc(j.id)}" style="view-transition-name:r-${esc(j.id)}" tabindex="0" role="button" data-row="${esc(j.id)}">
     <div class="ctop"><span class="id">${esc(idt)}</span>${j.round>1?`<span class="rnd">round ${j.round}</span>`:""}<span class="sp"></span>${j.state==="run"&&j.runnerOn?'<i class="pulse" title="Working now"></i>':""}${end?"":`<span class="mt num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`}</div>
@@ -785,11 +810,12 @@ function structural(fn){ if(document.startViewTransition&&!RM&&!document.hidden)
 function composerHTML(j,where="row"){
   const g=wgroup(j),a=agent(j),eng=!j.agent;
   if(j.state==="rejected")return "";
-  const ph=g==="you"?`Reply to ${a}…`:j.state==="paused"?`Leave a note for ${a}…`:g==="run"?`Message ${a}: redirect it, add context, ask…`:`What should change in ${j.num}?`;
-  const hint=g==="you"?`${Agent(j)} is waiting for you`:g==="done"?"This starts round "+(j.round+1):j.state==="paused"?"Paused. It reads this when you resume":g==="run"?"The job's next agent reads this when its lane starts":"Starts round "+(j.round+1);
+  const cf=j.waits&&j.waits.for==="confirm",rf=j.waits&&j.waits.for==="refine";
+  const ph=cf?"What should change in the criteria?":rf?`Answer here, or refine it in Claude Code…`:g==="you"?`Reply to ${a}…`:j.state==="paused"?`Leave a note for ${a}…`:g==="run"?`Message ${a}: redirect it, add context, ask…`:`What should change in ${j.num}?`;
+  const hint=cf?"Approve builds it on these criteria; a change goes back to intake":rf?"Your answer goes back to intake as your own words":g==="you"?`${Agent(j)} is waiting for you`:g==="done"?"This starts round "+(j.round+1):j.state==="paused"?"Paused. It reads this when you resume":g==="run"?"The job's next agent reads this when its lane starts":"Starts round "+(j.round+1);
   const chips=g==="run"&&j.state!=="paused"?["What are you doing right now?","Add a test for this","Keep the diff minimal"]:[];
   const ctl=g==="run"&&where==="panel"?"":g==="run"?`<button type="button" class="btn ghost sm" data-act="${j.state==="paused"?"resume":"pause"}" data-id="${esc(j.id)}">${j.state==="paused"?I.play+"Resume":I.pause+"Pause"}</button>${j.state==="paused"?"":`<button type="button" class="btn ghost sm" data-act="stop" data-id="${esc(j.id)}">${I.stop}Stop</button>`}`
-    :g==="you"?`<button type="button" class="btn ghost sm" data-act="reject" data-id="${esc(j.id)}">Reject</button>`
+    :g==="you"?`<button type="button" class="btn ghost sm" data-act="reject" data-id="${esc(j.id)}">Reject</button>${cf?`<button type="button" class="btn act sm" data-act="approve" data-id="${esc(j.id)}" title="Build it on these criteria (kitchen approve ${esc(j.num)})">Approve</button>`:""}`
     :g==="done"?`<button type="button" class="btn ghost sm" data-act="ask-cancel" data-id="${esc(j.id)}">Cancel</button>`:"";
   /* A done job takes no stray message: its report, its branch, and Ask for changes, which says it starts another round. */
   if(j.state==="done"&&!asking.has(j.id))return doneBar(j);
@@ -805,6 +831,8 @@ function doneBar(j){
 function askChanges(id,on){const j=J(id);if(!j)return;on?asking.add(id):asking.delete(id);
   if(open===id)renderPanel();else{expanded=id;renderList()}
   if(on){const t=$(`textarea[data-draft="${id}"][data-where="${open===id?"panel":"row"}"]`);if(t)t.focus()}}
+async function copyCmd(c){try{await navigator.clipboard.writeText(c);toast("Copied: "+c+". Run it in Claude Code or Codex")}catch(e){toast("Run in Claude Code or Codex: "+c)}}
+async function approve(id){const j=J(id);if(!j)return;if(expanded===id)expanded=null;await simple("approve",id,`${j.num} approved: it goes to Build`)}
 async function copyBranch(id){const b=(J(id)||{}).branch||"";try{await navigator.clipboard.writeText(b);toast("Copied: "+b)}catch(e){toast("The branch: "+b)}}
 async function startRunner(){const r=await post("start-runner",{});toast(r.ok?(said(r.lines)||"Kitchen started").replace(/^orchestrator detached: /,"Kitchen started: "):said(r.lines)||"Not started");refreshSoon()}
 function grow(){$$(".box textarea").forEach(t=>{t.style.height="auto";t.style.height=Math.min(160,t.scrollHeight)+"px"})}
@@ -970,7 +998,7 @@ document.addEventListener("keydown",e=>{
 document.addEventListener("click",e=>{
   const b=e.target.closest("[data-act]");
   if(b){const id=b.dataset.id,a=b.dataset.act;e.stopPropagation();
-    if(a==="message")message(id);else if(a==="pause")pause(id);else if(a==="resume")resume(id);else if(a==="stop")stopJob(id);else if(a==="reject")reject(id);else if(a==="chip")useChip(id,b);else if(a==="copy")copyRun();else if(a==="start-runner")startRunner();else if(a==="ask")askChanges(id,true);else if(a==="ask-cancel")askChanges(id,false);else if(a==="copy-branch")copyBranch(id);
+    if(a==="message")message(id);else if(a==="pause")pause(id);else if(a==="resume")resume(id);else if(a==="stop")stopJob(id);else if(a==="reject")reject(id);else if(a==="chip")useChip(id,b);else if(a==="copy")copyRun();else if(a==="start-runner")startRunner();else if(a==="ask")askChanges(id,true);else if(a==="ask-cancel")askChanges(id,false);else if(a==="copy-branch")copyBranch(id);else if(a==="copy-cmd")copyCmd(b.dataset.cmd);else if(a==="approve")approve(id);
     return}
   const r=e.target.closest("[data-row]");if(r)openJob(r.dataset.row);
 });

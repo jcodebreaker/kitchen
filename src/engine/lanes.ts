@@ -9,7 +9,7 @@
 //   regress → .kitchen/jobs/<id>/rounds/<n>/regress/verdict.json (one row per feature driven), plus its evidence
 import fs from "node:fs";
 import path from "node:path";
-import type { Kind, Risk } from "./machine.ts";
+import { type Kind, REFINE_REASONS, type RefineReason, type Risk } from "./machine.ts";
 import { roundDir } from "./store.ts";
 
 export const CHECK_KINDS = ["page", "http", "test", "cmd"] as const;
@@ -30,6 +30,8 @@ export type Intake =
       criteria: Criterion[];
     }
   | { decision: "NEEDS-INFO"; question: string; title: string | null }
+  /** ADR 0020: the ticket is refined with its author before it is built. `items`: the readings, slices or gaps. */
+  | { decision: "REFINE"; reason: RefineReason; items: string[]; title: string | null }
   | { decision: "REJECT"; reason: string; title: string | null };
 
 const header = (text: string, k: string) => new RegExp(`^${k}:[ \\t]*(.*)$`, "mi").exec(text)?.[1].trim() ?? "";
@@ -59,7 +61,18 @@ export function parseIntake(text: string): Intake | { refused: string } {
     return question ? { decision, question, title } : { refused: "NEEDS-INFO needs a QUESTION: line" };
   }
   if (decision === "REJECT") return { decision, reason: header(text, "REASON") || "intake rejected it", title };
-  if (decision !== "ACCEPT") return { refused: `DECISION: is ACCEPT, NEEDS-INFO or REJECT (got ${JSON.stringify(decision || "nothing")})` };
+  if (decision === "REFINE") {
+    const said = header(text, "REASON")
+      .toLowerCase()
+      .replace(/^[`*]+/, "")
+      .replace(/^(too|no)[ _]/, "$1-");
+    const reason = REFINE_REASONS.find((r) => new RegExp(`^${r}\\b`).test(said));
+    if (!reason) return { refused: `REFINE needs REASON: ${REFINE_REASONS.join(" | ")}` };
+    const items = refineItems(text);
+    if (!items.length) return { refused: "REFINE needs a `## Refine` section with at least one `- ` line: the readings, slices or gaps" };
+    return { decision, reason, items, title };
+  }
+  if (decision !== "ACCEPT") return { refused: `DECISION: is ACCEPT, NEEDS-INFO, REFINE or REJECT (got ${JSON.stringify(decision || "nothing")})` };
   const kind = header(text, "KIND").toLowerCase();
   if (!["feature", "bug", "ui", "chore"].includes(kind)) return { refused: "KIND: is feature, bug, ui or chore" };
   const risk = header(text, "RISK").toLowerCase();
@@ -70,6 +83,22 @@ export function parseIntake(text: string): Intake | { refused: string } {
   const after = list(header(text, "AFTER")).flatMap((x) => (/^\d{1,6}$/.test(x) ? [x.padStart(3, "0")] : /^\d{3,}-/.test(x) ? [x.split("-")[0]] : []));
   const changes = list(header(text, "CHANGES")).filter((x) => /^[\w.-]+\/[\w.-]+$/.test(x));
   return { decision: "ACCEPT", title, kind: kind as Kind, risk: risk as Risk, surfaces, files: list(header(text, "FILES")), after, changes, criteria };
+}
+
+/** Pure: the `- ` lines under intake's `## Refine` heading, up to the next heading. */
+export function refineItems(text: string): string[] {
+  const body = /^##[ \t]+Refine\b[^\n]*\n([\s\S]*?)(?=^#{1,6}[ \t]|(?![\s\S]))/im.exec(text)?.[1] ?? "";
+  return [...body.matchAll(/^[ \t]*[-*][ \t]+(.+)$/gm)].map((m) => m[1].trim()).filter(Boolean);
+}
+
+/** The intake as written (any decision), or null when there is none or it can't be used. */
+export function readIntake(jobDir: string): Intake | null {
+  try {
+    const i = parseIntake(fs.readFileSync(intakeFile(jobDir), "utf8"));
+    return "decision" in i ? i : null;
+  } catch {
+    return null;
+  }
 }
 
 export const intakeFile = (jobDir: string) => path.join(jobDir, "intake.md");

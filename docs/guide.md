@@ -66,6 +66,8 @@ kitchen ticket "Add GET /stats returning how many books and members the library 
 
 Plain words are enough. The intake lane rates it (kind, risk), lists the files it expects to touch and writes one to five criteria, each tagged with how QA checks it: `page` (a real browser), `http`, `test` or `cmd`. If it can't tell what done looks like, it asks you one question (`kitchen status` shows it; answer with `kitchen feedback`).
 
+When one short answer won't do (the ticket can be read more than one way, it is too big for one job, a bug has no way to see it, or its words mean something else in the code), intake sends it to be refined with you instead: `kitchen status` shows `needs-info(refine: readings)` and the dashboard shows the readings under Needs you. In Claude Code or Codex, say `/kitchen refine 004`: the session runs `kitchen refine 004` (a brief with the ticket, intake's readings, the verify map's features and your glossary and ADRs), asks you one question at a time with a recommended answer, writes the refined ticket (problem, in, out, the criteria you agreed, and slices when it is too big), and after your yes sends it back with `kitchen feedback`. Intake reads it as your own words and doesn't send it back for the same reason. Lane agents never grill: only your own session does. To check every reading before it is built, set `intake: { confirm: true }` in `kitchen.yaml`: each accepted job then waits with its criteria and what intake left out, for `kitchen approve <id>` (or Approve on the dashboard) or `kitchen feedback <id> "<what to change>"`.
+
 ## 4. Run the queue
 
 In Claude Code: `/kitchen run` (or `/kitchen:kitchen run` from the plugin). In a terminal: `kitchen run` (add `--detach` to put it in the background; `kitchen run --print` shows the exact command). Before it starts a session it brings the repo's copy of the kitchen skill and Kitchen's `.gitignore` entries up to date, so a repo set up by an older Kitchen runs the current loop. It refuses a flag it doesn't know (nothing starts), and inside the session it started it refuses to start another. The session's raw output is `.kitchen/run.jsonl` (this session and the one before, as `run.prev.jsonl`); `.kitchen/run.log` is the readable log.
@@ -78,7 +80,7 @@ The session is the orchestrator. It loops:
 
 | lane | the agent | Kitchen, at `finish` |
 |---|---|---|
-| intake | writes `intake.md`: decision, kind, risk, files, criteria | accepts it into Build, or asks you, or rejects |
+| intake | writes `intake.md`: decision, kind, risk, files, criteria | accepts it into Build, or asks you, or sends it to be refined with you, or rejects |
 | build | changes the code in the worktree and commits | refuses uncommitted work or no commits; runs your checks itself; red checks: Build again |
 | qa | `kitchen qa up`, then each criterion against the running app (`kitchen qa page` for pages, `kitchen qa http` for APIs; `kitchen qa reset` before one that needs fresh seed data) and the recipes of the features the job touches; `verdict.json` citing its evidence files; map updates in `map/` | refuses a verdict with a missing row or missing evidence (a page PASS needs a screenshot); FAIL: Build again, next round. PASS: commits the map updates into the job branch, or refuses them (the contract, a weakened check) |
 | review | reads the diff (map updates included) and QA's evidence, writes `review.json` | refuses a review whose branch moved; a blocking finding: Build again; else the merge |
@@ -131,6 +133,7 @@ kitchen ticket "<text>"
 kitchen run [--detach] [--max-usd n] | run --stop | run --print
 kitchen status [--json] · kitchen report [--json] · kitchen dashboard [--forget] [--private] [--port n] · kitchen skills
 kitchen feedback <id> ["<text>"] [--to intake|build|qa|review|regress]
+kitchen refine <id> · approve <id>
 kitchen steer <id> "<text>" · pause <id> · stop <id> · resume <id> · reject <id>
 kitchen job next|start|finish|show …     the orchestrator's verbs
 kitchen qa up|down|reset|page|http <id> …   the QA lane's tools (<id>: a job, or a verify run)
@@ -141,6 +144,7 @@ kitchen verify sweep|maintain [--json] · verify finish <run>   the verify map's
 - `steer`: a message for the job's next agent; it is quoted into that lane's brief as operator notes and marked read by it.
 - `pause`: the job parks when its current lane finishes. `stop`: it parks now, and the working agent's result is dropped (its `finish` is refused). `resume`: back where it paused.
 - `feedback`: answers `needs-info` (back to intake, with your answer in the clarifications) or `needs-human` (back to the stage it stopped in, or `--to`); on a ready or merged job it starts a follow-up round.
+- `refine`: for a job intake sent to be refined with you: writes `.kitchen/jobs/<id>/refine/brief.md` and prints its path, for a Claude Code or Codex session to follow with you (`/kitchen refine <id>`). `approve`: a job `intake.confirm` holds after intake goes to Build on its criteria.
 
 ## Dashboard
 

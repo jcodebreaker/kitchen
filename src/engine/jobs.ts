@@ -16,14 +16,28 @@ import { PromptSource } from "../sources/prompt.ts";
 import { admitMap, builderMapEdits, mapAt, writeMapChanges } from "../verify/admit.ts";
 import { intakeMapSection, qaMapSection, regressSection } from "../verify/brief.ts";
 import { namedBy, readMap, removals, touchedFeatures } from "../verify/map.ts";
-import { clarificationsSection, readRounds, recordQuestion } from "./clarify.ts";
+import { CONFIRM_KEY, clarificationsSection, questionsAsked, readRounds, recordQuestion } from "./clarify.ts";
 import { clearControl, moveJob, readControl } from "./control.ts";
 import { branchExists, diffSize, git, gitOut, revParse } from "./git.ts";
-import { changesOf, criteriaOf, intakeFile, matchPath, parseIntake, qaDir, readFeatureVerdict, readQa, readReview, regressDir, reviewFile } from "./lanes.ts";
+import {
+  changesOf,
+  criteriaOf,
+  intakeFile,
+  leftOutOf,
+  matchPath,
+  parseIntake,
+  qaDir,
+  readFeatureVerdict,
+  readQa,
+  readReview,
+  regressDir,
+  reviewFile,
+} from "./lanes.ts";
 import { BY_YOU, CATCH_UP_LIMIT, isCatchUp, isLane, type Job, type Lane, outOfCatchUps, outOfRounds, roundsUsed, type Stage } from "./machine.ts";
 import { markRead, operatorNotes, unreadMessages } from "./messages.ts";
 import { afterSection, queueSection } from "./others.ts";
 import { type Plan, planWave } from "./plan.ts";
+import { confirmQuestion, refineQuestion } from "./refine.ts";
 import { writeReport } from "./report.ts";
 import { type CatchUp, catchUpWithStaging, dropTrial, type MergeOutcome, mergeToStaging, stagingTip } from "./staging.ts";
 import { findJob, jobDirOf, kitchenDir, listJobs, roundDir, shortTitle, updateJob, worktreeOf, writeAtomic } from "./store.ts";
@@ -482,27 +496,56 @@ export async function finish(repo: string, id: string): Promise<Finished | { ref
     const i = parseIntake(fs.readFileSync(f, "utf8"));
     if ("refused" in i) return refuseLane(repo, job, `intake.md: ${i.refused}`);
     if (i.decision === "REJECT") return moveOn(repo, job, "rejected", `${job.id}  rejected by intake: ${i.reason}`, { reason: i.reason });
-    if (i.decision === "NEEDS-INFO") {
-      const asked = readRounds(dir).length;
-      if (asked >= 2)
+    if (i.decision === "NEEDS-INFO" || i.decision === "REFINE") {
+      const what = i.decision === "REFINE" ? `refine (${i.reason})` : i.question;
+      if (questionsAsked(readRounds(dir)) >= 2)
         return moveOn(repo, job, "needs-human", `${job.id}  intake asked a third question → needs-human`, {
-          reason: `intake still can't decide after 2 answers: ${i.question}`,
+          reason: `intake still can't decide after 2 answers: ${what}`,
         });
-      recordQuestion(dir, { key: `${job.id}/m${job.moves}`, question: i.question });
-      await new PromptSource(repo).ask(job, { key: `${job.id}/m${job.moves}`, text: i.question });
-      return moveOn(repo, job, "needs-info", `${job.id}  needs-info: ${i.question}`, { reason: i.question });
+      // ADR 0020: one refinement per reason. After it, intake decides on what the author said.
+      if (i.decision === "REFINE" && job.refined?.some((r) => r.reason === i.reason))
+        return refuseLane(
+          repo,
+          job,
+          `the author already refined this ticket for "${i.reason}" (their answer is in Clarifications): decide on it now: ACCEPT on the reading they gave, or NEEDS-INFO for one missing fact`,
+        );
+      const key = `${job.id}/m${job.moves}`;
+      const question = i.decision === "REFINE" ? refineQuestion(job, i.reason, i.items) : i.question;
+      recordQuestion(dir, { key, question });
+      await new PromptSource(repo).ask(job, { key, text: question });
+      if (i.decision === "NEEDS-INFO") return moveOn(repo, job, "needs-info", `${job.id}  needs-info: ${i.question}`, { reason: i.question });
+      return moveOn(repo, job, "needs-info", `${job.id}  needs-info: refine with you (${i.reason})`, {
+        reason: `refine: ${i.reason}`,
+        patch: (j) => {
+          if (i.title) j.title = shortTitle(i.title) ?? j.title;
+          j.waits = { for: "refine", reason: i.reason, at: new Date().toISOString() };
+        },
+      });
     }
     const title = shortTitle(i.title ?? undefined);
-    return moveOn(repo, job, "build", `${job.id}  intake ACCEPT ${i.kind} ${i.risk}: ${i.criteria.length} criteria → build`, {
-      patch: (j) => {
-        if (title) j.title = title;
-        j.kind = i.kind;
-        j.risk = i.risk;
-        j.surfaces = i.surfaces;
-        j.files = i.files;
-        j.after = i.after;
-      },
-    });
+    const accepted = (j: Job) => {
+      if (title) j.title = title;
+      j.kind = i.kind;
+      j.risk = i.risk;
+      j.surfaces = i.surfaces;
+      j.files = i.files;
+      j.after = i.after;
+    };
+    // ADR 0020 §3: intake.confirm holds every accepted job for the person's approval (`kitchen approve`).
+    if (cfg.intake.confirm) {
+      const key = `${job.id}/m${job.moves}${CONFIRM_KEY}`;
+      const question = confirmQuestion(job, i.criteria, leftOutOf(dir));
+      recordQuestion(dir, { key, question });
+      await new PromptSource(repo).ask(job, { key, text: question });
+      return moveOn(repo, job, "needs-info", `${job.id}  intake ACCEPT ${i.kind} ${i.risk}: ${i.criteria.length} criteria → waits for your approval`, {
+        reason: "confirm: approve the criteria",
+        patch: (j) => {
+          accepted(j);
+          j.waits = { for: "confirm", at: new Date().toISOString() };
+        },
+      });
+    }
+    return moveOn(repo, job, "build", `${job.id}  intake ACCEPT ${i.kind} ${i.risk}: ${i.criteria.length} criteria → build`, { patch: accepted });
   }
   const wt = job.worktree || worktreeOf(repo, job.id);
   if (lane === "build") {
@@ -770,6 +813,8 @@ export function show(repo: string, id: string): Record<string, unknown> {
     merged: job.merged ?? null,
     why: job.pausedReason ?? null,
     criteria: criteriaOf(dir),
+    leftOut: leftOutOf(dir) || null,
+    waits: job.waits ?? null,
     unread: unreadMessages(dir).length,
     report: fs.existsSync(path.join(dir, "report.html")) ? path.join(dir, "report.html") : null,
   };

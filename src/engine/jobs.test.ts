@@ -6,12 +6,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, test } from "vitest";
-import { report } from "../cli/commands.ts";
+import { report, stageLabel } from "../cli/commands.ts";
 import { loadConfig } from "../config.ts";
 import { readLedger } from "../ledger/append.ts";
 import * as control from "./control.ts";
 import { finish, next, start } from "./jobs.ts";
 import { intakeFile, qaDir, reviewFile } from "./lanes.ts";
+import { refine } from "./refine.ts";
 import { ensureStaging } from "./staging.ts";
 import { findJob, jobDirOf } from "./store.ts";
 
@@ -316,4 +317,67 @@ test("intake sees the other jobs: accepted ones by criteria and FILES, ones stil
     bc,
     /## Jobs this one builds on[\s\S]*- 001 "Add four" · done \(merged into staging, [0-9a-f]{7}\)[\s\S]*its change is in your branch: reuse its code/,
   );
+});
+
+const REFINE = (reason = "readings") =>
+  `DECISION: REFINE\nTITLE: Overdue loans\nREASON: ${reason}\n\n## Refine\n- A: a red flag on each loan\n- B: a page of overdue loans\n`;
+
+test("ADR 0020: REFINE waits for you marked refine; your refined ticket goes back to intake as your words; the same reason isn't sent back twice", async () => {
+  const r = await repo();
+  await control.ticket(r, "show overdue loans", quiet);
+  const id = findJob(r, "1").id;
+  await open(r, id, "intake");
+  fs.writeFileSync(intakeFile(dirOf(r, id)), REFINE());
+  assert.match((await fin(r, id)).line, /needs-info: refine with you \(readings\)/);
+  const j = findJob(r, id);
+  assert.equal(j.stage, "needs-info");
+  assert.equal(j.waits?.for === "refine" && j.waits.reason, "readings");
+  assert.equal(stageLabel(j), "needs-info(refine: readings)");
+  assert.equal(await control.approve(r, id, quiet), 1, "approve is only for a confirm job");
+  const lines: string[] = [];
+  assert.equal(await refine(r, id, (l) => lines.push(l)), 0);
+  const brief = fs.readFileSync(path.join(dirOf(r, id), "refine", "brief.md"), "utf8");
+  assert.match(brief, /show overdue loans[\s\S]*- A: a red flag on each loan[\s\S]*grill-with-docs[\s\S]*kitchen feedback 001 "<the refined ticket>"/);
+  assert.match(lines.join("\n"), /refine brief: .*refine\/brief\.md/);
+
+  await control.feedback(r, id, "Problem: … In: the red flag (A). Out: the page.", quiet);
+  const back = findJob(r, id);
+  assert.equal(back.stage, "intake");
+  assert.equal(back.waits, undefined, "the marker is cleared");
+  assert.deepEqual(
+    back.refined?.map((x) => x.reason),
+    ["readings"],
+  );
+  assert.equal(await refine(r, id, quiet), 1, "nothing to refine in intake");
+  const again = await open(r, id, "intake");
+  assert.match(fs.readFileSync(again.brief, "utf8"), /Refine with you \(readings\)[\s\S]*> Problem: … In: the red flag \(A\)/);
+  fs.writeFileSync(intakeFile(dirOf(r, id)), REFINE());
+  assert.match((await fin(r, id)).line, /already refined this ticket for "readings"/);
+  assert.equal(findJob(r, id).stage, "intake");
+  await open(r, id, "intake");
+  fs.writeFileSync(intakeFile(dirOf(r, id)), INTAKE());
+  assert.equal((await fin(r, id)).to, "build");
+});
+
+test("ADR 0020 §3: intake.confirm holds an accepted job for your approval; feedback sends it back to intake, approve to build", async () => {
+  const r = await repo("intake: { confirm: true }\n");
+  await control.ticket(r, "add a fourth line", quiet);
+  const id = findJob(r, "1").id;
+  await open(r, id, "intake");
+  fs.writeFileSync(intakeFile(dirOf(r, id)), INTAKE().replace("\n\n## Criteria", "\nLEFT OUT: a fifth line\n\n## Criteria"));
+  assert.match((await fin(r, id)).line, /waits for your approval/);
+  assert.equal(findJob(r, id).waits?.for, "confirm");
+  assert.match(fs.readFileSync(path.join(dirOf(r, id), "question.md"), "utf8"), /C1 \(cmd\): app\.txt has a fourth line[\s\S]*Left out: a fifth line/);
+  assert.equal(await refine(r, id, quiet), 1, "refine is only for a refine job");
+  await control.feedback(r, id, "also a fifth line", quiet);
+  assert.equal(findJob(r, id).stage, "intake");
+  await open(r, id, "intake");
+  fs.writeFileSync(intakeFile(dirOf(r, id)), INTAKE());
+  await fin(r, id);
+  assert.equal(findJob(r, id).stage, "needs-info");
+  assert.equal(await control.approve(r, id, quiet), 0);
+  const j = findJob(r, id);
+  assert.deepEqual([j.stage, j.kind, typeof j.approved], ["build", "feature", "string"]);
+  assert.equal(await control.approve(r, id, quiet), 1, "only while it waits");
+  assert.match((await build(r, id)).line, /→ qa/);
 });

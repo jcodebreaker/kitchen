@@ -20,6 +20,7 @@ forge: { kind: github, repo: you/your-repo }   # merge into staging through a PR
 | `round_limit` | 3 | rounds (QA or review sending the job back to Build) before it goes to a person |
 | `parallel` | 4 | lane agents at once; the wave plan holds the rest. Intake lanes are never held: every job in intake starts, and build, QA and review get the room left
 | `models.intake` / `builder` / `qa` / `reviewer` | strong / strong / medium / medium | the model each lane's agent runs on: a tier, or a model name. The regress lane and the verify sweep and maintain runs use `qa`'s |
+| `intake.confirm` | false | true: every job intake accepts waits under Needs you with its criteria and what it left out; `kitchen approve <id>` (or Approve on the dashboard) sends it to Build, `kitchen feedback <id> "…"` back to intake with your edit (ADR 0020) |
 | `agent.tool` | claude | the orchestrator's tool (`kitchen run` starts Claude Code) |
 | `agent.command` | `claude` on PATH | the argv prefix `kitchen run` starts |
 | `agent.models` | opus / sonnet / haiku | what `strong` / `medium` / `cheap` mean |

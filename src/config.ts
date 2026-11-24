@@ -57,6 +57,11 @@ export const ConfigSchema = z
       .strict()
       .prefault({}),
     /** Paths whose change makes a job high risk: it stops at Ready instead of merging into staging. */
+    /** ADR 0020 §3. `confirm: true`: every accepted job waits under Needs you, with its criteria, for `kitchen approve`. */
+    intake: z
+      .object({ confirm: z.boolean().default(false) })
+      .strict()
+      .prefault({}),
     high_paths: z.array(z.string()).default(["**/migrations/**", "**/auth/**", "**/*payment*", "infra/**", ".github/**", "**/.env*"]),
     checks: z.array(Check).default([]),
     /** Readies a fresh worktree for the checks (`npm ci`): run once per worktree before the first check. */
