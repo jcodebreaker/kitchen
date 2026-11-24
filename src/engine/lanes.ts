@@ -28,6 +28,8 @@ export type Intake =
       /** Behaviour this ticket changes on purpose, as `<feature>/<sub-feature>` of the verify map (ADR 0017 §4). */
       changes: string[];
       criteria: Criterion[];
+      /** ADR 0020: later slices of a ticket split with its author (`## Later slices`); Kitchen files each as a ticket. */
+      slices: string[];
     }
   | { decision: "NEEDS-INFO"; question: string; title: string | null }
   /** ADR 0020: the ticket is refined with its author before it is built. `items`: the readings, slices or gaps. */
@@ -82,12 +84,26 @@ export function parseIntake(text: string): Intake | { refused: string } {
   if (!criteria.length) return { refused: "ACCEPT needs at least one criterion: `- C1 (page|http|test|cmd): what must be true`" };
   const after = list(header(text, "AFTER")).flatMap((x) => (/^\d{1,6}$/.test(x) ? [x.padStart(3, "0")] : /^\d{3,}-/.test(x) ? [x.split("-")[0]] : []));
   const changes = list(header(text, "CHANGES")).filter((x) => /^[\w.-]+\/[\w.-]+$/.test(x));
-  return { decision: "ACCEPT", title, kind: kind as Kind, risk: risk as Risk, surfaces, files: list(header(text, "FILES")), after, changes, criteria };
+  return {
+    decision: "ACCEPT",
+    title,
+    kind: kind as Kind,
+    risk: risk as Risk,
+    surfaces,
+    files: list(header(text, "FILES")),
+    after,
+    changes,
+    criteria,
+    slices: sectionItems(text, "Later slices"),
+  };
 }
 
 /** Pure: the `- ` lines under intake's `## Refine` heading, up to the next heading. */
-export function refineItems(text: string): string[] {
-  const body = /^##[ \t]+Refine\b[^\n]*\n([\s\S]*?)(?=^#{1,6}[ \t]|(?![\s\S]))/im.exec(text)?.[1] ?? "";
+export const refineItems = (text: string): string[] => sectionItems(text, "Refine");
+
+/** Pure: the `- ` lines under the `## <heading>` section, up to the next heading. */
+function sectionItems(text: string, heading: string): string[] {
+  const body = new RegExp(`^##[ \\t]+${heading.replace(/ /g, "[ \\t]+")}\\b[^\\n]*\\n([\\s\\S]*?)(?=^#{1,6}[ \\t]|(?![\\s\\S]))`, "im").exec(text)?.[1] ?? "";
   return [...body.matchAll(/^[ \t]*[-*][ \t]+(.+)$/gm)].map((m) => m[1].trim()).filter(Boolean);
 }
 

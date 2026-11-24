@@ -8,7 +8,7 @@ import { readMapChanges } from "../verify/admit.ts";
 import { criteriaOf, leftOutOf, qaDir, readQa, readReview, regressDir } from "./lanes.ts";
 import type { Job } from "./machine.ts";
 import { readMessages } from "./messages.ts";
-import { jobDirOf, roundDir, writeAtomic } from "./store.ts";
+import { findJob, JOB_ID, jobDirOf, roundDir, writeAtomic } from "./store.ts";
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] as string);
 const MAX_TEXT = 6000;
@@ -46,6 +46,11 @@ export function renderReport(repo: string, job: Job, o: { diff?: { p: string; a:
   // ADR 0020: the reading was settled with you, not picked by intake.
   for (const r of job.refined ?? [])
     check.push(`Refined with you on ${esc(r.at.slice(0, 10))} (${esc(r.reason)}): the criteria come from your refined ticket. Check they say what you agreed.`);
+  // ADR 0020: the later slices of a ticket split with you, which Kitchen filed as their own tickets.
+  if (job.slices?.length)
+    check.push(
+      `Split with you: the rest is filed as ${job.slices.map((x) => `${esc(JOB_ID.exec(x.id)?.[1] ?? x.id)} “${esc(titleOf(repo, x.id) ?? x.text)}”`).join(", ")}.`,
+    );
   if (job.approved) check.push(`Criteria approved by you on ${esc(job.approved.slice(0, 10))}, before the build.`);
   const leftOut = leftOutOf(dir);
   if (leftOut) check.push(`Left out by intake (not in your ticket; file it separately if you want it): ${esc(leftOut)}`);
@@ -97,6 +102,14 @@ ${thread.length ? `<h2>Your messages</h2><ul>${thread.map((m) => `<li>${esc(m.at
 <p class="st">Evidence files: ${esc(path.relative(repo, qd))}/</p>
 </main></body></html>
 `;
+}
+
+function titleOf(repo: string, id: string): string | null {
+  try {
+    return findJob(repo, id).title;
+  } catch {
+    return null;
+  }
 }
 
 /** ADR 0017 §3: the touched features driven on the trial merge before it landed, newest round first. */

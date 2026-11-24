@@ -105,6 +105,8 @@ export type Job = {
   refined?: { reason: RefineReason; at: string }[];
   /** ADR 0020 §3: when the author approved intake's criteria (`kitchen approve`). */
   approved?: string;
+  /** ADR 0020: the later slices intake listed (`## Later slices`), each filed once as its own ticket: its text and job id. */
+  slices?: { text: string; id: string }[];
   /** Side effects done once (a PR opened): keys. */
   filed: string[];
   startedAt: string;

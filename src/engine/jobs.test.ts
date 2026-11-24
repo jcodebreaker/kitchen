@@ -13,6 +13,7 @@ import * as control from "./control.ts";
 import { finish, next, start } from "./jobs.ts";
 import { intakeFile, qaDir, reviewFile } from "./lanes.ts";
 import { refine } from "./refine.ts";
+import { renderReport } from "./report.ts";
 import { ensureStaging } from "./staging.ts";
 import { findJob, jobDirOf } from "./store.ts";
 
@@ -359,6 +360,47 @@ test("ADR 0020: REFINE waits for you marked refine; your refined ticket goes bac
   await open(r, id, "intake");
   fs.writeFileSync(intakeFile(dirOf(r, id)), REFINE());
   assert.equal((await fin(r, id)).to, "needs-human", "after two refinements a person decides");
+});
+
+test("ADR 0020: an ACCEPT with later slices files each as a ticket, each after the one before, when it goes to build; never twice", async () => {
+  const r = await repo();
+  await control.ticket(r, "show members their overdue loans better, and let lena do something about them", quiet);
+  const id = findJob(r, "1").id;
+  await open(r, id, "intake");
+  const split = `${INTAKE()}\n## Later slices\n- Lena can mark an overdue loan returned.\n- Members get an email when a loan is overdue (still needs refining)\n`;
+  fs.writeFileSync(intakeFile(dirOf(r, id)), split);
+  assert.match((await fin(r, id)).line, /→ build; filed 002, 003$/);
+  const [two, three] = [findJob(r, "2"), findJob(r, "3")];
+  assert.match(fs.readFileSync(path.join(dirOf(r, two.id), "ticket.md"), "utf8"), /Lena can mark an overdue loan returned\. Comes after job 001\./);
+  assert.match(fs.readFileSync(path.join(dirOf(r, three.id), "ticket.md"), "utf8"), /still needs refining\)\. Comes after job 002\./);
+  assert.deepEqual(
+    findJob(r, id).slices?.map((x) => x.id),
+    [two.id, three.id],
+  );
+  assert.match(renderReport(r, findJob(r, id)), /Split with you: the rest is filed as 002 “[^”]+”, 003 “[^”]+”/);
+});
+
+test("ADR 0020: with intake.confirm, the later slices are filed on approve, from intake.md as it stands then; never twice", async () => {
+  const r = await repo("intake: { confirm: true }\n");
+  await control.ticket(r, "show members their overdue loans better, and let lena do something about them", quiet);
+  const id = findJob(r, "1").id;
+  await open(r, id, "intake");
+  fs.writeFileSync(intakeFile(dirOf(r, id)), `${INTAKE()}\n## Later slices\n- Lena can mark an overdue loan returned\n`);
+  assert.match((await fin(r, id)).line, /→ waits for your approval$/);
+  assert.equal(findJobsCount(r), 1, "nothing filed before you approve");
+  // Asked for changes, intake rewrites the split: the approved one is what gets filed.
+  await control.feedback(r, id, "two later slices: Lena's button, then the email", quiet);
+  await open(r, id, "intake");
+  fs.writeFileSync(intakeFile(dirOf(r, id)), `${INTAKE()}\n## Later slices\n- Lena can mark an overdue loan returned\n- Members get an email\n`);
+  await fin(r, id);
+  assert.equal(findJobsCount(r), 1);
+  const lines: string[] = [];
+  assert.equal(await control.approve(r, id, (l) => lines.push(l)), 0);
+  assert.match(lines.join("\n"), /approved → build; filed 002, 003$/);
+  assert.match(fs.readFileSync(path.join(dirOf(r, findJob(r, "3").id), "ticket.md"), "utf8"), /Members get an email\. Comes after job 002\./);
+  assert.equal(await control.approve(r, id, quiet), 1, "only while it waits");
+  assert.equal(await control.fileSlices(r, findJob(r, id), ["Lena can mark an overdue loan returned", "Members get an email"]), "; already filed 002, 003");
+  assert.equal(findJobsCount(r), 3, "a re-run files nothing new");
 });
 
 test("ADR 0020 §3: intake.confirm holds an accepted job for your approval; feedback sends it back to intake, approve to build", async () => {

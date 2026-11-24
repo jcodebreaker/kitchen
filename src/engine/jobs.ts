@@ -17,7 +17,7 @@ import { admitMap, builderMapEdits, mapAt, writeMapChanges } from "../verify/adm
 import { intakeMapSection, qaMapSection, regressSection } from "../verify/brief.ts";
 import { namedBy, readMap, removals, touchedFeatures } from "../verify/map.ts";
 import { CONFIRM_KEY, clarificationsSection, questionsAsked, readRounds, recordQuestion } from "./clarify.ts";
-import { clearControl, moveJob, readControl } from "./control.ts";
+import { clearControl, fileSlices, moveJob, readControl } from "./control.ts";
 import { branchExists, diffSize, git, gitOut, revParse } from "./git.ts";
 import {
   changesOf,
@@ -540,7 +540,9 @@ export async function finish(repo: string, id: string): Promise<Finished | { ref
         },
       });
     }
-    return moveOn(repo, job, "build", `${job.id}  intake ACCEPT ${i.kind} ${i.risk}: ${i.criteria.length} criteria → build`, { patch: accepted });
+    // ADR 0020: the later slices are filed when the job goes to Build (with the gate, on approve: the split may change).
+    const filed = await fileSlices(repo, job, i.slices);
+    return moveOn(repo, job, "build", `${job.id}  intake ACCEPT ${i.kind} ${i.risk}: ${i.criteria.length} criteria → build${filed}`, { patch: accepted });
   }
   const wt = job.worktree || worktreeOf(repo, job.id);
   if (lane === "build") {
