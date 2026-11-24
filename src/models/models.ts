@@ -54,7 +54,8 @@ export function parseCodexConfig(text: string): {
       continue;
     }
     const p = /^model_providers\.("?)([\w.-]+)\1$/.exec(section);
-    if (p && ["base_url", "env_key", "name"].includes(k)) (out.providers[p[2]] ??= {})[k as "base_url"] = v;
+    if (!p || !["base_url", "env_key", "name"].includes(k)) continue;
+    out.providers[p[2]] = { ...out.providers[p[2]], [k]: v };
   }
   return out;
 }
