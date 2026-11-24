@@ -15,12 +15,12 @@ import net from "node:net";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { prepareOf, runShell } from "../checks/run-checks.ts";
-import { type Config, loadConfig } from "../config.ts";
+import { type AppConfig, type Config, loadConfig } from "../config.ts";
 import { qaDir, regressDir } from "../engine/lanes.ts";
 import { findJob, jobDirOf, worktreeOf, writeAtomic } from "../engine/store.ts";
 import { isRunId, runDir, runEvidence, runWorktree } from "../verify/paths.ts";
 
-type AppState = { pid?: number; port?: number; url: string; at: string; legacy?: { id: string; dev: string; wt: string } };
+type AppState = Partial<Started> & { url: string; at: string; legacy?: { id: string; dev: string; wt: string } };
 const stateFile = (repo: string, id: string) => path.join(isRunId(id) ? runDir(repo, id) : jobDirOf(repo, id), "app.json");
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$/;
 
@@ -86,6 +86,11 @@ const legacyDev = (wt: string, repo: string) => [wt, repo].map((d) => path.join(
 
 export async function appUp(repo: string, ref: string, out: (l: string) => void, cfg: Config = loadConfig(repo)): Promise<number> {
   const { id: jid, wt, out: dir } = jobPaths(repo, ref);
+  const remote = runUrl(repo, jid);
+  if (remote) {
+    out(`app: this sweep drives ${remote}: Kitchen starts nothing here (kitchen qa page|http ${jid} <path> go there)`);
+    return 1;
+  }
   const had = readState(repo, jid);
   if (had && (had.legacy || (had.pid && alive(had.pid))) && (await healthy(join(had.url, cfg.app.health)))) {
     out(`app: up at ${had.url}`);
@@ -123,34 +128,99 @@ export async function appUp(repo: string, ref: string, out: (l: string) => void,
     out(`app: up at ${url} (the repo's Toolkit, bin/dev up)`);
     return 0;
   }
-  const port = cfg.app.port && !cfg.app.start.includes("{port}") && !(cfg.app.url ?? "").includes("{port}") ? cfg.app.port : await freePort();
-  const env = { ...process.env, PORT: String(port) };
-  const fill = (s: string) => s.replaceAll("{port}", String(port));
-  if (cfg.app.reset) {
-    const r = await runShell(fill(cfg.app.reset), { cwd: wt, timeoutSec: 300, log, env });
-    if (!r.ok) {
-      out(`app: app.reset failed (exit ${r.exit}); see ${log}`);
-      return 1;
-    }
+  const r = await startApp(cfg, { wt, log, project: composeProject(cfg.app, jid), onSpawn: (st) => writeAtomic(stateFile(repo, jid), JSON.stringify(st)) });
+  if (!r.ok) {
+    await appDown(repo, jid);
+    out(`app: ${r.why}; see ${path.relative(repo, log)}`);
+    return 1;
   }
-  const fd = fs.openSync(log, "a");
-  const child = spawn("/bin/sh", ["-c", fill(cfg.app.start)], { cwd: wt, env, detached: true, stdio: ["ignore", fd, fd] });
+  out(`app: up at ${r.app.url} (pid ${r.app.pid}${r.app.project ? `, compose project ${r.app.project}` : ""}, log ${path.relative(repo, log)})`);
+  return 0;
+}
+
+/**
+ * ADR 0021 §4: the compose project a job's app runs in (`kq<job number>`, `kq-<run>` for a verify run), or null when
+ * `app.start` doesn't run `docker compose` / `docker-compose`. Containers, networks and volumes are then per job.
+ */
+export const COMPOSE = /(?<![\w-])(docker[ \t]+compose|docker-compose)(?![\w-])/;
+export function composeProject(app: Pick<AppConfig, "start">, id: string): string | null {
+  if (!COMPOSE.test(app.start)) return null;
+  const num = /^(\d+)-/.exec(id)?.[1];
+  return (num ? `kq${num}` : `kq-${id}`).toLowerCase().replace(/[^a-z0-9_-]/g, "-");
+}
+
+/** Pure: what the app's commands (start, reset, stop) get on top of Kitchen's environment. */
+export function appEnv(o: { port: number; project: string | null }): Record<string, string> {
+  return { PORT: String(o.port), ...(o.project ? { COMPOSE_PROJECT_NAME: o.project } : {}) };
+}
+
+/** Pure: what runs after the app's process ends: `app.stop`, else a compose app's `docker compose -p <project> down -v`. */
+export function stopCommand(app: Pick<AppConfig, "stop">, project: string | null): string | null {
+  return app.stop ?? (project ? `docker compose -p ${project} down -v` : null);
+}
+
+/** A started app: what stopping it needs. `stop` and `env` are filled at start, so a later config edit can't strand it. */
+export type Started = { pid?: number; port: number; url: string; at: string; project?: string; wt: string; stop?: string; env?: Record<string, string> };
+
+/**
+ * Start the app from `wt` as kitchen.yaml `app:` says: `app.reset`, then `app.start` on a free port (in $PORT and
+ * `{port}`), then wait for the health check. `onSpawn` gets the state as soon as there is a process to stop.
+ * Shared by `kitchen qa up` and the merge gate's `needs_app` checks.
+ */
+export async function startApp(
+  cfg: Config,
+  o: { wt: string; log: string; project: string | null; onSpawn?: (s: Started) => void },
+): Promise<{ ok: true; app: Started } | { ok: false; why: string; app?: Started }> {
+  const port = cfg.app.port && !cfg.app.start.includes("{port}") && !(cfg.app.url ?? "").includes("{port}") ? cfg.app.port : await freePort();
+  const extra = appEnv({ port, project: o.project });
+  const env = { ...process.env, ...extra };
+  const fill = (s: string) => s.replaceAll("{port}", String(port));
+  const stop = stopCommand(cfg.app, o.project);
+  if (cfg.app.reset) {
+    const r = await runShell(fill(cfg.app.reset), { cwd: o.wt, timeoutSec: 300, log: o.log, env });
+    if (!r.ok) return { ok: false, why: `app.reset failed (exit ${r.exit})` };
+  }
+  const fd = fs.openSync(o.log, "a");
+  const child = spawn("/bin/sh", ["-c", fill(cfg.app.start)], { cwd: o.wt, env, detached: true, stdio: ["ignore", fd, fd] });
   child.unref();
   fs.closeSync(fd);
+  let exit: number | null | undefined;
+  child.on("exit", (code) => {
+    exit = code;
+  });
   const url = fill(cfg.app.url ?? "http://127.0.0.1:{port}");
-  writeAtomic(stateFile(repo, jid), JSON.stringify({ pid: child.pid, port, url, at: new Date().toISOString() }));
+  const st: Started = {
+    pid: child.pid,
+    port,
+    url,
+    at: new Date().toISOString(),
+    wt: o.wt,
+    ...(o.project ? { project: o.project } : {}),
+    ...(stop ? { stop: fill(stop), env: extra } : {}),
+  };
+  o.onSpawn?.(st);
   const end = Date.now() + cfg.app.ready_timeout_sec * 1000;
   while (Date.now() < end) {
-    if (await healthy(join(url, cfg.app.health))) {
-      out(`app: up at ${url} (pid ${child.pid}, log ${path.relative(repo, log)})`);
-      return 0;
-    }
-    if (child.pid && !alive(child.pid)) break;
+    if (await healthy(join(url, cfg.app.health))) return { ok: true, app: st };
+    // A start command that exits 0 (`docker compose up -d`) leaves the app running: keep waiting for the health check.
+    if (exit !== undefined && exit !== 0) break;
     await new Promise((r) => setTimeout(r, 300));
   }
-  await appDown(repo, jid);
-  out(`app: not healthy at ${join(url, cfg.app.health)} within ${cfg.app.ready_timeout_sec}s; see ${path.relative(repo, log)}`);
-  return 1;
+  return { ok: false, why: `not healthy at ${join(url, cfg.app.health)} within ${cfg.app.ready_timeout_sec}s`, app: st };
+}
+
+/** Stop what `startApp` started: its process group, then `app.stop` (or the compose project's down). */
+export async function stopApp(s: Partial<Pick<Started, "pid" | "stop" | "env" | "wt">>, log?: string): Promise<void> {
+  if (s.pid) {
+    try {
+      process.kill(-s.pid, "SIGTERM");
+    } catch {}
+    for (let i = 0; i < 30 && alive(s.pid); i++) await new Promise((r) => setTimeout(r, 100));
+    try {
+      process.kill(-s.pid, "SIGKILL");
+    } catch {}
+  }
+  if (s.stop) await runShell(s.stop, { cwd: s.wt && fs.existsSync(s.wt) ? s.wt : process.cwd(), timeoutSec: 300, log, env: s.env });
 }
 
 export async function appDown(repo: string, ref: string, out: (l: string) => void = () => {}): Promise<number> {
@@ -161,15 +231,7 @@ export async function appDown(repo: string, ref: string, out: (l: string) => voi
     return 0;
   }
   if (s.legacy) await runShell(`"${s.legacy.dev}" down --id ${s.legacy.id}`, { cwd: s.legacy.wt, timeoutSec: 120 });
-  else if (s.pid) {
-    try {
-      process.kill(-s.pid, "SIGTERM");
-    } catch {}
-    for (let i = 0; i < 30 && alive(s.pid); i++) await new Promise((r) => setTimeout(r, 100));
-    try {
-      process.kill(-s.pid, "SIGKILL");
-    } catch {}
-  }
+  else await stopApp(s);
   fs.rmSync(stateFile(repo, id), { force: true });
   out("app: stopped");
   return 0;
@@ -180,6 +242,11 @@ export async function appDown(repo: string, ref: string, out: (l: string) => voi
  * starts on the seed data. Without an app.reset it only restarts, and says the data is what earlier checks left.
  */
 export async function appReset(repo: string, ref: string, out: (l: string) => void, cfg: Config = loadConfig(repo)): Promise<number> {
+  const remote = runUrl(repo, ref);
+  if (remote) {
+    out(`app: ${remote} is a deployed environment: Kitchen can't reset it. A recipe that needs fresh seed data is "not run: needs a fresh seed"`);
+    return 1;
+  }
   await appDown(repo, ref);
   const code = await appUp(repo, ref, out, cfg);
   if (code === 0 && cfg.app.start && !cfg.app.reset) out("app: restarted, but kitchen.yaml has no app.reset: the data is what earlier checks left (not fresh)");
@@ -187,8 +254,33 @@ export async function appReset(repo: string, ref: string, out: (l: string) => vo
   return code;
 }
 
+/**
+ * ADR 0021 §3: a sweep run with `--url` drives that deployed environment: its URL (from the run's run.json, never a
+ * job) is the base, and the only non-loopback origin `page` and `http` accept. Null for anything else.
+ */
+export function runUrl(repo: string, id: string): string | null {
+  if (!isRunId(id)) return null;
+  try {
+    const u = (JSON.parse(fs.readFileSync(path.join(runDir(repo, id), "run.json"), "utf8")) as { url?: unknown }).url;
+    return typeof u === "string" && /^https?:\/\//.test(u) ? u : null;
+  } catch {
+    return null;
+  }
+}
+
 function baseUrl(repo: string, id: string): string | null {
-  return readState(repo, id)?.url ?? null;
+  return runUrl(repo, id) ?? readState(repo, id)?.url ?? null;
+}
+
+/** Pure: `url` is this machine, or on the origin of the deployed URL a `--url` sweep drives. */
+export function reachable(url: string, remote: string | null): boolean {
+  if (LOOPBACK.test(url)) return true;
+  if (!remote) return false;
+  try {
+    return new URL(url).origin === new URL(remote).origin;
+  } catch {
+    return false;
+  }
 }
 
 /** Playwright, from Kitchen's own dependencies. */
@@ -220,7 +312,7 @@ export async function page(repo: string, ref: string, target: string, o: { name:
     return 1;
   }
   const url = join(base ?? "", target);
-  if (!LOOPBACK.test(url)) throw new Error(`page: ${url} is not this machine (127.0.0.1 or localhost only)`);
+  if (!reachable(url, runUrl(repo, jid))) throw new Error(`page: ${url} is not this machine (127.0.0.1 or localhost only)`);
   const browser = await playwright().chromium.launch({ headless: true });
   const errors: string[] = [];
   let ok = true;
@@ -288,7 +380,7 @@ export async function http(
     return 1;
   }
   const url = join(base ?? "", target);
-  if (!LOOPBACK.test(url)) throw new Error(`http: ${url} is not this machine (127.0.0.1 or localhost only)`);
+  if (!reachable(url, runUrl(repo, jid))) throw new Error(`http: ${url} is not this machine (127.0.0.1 or localhost only)`);
   const headers: Record<string, string> = {};
   for (const h of o.headers) {
     const i = h.indexOf(":");

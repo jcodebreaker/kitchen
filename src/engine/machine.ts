@@ -141,8 +141,9 @@ export const outOfCatchUps = (j: Pick<Job, "catchUps">) => (j.catchUps ?? 0) >= 
  * went red on the merged result while the same checks were green on the job branch alone and staging has commits
  * the branch doesn't. Anything else (a weakened map, red checks staging didn't cause) is a round.
  */
-export function isCatchUp(f: { cause?: "conflict" | "checks"; greenAlone: boolean; stagingAhead: boolean }): boolean {
-  return f.cause === "conflict" || (f.cause === "checks" && f.greenAlone && f.stagingAhead);
+export function isCatchUp(f: { cause?: "conflict" | "checks"; greenAlone: boolean; stagingAhead: boolean; mergeOnly?: boolean }): boolean {
+  // ADR 0021: a red `when: merge` check never ran on the branch alone, so "green alone" isn't known: always a round.
+  return f.cause === "conflict" || (f.cause === "checks" && !f.mergeOnly && f.greenAlone && f.stagingAhead);
 }
 
 /** Rounds used in the current budget. */

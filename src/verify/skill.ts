@@ -16,6 +16,7 @@ import path from "node:path";
 import type { Config } from "../config.ts";
 import { slugify } from "../engine/store.ts";
 import { SKILL_ROOTS, skillName } from "./map.ts";
+import { detectSuite, type Suite, suiteSection } from "./suite.ts";
 
 const MARK = /\n?<!-- kitchen:generated ([0-9a-f]{12}) -->\s*$/;
 const hash = (s: string) => createHash("sha256").update(s).digest("hex").slice(0, 12);
@@ -82,11 +83,11 @@ export function detectHandles(repo: string, max = 12): string[] {
   return out;
 }
 
-export type SkillFacts = { name: string; app: Config["app"]; handles: string[]; seed: string | null };
+export type SkillFacts = { name: string; app: Config["app"]; handles: string[]; seed: string | null; suite?: Suite | null };
 
 export function skillFacts(repo: string, cfg: Config): SkillFacts {
   const seed = ["seed.json", "seed.sql", "db/seeds.rb", "prisma/seed.ts", "fixtures"].find((f) => fs.existsSync(path.join(repo, f))) ?? null;
-  return { name: `verify-${appName(repo)}`, app: cfg.app, handles: detectHandles(repo), seed };
+  return { name: `verify-${appName(repo)}`, app: cfg.app, handles: detectHandles(repo), seed, suite: detectSuite(repo, cfg) };
 }
 
 export function skillMd(f: SkillFacts): string {
@@ -126,6 +127,8 @@ Run it before the first drive and after anything surprising:
 - ${a.start ? `\`kitchen qa http <id> GET ${a.health} --name doctor\` answers below 400.` : "The repo's checks pass (kitchen.yaml `checks:`)."}
 - Drive only the URL \`kitchen qa up\` printed for your \`<id>\`: never a port or an instance you didn't start, and never the person's own running copy.
 - A page whose text file lists console errors before you acted is not worth driving: restart it (\`kitchen qa reset <id>\`) first.
+
+${suiteSection(f.suite ?? null)}
 
 ## Drive
 

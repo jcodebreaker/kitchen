@@ -5,14 +5,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import { prepareOf, runChecks } from "../checks/run-checks.ts";
-import { loadConfig } from "../config.ts";
+import { checksFor, loadConfig } from "../config.ts";
 import { currentBranch, git, revParse } from "../engine/git.ts";
 import { ensureStaging } from "../engine/staging.ts";
 import { writeAtomic } from "../engine/store.ts";
 import { appendLedger } from "../ledger/append.ts";
 import { writeVerifySkill } from "../verify/skill.ts";
 import { type DetectedApp, detectApp } from "./detect-app.ts";
-import { detectChecks } from "./detect-checks.ts";
+import { composeWarning, detectChecks } from "./detect-checks.ts";
 import { addGitignore, hasOwnChecks, installSkill, toolFor, writeConfig } from "./files.ts";
 import { installHooks } from "./hooks.ts";
 import { preflight, preflightLines } from "./preflight.ts";
@@ -70,6 +70,12 @@ export async function init(o: InitOpts, out: (l: string) => void): Promise<numbe
       asked = true;
     }
   }
+  // ADR 0021: the e2e suite runs against the app when there is one to start (found now, or already in kitchen.yaml).
+  let hadApp = false;
+  try {
+    hadApp = !!loadConfig(repo).app.start;
+  } catch {}
+  if (det) det.checks = det.checks.map((c) => (c.when === "merge" ? { ...c, needsApp: !!app?.start || hadApp } : c));
   const branch = (await currentBranch(repo)) || "main";
   const base = ["staging"].includes(branch) ? "main" : branch;
   const cfgW = writeConfig(repo, tool, own ? (det?.install ? { checks: [], install: det.install, from: det.from } : null) : det, {
@@ -89,6 +95,7 @@ export async function init(o: InitOpts, out: (l: string) => void): Promise<numbe
   }
   const cfg = loadConfig(repo);
   const n = cfg.checkList.length;
+  const atMerge = cfg.checkList.filter((c) => c.when === "merge");
   out(
     phaseLine(
       true,
@@ -103,6 +110,18 @@ export async function init(o: InitOpts, out: (l: string) => void): Promise<numbe
     ),
   );
   for (const d of cfg.dropped.length ? [`  kitchen.yaml keys from an older Kitchen are ignored now: ${cfg.dropped.join(", ")}`] : []) out(d);
+  for (const c of atMerge)
+    out(`  ${c.name}: \`${c.run}\` runs on every merge into staging only (when: merge)${c.needsApp ? ", against the app started from the merged result" : ""}`);
+  const e2e = det?.checks.find((c) => c.when === "merge");
+  if (own && e2e && !atMerge.length)
+    out(
+      `  Found an end-to-end suite (\`${e2e.run}\`); your kitchen.yaml names its own checks, so add it yourself: - { name: e2e, run: ${JSON.stringify(e2e.run)}, when: merge, needs_app: ${!!e2e.needsApp}, timeout_sec: 900 }`,
+    );
+  const cw = composeWarning(repo);
+  if (cw)
+    out(
+      `  ${cw.file} publishes fixed host ports (${cw.ports.join(", ")}): two jobs' stacks can't both bind them. If app.start runs it, publish only the app's port, as "\${PORT}:<its port>" (Kitchen gives each job its own project and port).`,
+    );
 
   // 2. the skill, the hooks, .gitignore
   installSkill(repo);
@@ -146,13 +165,14 @@ export async function init(o: InitOpts, out: (l: string) => void): Promise<numbe
 
   // 4. the checks, once, on your checkout
   let failed = false;
-  if (n && sha) {
+  if (checksFor(cfg, "build").length && sha) {
     const c0 = Date.now();
     const log = path.join(repo, ".kitchen", "init", "checks.log");
     fs.mkdirSync(path.dirname(log), { recursive: true });
     fs.writeFileSync(log, "");
     const needDeps = !!prepareOf(cfg) && fs.existsSync(path.join(repo, "package.json")) && !fs.existsSync(path.join(repo, "node_modules"));
-    const r = await runChecks({ dir: repo, checks: cfg.checkList, prepare: needDeps ? prepareOf(cfg) : undefined, log });
+    // The `when: merge` checks (an e2e suite) aren't run here: they need the merged result, and often the app.
+    const r = await runChecks({ dir: repo, checks: checksFor(cfg, "build"), prepare: needDeps ? prepareOf(cfg) : undefined, log });
     writeAtomic(checksRecord(repo), `${JSON.stringify({ at: new Date().toISOString(), sha, results: r.results }, null, 2)}\n`);
     appendLedger(repo, { job: "-", stage: "init", round: 0, event: "checks", key: `init/checks/${Date.now()}`, result: r.ok ? "pass" : "fail" });
     const bad = r.results.find((x) => !x.ok);

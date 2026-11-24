@@ -67,6 +67,7 @@ test("ADR 0018: a catch-up opens a round folder but spends no round; three in a 
   assert.equal(isCatchUp({ cause: "checks", greenAlone: false, stagingAhead: true }), false);
   assert.equal(isCatchUp({ cause: "checks", greenAlone: true, stagingAhead: false }), false);
   assert.equal(isCatchUp({ greenAlone: true, stagingAhead: true }), false, "a weakened map is a round");
+  assert.equal(isCatchUp({ cause: "checks", greenAlone: true, stagingAhead: true, mergeOnly: true }), false, "a red when: merge check is a round");
 });
 
 test("a wave: intake first and never held for room, then downstream first in the room parallel leaves; running lanes take room", () => {

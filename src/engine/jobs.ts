@@ -9,7 +9,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { prepareOf, runChecks } from "../checks/run-checks.ts";
-import { type Config, type LaneRole, loadConfig, modelFor } from "../config.ts";
+import { type Config, checksFor, type LaneRole, loadConfig, modelFor } from "../config.ts";
 import { appendLedger } from "../ledger/append.ts";
 import { skillsForLane } from "../skills/forjob.ts";
 import { PromptSource } from "../sources/prompt.ts";
@@ -174,6 +174,13 @@ function redriveNote(dir: string, job: Job): string {
   return "";
 }
 
+/** The brief's note on the checks that run only on the trial merge (ADR 0021), or "". */
+function mergeOnly(cfg: Config): string {
+  const m = cfg.checkList.filter((c) => c.when === "merge");
+  if (!m.length) return "";
+  return `; on the trial merge into ${cfg.staging.branch} only: ${m.map((c) => `\`${c.run}\`${c.needsApp ? " (with the app running, its URL in $BASE_URL)" : ""}`).join(", ")}`;
+}
+
 function brief(
   repo: string,
   cfg: Config,
@@ -220,7 +227,11 @@ function brief(
     lane === "review" && o.head ? `- Review this commit: ${o.head} (diff: \`git diff ${o.base}...${o.head}\`)` : "",
     lane === "qa" || lane === "review" ? `- QA folder: ${qd}/` : "",
     lane === "regress" ? `- Evidence folder: ${regressDir(dir, job.round)}/ (\`kitchen qa\` saves there while the job is in regress)` : "",
-    `- Checks (kitchen.yaml): ${cfg.checkList.map((c) => `\`${c.run}\``).join(", ") || "none"}`,
+    `- Checks (kitchen.yaml): ${
+      checksFor(cfg, "build")
+        .map((c) => `\`${c.run}\``)
+        .join(", ") || "none"
+    }${mergeOnly(cfg)}`,
     `- The app: ${app}`,
     `- Your output: ${out[lane]}`,
     "",
@@ -564,7 +575,8 @@ export async function finish(repo: string, id: string): Promise<Finished | { ref
         `the build changed the verify skill (${edits.slice(0, 3).join(", ")}): builders never edit verify-*/, QA keeps the map. Put those files back as they were on ${cfg.staging.branch} and commit`,
       );
     const rd = roundDir(dir, job.round);
-    const r = await runChecks({ dir: wt, checks: cfg.checkList, prepare: prepareOf(cfg), stateDir: dir, log: path.join(rd, "checks.log") });
+    // ADR 0021: `when: merge` checks (an e2e suite) wait for the trial merge.
+    const r = await runChecks({ dir: wt, checks: checksFor(cfg, "build"), prepare: prepareOf(cfg), stateDir: dir, log: path.join(rd, "checks.log") });
     writeAtomic(path.join(rd, "checks.json"), `${JSON.stringify(r.results, null, 2)}\n`);
     appendLedger(repo, {
       job: job.id,
@@ -714,14 +726,15 @@ function greenAlone(dir: string, round: number): boolean {
 async function mergeFailed(
   repo: string,
   job: Job,
-  m: { why: string; back: boolean; cause?: "conflict" | "checks"; onto?: string },
+  m: { why: string; back: boolean; cause?: "conflict" | "checks"; onto?: string; tail?: string; mergeOnly?: boolean },
   head?: string,
 ): Promise<Finished> {
   const dir = jobDirOf(repo, job.id);
   const cfg = loadConfig(repo);
-  writeAtomic(path.join(roundDir(dir, job.round), "merge.txt"), `${m.why}\n`);
+  // The red check's last lines go with it: the next builder reads them (an e2e suite's failure says what broke).
+  writeAtomic(path.join(roundDir(dir, job.round), "merge.txt"), `${m.why}\n${m.tail ? `${fence(m.tail)}\n${m.tail}\n${fence(m.tail)}\n` : ""}`);
   const stagingAhead = !!(m.onto && head) && (await git(repo, ["merge-base", "--is-ancestor", m.onto, head], { allowFail: true })).code !== 0;
-  if (m.back && isCatchUp({ cause: m.cause, greenAlone: greenAlone(dir, job.round), stagingAhead })) {
+  if (m.back && isCatchUp({ cause: m.cause, greenAlone: greenAlone(dir, job.round), stagingAhead, mergeOnly: m.mergeOnly })) {
     if (outOfCatchUps(job))
       return moveOn(
         repo,

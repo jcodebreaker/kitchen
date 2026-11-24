@@ -114,7 +114,8 @@ feature map (`features/`), one file per user-facing feature with its recipe and 
 and updates it in every job; Kitchen drives the touched features before each merge. Two runs use it outside jobs,
 each one agent you start like a lane agent:
 
-1. `kitchen verify sweep --json` (a release check: every feature against staging, changes nothing) or
+1. `kitchen verify sweep --json` (a release check: every feature against staging, changes nothing; add
+   `--url <url>` when the user wants a deployed environment checked instead: nothing starts locally) or
    `kitchen verify maintain --json` (map upkeep: prune, fix drift, drive every feature; a broken feature becomes
    a new ticket). It checks out staging, starts the app, writes the brief and returns `{ id, prompt, model, cwd }`.
 2. Spawn one Agent with exactly that `prompt` and `model`, in the foreground.

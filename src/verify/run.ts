@@ -19,13 +19,17 @@ import { writeAtomic } from "../engine/store.ts";
 import { appDown, appUp } from "../qa/app.ts";
 import { KITCHEN_IDENTITY, mapAt } from "./admit.ts";
 import { allFeaturesSection } from "./brief.ts";
-import { isVerifyPath, readMap, removals, SKILL_ROOTS, sweepOrder } from "./map.ts";
+import { type Feature, isVerifyPath, readMap, removals, SKILL_ROOTS, sweepOrder } from "./map.ts";
 import { isRunId, runDir, runEvidence, runWorktree } from "./paths.ts";
 
 export type Out = (l: string) => void;
 const ROLES = path.resolve(import.meta.dirname, "..", "..", "roles");
 type Kind = "sweep" | "maintain";
-type RunInfo = { kind: Kind; id: string; at: string; onto: string; branch?: string; features: string[]; brief: string };
+/**
+ * `url`: a sweep against a deployed environment (ADR 0021 §3): no local app, recipes driven there. `seeded`: the
+ * features whose recipes need a reset or seed, which such a sweep reports as not run. Kept in the run, never in a job.
+ */
+type RunInfo = { kind: Kind; id: string; at: string; onto: string; branch?: string; features: string[]; brief: string; url?: string; seeded?: string[] };
 export type Prepared = { id: string; kind: Kind; brief: string; cwd: string; model: string; prompt: string; app: string };
 
 const stampId = (kind: Kind, d = new Date()) => `${kind}-${d.toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15)}`;
@@ -40,8 +44,21 @@ export function readRun(repo: string, id: string): RunInfo {
   }
 }
 
-/** Open a run: staging checked out (on a branch for maintain), the app up, the brief and the prompt written. */
-export async function prepare(repo: string, kind: Kind, out: Out, now = new Date()): Promise<Prepared> {
+/** Pure: the feature's recipe needs fresh seed data (a reset or seed step), which a deployed environment can't give. */
+export const needsSeed = (f: Pick<Feature, "text">): boolean => {
+  const drive = /## Driving it with kitchen qa([\s\S]*?)(\n## |$)/.exec(f.text)?.[1] ?? "";
+  return /kitchen qa reset|app\.reset|\bseed(ed)?\b/i.test(drive);
+};
+
+/**
+ * Open a run: staging checked out (on a branch for maintain), the app up, the brief and the prompt written. `url`
+ * (sweep only): drive that deployed environment instead; nothing starts locally.
+ */
+export async function prepare(repo: string, kind: Kind, out: Out, now = new Date(), o: { url?: string } = {}): Promise<Prepared> {
+  if (o.url !== undefined) {
+    if (kind !== "sweep") throw new Error("--url is for kitchen verify sweep: map upkeep drives staging's own app");
+    if (!/^https?:\/\/[^\s/]+/.test(o.url)) throw new Error(`--url takes an http(s) URL, got ${o.url}`);
+  }
   const cfg = loadConfig(repo);
   const onto = await stagingTip(repo, cfg);
   if (!onto) throw new Error(`there is no ${cfg.staging.branch} branch (kitchen init creates it)`);
@@ -55,11 +72,25 @@ export async function prepare(repo: string, kind: Kind, out: Out, now = new Date
   const map = readMap(wt);
   const ordered = sweepOrder(map.readme, map.features);
   const brief = path.join(dir, "brief.md");
-  const info: RunInfo = { kind, id, at: now.toISOString(), onto, ...(branch ? { branch } : {}), features: ordered.map((f) => f.id), brief };
+  const url = o.url?.replace(/\/$/, "");
+  const info: RunInfo = {
+    kind,
+    id,
+    at: now.toISOString(),
+    onto,
+    ...(branch ? { branch } : {}),
+    features: ordered.map((f) => f.id),
+    brief,
+    ...(url ? { url, seeded: ordered.filter(needsSeed).map((f) => f.id) } : {}),
+  };
   writeAtomic(runFile(repo, id), `${JSON.stringify(info, null, 2)}\n`);
   const lines: string[] = [];
-  const code = cfg.app.start ? await appUp(repo, id, (l) => lines.push(l), cfg) : 1;
-  const app = cfg.app.start ? (lines.find((l) => l.startsWith("app:")) ?? "app: ?") : "app: none configured (kitchen.yaml has no app.start)";
+  const code = url ? 0 : cfg.app.start ? await appUp(repo, id, (l) => lines.push(l), cfg) : 1;
+  const app = url
+    ? `app: the deployed environment at ${url} (nothing started locally)`
+    : cfg.app.start
+      ? (lines.find((l) => l.startsWith("app:")) ?? "app: ?")
+      : "app: none configured (kitchen.yaml has no app.start)";
   writeAtomic(brief, briefText(repo, cfg, info, wt, map, ordered, app, code === 0));
   const prompt = [
     `You are Kitchen's ${kind === "sweep" ? "sweep" : "map upkeep"} agent (run ${id}).`,
@@ -91,14 +122,34 @@ function briefText(
     `- Repository (main checkout, read-only for you): ${repo}`,
     `- Checkout to drive: ${wt}, ${cfg.staging.branch} at ${r.onto.slice(0, 12)}${r.branch ? ` on branch ${r.branch} (commit your map fixes here)` : " (detached; change nothing)"}`,
     `- Evidence folder: ${ev}/`,
-    `- The app: ${up ? `${app.replace(/^app: /, "")}. Kitchen started it; \`kitchen qa … ${r.id}\` drives it.` : `${app.replace(/^app: /, "")}. Start it with \`kitchen qa up ${r.id}\` when a feature needs it.`}`,
+    r.url
+      ? `- The app: the deployed environment at ${r.url}. Kitchen started nothing: \`kitchen qa page|http ${r.id} <path>\` drive ${r.url}; \`kitchen qa up|reset\` refuse. The checkout is only where the map is read: what is deployed may differ from it.`
+      : `- The app: ${up ? `${app.replace(/^app: /, "")}. Kitchen started it; \`kitchen qa … ${r.id}\` drives it.` : `${app.replace(/^app: /, "")}. Start it with \`kitchen qa up ${r.id}\` when a feature needs it.`}`,
     `- The verify skill: ${map.name ? `${wt}/.claude/skills/${map.name}/SKILL.md` : "none on staging yet"}`,
     `- Your output: ${r.kind === "sweep" ? `verdict.json in ${ev}/` : `report.json in ${ev}/, and your map fixes committed on ${r.branch}`}`,
     "",
-    "Use `kitchen qa up|down|reset|page|http` with the run id in place of a job id. Evidence lands in the evidence folder.",
+    r.url
+      ? `Use \`kitchen qa page|http\` with the run id in place of a job id. Evidence lands in the evidence folder.`
+      : "Use `kitchen qa up|down|reset|page|http` with the run id in place of a job id. Evidence lands in the evidence folder.",
     "",
+    r.url ? deployedSection(r) : "",
     allFeaturesSection(map, ordered),
     role,
+  ].join("\n");
+}
+
+/** A `--url` sweep's rules: drive the deployed URL, and which features to report as not run. */
+function deployedSection(r: RunInfo): string {
+  const seeded = r.seeded ?? [];
+  return [
+    `## Against a deployed environment (${r.url})`,
+    "",
+    `This sweep drives ${r.url}, not an app Kitchen started. Change nothing there beyond what a recipe's steps do as a user would.`,
+    "",
+    seeded.length
+      ? `These features' recipes need a reset or fresh seed data, which a deployed environment can't give: don't drive them. Give each a row \`{ "id": "<feature>", "result": "NOT_RUN", "evidence": [], "note": "not run: needs a fresh seed" }\`: ${seeded.join(", ")}.`
+      : "No feature's recipe needs a reset or seed: drive them all.",
+    "",
   ].join("\n");
 }
 
@@ -120,7 +171,7 @@ function reportHtml(title: string, sub: string, rows: { id: string; result: stri
   const tr = rows
     .map(
       (x) =>
-        `<tr><td>${esc(x.id)}</td><td class="${x.result === "PASS" ? "ok" : "bad"}">${esc(x.result)}</td><td>${esc(x.note)}<br><small>${x.evidence.map((e) => `<a href="evidence/${encodeURIComponent(e)}">${esc(e)}</a>`).join(" · ")}</small></td></tr>`,
+        `<tr><td>${esc(x.id)}</td><td class="${x.result === "PASS" ? "ok" : x.result === "NOT_RUN" ? "st" : "bad"}">${esc(x.result.replace("_", " "))}</td><td>${esc(x.note)}<br><small>${x.evidence.map((e) => `<a href="evidence/${encodeURIComponent(e)}">${esc(e)}</a>`).join(" · ")}</small></td></tr>`,
     )
     .join("\n");
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(title)}</title>
@@ -134,7 +185,7 @@ td{border-top:1px solid var(--line);padding:8px 6px;vertical-align:top}table{wid
 
 async function finishSweep(repo: string, r: RunInfo, out: Out): Promise<number> {
   const ev = runEvidence(repo, r.id);
-  const v = readFeatureVerdict(ev, r.features);
+  const v = readFeatureVerdict(ev, r.features, { notRun: r.url ? (r.seeded ?? []) : [] });
   if ("refused" in v) {
     out(`refused: ${v.refused} (the agent fixes its verdict.json; then kitchen verify finish ${r.id} again)`);
     return 1;
@@ -144,14 +195,17 @@ async function finishSweep(repo: string, r: RunInfo, out: Out): Promise<number> 
     file,
     reportHtml(
       `Sweep ${r.id}: ${v.verdict}`,
-      `Every feature of the verify map, in sweep order, against staging at ${r.onto.slice(0, 12)}. Nothing was changed.`,
+      r.url
+        ? `Every feature of the verify map (staging at ${r.onto.slice(0, 12)}), in sweep order, against the deployed environment at ${r.url}. Nothing was changed.`
+        : `Every feature of the verify map, in sweep order, against staging at ${r.onto.slice(0, 12)}. Nothing was changed.`,
       v.features,
     ),
   );
   await dropCheckout(repo, r.id);
   for (const f of v.features) out(`${f.result.padEnd(4)}  ${f.id}: ${f.note}`);
+  const notRun = v.features.filter((f) => f.result === "NOT_RUN").length;
   out(
-    `sweep ${r.id}: ${v.verdict} (${v.features.filter((f) => f.result === "PASS").length} of ${v.features.length} features) · report ${path.relative(repo, file)}`,
+    `sweep ${r.id}: ${v.verdict} (${v.features.filter((f) => f.result === "PASS").length} of ${v.features.length} features${notRun ? `, ${notRun} not run: need a fresh seed` : ""})${r.url ? ` against ${r.url}` : ""} · report ${path.relative(repo, file)}`,
   );
   return 0;
 }

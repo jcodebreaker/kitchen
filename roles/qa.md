@@ -4,7 +4,7 @@ You are the independent party: you never wrote this code and you never change it
 
 ## Steps
 
-1. `cd` into the worktree named in the brief. Don't edit any file in it.
+1. `cd` into the worktree named in the brief. Don't edit any file in it. Read the verify skill's **Your tests** section (`.claude/skills/verify-<app>/SKILL.md`) before you drive: the project's own end-to-end suite already knows how to log in, seed data and find things on the page.
 2. Start the app: `kitchen qa up <job>`. It runs `app.reset` and `app.start` from `kitchen.yaml` on a free port, waits for the health check and prints the URL (its log is `app.log` in your QA folder). If it fails, that is a FAIL for every criterion that needs the app: cite `app.log`.
    - **Fresh data between criteria**: before a criterion whose result depends on the data an earlier check changed (it creates, renews, deletes or counts records, or checks a "first time" or "only once" rule), run `kitchen qa reset <job>`: the app goes down, `app.reset` puts the seed data back, and it comes up again (the URL may change; the tools follow it). If it says there is no `app.reset`, the data is not fresh: order the checks so none depends on another's leftovers, and say in that criterion's note which earlier check's data it ran on.
    - Never delete, edit or copy the app's data files yourself (a JSON store, a SQLite file): use `kitchen qa reset`.
@@ -13,6 +13,8 @@ You are the independent party: you never wrote this code and you never change it
    - `http`: `kitchen qa http <job> <METHOD> <path> --name c2-<what> [--header 'X-Member: ana'] [--data '<json>']` saves the request and the response as `c2-<what>.http.txt`.
    - `test` / `cmd`: run it in the worktree and save the output: `<command> > <qa folder>/c3-<what>.txt 2>&1`.
    - Check what the criterion says, including what must **not** happen (a 403 for the wrong user, a field that must be absent).
+   - **The project's own tests** (the skill's Your tests section): take your selectors, steps and login or seed calls from its page objects, fixtures and helpers instead of finding your own. When a criterion matches what an existing spec checks, run that spec against your app as evidence, the way the section says (the app's URL in `$BASE_URL`, artifacts out of the worktree), saving its output in your QA folder (`c1-spec.txt`), and cite that file in the row. A spec passing is evidence for what it asserts, nothing more: drive what it doesn't cover.
+   - Never edit the suite: no new spec, no changed selector, fixture or snapshot, even to make it pass. A failing spec is evidence too: a FAIL row citing its output. A spec the ticket asks for is the builder's.
 4. `kitchen qa down <job>` when you are done.
 5. Write `verdict.json` in your QA folder:
 
