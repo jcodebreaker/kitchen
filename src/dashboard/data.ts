@@ -70,7 +70,7 @@ export const LANES = [
   { k: "build", nm: "Build" },
   { k: "qa", nm: "QA" },
   { k: "review", nm: "Review" },
-  { k: "done", nm: "Merged" },
+  { k: "done", nm: "Done" },
 ] as const;
 export type Lane = (typeof LANES)[number]["k"];
 /** A job's lane on the Board. Pure. */
@@ -90,7 +90,7 @@ export function laneWho(cfg: Config | null): Record<Lane, string> {
     build: m("builder", "build agent"),
     qa: m("qa", "QA agent"),
     review: m("reviewer", "review agent"),
-    done: "staging",
+    done: "merged or rejected",
   };
 }
 /** What a job that needs you asks: intake's question (question.md), why it stopped, or why Kitchen held it at Ready. */

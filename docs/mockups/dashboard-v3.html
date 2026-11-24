@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kitchen Dashboard v3 (mock-up)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#fcfcfd; --side:#f5f5f7; --band:#f3f3f5; --hover:#f0f0f3; --line:#ebebef; --line2:#dcdce2;
+  --fg:#1d1d20; --mute:#6b6b76; --faint:#9e9ea8;
+  --prog:#5e6ad2; --done:#8b9a8f; --gone:#b4b4bc; --brand:#5e6ad2; --fail:#eb5757;
+  --act:#f2994a; --act-bg:#fef3ea; --act-line:#f6c9a3;
+  --panel:#ffffff; --shadow:0 4px 24px rgba(0,0,0,.08);
+  --mono:"SF Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#191a1f; --side:#15161a; --band:#202127; --hover:#24252c; --line:#26272e; --line2:#33343c;
+  --fg:#e6e6ea; --mute:#8f909a; --faint:#62636c; --panel:#1d1e23; --shadow:0 4px 30px rgba(0,0,0,.5);
+  --act-bg:#33241a; --act-line:#5c3f27; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#191a1f; --side:#15161a; --band:#202127; --hover:#24252c; --line:#26272e; --line2:#33343c;
+  --fg:#e6e6ea; --mute:#8f909a; --faint:#62636c; --panel:#1d1e23; --shadow:0 4px 30px rgba(0,0,0,.5);
+  --act-bg:#33241a; --act-line:#5c3f27; color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--side);color:var(--fg);font:13px/1.45 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;cursor:pointer;background:none;border:0;padding:0}
+.mono{font-family:var(--mono);font-size:12px}
+.app{display:grid;grid-template-columns:220px 1fr;min-height:100vh}
+
+/* sidebar */
+.side{padding:12px 10px;display:flex;flex-direction:column;gap:2px}
+.ws{display:flex;align-items:center;gap:8px;padding:6px 8px 14px;font-weight:600}
+.ws .logo{width:20px;height:20px;border-radius:5px;background:var(--fg);color:var(--bg);display:grid;place-items:center;font-size:11px;font-weight:700}
+.nav{display:flex;align-items:center;gap:9px;padding:5px 8px;border-radius:6px;color:var(--mute);width:100%;text-align:left}
+.nav:hover{background:var(--hover);color:var(--fg)}
+.nav.on{background:var(--hover);color:var(--fg);font-weight:500}
+.nav .c{margin-left:auto;font-size:11.5px;color:var(--faint)}
+.nav .c.act{color:var(--act);font-weight:600}
+.side .lbl{font-size:11.5px;color:var(--faint);padding:14px 8px 4px}
+.side .foot{margin-top:auto;padding:8px;color:var(--faint);font-size:11.5px;display:flex;gap:12px}
+.side .foot a{cursor:pointer;text-decoration:underline}
+
+/* main */
+.main{background:var(--bg);border-left:1px solid var(--line);min-width:0;display:flex;flex-direction:column}
+
+.row .ttl{font-size:13.5px}
+.live{font-size:12.5px}
+.top{display:flex;align-items:center;gap:10px;height:44px;padding:0 max(16px,env(safe-area-inset-right,0px)) 0 20px;border-bottom:1px solid var(--line)}
+.top .crumb{color:var(--mute)} .top .crumb b{color:var(--fg);font-weight:500}
+.top .sp{flex:1}
+.top .cost{color:var(--mute)}
+.btn{border:1px solid var(--line2);border-radius:6px;padding:4px 10px;font-size:12.5px;font-weight:500;background:var(--panel)}
+.btn:hover{background:var(--hover)}
+.btn.pri{background:var(--brand);border-color:var(--brand);color:#fff}
+.btn.act{background:var(--act);border-color:var(--act);color:#fff}
+.btn.sel{background:var(--fg);border-color:var(--fg);color:var(--bg)}
+
+.group{border-bottom:1px solid var(--line)}
+.ghead{display:flex;align-items:center;gap:8px;height:38px;padding:0 24px;margin-top:0;background:var(--band);font-weight:500;position:sticky;top:0;z-index:1}
+.ghead .n{color:var(--faint);font-weight:400}
+.ghead.act{background:var(--act-bg)}
+.row{display:grid;grid-template-columns:18px 52px minmax(0,1fr) auto 56px;align-items:center;gap:12px;height:46px;padding:0 24px;border-top:1px solid var(--line);width:100%;text-align:left}
+.group .row:first-of-type{border-top:0}
+.row:hover{background:var(--hover)}
+.row.sel{background:var(--hover)}
+.row .id{color:var(--faint)}
+.row .ttl{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .ttl small{color:var(--faint);font-size:12.5px;margin-left:6px}
+.row .t{text-align:right;color:var(--faint)}
+.live{display:flex;align-items:center;gap:7px;max-width:340px;color:var(--mute);min-width:0}
+.live span:last-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.live .stg{color:var(--faint)}
+.pulse{width:6px;height:6px;border-radius:50%;background:var(--prog);flex:none;animation:pulse 1.4s infinite}
+@keyframes pulse{50%{opacity:.3}}
+.chg{animation:chg 1.5s}
+@keyframes chg{0%{background:var(--act-bg)}}
+.ask{padding:4px 24px 16px 106px;display:none}
+.ask.on{display:block}
+.ask p{margin:0 0 8px;color:var(--mute);max-width:640px}
+.ask .r{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.ask input{flex:1;min-width:200px;max-width:520px;border:1px solid var(--line2);background:var(--panel);color:var(--fg);border-radius:6px;padding:6px 10px;font:inherit}
+.ask .q{display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
+.ask .q b{font-weight:500;min-width:84px}
+.tag{font-size:11px;border:1px solid var(--line2);border-radius:10px;padding:0 6px;color:var(--faint);margin-left:6px}
+
+/* peek */
+.peek{position:fixed;top:8px;right:8px;bottom:8px;width:min(520px,calc(100% - 16px));background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);transform:translateX(110%);transition:transform .2s ease;overflow-y:auto;z-index:5}
+.peek.on{transform:none}
+.ph{display:flex;align-items:center;gap:8px;height:44px;padding:0 14px;border-bottom:1px solid var(--line);color:var(--mute);position:sticky;top:0;background:var(--panel);z-index:1}
+.ph .x{margin-left:auto;width:26px;height:26px;border-radius:6px;color:var(--mute)} .ph .x:hover{background:var(--hover)}
+.pb{padding:18px 20px 30px}
+.pb h1{font-size:19px;font-weight:600;letter-spacing:-.01em;margin:0 0 10px;line-height:1.3;text-wrap:balance}
+.props{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
+.prop{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:6px;padding:2px 8px;color:var(--mute);font-size:12px}
+.sh{font-size:12px;font-weight:500;color:var(--mute);margin:24px 0 8px;display:flex;align-items:center}
+.sh .n{margin-left:auto;color:var(--faint);font-weight:400}
+.steps{display:flex;flex-direction:column}
+.step{display:grid;grid-template-columns:18px 1fr auto;gap:10px;align-items:center;padding:7px 0;position:relative}
+.step:not(:last-child)::after{content:"";position:absolute;left:8.5px;top:27px;bottom:-7px;width:1px;background:var(--line2)}
+.step .nm{font-weight:500} .step .nm small{color:var(--faint);font-weight:400;margin-left:6px}
+.step .st{color:var(--faint);font-size:12px}
+.step .sum{grid-column:2/4;color:var(--mute);font-size:12.5px;margin-top:-4px}
+.step.cur .nm{color:var(--fg)}
+.feed{grid-column:2/4;border:1px solid var(--line);border-radius:8px;margin:4px 0 4px;overflow:hidden}
+.ev{display:grid;grid-template-columns:54px 1fr 54px;gap:8px;padding:6px 10px;border-top:1px solid var(--line);align-items:baseline}
+.ev:first-child{border-top:0}
+.ev .k{font-size:11px;color:var(--faint)}
+.ev .k.res{color:#3f9a5c} .ev .k.think{color:var(--mute)}
+.ev .w{font-family:var(--mono);font-size:11.5px;overflow-wrap:anywhere}
+.ev .at{font-family:var(--mono);font-size:11px;color:var(--faint);text-align:right}
+.ev.new{animation:chg 1.2s}
+.crit{display:grid;grid-template-columns:18px 1fr;gap:4px 10px;padding:8px 0;border-top:1px solid var(--line)}
+.crit:first-of-type{border-top:0}
+.crit .e{grid-column:2;color:var(--faint);font-size:12px}
+.crit .e a{cursor:pointer;text-decoration:underline}
+.proof{grid-column:2;display:none;background:var(--band);border-radius:6px;padding:7px 9px;font-family:var(--mono);font-size:11.5px}
+.proof.on{display:block}
+.callout{border:1px solid var(--act-line);background:var(--act-bg);border-radius:8px;padding:12px 14px;margin-top:16px}
+.callout p{margin:0 0 10px}
+.callout textarea{width:100%;min-height:60px;border:1px solid var(--act-line);border-radius:6px;background:var(--panel);color:var(--fg);font:inherit;padding:7px 9px;resize:vertical}
+.callout .r{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+
+@media (max-width:820px){
+  .app{grid-template-columns:1fr}.side{display:none}
+  .row{grid-template-columns:18px 40px minmax(0,1fr) 48px;height:auto;min-height:42px;padding:8px 16px}
+  .row .live,.row .actcell{grid-column:3/5;grid-row:2;max-width:none}
+  .row .ttl{white-space:normal}
+  .ask{padding:2px 16px 14px 16px}
+  .top{padding:0 16px}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <nav class="side">
+    <div class="ws"><span class="logo">K</span>kitchen-dog</div>
+    <button class="nav on" onclick="jump('g-you')">◉&nbsp; Needs you <span class="c act" id="sYou">2</span></button>
+    <button class="nav" onclick="jump('g-run')">◐&nbsp; Running <span class="c" id="sRun">3</span></button>
+    <button class="nav" onclick="jump('g-done')">✓&nbsp; Done <span class="c" id="sDone">3</span></button>
+    <div class="lbl">Project</div>
+    <button class="nav" onclick="openSetup()">⚙&nbsp; Setup <span class="c" id="sSetup">step 6/9</span></button>
+    <button class="nav">▤&nbsp; Toolkit <span class="c">proven</span></button>
+    <button class="nav">$&nbsp; Cost <span class="c" id="sCost">$3.48</span></button>
+    <div class="foot"><a onclick="toggleTheme()">theme</a><a id="pz" onclick="paused=!paused;this.textContent=paused?'resume':'pause'">pause</a></div>
+  </nav>
+  <main class="main">
+    <div class="top"><span class="crumb">kitchen-dog › <b>Jobs</b></span><span class="sp"></span><span class="cost mono" id="tCost"></span><button class="btn pri" onclick="newTicket()">New ticket</button></div>
+    <div id="list"></div>
+    <div style="padding:14px 20px;color:var(--faint);font-size:12px">Mock-up · 001–006 are real kitchen-dog runs · 007 and Setup are examples · activity is replayed</div>
+  </main>
+</div>
+<aside class="peek" id="peek"></aside>
+
+<script>
+const STAGES=[{k:"intake",nm:"Intake",who:"sonnet"},{k:"build",nm:"Build",who:"sonnet"},{k:"gate",nm:"Gate",who:"engine"},{k:"verify",nm:"Verify",who:"verifier"},{k:"review",nm:"Review",who:"opus"},{k:"ready",nm:"Report",who:"engine"}];
+const ORDER=STAGES.map(s=>s.k);
+const FEEDS={
+  intake:[["think","Ticket names a command; check how it is wired"],["tool","Read src/cli/commands.ts"],["tool","Bash kitchen --help"],["think","Write 3 criteria, one negative"],["tool","Write criteria.md"]],
+  build:[["think","Round 1 failed C2 — read the verdict first"],["tool","Read rounds/1/verdict.md"],["tool","Read src/cli/status.ts"],["tool","Edit src/cli/status.ts +12 −3"],["tool","Bash npm test -- status"],["res","14 tests pass"],["tool","Bash git commit"]],
+  gate:[["tool","Bash npm run typecheck"],["tool","Bash npm run lint"],["res","checks pass"]],
+  verify:[["tool","toolkit up --id {id}"],["tool","drive: kitchen status (no jobs)"],["res","C1 pass · e7"],["tool","drive: kitchen status (3 jobs)"],["res","C2 pass · e9"],["tool","toolkit down"]],
+  review:[["tool","Read diff · 3 files +41 −8"],["think","Rejected jobs counted as done?"],["tool","Read src/cli/status.ts:88"],["res","no finding"]],
+  ready:[["tool","Write report.html"],["res","report ready"]],
+};
+let jobs=[
+ {id:"006",kind:"bug",title:"kitchen version (no dashes) should print the same version as --version",stage:"intake",round:1,cost:.31,secs:478,you:true,
+  q:"Couldn't reproduce after 2 tries — `kitchen version` already prints 0.0.0. What exactly do you run, and what do you see?",suggest:"Inside a project folder it prints the help text",hist:{intake:["you","7m 58s","Repro failed twice"]},crit:[]},
+ {id:"005",kind:"feature",title:"kitchen status should end with one summary line after the job rows",stage:"build",round:2,cost:.41,secs:202,
+  hist:{intake:["ok","42s","3 criteria"],gate:["ok","8s",""],verify:["bad","1m 05s","Round 1: C2 and C3 failed — exit 1 with no jobs"]},
+  crit:[["ok","With the seed jobs, the last line is a summary with job, done and needs-you counts.","e7 · 6 jobs · 3 done · 1 needs you"],["bad","With no jobs, it prints \"no jobs.\"","e9 · exit 1: Cannot read properties of undefined"],["bad","With no jobs, no summary line.","e10 · not reached"]]},
+ {id:"007",kind:"example",title:"Dashboard: the needs-you banner should name each waiting job",stage:"verify",round:1,cost:.81,secs:157,
+  hist:{intake:["ok","51s",""],build:["ok","1m 22s","2 files"],gate:["ok","9s",""]},crit:[["run","Banner lists every waiting job by id and title.",""],["wait","Nothing waiting → no banner.",""]]},
+ {id:"003",kind:"feature",title:"kitchen dismiss <job> with no finding id should list that job's findings",stage:"review",round:2,cost:.88,secs:200,
+  hist:{intake:["ok","38s",""],build:["ok","2m 10s","Round 2"],gate:["ok","7s",""],verify:["ok","48s","C1 C2 pass"]},crit:[["ok","Prints each open finding with its id.","e4 · F1 missing --json flag"],["ok","No findings → \"no open findings.\", exit 0.","e5 · exit 0"]]},
+ {id:"002",kind:"feature",title:"kitchen migrate --dry-run should exit 1 when it would change something",stage:"done",round:2,cost:.50,secs:136,hist:{review:["ok","21s","No findings"],ready:["ok","4s","report.html"]},crit:[["ok","Pending changes → exit 1.","e3"],["ok","Nothing to do → exit 0.","e4"]]},
+ {id:"004",kind:"feature",title:"kitchen status --json should print the jobs as one JSON array",stage:"done",round:1,cost:.33,secs:277,hist:{},crit:[["ok","Output parses as one JSON array.","e2"]]},
+ {id:"001",kind:"bug",title:"kitchen ticket with empty or whitespace-only text must refuse",stage:"rejected",round:1,cost:.23,secs:379,hist:{intake:["bad","6m 19s","Already refused on main — not a bug"]},crit:[]},
+];
+let setup={state:"you",step:6,q:[{label:"Host image",opts:["Engine only","Full host image · ~10 GB"],pick:null},{label:"Model",opts:["Mock model","Real key"],pick:null}]};
+let feeds={},ptr={},open=null,paused=false,expanded=new Set(),changed=new Set();
+const now=()=>new Date().toTimeString().slice(0,8);
+const fmt=s=>s>=60?Math.floor(s/60)+"m":s+"s";
+const fmtL=s=>s>=60?Math.floor(s/60)+"m "+String(s%60).padStart(2,"0")+"s":s+"s";
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+function push(j){const f=FEEDS[j.stage];if(!f)return;const[c,t]=f[ptr[j.id]%f.length];ptr[j.id]++;feeds[j.id].unshift({c,t:t.replace("{id}",j.id),at:now(),stage:j.stage,new:true});feeds[j.id]=feeds[j.id].slice(0,40)}
+jobs.forEach(j=>{feeds[j.id]=[];ptr[j.id]=0;if(!j.you&&j.stage!=="done"&&j.stage!=="rejected")for(let i=0;i<2;i++)push(j)});
+
+/* Linear-style status icon: ring filled by stage progress */
+function icon(j){
+  if(j.you||j==="setup") return `<svg width="16" height="16" viewBox="0 0 16 16"><rect x="1" y="1" width="14" height="14" rx="4" fill="var(--act)"/><rect x="7.2" y="4" width="1.6" height="5" rx=".8" fill="#fff"/><circle cx="8" cy="11.3" r="1" fill="#fff"/></svg>`;
+  if(j.stage==="done") return `<svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="var(--done)"/><path d="M5 8.2l2 2 4-4.2" stroke="#fff" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  if(j.stage==="rejected") return `<svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="var(--gone)"/><path d="M5.6 5.6l4.8 4.8M10.4 5.6l-4.8 4.8" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/></svg>`;
+  const frac=(ORDER.indexOf(j.stage)+.5)/ORDER.length; const r=3.2, c=2*Math.PI*r;
+  return `<svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5" fill="none" stroke="var(--prog)" stroke-width="1.5"/><circle cx="8" cy="8" r="${r}" fill="none" stroke="var(--prog)" stroke-width="${r*2}" stroke-dasharray="${c*frac} ${c}" transform="rotate(-90 8 8)"/></svg>`;
+}
+function stageName(j){return STAGES.find(s=>s.k===j.stage).nm}
+
+function render(){
+  const you=jobs.filter(j=>j.you), run=jobs.filter(j=>!j.you&&!["done","rejected"].includes(j.stage)), done=jobs.filter(j=>["done","rejected"].includes(j.stage));
+  const nYou=you.length+(setup.state==="you"?1:0);
+  let h="";
+  h+=`<section class="group" id="g-you"><div class="ghead ${nYou?"act":""}">${nYou?icon("setup"):"○"} Needs you <span class="n">${nYou}</span></div>`;
+  if(setup.state==="you"){
+    const ex=expanded.has("setup");
+    h+=`<button class="row" onclick="toggle('setup')">${icon("setup")}<span class="id mono">setup</span><span class="ttl">superchat-lite needs 2 answers to build its test kit<span class="tag">example</span></span><span class="actcell"><span class="btn act">${ex?"Close":"Answer"}</span></span><span class="t"></span></button>
+    <div class="ask ${ex?"on":""}">${setup.q.map((q,qi)=>`<div class="q"><b>${q.label}</b>${q.opts.map((o,oi)=>`<button class="btn ${q.pick===oi?"sel":""}" onclick="pick(${qi},${oi})">${o}</button>`).join("")}</div>`).join("")}<p style="font-size:12px">Disk has 22 GB free. Engine only + mock model is enough for most features.</p></div>`;
+  }
+  you.forEach(j=>{const ex=expanded.has(j.id);
+    h+=`<button class="row ${open===j.id?"sel":""}" onclick="toggle('${j.id}')">${icon(j)}<span class="id mono">${j.id}</span><span class="ttl">${esc(j.title)}</span><span class="actcell"><span class="btn act">${ex?"Close":"Answer"}</span></span><span class="t mono">${fmt(j.secs)}</span></button>
+    <div class="ask ${ex?"on":""}"><p>${esc(j.q)}</p><div class="r"><input id="in${j.id}" placeholder="Your answer…" onclick="event.stopPropagation()"><button class="btn" onclick="sug('${j.id}')">Suggest</button><button class="btn act" onclick="answer('${j.id}')">Send</button><button class="btn" onclick="reject('${j.id}')">Reject</button><button class="btn" onclick="openJob('${j.id}')">Details</button></div></div>`});
+  if(!nYou) h+=`<div class="row" style="color:var(--faint)"><span></span><span></span><span>Nothing needs you.</span></div>`;
+  h+=`</section>`;
+  h+=`<section class="group" id="g-run"><div class="ghead">${run[0]?icon(run[0]):"○"} Running <span class="n">${run.length+(setup.state==="run"?1:0)}</span></div>`;
+  if(setup.state==="run") h+=`<button class="row" onclick="openSetup()">${icon({stage:"verify"})}<span class="id mono">setup</span><span class="ttl">superchat-lite · building the test kit<span class="tag">example</span></span><span class="live"><span class="pulse"></span><span><span class="stg">step ${setup.step}/9 ·</span> ${["","","","","","","toolkit up --id _setup","doctor · 5 features","prove twice"][setup.step-1]||"working"}</span></span><span class="t"></span></button>`;
+  run.forEach(j=>{const f=feeds[j.id][0];
+    h+=`<button class="row ${open===j.id?"sel":""} ${changed.has(j.id)?"chg":""}" onclick="openJob('${j.id}')">${icon(j)}<span class="id mono">${j.id}</span><span class="ttl">${esc(j.title)}${j.kind==="example"?'<span class="tag">example</span>':""}</span><span class="live"><span class="pulse"></span><span><span class="stg">${stageName(j)}${j.round>1?" r"+j.round:""} ·</span> ${esc(f?f.t:"starting")}</span></span><span class="t mono">${fmt(j.secs)}</span></button>`});
+  h+=`</section>`;
+  h+=`<section class="group" id="g-done"><div class="ghead">${icon({stage:"done"})} Done <span class="n">${done.length}</span></div>`;
+  done.forEach(j=>{h+=`<button class="row ${open===j.id?"sel":""} ${changed.has(j.id)?"chg":""}" onclick="openJob('${j.id}')">${icon(j)}<span class="id mono">${j.id}</span><span class="ttl" style="${j.stage==="rejected"?"color:var(--faint)":""}">${esc(j.title)}</span><span class="live" style="color:var(--faint)">${j.stage==="rejected"?"rejected":"ready to merge"}</span><span class="t mono">$${j.cost.toFixed(2)}</span></button>`});
+  h+=`</section>`;
+  document.getElementById("list").innerHTML=h;
+  const cost="$"+jobs.reduce((a,j)=>a+j.cost,0).toFixed(2);
+  document.getElementById("tCost").textContent=cost+" today";document.getElementById("sCost").textContent=cost;
+  document.getElementById("sYou").textContent=nYou||"";document.getElementById("sRun").textContent=run.length;document.getElementById("sDone").textContent=done.length;
+  document.getElementById("sSetup").textContent=setup.state==="done"?"proven":"step "+setup.step+"/9";
+  changed.clear(); renderPeek();
+}
+
+function stepState(j,s,i){
+  const h=j.hist[s.k], idx=ORDER.indexOf(j.stage);
+  if(j.stage==="rejected") return h||["skip","",""];
+  if(j.stage==="done") return h||["ok","",""];
+  if(s.k===j.stage) return j.you?["you",fmtL(j.secs),h?h[2]:""]:["run","",""];
+  if(h&&i<idx) return h[0]==="bad"?["ok",h[1],h[2]]:h; // earlier failure was retried
+  if(h) return h;
+  return i<idx?["ok","",""]:["wait","",""];
+}
+function sIcon(st){
+  if(st==="ok") return icon({stage:"done"});
+  if(st==="bad") return `<svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="var(--fail)"/><path d="M5.6 5.6l4.8 4.8M10.4 5.6l-4.8 4.8" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/></svg>`;
+  if(st==="you") return icon("setup");
+  if(st==="run") return icon({stage:"verify"});
+  if(st==="skip") return icon({stage:"rejected"});
+  return `<svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5" fill="none" stroke="var(--line2)" stroke-width="1.5" stroke-dasharray="2 2"/></svg>`;
+}
+function renderPeek(){
+  const p=document.getElementById("peek");
+  if(!open){p.classList.remove("on");return}
+  p.classList.add("on");
+  if(open==="setup") return renderSetupPeek(p);
+  const j=jobs.find(x=>x.id===open);
+  const status=j.you?"Needs you":j.stage==="done"?"Ready to merge":j.stage==="rejected"?"Rejected":stageName(j)+" · running";
+  const steps=STAGES.map((s,i)=>{const[st,t,sum]=stepState(j,s,i);const fs=feeds[j.id].filter(f=>f.stage===s.k);
+    return `<div class="step ${st==="run"?"cur":""}">${sIcon(st)}<span class="nm">${s.nm}<small>${s.who}</small></span><span class="st mono">${st==="run"?"now":st==="wait"?"":t}</span>
+      ${sum?`<span class="sum">${esc(sum)}</span>`:""}
+      ${st==="run"&&fs.length?`<div class="feed">${fs.slice(0,6).map(f=>`<div class="ev ${f.new?"new":""}"><span class="k ${f.c}">${{tool:"Tool",think:"Reason",res:"Result"}[f.c]}</span><span class="w">${esc(f.t)}</span><span class="at">${f.at}</span></div>`).join("")}</div>`:""}</div>`}).join("");
+  const okN=j.crit.filter(c=>c[0]==="ok").length;
+  const crit=j.crit.length?j.crit.map((c,i)=>`<div class="crit">${sIcon(c[0]==="ok"?"ok":c[0]==="bad"?"bad":c[0]==="run"?"run":"wait")}<span>${esc(c[1])}</span>${c[2]?`<span class="e">evidence <a onclick="this.parentNode.nextElementSibling.classList.toggle('on')">${esc(c[2].split(" · ")[0])}</a></span><span class="proof">${esc(c[2])}</span>`:""}</div>`).join(""):`<div style="color:var(--faint)">No checks yet.</div>`;
+  p.innerHTML=`<div class="ph"><span class="mono">${j.id}</span><span>·</span><span>${j.kind}</span><button class="x" onclick="closePeek()">✕</button></div>
+  <div class="pb"><h1>${esc(j.title)}</h1>
+  <div class="props"><span class="prop">${icon(j)} ${status}</span><span class="prop">Round ${j.round}</span><span class="prop mono">${fmtL(j.secs)}</span><span class="prop mono">$${j.cost.toFixed(2)}</span>${j.stage==="done"?'<span class="prop">Report ↗</span>':""}</div>
+  ${j.you?`<div class="callout"><p>${esc(j.q)}</p><textarea id="pin${j.id}" placeholder="Your answer…"></textarea><div class="r"><button class="btn act" onclick="answer('${j.id}',1)">Send</button><button class="btn" onclick="document.getElementById('pin${j.id}').value=${JSON.stringify(j.suggest).replace(/"/g,"&quot;")}">Suggest</button><button class="btn" onclick="reject('${j.id}')">Reject</button></div></div>`:""}
+  <div class="sh">Steps</div><div class="steps">${steps}</div>
+  <div class="sh">Checks <span class="n">${j.crit.length?okN+" of "+j.crit.length+" pass":""}</span></div>${crit}</div>`;
+  feeds[j.id].forEach(f=>f.new=false);
+}
+function renderSetupPeek(p){
+  const names=["Survey the repo","Pick how to run it","Write the Toolkit","Bring it up","Doctor","Your answers","Build the test kit","Prove it twice","Merge kitchen/setup"];
+  const rows=names.map((n,i)=>{const st=setup.state==="done"||i<setup.step-1?"ok":i===setup.step-1?(setup.state==="you"?"you":"run"):"wait";return `<div class="step">${sIcon(st)}<span class="nm">${n}</span><span class="st">${st==="run"?"now":""}</span></div>`}).join("");
+  p.innerHTML=`<div class="ph"><span class="mono">setup</span><span>·</span><span>superchat-lite</span><span class="tag">example</span><button class="x" onclick="closePeek()">✕</button></div>
+  <div class="pb"><h1>Set up Kitchen for superchat-lite</h1><div class="props"><span class="prop">${setup.state==="you"?icon("setup")+" Needs you":setup.state==="done"?icon({stage:"done"})+" Proven":icon({stage:"verify"})+" Running"}</span><span class="prop">Docker Compose · mock LiteLLM · 5 features</span></div>
+  ${setup.state==="you"?`<div class="callout">${setup.q.map((q,qi)=>`<p><b>${q.label}</b></p><div class="r" style="margin:-4px 0 12px">${q.opts.map((o,oi)=>`<button class="btn ${q.pick===oi?"sel":""}" onclick="pick(${qi},${oi})">${o}</button>`).join("")}</div>`).join("")}</div>`:""}
+  <div class="sh">Steps</div><div class="steps">${rows}</div></div>`;
+}
+
+function toggle(id){expanded.has(id)?expanded.delete(id):expanded.add(id);render();const i=document.getElementById("in"+id);if(i)i.focus()}
+function sug(id){const j=jobs.find(x=>x.id===id);document.getElementById("in"+id).value=j.suggest}
+function openJob(id){open=id;render()}
+function openSetup(){open="setup";render()}
+function closePeek(){open=null;render()}
+function answer(id,fromPeek){const el=document.getElementById((fromPeek?"pin":"in")+id);if(!el||!el.value){if(el)el.placeholder="Type an answer first";return}
+  const j=jobs.find(x=>x.id===id);j.you=false;j.hist.intake=["ok","8m","You answered: “"+el.value+"”"];j.secs=0;expanded.delete(id);push(j);changed.add(id);render()}
+function reject(id){const j=jobs.find(x=>x.id===id);j.you=false;j.stage="rejected";j.hist.intake=["bad",fmtL(j.secs),"Rejected by you"];expanded.delete(id);changed.add(id);render()}
+function pick(qi,oi){setup.q[qi].pick=oi;if(setup.q.every(q=>q.pick!==null)){setup.state="run";setup.step=7;expanded.delete("setup")}render()}
+function newTicket(){const id=String(8+jobs.filter(j=>+j.id>=8).length).padStart(3,"0");jobs.splice(1,0,{id,kind:"example",title:"New ticket (example)",stage:"intake",round:1,cost:0,secs:0,hist:{},crit:[]});feeds[id]=[];ptr[id]=0;push(jobs[1]);changed.add(id);render()}
+function jump(id){document.getElementById(id).scrollIntoView({behavior:"smooth"})}
+function toggleTheme(){const r=document.documentElement;const dark=r.dataset.theme?r.dataset.theme==="dark":matchMedia("(prefers-color-scheme: dark)").matches;r.dataset.theme=dark?"light":"dark"}
+document.addEventListener("keydown",e=>{if(e.key==="Escape")closePeek()});
+
+let tick=0;
+setInterval(()=>{
+  if(paused)return;tick++;
+  jobs.forEach(j=>{
+    if(j.you||["done","rejected"].includes(j.stage))return;
+    j.secs+=2;j.cost+=.004;if(Math.random()<.55)push(j);
+    if(ptr[j.id]>=FEEDS[j.stage].length+2&&Math.random()<.3){
+      const i=ORDER.indexOf(j.stage);j.hist[j.stage]=["ok",fmtL(20+Math.floor(Math.random()*70)),""];
+      j.stage=i+1<ORDER.length?ORDER[i+1]:"done";ptr[j.id]=0;changed.add(j.id);if(j.stage!=="done")push(j);
+      if(j.stage==="review")j.crit.forEach(c=>{if(c[0]!=="ok"){c[0]="ok";c[2]="e"+(11+i)+" · pass"}});
+    }
+  });
+  if(setup.state==="run"&&tick%5===0){setup.step++;if(setup.step>9){setup.state="done";setup.step=9}}
+  render();
+},2000);
+render();
+</script>
+</body>
+</html>

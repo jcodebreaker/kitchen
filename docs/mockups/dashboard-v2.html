@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kitchen Dashboard v2 (mock-up)</title>
+<style>
+:root{
+  --bg:#f7f7f5; --panel:#ffffff; --sunk:#f1f1ee; --line:#e6e5e0; --line2:#d9d8d2;
+  --fg:#1c1c1a; --mute:#6f6e69; --faint:#a3a29c;
+  --run:#2f6fde; --run-bg:#eaf1fd;
+  --ok:#1f8a4c; --ok-bg:#e7f5ec;
+  --bad:#c93b2f; --bad-bg:#fcebe9;
+  --you:#b45309; --you-bg:#fdf3e4; --you-line:#f2d3a6;
+  --shadow:0 1px 2px rgba(20,20,10,.05),0 1px 0 rgba(20,20,10,.03);
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#131312; --panel:#1b1b1a; --sunk:#222220; --line:#2c2c29; --line2:#3a3a36;
+  --fg:#ececea; --mute:#9b9a94; --faint:#66655f;
+  --run:#6ea0ff; --run-bg:#1a2639; --ok:#4cc27e; --ok-bg:#16291e; --bad:#f0776b; --bad-bg:#33191a;
+  --you:#f0a94a; --you-bg:#2e2313; --you-line:#5a4220; --shadow:none; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#131312; --panel:#1b1b1a; --sunk:#222220; --line:#2c2c29; --line2:#3a3a36;
+  --fg:#ececea; --mute:#9b9a94; --faint:#66655f;
+  --run:#6ea0ff; --run-bg:#1a2639; --ok:#4cc27e; --ok-bg:#16291e; --bad:#f0776b; --bad-bg:#33191a;
+  --you:#f0a94a; --you-bg:#2e2313; --you-line:#5a4220; --shadow:none; color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Inter","Segoe UI",sans-serif}
+button{font:inherit;color:inherit;cursor:pointer}
+.mono{font-family:var(--mono);font-size:12.5px}
+.wrap{max-width:1280px;margin:0 auto;padding:20px max(16px,env(safe-area-inset-right,0px)) 40px max(16px,env(safe-area-inset-left,0px))}
+
+/* header */
+header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:22px}
+.logo{font-weight:650;font-size:17px;letter-spacing:-.01em}
+.repo{color:var(--mute)}
+.spacer{flex:1}
+.stat{display:flex;align-items:center;gap:6px;color:var(--mute);font-size:13px}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--faint);flex:none}
+.dot.run{background:var(--run);box-shadow:0 0 0 3px var(--run-bg);animation:pulse 1.6s infinite}
+.dot.you{background:var(--you)}
+.dot.ok{background:var(--ok)}
+.dot.bad{background:var(--bad)}
+@keyframes pulse{50%{box-shadow:0 0 0 5px transparent}}
+.btn{border:1px solid var(--line2);background:var(--panel);border-radius:7px;padding:5px 11px;font-size:13px;box-shadow:var(--shadow)}
+.btn:hover{border-color:var(--faint)}
+.btn.primary{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.btn.sel{background:var(--you);border-color:var(--you);color:#fff}
+
+/* needs you */
+h2{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--mute);margin:0 0 10px;display:flex;gap:8px;align-items:center}
+h2 .n{background:var(--you-bg);color:var(--you);border-radius:10px;padding:0 7px;font-size:11px}
+.inbox{background:var(--panel);border:1px solid var(--you-line);border-radius:10px;margin-bottom:26px;box-shadow:var(--shadow);overflow:hidden}
+.ask{display:grid;grid-template-columns:auto 1fr auto;gap:4px 14px;align-items:start;padding:14px 16px;border-top:1px solid var(--line)}
+.ask:first-child{border-top:0}
+.ask .tag{font-size:12px;color:var(--you);font-weight:600;white-space:nowrap;padding-top:1px}
+.ask .q{min-width:0}
+.ask .q b{font-weight:600}
+.ask .q p{margin:3px 0 0;color:var(--mute)}
+.ask .acts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.ask.done{opacity:.55}
+.ask .reply{grid-column:2/4;display:flex;gap:8px;margin-top:8px}
+.ask .reply input{flex:1;min-width:0;border:1px solid var(--line2);background:var(--bg);border-radius:7px;padding:6px 10px;font:inherit;color:var(--fg)}
+.empty-inbox{padding:14px 16px;color:var(--mute)}
+
+/* board */
+.board{display:grid;grid-template-columns:repeat(4,minmax(0,1fr)) 220px;gap:14px;align-items:start}
+.col{min-width:0}
+.colhead{display:flex;align-items:baseline;gap:8px;padding:0 4px 10px;border-bottom:1px solid var(--line);margin-bottom:10px}
+.colhead b{font-weight:600}
+.colhead span{color:var(--faint);font-size:12px}
+.colhead .c{margin-left:auto;color:var(--mute);font-size:12px}
+.cards{display:flex;flex-direction:column;gap:10px;min-height:60px}
+.none{color:var(--faint);padding:6px 4px;font-size:13px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 13px;box-shadow:var(--shadow);text-align:left;width:100%;display:flex;flex-direction:column;gap:9px;transition:border-color .15s,transform .15s}
+.card:hover{border-color:var(--line2);transform:translateY(-1px)}
+.card.you{border-color:var(--you-line)}
+.card.arrive{animation:arrive 1.2s}
+@keyframes arrive{0%{box-shadow:0 0 0 3px var(--run-bg);border-color:var(--run)}}
+.card .top{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--mute)}
+.card .top .kind{margin-left:auto}
+.card .title{font-weight:550;line-height:1.35}
+.now{display:flex;gap:8px;align-items:flex-start;background:var(--run-bg);border-radius:7px;padding:7px 9px;font-size:12.5px;min-width:0}
+.now .dot{margin-top:5px}
+.now .txt{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);font-size:12px}
+.now.wait{background:var(--you-bg);color:var(--you)}
+.prog{display:flex;gap:3px}
+.prog i{flex:1;height:4px;border-radius:2px;background:var(--line)}
+.prog i.ok{background:var(--ok)} .prog i.run{background:var(--run)} .prog i.bad{background:var(--bad)} .prog i.you{background:var(--you)}
+.meta{display:flex;gap:10px;font-size:12px;color:var(--mute)}
+.meta .r{margin-left:auto}
+.donecol .card{padding:10px 12px;gap:4px;box-shadow:none;background:transparent}
+.donecol .card .title{font-weight:500;font-size:13px}
+.donecol .card.rej .title{text-decoration:line-through;color:var(--mute)}
+.pill{font-size:11.5px;border-radius:5px;padding:1px 6px;font-weight:550}
+.pill.ok{background:var(--ok-bg);color:var(--ok)} .pill.bad{background:var(--bad-bg);color:var(--bad)}
+.pill.run{background:var(--run-bg);color:var(--run)} .pill.you{background:var(--you-bg);color:var(--you)} .pill.mute{background:var(--sunk);color:var(--mute)}
+
+footer{margin-top:34px;display:flex;gap:18px;flex-wrap:wrap;color:var(--faint);font-size:12px}
+footer a{color:var(--mute);cursor:pointer;text-decoration:underline}
+
+/* drawer */
+.scrim{position:fixed;inset:0;background:rgba(10,10,8,.28);opacity:0;pointer-events:none;transition:opacity .2s}
+.scrim.on{opacity:1;pointer-events:auto}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:min(560px,100%);background:var(--panel);border-left:1px solid var(--line);transform:translateX(100%);transition:transform .22s ease;overflow-y:auto;padding:22px max(22px,env(safe-area-inset-right,0px)) 40px 22px}
+.drawer.on{transform:none}
+.dh{display:flex;gap:10px;align-items:flex-start}
+.dh h3{margin:4px 0 6px;font-size:18px;line-height:1.3;letter-spacing:-.01em;text-wrap:balance}
+.dh .x{margin-left:auto;border:1px solid var(--line2);background:transparent;border-radius:7px;width:30px;height:30px;flex:none}
+.dmeta{display:flex;gap:8px;flex-wrap:wrap;align-items:center;color:var(--mute);font-size:13px;margin-bottom:22px}
+.sec{margin-top:24px}
+.steps{border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.step{border-top:1px solid var(--line)}
+.step:first-child{border-top:0}
+.srow{display:flex;align-items:center;gap:10px;padding:11px 14px;width:100%;background:none;border:0;text-align:left}
+.srow:hover{background:var(--sunk)}
+.ico{width:18px;height:18px;border-radius:50%;flex:none;display:grid;place-items:center;font-size:11px;font-weight:700;color:#fff;background:var(--line2)}
+.ico.ok{background:var(--ok)} .ico.bad{background:var(--bad)} .ico.you{background:var(--you)}
+.ico.run{background:transparent;border:2px solid var(--run);border-right-color:transparent;animation:spin 1s linear infinite}
+.ico.wait{background:transparent;border:1.5px dashed var(--line2)}
+.ico.skip{background:var(--sunk);color:var(--faint)}
+@keyframes spin{to{transform:rotate(360deg)}}
+.srow .nm{font-weight:550}
+.srow .who{color:var(--faint);font-size:12px}
+.srow .st{margin-left:auto;color:var(--mute);font-size:12.5px;white-space:nowrap}
+.srow .chev{color:var(--faint);width:10px;transition:transform .15s}
+.step.open .chev{transform:rotate(90deg)}
+.sbody{display:none;background:var(--sunk);padding:4px 14px 12px 42px}
+.step.open .sbody{display:block}
+.sbody .sum{color:var(--mute);font-size:13px;padding:8px 0}
+.feed{display:flex;flex-direction:column}
+.ev{display:grid;grid-template-columns:58px 1fr 58px;gap:8px;align-items:baseline;padding:5px 0;border-top:1px dashed var(--line)}
+.ev:first-child{border-top:0}
+.chip{font-size:11px;border-radius:4px;padding:1px 6px;justify-self:start;font-weight:550}
+.chip.tool{background:var(--you-bg);color:var(--you)} .chip.think{background:var(--run-bg);color:var(--run)} .chip.res{background:var(--ok-bg);color:var(--ok)} .chip.fail{background:var(--bad-bg);color:var(--bad)}
+.ev .what{min-width:0;font-family:var(--mono);font-size:12px;overflow-wrap:anywhere}
+.ev .t{color:var(--faint);font-size:11.5px;text-align:right;font-family:var(--mono)}
+.ev.new{animation:fade .6s}
+@keyframes fade{from{opacity:0;transform:translateY(-3px)}}
+.crit{display:grid;grid-template-columns:52px 1fr;align-items:start;gap:4px 12px;padding:11px 0;border-top:1px solid var(--line)}
+.crit:first-of-type{border-top:0}
+.crit .ev2{grid-column:2;color:var(--faint);font-size:12px}
+.crit .ev2 a{color:var(--mute);cursor:pointer;text-decoration:underline}
+.proof{grid-column:2;display:none;background:var(--sunk);border-radius:6px;padding:8px 10px;font-family:var(--mono);font-size:12px;white-space:pre-wrap;margin-top:4px}
+.proof.on{display:block}
+.youbox{background:var(--you-bg);border:1px solid var(--you-line);border-radius:10px;padding:14px}
+.youbox p{margin:0 0 10px}
+.youbox textarea{width:100%;min-height:64px;border:1px solid var(--you-line);border-radius:7px;background:var(--panel);color:var(--fg);font:inherit;padding:8px 10px;resize:vertical}
+.youbox .row{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+
+@media (max-width:980px){.board{grid-template-columns:repeat(2,minmax(0,1fr))}.donecol{grid-column:1/-1}}
+@media (max-width:560px){.board{grid-template-columns:1fr}.ask{grid-template-columns:1fr}.ask .acts{justify-content:flex-start}.ask .reply{grid-column:1}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">Kitchen</div>
+    <div class="repo mono">kitchen-dog · main</div>
+    <div class="spacer"></div>
+    <div class="stat"><span class="dot run"></span><span id="nRun">3 running</span></div>
+    <div class="stat"><span class="dot you"></span><span id="nYou">2 need you</span></div>
+    <div class="stat mono" id="cost">$4.29 today</div>
+    <button class="btn primary" onclick="newTicket()">New ticket</button>
+  </header>
+
+  <h2>Needs you <span class="n" id="inboxN">2</span></h2>
+  <div class="inbox" id="inbox"></div>
+
+  <div class="board" id="board"></div>
+
+  <footer>
+    <span>Mock-up. Jobs 001–006 are real kitchen-dog runs; 007 and Setup are examples; live activity is replayed.</span>
+    <span class="spacer"></span>
+    <a onclick="toggleTheme()">theme</a>
+    <a onclick="paused=!paused;this.textContent=paused?'resume':'pause'">pause</a>
+  </footer>
+</div>
+
+<div class="scrim" id="scrim" onclick="closeDrawer()"></div>
+<aside class="drawer" id="drawer" aria-label="Job detail"></aside>
+
+<script>
+const STAGES=[
+  {k:"intake",nm:"Intake",who:"sonnet"},
+  {k:"build",nm:"Build",who:"sonnet"},
+  {k:"gate",nm:"Gate",who:"engine"},
+  {k:"verify",nm:"Verify",who:"engine · verifier"},
+  {k:"review",nm:"Review",who:"opus"},
+  {k:"ready",nm:"Report",who:"engine"},
+];
+const COLS=[
+  {k:"intake",nm:"Intake",sub:"understand the ticket",stages:["intake"]},
+  {k:"build",nm:"Build",sub:"write the change",stages:["build","gate"]},
+  {k:"check",nm:"Check",sub:"prove it works",stages:["verify"]},
+  {k:"review",nm:"Review",sub:"second pair of eyes",stages:["review","ready"]},
+];
+const FEEDS={
+  intake:[["think","Ticket names a command; check how it is wired"],["tool","Read src/cli/commands.ts"],["tool","Bash kitchen --help"],["think","Write 3 criteria, one negative"],["tool","Write .kitchen/jobs/{id}/criteria.md"]],
+  build:[["think","Round 1 failed C2. Read the verdict first"],["tool","Read .kitchen/jobs/{id}/rounds/1/verdict.md"],["tool","Read src/cli/status.ts"],["tool","Edit src/cli/status.ts  +12 −3"],["tool","Bash npm test -- status"],["res","14 tests pass"],["tool","Bash git commit -m \"status: summary line\""]],
+  gate:[["tool","Bash npm run typecheck"],["tool","Bash npm run lint"],["res","checks pass"]],
+  verify:[["tool","toolkit up --id {id}"],["tool","drive kitchen status (no jobs)"],["res","C1 pass · evidence e7"],["tool","drive kitchen status (3 jobs)"],["res","C2 pass · evidence e9"],["tool","toolkit down --id {id}"]],
+  review:[["tool","Read diff (3 files, +41 −8)"],["think","Summary line counts done jobs twice when one is rejected?"],["tool","Read src/cli/status.ts:88"],["res","no finding: rejected is not counted as done"]],
+  ready:[["tool","Write report.html"],["res","report ready"]],
+};
+const now=()=>{const d=new Date();return d.toTimeString().slice(0,8)};
+
+let jobs=[
+ {id:"005",kind:"feature",risk:"low",title:"kitchen status should end with one summary line after the job rows",stage:"build",round:2,cost:.41,secs:202,
+  hist:{intake:["ok","42s","3 criteria written"],build:["run","",""],gate:["ok","8s","round 1 · typecheck and lint pass"],verify:["bad","1m 05s","round 1 · C2 and C3 failed: exit 1 with no jobs"]},
+  crit:[["ok","With the seed jobs, the last line of kitchen status is a summary with job, done and needs-you counts.","e7 · stdout: 6 jobs · 3 done · 1 needs you"],["bad","With no jobs, kitchen status prints \"no jobs.\"","e9 · got exit 1, stderr: Cannot read properties of undefined"],["bad","With no jobs, no summary line is printed.","e10 · not reached"]]},
+ {id:"007",kind:"example",risk:"medium",title:"Dashboard: the needs-you banner should name each waiting job",stage:"verify",round:1,cost:.81,secs:157,
+  hist:{intake:["ok","51s","3 criteria"],build:["ok","1m 22s","2 files changed"],gate:["ok","9s","pass"],verify:["run","",""]},
+  crit:[["run","The banner lists every job waiting on you by id and title.",""],["wait","With nothing waiting, no banner shows.",""],["wait","Clicking a name opens that job.",""]]},
+ {id:"003",kind:"feature",risk:"medium",title:"kitchen dismiss <job> with no finding id should list that job's findings",stage:"review",round:2,cost:.88,secs:200,
+  hist:{intake:["ok","38s","2 criteria"],build:["ok","2m 10s","round 2 · 1 file"],gate:["ok","7s","pass"],verify:["ok","48s","round 2 · C1 C2 pass"],review:["run","",""]},
+  crit:[["ok","kitchen dismiss 003 prints each open finding with its id.","e4 · stdout: F1 missing --json flag …"],["ok","With no findings, it prints \"no open findings.\" and exits 0.","e5 · exit 0"]]},
+ {id:"006",kind:"bug",risk:"low",title:"kitchen version (no dashes) should print the same version as --version",stage:"intake",round:1,cost:.31,secs:478,you:true,
+  q:"Could not reproduce after 2 tries: `kitchen version` already prints 0.0.0. What exactly do you run, and what do you see?",suggest:"I run it inside a project folder and it prints the help text instead",
+  hist:{intake:["you","7m 58s","repro failed twice — asked you"]},crit:[]},
+ {id:"002",kind:"feature",title:"kitchen migrate --dry-run should exit with code 1 when it would change something",stage:"done",cost:.50,secs:136,rounds:2,crit:[["ok","Dry run with pending changes exits 1.","e3"],["ok","Dry run with nothing to do exits 0.","e4"]],hist:{intake:["ok","40s",""],build:["ok","58s","round 2"],gate:["ok","6s",""],verify:["ok","31s",""],review:["ok","21s","no findings"],ready:["ok","4s","report.html"]}},
+ {id:"004",kind:"feature",title:"kitchen status --json should print the jobs as one JSON array",stage:"done",cost:.33,secs:277,rounds:1,crit:[["ok","Output parses as one JSON array.","e2"]],hist:{intake:["ok","35s",""],build:["ok","1m 40s",""],gate:["ok","7s",""],verify:["ok","1m 02s",""],review:["ok","50s","no findings"],ready:["ok","4s",""]}},
+ {id:"001",kind:"bug",title:"kitchen ticket with empty or whitespace-only text must refuse",stage:"rejected",cost:.23,secs:379,crit:[],hist:{intake:["bad","6m 19s","already refused on main — rejected as not a bug"]}},
+];
+let setup={q:[{k:"img",label:"Host image",opts:["Engine only","Full host image (~10 GB)"],pick:null,hint:"22 GB free; engine only is enough for most features"},{k:"model",label:"Model",opts:["Mock model","Real key"],pick:null,hint:"mock is free and deterministic"}],step:6,state:"you"};
+let feeds={}; let ptr={}; let open=null; let paused=false; let openSteps=new Set();
+jobs.forEach(j=>{feeds[j.id]=[];ptr[j.id]=0;if(j.stage!=="done"&&j.stage!=="rejected"&&!j.you){for(let i=0;i<3;i++)push(j)}});
+
+function push(j){
+  const f=FEEDS[j.stage]; if(!f) return;
+  const [c,t]=f[ptr[j.id]%f.length]; ptr[j.id]++;
+  feeds[j.id].unshift({c,t:t.replace("{id}",j.id),at:now(),stage:j.stage,new:true});
+  feeds[j.id]=feeds[j.id].slice(0,40);
+}
+const fmt=s=>s>=60?Math.floor(s/60)+"m "+String(s%60).padStart(2,"0")+"s":s+"s";
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const col=j=>COLS.find(c=>c.stages.includes(j.stage));
+function progress(j){
+  const idx=STAGES.findIndex(s=>s.k===j.stage);
+  return STAGES.map((s,i)=>{let c="";
+    if(j.stage==="done")c="ok";else if(j.you&&i===idx)c="you";else if(i<idx)c="ok";else if(i===idx)c="run";
+    if(j.hist[s.k]&&j.hist[s.k][0]==="bad"&&i!==idx&&j.stage!=="done")c=i<idx?"ok":c;
+    return `<i class="${c}" title="${s.nm}"></i>`}).join("");
+}
+function lastLine(j){const f=feeds[j.id][0];return f?f.t:"starting…"}
+
+function renderInbox(){
+  const items=[];
+  if(setup.state==="you") items.push(`<div class="ask"><span class="tag">Setup</span><div class="q"><b>superchat-lite needs 2 answers before Kitchen can build its test kit</b> <span class="pill mute">example</span>
+    ${setup.q.map((q,qi)=>`<p>${q.label}: ${q.opts.map((o,oi)=>`<button class="btn ${q.pick===oi?"sel":""}" style="margin:6px 4px 0 0" onclick="pickSetup(${qi},${oi})">${o}</button>`).join("")} <span style="color:var(--faint);font-size:12px">${q.hint}</span></p>`).join("")}
+    </div><div class="acts"><button class="btn" onclick="openSetup()">Details</button></div></div>`);
+  jobs.filter(j=>j.you).forEach(j=>items.push(`<div class="ask"><span class="tag">${j.id} · ${j.kind}</span><div class="q"><b>${esc(j.title)}</b><p>${esc(j.q)}</p></div>
+    <div class="acts"><button class="btn" onclick="openJob('${j.id}')">Open</button><button class="btn" onclick="reject('${j.id}')">Reject</button></div>
+    <div class="reply"><input id="r${j.id}" placeholder="Your answer…" value=""><button class="btn" onclick="document.getElementById('r${j.id}').value=${JSON.stringify(j.suggest).replace(/"/g,"&quot;")}">Suggest</button><button class="btn primary" onclick="answer('${j.id}')">Send</button></div></div>`));
+  document.getElementById("inbox").innerHTML=items.join("")||`<div class="empty-inbox">Nothing needs you. Kitchen will ask here when it does.</div>`;
+  document.getElementById("inboxN").textContent=items.length;
+  document.getElementById("inbox").style.borderColor=items.length?"":"var(--line)";
+  document.getElementById("nYou").textContent=items.length+" need"+(items.length===1?"s":"")+" you";
+}
+function card(j){
+  const live=!j.you;
+  return `<button class="card ${j.you?"you":""} ${j.arrive?"arrive":""}" onclick="openJob('${j.id}')">
+    <div class="top"><span class="mono">${j.id}</span><span>${STAGES.find(s=>s.k===j.stage).nm}${j.round>1?" · round "+j.round:""}</span><span class="kind">${j.kind==="example"?'<span class="pill mute">example</span>':j.kind}</span></div>
+    <div class="title">${esc(j.title)}</div>
+    ${live?`<div class="now"><span class="dot run"></span><span class="txt">${esc(lastLine(j))}</span></div>`:`<div class="now wait"><span class="dot you"></span><span>Waiting on your answer</span></div>`}
+    <div class="prog">${progress(j)}</div>
+    <div class="meta"><span>${j.risk} risk</span><span>$${j.cost.toFixed(2)}</span><span class="r mono">${fmt(j.secs)}</span></div>
+  </button>`;
+}
+function renderBoard(){
+  const html=COLS.map(c=>{const cs=jobs.filter(j=>c.stages.includes(j.stage));
+    return `<div class="col"><div class="colhead"><b>${c.nm}</b><span>${c.sub}</span><span class="c">${cs.length||""}</span></div><div class="cards">${cs.map(card).join("")||'<div class="none">—</div>'}</div></div>`}).join("");
+  const done=jobs.filter(j=>j.stage==="done"||j.stage==="rejected");
+  const dhtml=`<div class="col donecol"><div class="colhead"><b>Done</b><span>proven</span><span class="c">${done.length}</span></div><div class="cards">${done.map(j=>`<button class="card ${j.stage==="rejected"?"rej":""}" onclick="openJob('${j.id}')"><div class="top"><span class="mono">${j.id}</span>${j.stage==="rejected"?'<span class="pill bad">rejected</span>':'<span class="pill ok">ready to merge</span>'}</div><div class="title">${esc(j.title)}</div><div class="meta"><span>$${j.cost.toFixed(2)}</span><span class="r mono">${fmt(j.secs)}</span></div></button>`).join("")}</div></div>`;
+  document.getElementById("board").innerHTML=html+dhtml;
+  const run=jobs.filter(j=>!j.you&&j.stage!=="done"&&j.stage!=="rejected").length+(setup.state==="run"?1:0);
+  document.getElementById("nRun").textContent=run+" running";
+  document.getElementById("cost").textContent="$"+jobs.reduce((a,j)=>a+j.cost,0).toFixed(2)+" today";
+  jobs.forEach(j=>j.arrive=false);
+}
+
+function stepState(j,s,i){
+  const h=j.hist[s.k]; const idx=STAGES.findIndex(x=>x.k===j.stage);
+  if(j.stage==="rejected") return h?h:["skip","","not run"];
+  if(s.k===j.stage&&j.stage!=="done") return j.you?["you",fmt(j.secs),h?h[2]:""]:["run","","working now"];
+  if(h) return h;
+  if(j.stage==="done") return ["ok","",""];
+  return i<idx?["ok","",""]:["wait","",""];
+}
+function renderDrawer(){
+  if(!open){return}
+  const d=document.getElementById("drawer");
+  if(open==="setup"){renderSetupDrawer();return}
+  const j=jobs.find(x=>x.id===open);
+  const status=j.stage==="done"?'<span class="pill ok">ready to merge</span>':j.stage==="rejected"?'<span class="pill bad">rejected</span>':j.you?'<span class="pill you">needs you</span>':`<span class="pill run">${STAGES.find(s=>s.k===j.stage).nm.toLowerCase()} · running</span>`;
+  const ico={ok:"✓",bad:"✕",you:"!",run:"",wait:"",skip:"–"};
+  const steps=STAGES.map((s,i)=>{const [st,t,sum]=stepState(j,s,i);
+    const fs=feeds[j.id].filter(f=>f.stage===s.k);
+    const isOpen=openSteps.has(j.id+s.k)||(st==="run"&&!openSteps.has(j.id+s.k+"-closed"));
+    return `<div class="step ${isOpen?"open":""}"><button class="srow" onclick="toggleStep('${j.id}','${s.k}',${isOpen})"><span class="ico ${st}">${ico[st]||""}</span><span class="nm">${s.nm}</span><span class="who">${s.who}</span><span class="st">${st==="run"?"running…":st==="wait"?"waiting":st==="skip"?"skipped":(st==="bad"?"failed ":"")+t}</span><span class="chev">›</span></button>
+      <div class="sbody">${sum?`<div class="sum">${esc(sum)}</div>`:""}${fs.length?`<div class="feed">${fs.slice(0,8).map(f=>`<div class="ev ${f.new?"new":""}"><span class="chip ${f.c}">${{tool:"Tool",think:"Reason",res:"Result",fail:"Failed"}[f.c]}</span><span class="what">${esc(f.t)}</span><span class="t">${f.at}</span></div>`).join("")}</div>`:(sum?"":`<div class="sum">${st==="wait"?"Not started yet.":"No activity recorded."}</div>`)}</div></div>`}).join("");
+  const crit=j.crit.length?j.crit.map((c,i)=>`<div class="crit"><span class="pill ${c[0]==="ok"?"ok":c[0]==="bad"?"bad":c[0]==="run"?"run":"mute"}">${{ok:"pass",bad:"fail",run:"checking",wait:"pending"}[c[0]]}</span><span>C${i+1} ${esc(c[1])}</span>${c[2]?`<span class="ev2">evidence <a onclick="this.parentNode.nextElementSibling.classList.toggle('on')">${esc(c[2].split(" · ")[0])}</a></span><span class="proof">${esc(c[2])}</span>`:""}</div>`).join(""):`<div class="none">No criteria yet.</div>`;
+  const you=j.you?`<div class="sec"><h2>Your call</h2><div class="youbox"><p>${esc(j.q)}</p><textarea id="dr${j.id}" placeholder="Your answer…"></textarea><div class="row"><button class="btn primary" onclick="answer('${j.id}',true)">Send answer</button><button class="btn" onclick="document.getElementById('dr${j.id}').value=${JSON.stringify(j.suggest).replace(/"/g,"&quot;")}">Use suggestion</button><button class="btn" onclick="reject('${j.id}')">Reject ticket</button></div></div></div>`:"";
+  d.innerHTML=`<div class="dh"><div><div class="mono" style="color:var(--mute)">${j.id} · ${j.kind}${j.risk?" · "+j.risk+" risk":""}</div><h3>${esc(j.title)}</h3></div><button class="x" onclick="closeDrawer()" aria-label="Close">✕</button></div>
+    <div class="dmeta">${status}<span>·</span><span>round ${j.round||j.rounds||1}</span><span>·</span><span>$${j.cost.toFixed(2)}</span><span>·</span><span class="mono">${fmt(j.secs)}</span>${j.stage==="done"?'<span>·</span><a style="color:var(--fg);text-decoration:underline;cursor:pointer">open report ↗</a>':""}</div>
+    ${you}
+    <div class="sec"><h2>Steps</h2><div class="steps">${steps}</div></div>
+    <div class="sec"><h2>Checks</h2>${crit}</div>`;
+  feeds[j.id].forEach(f=>f.new=false);
+}
+function renderSetupDrawer(){
+  const d=document.getElementById("drawer");
+  const names=["Survey the repo","Pick how to run it","Write the Toolkit","Bring it up","Doctor","Your answers","Build the test kit","Prove it twice","Merge kitchen/setup"];
+  const rows=names.map((n,i)=>{const st=i<setup.step-1?"ok":i===setup.step-1?(setup.state==="you"?"you":setup.state==="done"?"ok":"run"):setup.state==="done"?"ok":"wait";
+    return `<div class="step"><div class="srow"><span class="ico ${st}">${st==="ok"?"✓":st==="you"?"!":""}</span><span class="nm">${n}</span><span class="st">${st==="run"?"running…":st==="wait"?"waiting":st==="you"?"needs you":"done"}</span></div></div>`}).join("");
+  d.innerHTML=`<div class="dh"><div><div class="mono" style="color:var(--mute)">setup · superchat-lite <span class="pill mute">example</span></div><h3>Set up Kitchen for this project</h3></div><button class="x" onclick="closeDrawer()">✕</button></div>
+  <div class="dmeta">${setup.state==="you"?'<span class="pill you">needs you</span>':setup.state==="done"?'<span class="pill ok">proven</span>':'<span class="pill run">running</span>'}<span>·</span><span>survey: Docker Compose stack, mock LiteLLM, 5 features found</span></div>
+  ${setup.state==="you"?`<div class="sec"><h2>Your call</h2><div class="youbox">${setup.q.map((q,qi)=>`<p><b>${q.label}</b> · <span style="color:var(--mute)">${q.hint}</span><br>${q.opts.map((o,oi)=>`<button class="btn ${q.pick===oi?"sel":""}" style="margin:6px 4px 0 0" onclick="pickSetup(${qi},${oi})">${o}</button>`).join("")}</p>`).join("")}</div></div>`:""}
+  <div class="sec"><h2>Steps</h2><div class="steps">${rows}</div></div>`;
+}
+
+function openJob(id){open=id;document.getElementById("drawer").classList.add("on");document.getElementById("scrim").classList.add("on");renderDrawer()}
+function openSetup(){openJob("setup")}
+function closeDrawer(){open=null;document.getElementById("drawer").classList.remove("on");document.getElementById("scrim").classList.remove("on")}
+function toggleStep(id,k,isOpen){if(isOpen){openSteps.delete(id+k);openSteps.add(id+k+"-closed")}else{openSteps.add(id+k);openSteps.delete(id+k+"-closed")}renderDrawer()}
+function answer(id,fromDrawer){const j=jobs.find(x=>x.id===id);const v=(document.getElementById((fromDrawer?"dr":"r")+id)||{}).value;if(!v){(document.getElementById((fromDrawer?"dr":"r")+id)||{}).placeholder="Type an answer first";return}
+  j.you=false;j.hist.intake=["ok","8m 02s","you answered: “"+v+"”"];j.stage="intake";j.secs=0;j.arrive=true;feeds[j.id]=[];push(j);renderAll()}
+function reject(id){const j=jobs.find(x=>x.id===id);j.you=false;j.stage="rejected";j.hist.intake=["bad",fmt(j.secs),"rejected by you"];renderAll()}
+function pickSetup(qi,oi){setup.q[qi].pick=oi;if(setup.q.every(q=>q.pick!==null)){setup.state="run";setup.step=7}renderAll()}
+function newTicket(){const id=String(8+jobs.filter(j=>+j.id>=8).length).padStart(3,"0");jobs.unshift({id,kind:"example",risk:"low",title:"New ticket from the button (example)",stage:"intake",round:1,cost:0,secs:0,hist:{},crit:[],arrive:true});feeds[id]=[];ptr[id]=0;push(jobs[0]);renderAll()}
+function toggleTheme(){const r=document.documentElement;const dark=r.dataset.theme?r.dataset.theme==="dark":matchMedia("(prefers-color-scheme: dark)").matches;r.dataset.theme=dark?"light":"dark"}
+function renderAll(){renderInbox();renderBoard();renderDrawer()}
+
+const ORDER=STAGES.map(s=>s.k);
+let tick=0;
+setInterval(()=>{
+  if(paused) return; tick++;
+  jobs.forEach(j=>{
+    if(j.you||j.stage==="done"||j.stage==="rejected") return;
+    j.secs+=2; j.cost+=.004;
+    if(Math.random()<.6) push(j);
+    const len=FEEDS[j.stage].length;
+    if(ptr[j.id]>=len+2&&Math.random()<.35){
+      const i=ORDER.indexOf(j.stage); j.hist[j.stage]=["ok",fmt(10+Math.floor(Math.random()*80)),FEEDS[j.stage][len-1][1].replace("{id}",j.id)];
+      j.stage=i+1<ORDER.length?ORDER[i+1]:"done"; ptr[j.id]=0; j.arrive=true;
+      if(j.stage!=="done") push(j);
+      j.crit.forEach(c=>{if(j.stage==="review"&&c[0]!=="ok"){c[0]="ok";c[2]=c[2]||"e"+(11+Math.floor(Math.random()*9))+" · pass"}});
+    }
+  });
+  if(setup.state==="run"&&tick%6===0){setup.step++;if(setup.step>9){setup.state="done";setup.step=9}}
+  renderAll();
+},2000);
+renderAll();
+</script>
+</body>
+</html>
