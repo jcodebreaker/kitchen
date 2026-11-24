@@ -21,6 +21,13 @@ Work
                                          starts (kitchen run --detach) when nothing works the queue, as after approve,
                                          feedback, resume and inbox run; --no-run files it only; --into: the branch it
                                          starts from and goes into (default staging; it must exist)
+  kitchen ticket --check "<what to check>"   a check (ADR 0028): QA tests staging as it is, nothing is built; "Checked
+                                         on staging · 4 of 4 pass", or each problem proposed in the inbox
+  kitchen ticket --check --every day|hour|2h… "<text>"   file that check on a timer (launchd / systemd);
+                                         --every off "<same text>" removes it; kitchen schedules lists them
+  kitchen schedules                      this repo's timers (checks, collect), each with how to remove it
+  kitchen promote <id>                   a job intake read as KEEP: no (verified, not merged): review, the merge
+                                         check, then the merge into its target (or its PR)
   kitchen run [--detach] [--max-usd n]   a headless orchestrator session works the queue (or /kitchen run in Claude Code)
   kitchen run --stop | --print           end it | print the exact command it runs
   kitchen status [--json] [--all]        one row per job (--all: the removed ones too)
@@ -87,7 +94,11 @@ kitchen --version · kitchen <command> --help · docs: README.md in the package`
 
 const COMMAND_HELP: Record<string, string> = {
   ticket:
-    'kitchen ticket "<what you want>" [--into <branch>] [--no-run]\n\nFiles a ticket for intake. When no orchestrator works the queue, Kitchen starts one (kitchen run --detach) and says so: "→ intake · Kitchen started"; when one does, it picks the ticket up ("· Kitchen is already working the queue"). approve, feedback, resume and inbox run do the same.\n  --no-run   file it only; kitchen run works the queue later\n  --into <branch>   the job\'s target (ADR 0026): its Build starts from that branch\'s tip and it merges into it, not staging. The branch must exist (on origin with forge github, else locally); Kitchen never creates it. With staging.merge: kitchen, the base branch, main and master are refused; with merge: pr any branch is fine, since a person merges the PR.',
+    'kitchen ticket "<what you want>" [--into <branch>] [--no-run] [--check] | ticket --check --every <when|off> "<text>"\n\nFiles a ticket for intake. When no orchestrator works the queue, Kitchen starts one (kitchen run --detach) and says so: "→ intake · Kitchen started"; when one does, it picks the ticket up ("· Kitchen is already working the queue"). approve, feedback, resume and inbox run do the same.\n  --no-run   file it only; kitchen run works the queue later\n  --into <branch>   the job\'s target (ADR 0026): its Build starts from that branch\'s tip and it merges into it, not staging. The branch must exist (on origin with forge github, else locally); Kitchen never creates it. With staging.merge: kitchen, the base branch, main and master are refused; with merge: pr any branch is fine, since a person merges the PR.\n  --check   a check (ADR 0028): intake is told the kind (KIND: check); QA tests the target\'s tip as it is (a check-<id> verify run), nothing is built or merged. Done says "Checked on staging · N of N pass", or "Found N problems" with each problem proposed in the inbox (kitchen inbox list; run one to file the fix).\n  --every <day|hour|2h|30m|…>   with --check: a launchd agent (macOS) or systemd user timer (Linux) files the same check on each tick (the log is .kitchen/checks.log). --every off with the same text removes it; kitchen schedules lists this repo\'s timers.',
+  promote:
+    'kitchen promote <id>\n\nA job intake read as KEEP: no (code built only to verify something now) ends at Done, "Verified · not merged", its branch kept. promote takes it the rest of the way: Review, the merge check when it touches mapped features, then the merge into its target, or a PR with staging.merge: pr (ADR 0026).',
+  schedules:
+    "kitchen schedules\n\nThis repo's timers (.kitchen/schedules.json): each check filed with kitchen ticket --check --every, and collect's, with the command that removes it.",
   run: "kitchen run [--detach] [--max-usd n] | run --stop | run --print\n\nStarts a headless Claude Code session that runs /kitchen run: it plans waves and spawns one agent per lane (intake, build, QA, review), moving jobs only through kitchen job verbs. One per repo.\n  --detach   in the background; the log is .kitchen/run.log\n  --max-usd  the session's spend cap (claude --max-budget-usd); default agent.max_usd in kitchen.yaml\n  --stop     end it (jobs keep their state)\n  --print    print the command and run nothing",
   status:
     "kitchen status [--json]\n\nThe orchestrator, then one row per job: id, title, stage (* while an agent works on it), round, when it last moved, the merge, the Report.",
@@ -169,7 +180,7 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
   const { INBOX_FLAGS } = await import("./inbox/cli.ts");
-  const f = parse(rest, ["repo", "to", "into", "port", "tool", "max-usd", "name", "script", "header", "data", "url", ...INBOX_FLAGS]);
+  const f = parse(rest, ["repo", "to", "into", "port", "tool", "max-usd", "name", "script", "header", "data", "url", "from-schedule", ...INBOX_FLAGS]);
   // Inside a job's worktree (.worktrees/<job>), the main checkout: that is where the jobs live.
   const repo = f.vals.repo?.[0] ? path.resolve(f.vals.repo[0]) : (await import("./cli/here.ts")).kitchenRepo(process.cwd());
   const v = (k: string) => f.vals[k]?.[0];
@@ -237,8 +248,24 @@ async function main(argv: string[]): Promise<number> {
       const s = await (await import("./dashboard/server.ts")).serveDashboard(repo, port, out, { private: priv });
       return s ? await new Promise<number>(() => {}) : 0;
     }
-    case "ticket":
-      return waking((o) => control.ticket(repo, f.pos.join(" ") || need(0, '"<text>"'), o, { into: v("into") }));
+    case "ticket": {
+      const check = f.flags.has("--check");
+      // ADR 0028 §5: a check filed on a timer (or, with off, no longer).
+      if (v("every") !== undefined) {
+        if (!check) throw new Error('--every files a check on a timer: kitchen ticket --check --every day "<what to check>"');
+        const { scheduleCheck } = await import("./inbox/schedule.ts");
+        for (const l of scheduleCheck(repo, import.meta.filename, f.pos.join(" "), v("every") as string, {}, v("into"))) out(l);
+        return 0;
+      }
+      // A schedule's tick says so (argvOf): the job records it was filed by its schedule, and how often.
+      const schedule = check ? v("from-schedule") : undefined;
+      return waking((o) => control.ticket(repo, f.pos.join(" ") || need(0, '"<text>"'), o, { into: v("into"), check, schedule }));
+    }
+    case "schedules":
+      for (const l of (await import("./inbox/schedule.ts")).schedulesLines(repo)) out(l);
+      return 0;
+    case "promote":
+      return waking((o) => control.promote(repo, need(0, "<id>"), o));
     case "run": {
       // `kitchen run` starts a paid session: a flag it doesn't know (a typo, `--status`) stops it instead.
       const odd = [...[...f.flags].filter((x) => !["--detach", "--stop", "--print", "--json"].includes(x)), ...f.pos];

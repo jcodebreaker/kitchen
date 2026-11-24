@@ -46,7 +46,14 @@ export function qaMapSection(
   qaFolder: string,
   changes: string[] = [],
   where: { skill: string; local: boolean } = { skill: map.name ? `.claude/skills/${map.name}` : "", local: false },
+  check = false,
 ): string {
+  // ADR 0028: a check has no branch: what QA keeps goes to the map itself when the check is done.
+  const lands = check
+    ? `Kitchen adds your files to the verify map when the check is done (${where.local ? "the map on this machine" : "committed into staging"}), so later merge checks and sweeps repeat them: write one only for a recipe worth repeating`
+    : where.local
+      ? "Kitchen saves your files to the map on this machine when QA passes"
+      : "Kitchen commits your files into the job branch when QA passes";
   if (!map.name)
     return `## The verify map\n\nStaging has no verify skill yet: Kitchen adds its skeleton with the first map update. Check the criteria as your role says, and write a feature file for each user-facing feature this job touches in \`${qaFolder}/map/\` (the contract is in your role).\n`;
   const hit = touchedFeatures(map.features, files);
@@ -72,7 +79,7 @@ export function qaMapSection(
     "",
     rest.length ? `### Other features (not touched; read one only if a criterion needs it)\n\n${index(rest)}` : "",
     "",
-    `**Map updates go in \`${qaFolder}/map/\`**: the whole new text of each feature file you add or change (\`<feature>.md\`); \`README.md\` only when the baseline or the conventions change. Never edit the skill in the worktree: ${where.local ? "Kitchen saves your files to the map on this machine when QA passes" : "Kitchen commits your files into the job branch when QA passes"}.`,
+    `**Map updates go in \`${qaFolder}/map/\`**: the whole new text of each feature file you add or change (\`<feature>.md\`); \`README.md\` only when the baseline or the conventions change. Never edit the skill in the worktree: ${lands}.`,
     "",
   ].join("\n");
 }

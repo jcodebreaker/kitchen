@@ -8,8 +8,9 @@ import { type Config, LANE_ROLES, loadConfig, modelFor, targetOf } from "../conf
 import { diffSize } from "../engine/git.ts";
 import { heartbeatFile, syncPrs } from "../engine/jobs.ts";
 import { criteriaOf, leftOutOf, readIntake, readQa, readReview } from "../engine/lanes.ts";
-import { BY_YOU_STOPPED, isActive, type Job, PR_OPEN_WORDS, pausedByYou, prOpen, type Stage } from "../engine/machine.ts";
+import { BY_YOU_STOPPED, isActive, isCheck, type Job, PR_OPEN_WORDS, pausedByYou, prOpen, promotable, type Stage } from "../engine/machine.ts";
 import { JOB_ID, jobDirOf, scanJobs } from "../engine/store.ts";
+import { type Kept, listKept } from "../inbox/schedule.ts";
 import { type LedgerLine, readLedger } from "../ledger/append.ts";
 import { liveRun } from "../run/orchestrator.ts";
 import { activityOf, type Ev } from "./activity.ts";
@@ -138,11 +139,11 @@ export function waitsOf(j: Job, dir: string): Waits | null {
 
 export type Crit = { id: string; text: string; st: "ok" | "bad" | "wait"; e: string };
 /** The job's criteria (intake's) with QA's latest results. */
-export function critOf(dir: string, round: number): Crit[] {
+export function critOf(dir: string, round: number, o: { check?: boolean } = {}): Crit[] {
   const crit = criteriaOf(dir);
   let rows: { id: string; result: string; note: string; evidence: string[] }[] = [];
   for (let r = round; r >= 1 && !rows.length; r--) {
-    const qa = readQa(dir, r, crit);
+    const qa = readQa(dir, r, crit, o);
     if ("criteria" in qa) rows = qa.criteria;
   }
   return crit.map((c) => {
@@ -253,12 +254,48 @@ export type JobCard = {
   from: string | null;
   /** ADR 0025 §4: the check command running now, since when, its log (in the job folder) and its last line; null between checks. */
   checking: { cmd: string; at: string; log: string; last: string } | null;
+  /**
+   * ADR 0028: a check ticket (`kind: "check"`): tested on its target's tip, never built. `result`: the words once done
+   * ("Checked on staging · 4 of 4 pass", "Found 2 problems"); `findings`: the problems found, and the inbox proposals
+   * they became; `explore`: minutes when it explores; `every`: how often a schedule files this same check ("day",
+   * "hour"; ADR 0028 §5, matched on the ticket's text), or null. Null for any other job.
+   */
+  check: { result: string | null; findings: number; proposals: string[]; explore: number | null; forced: boolean; every: string | null } | null;
+  /** ADR 0028 amendment: false for intake's `KEEP: no` (built to verify, not merged unless promoted); absent otherwise. */
+  keep?: false;
+  /** Verified and not merged: the words ("Verified · not merged"), or null. */
+  verified: string | null;
+  /** It can be promoted now (`kitchen promote`, the `promote` action): done, KEEP: no, not merged. */
+  promotable: boolean;
 };
+
+/** ADR 0028: a check's track is Intake → QA; a KEEP: no job's ends at QA (until it is promoted). */
+function phasesOf(j: Job, chk: boolean): { k: Phase; nm: string }[] {
+  const ks: Phase[] | null = chk ? ["intake", "qa"] : j.keep === false ? ["intake", "build", "qa"] : null;
+  return PHASES.filter((p) => !ks || ks.includes(p.k)).map((p) => ({ k: p.k, nm: p.nm }));
+}
+
+/** ADR 0028 §5: for a check filed before jobs recorded their schedule, how often a schedule files the same text and target, or null. */
+function everyOf(kept: Kept[], dir: string, j: Job): string | null {
+  const ks = kept.filter((k) => k.task.name === "check");
+  if (!ks.length) return null;
+  const norm = (s: string) => s.replace(/\s+/g, " ").trim();
+  let text: string;
+  try {
+    text = norm(fs.readFileSync(path.join(dir, "ticket.md"), "utf8").replace(/^# [^\n]*\n+/, ""));
+  } catch {
+    return null;
+  }
+  const k = ks.find((x) => x.task.name === "check" && norm(x.task.text) === text && (x.task.into ?? null) === (j.target ?? null));
+  return k?.every ?? null;
+}
 
 export type Snapshot = {
   repo: string;
   /** ADR 0026: the default target (staging.branch); a card names its own only when it differs. */
   target: string;
+  /** ADR 0026 §4: who merges a passing job (staging.merge): Kitchen, or a person through a PR. */
+  merge: "kitchen" | "pr";
   at: string;
   usdToday: number;
   usdTotal: number;
@@ -312,6 +349,7 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
   const jobs: JobCard[] = [];
   const corrupt: string[] = [];
   const removed: { id: string; at: string }[] = [];
+  const kept = listKept(repo);
   for (const e of scanJobs(repo)) {
     if (!e.job || !JOB_ID.test(e.job.id)) {
       corrupt.push(e.id);
@@ -323,8 +361,9 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
       continue;
     }
     const dir = jobDirOf(repo, j.id);
-    const crit = critOf(dir, j.round);
-    const qaNow = readQa(dir, j.round, criteriaOf(dir));
+    const chk = isCheck(j);
+    const crit = critOf(dir, j.round, { check: chk });
+    const qaNow = readQa(dir, j.round, criteriaOf(dir), { check: chk });
     const rv = readReview(dir, j.round);
     const review =
       "findings" in rv
@@ -345,9 +384,9 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
       paused: j.stage === "paused" ? `paused${j.pausedFrom ? ` (from ${j.pausedFrom})` : ""}` : null,
       reason: j.pausedReason ?? null,
       risk: j.risk,
-      kind: j.kind,
       round: j.round - (catchUps.get(j.id) ?? 0),
       roundLimit: j.roundLimit,
+      kind: chk ? "check" : j.kind,
       verdict: "criteria" in qaNow ? qaNow.verdict : null,
       criteria: crit.filter((c) => c.st !== "wait").map((c) => ({ id: c.id, result: c.st === "ok" ? "PASS" : "FAIL" })),
       review,
@@ -369,7 +408,7 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
       branch: j.branch,
       state: stateOf(j),
       phase: phaseOf(stage),
-      phases: PHASES.map((p) => ({ k: p.k, nm: p.nm })),
+      phases: phasesOf(j, chk),
       checks: { ok: crit.filter((x) => x.st === "ok").length, total: crit.length },
       agent: agentOf(stage),
       q: questionOf(j, dir),
@@ -379,12 +418,32 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
       files: await changesOf(j, now),
       doneAt: j.doneAt ?? null,
       lane: laneOf(j),
-      proof: j.stage === "rejected" ? null : "criteria" in qaNow ? (qaNow.verdict === "PASS" ? "pass" : "fail") : null, // no QA verdict yet: no pill (the Toolkit's "proven" is gone)
+      proof:
+        j.stage === "rejected" || ("criteria" in qaNow && qaNow.verdict === "BLOCKED")
+          ? null
+          : "criteria" in qaNow
+            ? qaNow.verdict === "PASS"
+              ? "pass"
+              : "fail"
+            : null, // no QA verdict yet: no pill (the Toolkit's "proven" is gone)
       held: j.held ?? null,
       merged: j.merged ? { into: j.merged.into, sha: j.merged.sha, by: j.mergedBy ?? null } : null,
       waits: waitsOf(j, dir),
       from: j.from?.label ?? null,
       checking: checkingOf(j, dir),
+      check: chk
+        ? {
+            result: j.check?.result ?? null,
+            findings: j.check?.findings ?? 0,
+            proposals: j.check?.proposals ?? [],
+            explore: j.check?.explore ?? null,
+            forced: !!j.check?.forced,
+            every: j.check?.every ?? everyOf(kept, dir, j),
+          }
+        : null,
+      ...(j.keep === false ? { keep: false as const } : {}),
+      verified: j.stage === "done" ? (j.verified?.words ?? null) : null,
+      promotable: promotable(j),
     });
   }
   const who = laneWho(cfg);
@@ -393,6 +452,7 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
   return {
     repo: path.basename(repo),
     target: cfg?.staging.branch ?? "staging",
+    merge: cfg?.staging.merge ?? "kitchen",
     at: new Date(now).toISOString(),
     usdToday: priced.filter((l) => new Date(l.t).toDateString() === today).reduce((a, l) => a + (l.usd as number), 0),
     usdTotal: priced.reduce((a, l) => a + (l.usd as number), 0),

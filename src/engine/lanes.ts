@@ -9,7 +9,7 @@
 //   regress → .kitchen/jobs/<id>/rounds/<n>/regress/verdict.json (one row per feature driven), plus its evidence
 import fs from "node:fs";
 import path from "node:path";
-import { type Kind, REFINE_REASONS, type RefineReason, type Risk } from "./machine.ts";
+import { EXPLORE_MINUTES, KINDS, type Kind, REFINE_REASONS, type RefineReason, type Risk } from "./machine.ts";
 import { roundDir } from "./store.ts";
 
 export const CHECK_KINDS = ["page", "http", "test", "cmd"] as const;
@@ -30,6 +30,10 @@ export type Intake =
       criteria: Criterion[];
       /** ADR 0020: later slices of a ticket split with its author (`## Later slices`); Kitchen files each as a ticket. */
       slices: string[];
+      /** ADR 0028: a check that explores (`EXPLORE: <minutes>`): QA drives freely that long and reports findings. */
+      explore?: number;
+      /** ADR 0028 amendment: `KEEP: no`: built only to verify now, never merged unless promoted. Default true; a check has none. */
+      keep: boolean;
     }
   | { decision: "NEEDS-INFO"; question: string; title: string | null }
   /** ADR 0020: the ticket is refined with its author before it is built. `items`: the readings, slices or gaps. */
@@ -76,12 +80,20 @@ export function parseIntake(text: string): Intake | { refused: string } {
   }
   if (decision !== "ACCEPT") return { refused: `DECISION: is ACCEPT, NEEDS-INFO, REFINE or REJECT (got ${JSON.stringify(decision || "nothing")})` };
   const kind = header(text, "KIND").toLowerCase();
-  if (!["feature", "bug", "ui", "chore"].includes(kind)) return { refused: "KIND: is feature, bug, ui or chore" };
-  const risk = header(text, "RISK").toLowerCase();
+  if (!(KINDS as readonly string[]).includes(kind)) return { refused: "KIND: is feature, bug, ui, chore or check" };
+  const check = kind === "check";
+  // ADR 0028: a check changes nothing, so its risk is low unless intake says otherwise.
+  const risk = header(text, "RISK").toLowerCase() || (check ? "low" : "");
   if (!["low", "medium", "high"].includes(risk)) return { refused: "RISK: is low, medium or high" };
   const surfaces = list(header(text, "SURFACES").toLowerCase()).filter((s): s is "ui" | "security" => s === "ui" || s === "security");
   const criteria = parseCriteria(text);
-  if (!criteria.length) return { refused: "ACCEPT needs at least one criterion: `- C1 (page|http|test|cmd): what must be true`" };
+  const explore = check ? exploreOf(text) : undefined;
+  if (!criteria.length && explore === undefined)
+    return {
+      refused: check
+        ? "a check needs at least one criterion (`- C1 (page|http|test|cmd): what to check`) or an EXPLORE: <minutes> line"
+        : "ACCEPT needs at least one criterion: `- C1 (page|http|test|cmd): what must be true`",
+    };
   const after = list(header(text, "AFTER")).flatMap((x) => (/^\d{1,6}$/.test(x) ? [x.padStart(3, "0")] : /^\d{3,}-/.test(x) ? [x.split("-")[0]] : []));
   const changes = list(header(text, "CHANGES")).filter((x) => /^[\w.-]+\/[\w.-]+$/.test(x));
   return {
@@ -95,7 +107,19 @@ export function parseIntake(text: string): Intake | { refused: string } {
     changes,
     criteria,
     slices: sectionItems(text, "Later slices"),
+    ...(explore !== undefined ? { explore } : {}),
+    keep: check || !/^(no|false|n)\b/i.test(header(text, "KEEP")),
   };
+}
+
+/** Pure: a check's `EXPLORE:` line in minutes (no number: EXPLORE_MINUTES, at most 120), or undefined without one. */
+export function exploreOf(text: string): number | undefined {
+  const m = /^EXPLORE:[ \t]*(.*)$/im.exec(text);
+  if (!m) return undefined;
+  const said = m[1].trim();
+  if (/^(none|no|-|n\/a)\.?$/i.test(said)) return undefined;
+  const n = Number(/\d+/.exec(said)?.[0] ?? EXPLORE_MINUTES);
+  return Math.min(120, Math.max(1, n || EXPLORE_MINUTES));
 }
 
 /** Pure: the `- ` lines under intake's `## Refine` heading, up to the next heading. */
@@ -149,14 +173,34 @@ export function criteriaOf(jobDir: string): Criterion[] {
 export const qaDir = (jobDir: string, round: number) => path.join(roundDir(jobDir, round), "qa");
 export const qaVerdictFile = (jobDir: string, round: number) => path.join(qaDir(jobDir, round), "verdict.json");
 export type QaRow = { id: string; result: "PASS" | "FAIL"; evidence: string[]; note: string };
-export type QaVerdict = { verdict: "PASS" | "FAIL"; criteria: QaRow[] };
+/** ADR 0028: a problem a check found: a proposed bug (what was seen, how to see it again, the evidence). */
+export type QaFinding = { title: string; seen: string; repro: string[]; evidence: string[]; criterion?: string };
+export type QaVerdict = {
+  /** BLOCKED: only a check's, when QA couldn't run at all (the app won't start, the page is unreachable). */
+  verdict: "PASS" | "FAIL" | "BLOCKED";
+  criteria: QaRow[];
+  /** A check's problems, one per failure or finding (ADR 0028 §3); [] for a job's QA. */
+  findings: QaFinding[];
+  /** BLOCKED: why QA couldn't run. */
+  blocked?: string;
+};
+
+/** Pure apart from the stat: the evidence file is in `dir`, a file, and not empty. */
+const goodEvidence = (dir: string, f: string) => {
+  const p = path.resolve(dir, f);
+  return p.startsWith(`${dir}${path.sep}`) && fs.existsSync(p) && fs.statSync(p).isFile() && fs.statSync(p).size > 0;
+};
 
 /**
  * Pure apart from reading the evidence folder: the QA verdict, or why it is refused. Every criterion must have a row;
  * every row cites evidence files that exist in the QA folder and aren't empty; a page criterion cites a screenshot.
  * The verdict is PASS only when every row is (the agent's own verdict line is checked against its rows).
+ *
+ * ADR 0028, `check`: the verdict may be BLOCKED (`blocked`: why QA couldn't run), and `findings` lists each problem
+ * as a proposed bug: `{ title, seen, repro: [steps], evidence: [files], criterion? }`. Every FAIL row has one (its
+ * `criterion`); an exploring check's findings stand alone. A check passes only with every row PASS and no finding.
  */
-export function readQa(jobDir: string, round: number, criteria: Criterion[]): QaVerdict | { refused: string } {
+export function readQa(jobDir: string, round: number, criteria: Criterion[], o: { check?: boolean } = {}): QaVerdict | { refused: string } {
   const dir = qaDir(jobDir, round);
   let raw: unknown;
   try {
@@ -164,7 +208,16 @@ export function readQa(jobDir: string, round: number, criteria: Criterion[]): Qa
   } catch (e) {
     return { refused: `no readable ${path.relative(jobDir, qaVerdictFile(jobDir, round))}: ${(e as Error).message.split("\n")[0]}` };
   }
-  const v = raw as { verdict?: unknown; criteria?: unknown };
+  const v = raw as { verdict?: unknown; criteria?: unknown; findings?: unknown; blocked?: unknown; evidence?: unknown };
+  const said = String(v.verdict ?? "").toUpperCase();
+  if (o.check && said === "BLOCKED") {
+    const blocked = String(v.blocked ?? "").trim();
+    if (!blocked) return { refused: "a BLOCKED verdict says why in blocked (the app won't start, the page is unreachable)" };
+    const ev = Array.isArray(v.evidence) ? v.evidence.map(String) : [];
+    const bad = ev.find((f) => !goodEvidence(dir, f));
+    if (bad) return { refused: `BLOCKED: evidence ${bad} is missing, empty or outside the QA folder` };
+    return { verdict: "BLOCKED", criteria: [], findings: [], blocked };
+  }
   if (!Array.isArray(v.criteria)) return { refused: "verdict.json needs a criteria array" };
   const rows: QaRow[] = [];
   for (const r of v.criteria as Record<string, unknown>[]) {
@@ -191,16 +244,37 @@ export function readQa(jobDir: string, round: number, criteria: Criterion[]): Qa
   }
   for (const row of rows.filter((r) => r.id.startsWith("R-"))) {
     if (!row.evidence.length) return { refused: `${row.id} cites no evidence file` };
-    for (const f of row.evidence) {
-      const p = path.resolve(dir, f);
-      if (!p.startsWith(`${dir}${path.sep}`) || !fs.existsSync(p) || !fs.statSync(p).isFile() || fs.statSync(p).size === 0)
-        return { refused: `${row.id}: evidence ${f} is missing, empty or outside the QA folder` };
-    }
+    for (const f of row.evidence) if (!goodEvidence(dir, f)) return { refused: `${row.id}: evidence ${f} is missing, empty or outside the QA folder` };
   }
-  const allPass = criteria.every((c) => rows.find((r) => r.id === c.id)?.result === "PASS") && rows.every((r) => !r.id.startsWith("R-") || r.result === "PASS");
-  const said = String(v.verdict ?? "").toUpperCase();
+  const findings: QaFinding[] = [];
+  if (o.check) {
+    if (v.findings !== undefined && !Array.isArray(v.findings)) return { refused: "findings is an array (empty when there are none)" };
+    for (const [i, x] of ((v.findings ?? []) as Record<string, unknown>[]).entries()) {
+      const title = String(x?.title ?? "").trim();
+      const seen = String(x?.seen ?? "").trim();
+      if (!title || !seen) return { refused: `finding ${i + 1} needs a title and what was seen (seen)` };
+      const repro = (Array.isArray(x.repro) ? x.repro.map(String) : x.repro ? [String(x.repro)] : []).map((s) => s.trim()).filter(Boolean);
+      if (!repro.length) return { refused: `finding ${i + 1} (${title}) needs repro: the steps to see it again` };
+      const evidence = Array.isArray(x.evidence) ? x.evidence.map(String) : [];
+      if (!evidence.length) return { refused: `finding ${i + 1} (${title}) cites no evidence file` };
+      const bad = evidence.find((f) => !goodEvidence(dir, f));
+      if (bad) return { refused: `finding ${i + 1} (${title}): evidence ${bad} is missing, empty or outside the QA folder` };
+      const criterion = x.criterion ? String(x.criterion).toUpperCase() : undefined;
+      findings.push({ title: title.slice(0, 120), seen, repro, evidence, ...(criterion ? { criterion } : {}) });
+    }
+    const unexplained = rows.filter((r) => r.result === "FAIL" && !findings.some((f) => f.criterion === r.id)).map((r) => r.id);
+    if (unexplained.length)
+      return {
+        refused: `${unexplained.join(", ")} FAILED with no finding: give each failure a finding (title, seen, repro, evidence, criterion: "${unexplained[0]}")`,
+      };
+  }
+  const allPass =
+    criteria.every((c) => rows.find((r) => r.id === c.id)?.result === "PASS") &&
+    rows.every((r) => !r.id.startsWith("R-") || r.result === "PASS") &&
+    (!o.check || rows.every((r) => r.result === "PASS"));
   if (said === "PASS" && !allPass) return { refused: "verdict PASS, but a criterion's row is FAIL" };
-  return { verdict: allPass ? "PASS" : "FAIL", criteria: rows };
+  if (said === "PASS" && findings.length) return { refused: "verdict PASS, but it lists findings: a check with problems is FAIL" };
+  return { verdict: allPass && !findings.length ? "PASS" : "FAIL", criteria: rows, findings };
 }
 
 export const regressDir = (jobDir: string, round: number) => path.join(roundDir(jobDir, round), "regress");

@@ -17,7 +17,7 @@ import {
 } from "../sources/config.ts";
 import { storeSlackToken } from "../sources/secret.ts";
 import { collect, detachCollect, readSource } from "./collect.ts";
-import { installSchedule, parseEvery, removeSchedule } from "./schedule.ts";
+import { installSchedule, keep, parseEvery, removeSchedule } from "./schedule.ts";
 import * as inbox from "./store.ts";
 
 type Out = (l: string) => void;
@@ -165,10 +165,13 @@ function need1(ids: string[], verb: string): string {
 export async function collectVerb(repo: string, f: Flags, cli: string, out: Out): Promise<number> {
   if (f.flags.has("--remove-schedule")) {
     for (const l of removeSchedule(repo)) out(l);
+    keep(repo, { name: "collect" }, null);
     return 0;
   }
   if (f.flags.has("--install-schedule")) {
-    for (const l of installSchedule(repo, cli, parseEvery(one(f, "every") ?? "1h"))) out(l);
+    const every = parseEvery(one(f, "every") ?? "1h");
+    for (const l of installSchedule(repo, cli, every)) out(l);
+    keep(repo, { name: "collect" }, every);
     return 0;
   }
   if (f.flags.has("--detach")) return detachCollect(repo, cli, out, f.flags.has("--no-triage") ? ["--no-triage"] : []);

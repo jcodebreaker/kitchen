@@ -47,6 +47,16 @@ kitchen ticket "<what you want>"
 
 Plain words are enough. Intake turns them into criteria, asks you one question, or — when the ticket can be read more than one way — asks you to refine it with it in Claude Code.
 
+To test something without changing code ("check checkout still works", "go through the loan flow and see what breaks"), file a check: QA drives staging as it is, nothing is built or merged, and the job ends "Checked on staging · 4 of 4 pass" or "Found 2 problems", each problem proposed in the inbox for you to run, hold or set aside.
+
+```sh
+kitchen ticket --check "check checkout still works"
+kitchen ticket --check --every day "check checkout still works"    # on a timer; --every off "<same text>" removes it
+kitchen schedules                                                  # this repo's timers
+```
+
+Code asked for only to verify something now ("a harness that proves the import handles 10k rows") is built and checked, then stops at Done, "Verified · not merged", its branch kept: `kitchen promote <id>` reviews and merges it later.
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/term-ticket-dark.webp">
   <img alt="kitchen ticket: the ticket is filed as job 001 and goes to intake" src="docs/img/term-ticket-light.webp">

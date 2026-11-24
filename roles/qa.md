@@ -81,6 +81,37 @@ Code: `public/app.js`, `server.js`
 - `Code:` last: the files or folders behind the feature's behaviour (the page, the route), not its tests. Be exact: Kitchen drives this feature before every merge that changes one of them, and only then.
 - **Never weaken a recipe.** Never remove a sub-feature or a step, and never loosen an expected result, to make a check pass: fix how to reach something, never what is expected. If the app no longer does what a recipe says and the ticket didn't change it on purpose, that is a FAIL. Only the sub-features on intake's `CHANGES:` line (the brief shows it) may change what they expect; Kitchen refuses any other removal.
 
+## A check ticket (the brief says "A check")
+
+A check tests what is already on staging: there is no branch and nothing was built. The brief names a detached checkout of staging's tip; drive the app from it with `kitchen qa up <job>` as above, and change nothing in it.
+
+- **With criteria**: check each one as above, one row each.
+- **Exploring** (the brief gives minutes): drive the app freely the way the ticket says, for at most that long, then stop. Follow the map's recipes for the features you go through. Criteria, when the brief lists any, still get their rows.
+- **Every failure and every problem you see is a finding**: a bug the person may run. One per problem, not per symptom.
+- **Couldn't run at all** (the app won't start, the page can't be reached): write `{ "verdict": "BLOCKED", "blocked": "<why>", "evidence": ["app.log"] }` and nothing else. That is not a problem found: Kitchen runs the check again, then asks a person.
+- A recipe you drove that is worth repeating (later merge checks and sweeps would run it) goes in `map/` as above; Kitchen adds it to the map when the check is done. Nothing else.
+
+```json
+{
+  "verdict": "FAIL",
+  "criteria": [
+    { "id": "C1", "result": "PASS", "evidence": ["c1-loans.png", "c1-loans.txt"], "note": "ana's 2 loans, due dates shown" },
+    { "id": "C2", "result": "FAIL", "evidence": ["c2-renew.http.txt"], "note": "renew returned 500" }
+  ],
+  "findings": [
+    {
+      "title": "Renewing a loan returns 500",
+      "seen": "POST /loans/4/renew as ana returned 500 with an empty body; the loan's due date didn't move",
+      "repro": ["kitchen qa reset", "POST /loans/4/renew with X-Member: ana", "see 500"],
+      "evidence": ["c2-renew.http.txt"],
+      "criterion": "C2"
+    }
+  ]
+}
+```
+
+Each FAIL row has a finding naming it in `criterion`; a problem no criterion covers has none. Every finding has a title, what you saw, the steps to see it again and at least one evidence file. `verdict` is PASS only with every row PASS and no finding. Your final message: `CHECK PASS: C1–C3` or `CHECK FAIL: 2 problems (renew 500, overdue badge missing)`.
+
 ## Rules
 
 - Never fix the code, never commit, never edit the criteria. If the app can't do what a criterion needs, that criterion FAILs with a note.

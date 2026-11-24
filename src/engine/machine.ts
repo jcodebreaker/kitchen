@@ -21,7 +21,10 @@ export const pausedByYou = (j: Pick<Job, "stage" | "pausedReason">) => j.stage =
 export const WAITING: readonly Stage[] = ["needs-info", "needs-human", "paused", "rejected"];
 
 export type Risk = "low" | "medium" | "high";
-export type Kind = "feature" | "bug" | "ui" | "chore";
+export type Kind = "feature" | "bug" | "ui" | "chore" | "check";
+export const KINDS: readonly Kind[] = ["feature", "bug", "ui", "chore", "check"];
+/** ADR 0028: how long an exploring check drives freely when intake's EXPLORE: names no minutes. */
+export const EXPLORE_MINUTES = 20;
 /** Why intake sends a ticket to be refined with its author (ADR 0020 §1). */
 export const REFINE_REASONS = ["readings", "too-big", "no-repro", "terms"] as const;
 export type RefineReason = (typeof REFINE_REASONS)[number];
@@ -43,6 +46,33 @@ export type JobFrom = {
   items: string[];
   refs: { source: string; kind: string; ref: string; url?: string }[];
 };
+
+/**
+ * ADR 0028: a check. `forced`: filed with `kitchen ticket --check` (intake is told the kind). `explore`: minutes QA
+ * drives freely (intake's EXPLORE:). `run`/`onto`: the check-<id> verify run QA drove and the tip it checked out. Once
+ * done: `result` (the words a card shows), the criteria passed of the total, the problems found and the inbox
+ * proposals they became, and what became of the recipes it kept (`map`).
+ */
+export type JobCheck = {
+  forced?: boolean;
+  /** ADR 0028 §5: filed by a schedule's tick (`kitchen ticket --check --from-schedule <every>`), and how often it runs. */
+  filedBy?: "schedule";
+  every?: string;
+  explore?: number;
+  run?: string;
+  onto?: string;
+  result?: string;
+  pass?: number;
+  total?: number;
+  findings?: number;
+  proposals?: string[];
+  map?: string;
+};
+export const isCheck = (j: Pick<Job, "kind" | "check">) => j.kind === "check" || !!j.check?.forced;
+/** ADR 0028 amendment: the words of a job verified and not merged (`KEEP: no`). */
+export const VERIFIED_WORDS = "Verified · not merged";
+/** A `KEEP: no` job QA verified, waiting for `kitchen promote` (done, not merged). */
+export const promotable = (j: Pick<Job, "stage" | "keep" | "merged">) => j.stage === "done" && j.keep === false && !j.merged;
 
 /** `closedBy: "kitchen"`: Kitchen closed it because the person rejected or removed the job. */
 export type JobPr = { number: number; url: string; state?: "open" | "merged" | "closed"; onto?: string; head?: string; closedBy?: "kitchen" };
@@ -152,6 +182,17 @@ export type Job = {
   archived?: { at: string; by: "person" };
   /** ADR 0022: the outer loop's proposal it was filed from, or none (`kitchen ticket`). */
   from?: JobFrom;
+  /** ADR 0028: a check ticket (KIND: check): QA on its target's tip, never built. */
+  check?: JobCheck;
+  /**
+   * ADR 0028 amendment: intake's `KEEP: no`: code built only to verify something now. QA passing ends it at Done,
+   * verified and not merged; its branch stays. `kitchen promote` sets it back (absent: kept, the normal flow).
+   */
+  keep?: false;
+  /** When it was verified and not merged (`KEEP: no` and QA passed): the words, the head QA drove. */
+  verified?: { words: string; head: string; at: string };
+  /** When the person promoted it (`kitchen promote`): Review → merge check → merge into its target. */
+  promoted?: string;
   /** Side effects done once (a PR opened): keys. */
   filed: string[];
   startedAt: string;
@@ -161,15 +202,18 @@ export type Job = {
 
 /** The moves the table allows: from → to. */
 export const MOVES: Record<Stage, readonly Stage[]> = {
-  intake: ["build", "needs-info", "needs-human", "rejected", "paused"],
-  "needs-info": ["intake", "build", "rejected"],
+  // ADR 0028: a check goes from intake (or the approval) straight to QA, and from QA to done; a QA that couldn't run
+  // (the app won't start) runs again in a new round (qa → qa), and a done check can be run again.
+  intake: ["build", "qa", "needs-info", "needs-human", "rejected", "paused"],
+  "needs-info": ["intake", "build", "qa", "rejected"],
   build: ["qa", "needs-human", "rejected", "paused"],
-  qa: ["review", "build", "needs-human", "rejected", "paused"],
+  qa: ["review", "build", "qa", "done", "needs-human", "rejected", "paused"],
   review: ["build", "regress", "ready", "done", "needs-human", "rejected", "paused"],
   regress: ["build", "ready", "done", "needs-human", "rejected", "paused"],
   // kitchen merge: the person's yes runs the merge gate, which may need the merge check lane or another round.
   ready: ["build", "regress", "done", "needs-human", "rejected"],
-  done: ["build"],
+  // ADR 0028 amendment: a job verified and not merged (KEEP: no) is promoted to Review.
+  done: ["build", "qa", "review"],
   "needs-human": ["intake", "build", "qa", "review", "regress", "rejected"],
   paused: ["intake", "build", "qa", "review", "regress", "rejected"],
   rejected: [],
@@ -221,6 +265,20 @@ export function move(j: Job, to: Stage, o: { reason?: string; now?: Date; catchU
   delete n.pausedReason;
   delete n.tries;
   delete n.waits;
+  // ADR 0028: a check's QA again (it couldn't run, or the person runs a done check again): a new round folder. Again
+  // after done is new work, a fresh budget; after a QA that couldn't run, the same budget.
+  if (to === "qa" && (j.stage === "qa" || j.stage === "done")) {
+    n.round = j.round + 1;
+    if (j.stage === "done") {
+      n.roundStart = n.round;
+      delete n.doneAt;
+    }
+  }
+  if (to === "review" && j.stage === "done") {
+    n.roundStart = j.round;
+    delete n.doneAt;
+    delete n.verified;
+  }
   if (to === "build" && BACK_TO_BUILD.includes(j.stage)) {
     n.round = j.round + 1;
     // A catch-up (ADR 0018): a new round folder, the same budget. Anything else back to Build is a real round.
@@ -231,6 +289,7 @@ export function move(j: Job, to: Stage, o: { reason?: string; now?: Date; catchU
     // A follow-up on a finished job is new work: a fresh budget.
     if (j.stage === "done" || j.stage === "ready") n.roundStart = n.round;
     delete n.held;
+    delete n.verified;
     delete n.merged;
     delete n.mergedBy;
     delete n.doneAt;

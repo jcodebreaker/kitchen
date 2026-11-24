@@ -26,6 +26,14 @@ _Avoid_: Priority, severity
 Intake's list of what "done" means, each tagged with how QA checks it (page, http, test, cmd); fixed once written: the builder may not change them.
 _Avoid_: Spec document, PRD, plan, verification contract
 
+**Check**:
+A Ticket that asks to test, confirm or explore without changing code (intake's `KIND: check`, or `kitchen ticket --check`). Its Job goes Intake → QA → Done: QA drives the Target's tip as it is (a `check-<id>` verify run), nothing is built or merged. Done says "Checked on staging · 4 of 4 pass", or "Found 2 problems" with each problem a Proposal in the Inbox. An exploring Check (`EXPLORE: <minutes>`) drives freely for that long. `--every day` files it on a timer (ADR 0028).
+_Avoid_: Test job, verification run, smoke test
+
+**Verified, not merged**:
+Where a Job ends when intake read its Ticket as `KEEP: no` (code built only to prove something now): Build, its checks and QA, then Done without Review or a merge; the branch stays. `kitchen promote` takes it on to Review, the Merge check and the merge into its Target (ADR 0028 amendment).
+_Avoid_: Draft, throwaway job
+
 **Steer**:
 A person's message to a Job (`kitchen steer`, the dashboard's composer): the Orchestrator hands it to the Job's next Lane agent, quoted as operator notes. Kept on the Job's thread, `messages.jsonl`.
 _Avoid_: Chat, prompt, interrupt

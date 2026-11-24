@@ -28,10 +28,11 @@ const job = (n: number, o: Partial<Job> = {}): Job => ({
 });
 
 test("the table: only listed moves; done and rejected are terminal except a follow-up; a paused job resumes where it paused", () => {
-  assert.throws(() => move(job(1), "qa"), MoveRefused);
+  assert.throws(() => move(job(1), "review"), MoveRefused);
   assert.throws(() => move(job(1, { stage: "build" }), "done"), /build → done is not a move/);
   assert.deepEqual(MOVES.rejected, []);
-  assert.deepEqual(MOVES.done, ["build"]);
+  // ADR 0028: a done check runs again (qa); a job verified and not merged is promoted (review).
+  assert.deepEqual(MOVES.done, ["build", "qa", "review"]);
   const p = move(job(1, { stage: "qa" }), "paused", { reason: "by-you" });
   assert.equal(p.pausedFrom, "qa");
   assert.match(String(refuse(p, "build")), /resumes in qa/);

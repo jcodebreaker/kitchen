@@ -11,14 +11,15 @@ import path from "node:path";
 import { type OnCheck, prepareOf, runChecks } from "../checks/run-checks.ts";
 import { type Config, checksFor, type LaneRole, loadConfig, modelFor, targetOf } from "../config.ts";
 import { commentOnMerge } from "../inbox/comment.ts";
-import { addFindings, qaFindings, reviewFindings } from "../inbox/findings.ts";
+import { addFindings, proposeCheckFindings, qaFindings, reviewFindings } from "../inbox/findings.ts";
 import { appendLedger } from "../ledger/append.ts";
 import { skillsForLane } from "../skills/forjob.ts";
 import { PromptSource } from "../sources/prompt.ts";
 import { type Admitted, admitMap, builderMapEdits, writeMapChanges } from "../verify/admit.ts";
 import { intakeMapSection, qaMapSection, regressSection } from "../verify/brief.ts";
 import { namedBy, removals, touchedFeatures } from "../verify/map.ts";
-import { mapIn, mapOf, seedCheckout, skillIn, skillNameOf, skippedLine } from "../verify/where.ts";
+import { runDir, runWorktree } from "../verify/paths.ts";
+import { mapIn, mapMode, mapOf, seedCheckout, skillIn, skillNameOf, skippedLine } from "../verify/where.ts";
 import { CONFIRM_KEY, clarificationsSection, questionsAsked, readRounds, recordQuestion } from "./clarify.ts";
 import { clearControl, fileSlices, moveJob, readControl } from "./control.ts";
 import { branchExists, diffSize, git, gitOut, revParse } from "./git.ts";
@@ -40,8 +41,10 @@ import {
   BY_YOU,
   CATCH_UP_LIMIT,
   isCatchUp,
+  isCheck,
   isLane,
   type Job,
+  type JobCheck,
   type JobPr,
   type Lane,
   outOfCatchUps,
@@ -50,6 +53,7 @@ import {
   prOpen,
   roundsUsed,
   type Stage,
+  VERIFIED_WORDS,
 } from "./machine.ts";
 import { markRead, operatorNotes, unreadMessages } from "./messages.ts";
 import { afterSection, queueSection } from "./others.ts";
@@ -127,6 +131,31 @@ async function intakeCheckout(repo: string, cfg: Config, job: Job): Promise<{ wt
 
 /** Intake's checkout gone (its lane finished or was refused; the job removed). */
 export const dropIntakeCheckout = (repo: string, id: string) => dropTrial(repo, intakeCheckoutOf(repo, id));
+
+/** ADR 0028: a check's verify run (`.kitchen/verify/check-<job>/`), as a sweep's: its checkout of the target's tip. */
+export const checkRunId = (id: string) => `check-${id}`;
+
+/**
+ * ADR 0028 §2: a check's QA drives its target's tip (staging, unless the ticket named another), never a branch: a
+ * detached checkout under `.kitchen/verify/check-<job>/wt`, made fresh for each QA round, with its run.json as a
+ * sweep's. `kitchen qa … <job>` drives the app from it; the evidence stays in the job's QA folder.
+ */
+async function checkCheckout(repo: string, cfg: Config, job: Job): Promise<{ wt: string; base: string; run: string }> {
+  const run = checkRunId(job.id);
+  const wt = runWorktree(repo, run);
+  const onto = await baseCommit(repo, cfg, job);
+  await dropTrial(repo, wt);
+  fs.mkdirSync(runDir(repo, run), { recursive: true });
+  await git(repo, ["worktree", "add", "-q", "--detach", wt, onto]);
+  writeAtomic(
+    path.join(runDir(repo, run), "run.json"),
+    `${JSON.stringify({ kind: "check", id: run, job: job.id, at: new Date().toISOString(), onto, features: [] }, null, 2)}\n`,
+  );
+  return { wt, base: onto, run };
+}
+
+/** A check's checkout gone (the check finished; the job removed). Its run folder (run.json) stays. */
+export const dropCheckCheckout = (repo: string, id: string) => dropTrial(repo, runWorktree(repo, checkRunId(id)));
 
 const fence = (s: string) => {
   let f = "~~~~";
@@ -265,6 +294,9 @@ function brief(
     `# Kitchen ${lane} lane: job ${job.id}`,
     "",
     `- Job: ${job.id} "${job.title}" · kind ${job.kind ?? "?"} · risk ${job.risk ?? "?"} · round ${job.round} (${roundsUsed(job)} of ${job.roundLimit})`,
+    lane === "intake" && job.check?.forced
+      ? "- The person filed this as a check (`kitchen ticket --check`): if you accept it, write `KIND: check` (test, confirm or explore; no code changes)."
+      : "",
     lane === "intake"
       ? `- The code (read-only for you): ${o.wt}, a checkout of ${o.base.slice(0, 12)}, what Build would start from. Read the code there; change nothing. Never read ${repo} (the person's checkout): it may be on another branch.`
       : `- Repository (main checkout, read-only for you): ${repo}`,
@@ -272,7 +304,9 @@ function brief(
       ? ""
       : lane === "regress" && job.drive
         ? `- The merged result (drive it, change nothing): ${o.wt}: ${targetOf(cfg, job)} at ${job.drive.onto.slice(0, 12)} with ${job.branch} (${job.drive.head.slice(0, 12)}) merged as ${job.drive.sha.slice(0, 12)}`
-        : `- Worktree (work only here): ${o.wt} on branch ${job.branch}, from ${o.base.slice(0, 12)}`,
+        : lane === "qa" && isCheck(job)
+          ? `- The checkout to drive (change nothing): ${o.wt}, ${targetOf(cfg, job)} at ${o.base.slice(0, 12)}, detached: a check has no branch and changes no code`
+          : `- Worktree (work only here): ${o.wt} on branch ${job.branch}, from ${o.base.slice(0, 12)}`,
     `- Job folder: ${dir}`,
     job.target ? `- Target: ${job.target} (the ticket named it): the work starts from it and merges into it, not ${cfg.staging.branch}` : "",
     lane === "review" && o.head ? `- Review this commit: ${o.head} (diff: \`git diff ${o.base}...${o.head}\`)` : "",
@@ -298,10 +332,14 @@ function brief(
     o.others ?? "",
     o.notes,
     lane === "build" && o.caught ? targetMoved(targetOf(cfg, job), o.caught) : "",
+    lane === "build" && job.keep === false
+      ? "## Built to verify, not kept\n\nIntake read this ticket as `KEEP: no`: the code proves something now (a harness, a one-off test). QA checks it; it is not reviewed or merged unless the person promotes it later. Keep it to what the criteria need.\n"
+      : "",
     lane === "build" || lane === "review" ? catchUpNote(cfg, dir, job, lane, o.head) : "",
     lane === "build" || lane === "intake" ? earlier(cfg, dir, job) : "",
     lane === "qa" || lane === "regress" ? refusedNote(dir) : "",
-    lane === "qa" ? redriveNote(dir, job) : "",
+    lane === "qa" && !isCheck(job) ? redriveNote(dir, job) : "",
+    lane === "qa" && isCheck(job) ? checkNote(cfg, job, qd) : "",
     o.map ?? "",
     lane === "review" ? qaSummary(dir, job) : "",
     o.skills,
@@ -350,6 +388,21 @@ function catchUpNote(cfg: Config, dir: string, job: Job, lane: Lane, head?: stri
   ].join("\n");
 }
 
+/** ADR 0028: the QA brief's note for a check: what it drives, the time box when it explores, and what to write. */
+function checkNote(cfg: Config, job: Job, qd: string): string {
+  const explore = job.check?.explore;
+  return [
+    `## A check: test ${targetOf(cfg, job)} as it is, change nothing`,
+    "",
+    explore
+      ? `This check explores: drive the app freely for at most ${explore} minutes (start a timer; stop when it rings), the way the ticket says, and report what is broken. Check the criteria below too, when the brief lists any.`
+      : "Check each criterion against the app started from the checkout above, as your role says.",
+    "",
+    `Every failure and every problem you see becomes a finding in \`${qd}/verdict.json\` (your role's "A check ticket" section): each is proposed to the person as a bug. If the app won't start or the page can't be reached, write the verdict BLOCKED with why: that is not a problem found, Kitchen runs the check again.`,
+    "",
+  ].join("\n");
+}
+
 function qaSummary(dir: string, job: Job): string {
   const qa = readQa(dir, job.round, criteriaOf(dir));
   if (!("criteria" in qa)) return "";
@@ -389,7 +442,11 @@ export async function start(
   let wt = repo;
   let base = job.base;
   let caught: CatchUp | null = null;
-  if (lane === "build") {
+  let checkRun: string | undefined;
+  // ADR 0028 §2: a check is never built.
+  if (lane === "build" && isCheck(job)) return { refused: `${job.id} is a check: it never builds (its QA drives ${targetOf(cfg, job)}'s tip)` };
+  if (lane === "qa" && isCheck(job)) ({ wt, base, run: checkRun } = await checkCheckout(repo, cfg, job));
+  else if (lane === "build") {
     ({ wt, base } = await ensureWorktree(repo, cfg, job));
     // A later round (QA or review sent it back, or the merge conflicted): rebuild on the target as it is now.
     if (job.base) {
@@ -430,7 +487,14 @@ export async function start(
     lane === "intake"
       ? intakeMapSection(await mapOf(repo, cfg, base))
       : lane === "qa"
-        ? qaMapSection(mapIn(repo, cfg, wt), await jobFiles(repo, job), qaDir(dir, job.round), changesOf(dir), skillIn(repo, cfg, wt, skillNameOf(repo, cfg)))
+        ? qaMapSection(
+            mapIn(repo, cfg, wt),
+            await jobFiles(repo, job),
+            qaDir(dir, job.round),
+            changesOf(dir),
+            skillIn(repo, cfg, wt, skillNameOf(repo, cfg)),
+            isCheck(job),
+          )
         : lane === "regress" && job.drive
           ? regressSection(mapIn(repo, cfg, wt), job.drive.features)
           : "";
@@ -444,6 +508,7 @@ export async function start(
   job = await updateJob(repo, job.id, (j) => {
     if (lane === "build") j.base = base;
     if (lane !== "intake") j.worktree = wt;
+    if (checkRun) j.check = { ...j.check, run: checkRun, onto: base };
     j.running = { lane, at: new Date(t0).toISOString(), key, stream, ...(head ? { head } : {}) };
     j.agentRuns.push({ key, role: ROLE_OF[lane], stage: lane, round: j.round, at: new Date(t0).toISOString(), stream, model });
     return j;
@@ -590,6 +655,10 @@ export async function finish(repo: string, id: string): Promise<Finished | { ref
         },
       });
     }
+    // ADR 0028 §5: `kitchen ticket --check` forces the kind.
+    if (job.check?.forced && i.kind !== "check")
+      return refuseLane(repo, job, `intake.md: the person filed this as a check (kitchen ticket --check): KIND: check, not ${i.kind}`);
+    const check = i.kind === "check";
     const title = shortTitle(i.title ?? undefined);
     const accepted = (j: Job) => {
       if (title) j.title = title;
@@ -598,14 +667,19 @@ export async function finish(repo: string, id: string): Promise<Finished | { ref
       j.surfaces = i.surfaces;
       j.files = i.files;
       j.after = i.after;
+      if (check) j.check = { ...j.check, ...(i.explore ? { explore: i.explore } : {}) };
+      // ADR 0028 amendment: KEEP: no is built and verified, never merged unless promoted.
+      if (!i.keep) j.keep = false;
+      else delete j.keep;
     };
+    const what = check ? `check${i.explore ? ` (explore ${i.explore} min)` : ""}` : `${i.kind} ${i.risk}${i.keep ? "" : " (KEEP: no)"}`;
     // ADR 0020 §3: intake.confirm holds every accepted job for the person's approval (`kitchen approve`).
     if (cfg.intake.confirm) {
       const key = `${job.id}/m${job.moves}${CONFIRM_KEY}`;
       const question = confirmQuestion(job, i.criteria, leftOutOf(dir));
       recordQuestion(dir, { key, question });
       await new PromptSource(repo).ask(job, { key, text: question });
-      return moveOn(repo, job, "needs-info", `${job.id}  intake ACCEPT ${i.kind} ${i.risk}: ${i.criteria.length} criteria → waits for your approval`, {
+      return moveOn(repo, job, "needs-info", `${job.id}  intake ACCEPT ${what}: ${i.criteria.length} criteria → waits for your approval`, {
         reason: "confirm: approve the criteria",
         patch: (j) => {
           accepted(j);
@@ -613,9 +687,12 @@ export async function finish(repo: string, id: string): Promise<Finished | { ref
         },
       });
     }
+    // ADR 0028 §2: a check goes straight to QA on its target's tip; it has no slices to file.
+    if (check)
+      return moveOn(repo, job, "qa", `${job.id}  intake ACCEPT ${what}: ${i.criteria.length} criteria → qa on ${targetOf(cfg, job)}`, { patch: accepted });
     // ADR 0020: the later slices are filed when the job goes to Build (with the gate, on approve: the split may change).
     const filed = await fileSlices(repo, job, i.slices);
-    return moveOn(repo, job, "build", `${job.id}  intake ACCEPT ${i.kind} ${i.risk}: ${i.criteria.length} criteria → build${filed}`, { patch: accepted });
+    return moveOn(repo, job, "build", `${job.id}  intake ACCEPT ${what}: ${i.criteria.length} criteria → build${filed}`, { patch: accepted });
   }
   const wt = job.worktree || worktreeOf(repo, job.id);
   if (lane === "build") {
@@ -659,6 +736,7 @@ export async function finish(repo: string, id: string): Promise<Finished | { ref
     }
     return moveOn(repo, job, "qa", `${job.id}  built (${ahead} commit${ahead === 1 ? "" : "s"}), checks pass → qa`);
   }
+  if (lane === "qa" && isCheck(job)) return finishCheck(repo, cfg, job);
   if (lane === "qa") {
     await (await import("../qa/app.ts")).appDown(repo, job.id).catch(() => {});
     const qa = readQa(dir, job.round, criteriaOf(dir));
@@ -675,6 +753,23 @@ export async function finish(repo: string, id: string): Promise<Finished | { ref
       }).catch((e: Error) => ({ files: [], sha: null, changes: [], skipped: e.message.split("\n")[0] }) as Admitted);
       if ("refused" in ad) return refuseLane(repo, job, `QA's map update: ${ad.refused}`);
       if (ad.files.length && !ad.skipped) writeMapChanges(dir, ad.changes);
+      // ADR 0028 amendment: KEEP: no ends here, verified and not merged; the branch stays for `kitchen promote`.
+      if (job.keep === false) {
+        const head = (await revParse(repo, job.branch)) ?? "";
+        return moveOn(
+          repo,
+          job,
+          "done",
+          `${job.id}  QA PASS (${qa.criteria.length} criteria) → done: ${VERIFIED_WORDS} (KEEP: no; kitchen promote ${job.id} merges it)`,
+          {
+            patch: (j) => {
+              if (ad.sha) j.mapCommits = [...(j.mapCommits ?? []), ad.sha];
+              if (ad.skipped) j.mapSkipped = ad.skipped;
+              j.verified = { words: VERIFIED_WORDS, head, at: new Date().toISOString() };
+            },
+          },
+        );
+      }
       const kept = [
         ad.sha ? `map ${ad.files.join(", ")} committed (${ad.sha.slice(0, 7)})` : "",
         ad.note ?? "",
@@ -715,6 +810,80 @@ export async function finish(repo: string, id: string): Promise<Finished | { ref
   // ADR 0018: a catch-up's review reads only what changed since this head.
   await updateJob(repo, job.id, (j) => ({ ...j, reviewed: { head: head as string, round: j.round } }));
   return mergeOrHold(repo, cfg, job, head as string);
+}
+
+/** Pure: a check's result words (ADR 0028 §4), as its card and Report say them. */
+export function checkWords(o: { pass: number; total: number; findings: number; explore?: number }): string {
+  if (o.findings) return `Found ${o.findings} problem${o.findings === 1 ? "" : "s"}`;
+  if (!o.total) return `Checked on staging · explored ${o.explore ?? 0} min, no problems`;
+  return `Checked on staging · ${o.pass} of ${o.total} pass`;
+}
+
+/**
+ * ADR 0028 §3-§6: a check's QA finished. BLOCKED (QA couldn't run: the app won't start) runs QA again in a new
+ * round, and out of rounds goes to a person. Otherwise it is done: all pass, or each finding proposed in the Inbox
+ * (Kitchen findings, linked to this job); recipes QA kept go to the verify map, and a map that can't be written never
+ * fails the check. Never Build, Review or a merge.
+ */
+async function finishCheck(repo: string, cfg: Config, job: Job): Promise<Finished> {
+  const dir = jobDirOf(repo, job.id);
+  const qd = qaDir(dir, job.round);
+  await (await import("../qa/app.ts")).appDown(repo, job.id).catch(() => {});
+  const criteria = criteriaOf(dir);
+  const qa = readQa(dir, job.round, criteria, { check: true });
+  if ("refused" in qa) return refuseLane(repo, job, `QA: ${qa.refused}`);
+  const onto = job.check?.onto ?? "";
+  const target = targetOf(cfg, job);
+  if (qa.verdict === "BLOCKED") {
+    await dropCheckCheckout(repo, job.id);
+    if (outOfRounds(job))
+      return moveOn(repo, job, "needs-human", `${job.id}  check couldn't run (${qa.blocked}), out of rounds → needs-human`, {
+        reason: `the check couldn't run after ${job.roundLimit} rounds: ${qa.blocked}`,
+      });
+    return moveOn(repo, job, "qa", `${job.id}  check couldn't run (${qa.blocked}) → qa again (round ${job.round + 1})`);
+  }
+  await addFindings(repo, qaFindings(job.id, job.round, qd));
+  const proposals = await proposeCheckFindings(repo, { job: job.id, round: job.round, onto, target, qaFolder: qd, findings: qa.findings }).catch(
+    () => [] as string[],
+  );
+  const map = await keepRecipes(repo, cfg, job, qd).catch((e: Error) => skippedLine(e.message.split("\n")[0]));
+  await dropCheckCheckout(repo, job.id);
+  const ids = new Set(criteria.map((c) => c.id));
+  const pass = qa.criteria.filter((r) => ids.has(r.id) && r.result === "PASS").length;
+  const result = checkWords({ pass, total: criteria.length, findings: qa.findings.length, explore: job.check?.explore });
+  const outcome: JobCheck = { result, pass, total: criteria.length, findings: qa.findings.length, proposals, ...(map ? { map } : {}) };
+  const tail = [proposals.length ? `proposed ${proposals.join(", ")} in the inbox` : "", map].filter(Boolean);
+  return moveOn(repo, job, "done", `${job.id}  check on ${target} ${onto.slice(0, 7)}: ${result}${tail.map((t) => ` · ${t}`).join("")} → done`, {
+    patch: (j) => {
+      j.check = { ...j.check, ...outcome };
+    },
+  });
+}
+
+/**
+ * ADR 0028 §4: the recipes a check used, worth repeating (QA's `map/` files), added to the verify map: admitted as a
+ * job's are (the contract, nothing weakened), then saved on this machine (verify.map: local) or committed on a
+ * branch of the target's tip and merged into it as map upkeep is. The line to say, or "" when QA kept none. Never
+ * throws for a map problem: it is the line, and the check is done anyway.
+ */
+async function keepRecipes(repo: string, cfg: Config, job: Job, qd: string): Promise<string> {
+  const { admitMap, mapUpdates } = await import("../verify/admit.ts");
+  if (!mapUpdates(qd).length) return "";
+  const wt = runWorktree(repo, checkRunId(job.id));
+  const onto = job.check?.onto ?? "";
+  const ad = await admitMap(repo, wt, qd, { base: onto, changes: [], message: `Map updates from check ${job.id}`, cfg });
+  if ("refused" in ad) return skippedLine(ad.refused);
+  if (ad.skipped) return skippedLine(ad.skipped);
+  if (mapMode(cfg) === "local" || !ad.sha) return ad.note ?? (ad.sha ? "" : "map unchanged");
+  // Repo map: the commit is on the detached checkout; it lands on the target through the merge gate, as upkeep's.
+  const branch = `kitchen/${checkRunId(job.id)}-map`;
+  await git(repo, ["branch", "-f", branch, ad.sha]);
+  if (!cfg.staging.auto_merge) return `map ${ad.files.join(", ")} left on ${branch} (staging.auto_merge is off: a person merges it)`;
+  const pseudo = { ...job, branch, pr: null, title: `Map updates from check ${job.id}` } as Job;
+  const m = await mergeToTarget(repo, cfg, pseudo, ad.sha, { log: path.join(roundDir(jobDirOf(repo, job.id), job.round), "map-merge.log"), merge: "kitchen" });
+  if (!m.ok) return skippedLine(`not merged into ${targetOf(cfg, job)}: ${m.why} (the branch ${branch} stays)`);
+  await git(repo, ["branch", "-D", branch], { allowFail: true });
+  return `map ${ad.files.join(", ")} merged into ${targetOf(cfg, job)} (${m.sha.slice(0, 7)})`;
 }
 
 /** ADR 0025 §4: the job says which check runs now (`checking`), for the dashboard; cleared when the checks end. */
@@ -1110,6 +1279,7 @@ export function show(repo: string, id: string): Record<string, unknown> {
     criteria: criteriaOf(dir),
     leftOut: leftOutOf(dir) || null,
     waits: job.waits ?? null,
+    check: job.check ?? null,
     unread: unreadMessages(dir).length,
     report: fs.existsSync(path.join(dir, "report.html")) ? path.join(dir, "report.html") : null,
   };

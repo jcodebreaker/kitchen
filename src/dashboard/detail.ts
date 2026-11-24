@@ -4,7 +4,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { loadConfig, targetOf } from "../config.ts";
-import { CATCH_UP_LIMIT, isActive, type Job, prOpen, STAGES, type Stage } from "../engine/machine.ts";
+import { criteriaOf, qaDir, readQa } from "../engine/lanes.ts";
+import { CATCH_UP_LIMIT, isActive, isCheck, type Job, prOpen, STAGES, type Stage } from "../engine/machine.ts";
 import { type Message, readMessages } from "../engine/messages.ts";
 import { findJob, jobDirOf } from "../engine/store.ts";
 import { type LedgerLine, readLedger } from "../ledger/append.ts";
@@ -29,7 +30,50 @@ export type MsgEv =
   | { c: "you"; t: string; at: string; kind: Message["kind"]; status: string; sent: boolean }
   | { c: "ask"; t: string; at: string; who: string }
   | { c: "sys"; t: string; at: string };
-export type Detail = { id: string; tl: Seg[]; crit: { id: string; text: string; st: "ok" | "bad" | "wait"; e: string }[]; ticket: string };
+export type Detail = {
+  id: string;
+  tl: Seg[];
+  /** `shot`: ADR 0028, a check's screenshot for the criterion (a path under the page, /jobs/<id>/qa/<round>/<file>). */
+  crit: { id: string; text: string; st: "ok" | "bad" | "wait"; e: string; shot?: string }[];
+  ticket: string;
+  /** ADR 0028 §4: what a check found, each with the inbox proposal it became. */
+  found?: { pid: string; title: string; seen: string }[];
+};
+
+/**
+ * ADR 0028: a check's Checks tab: each criterion with the first screenshot QA cited for it, and each finding with the
+ * inbox proposal it became (the engine proposes them in order, so the i-th finding is the i-th proposal).
+ */
+function checkTab(dir: string, j: Job): Pick<Detail, "crit" | "found"> {
+  const crit = critOf(dir, j.round, { check: true });
+  const criteria = criteriaOf(dir);
+  for (let r = j.round; r >= 1; r--) {
+    const qa = readQa(dir, r, criteria, { check: true });
+    if (!("criteria" in qa) || (!qa.criteria.length && !qa.findings.length)) continue;
+    const at = (f: string) => `jobs/${encodeURIComponent(j.id)}/qa/${r}/${f.split("/").map(encodeURIComponent).join("/")}`;
+    const ps = j.check?.proposals ?? [];
+    return {
+      // The icon says pass or fail and the thumbnail is the screenshot: the line under it is QA's note and any other file.
+      crit: crit.map((c) => {
+        const row = qa.criteria.find((x) => x.id === c.id);
+        if (!row) return c;
+        const shot = row.evidence.find((f) => /\.(png|jpe?g)$/i.test(f));
+        const e = [row.note, ...row.evidence.filter((f) => f !== shot)].filter(Boolean).join(" · ");
+        return { ...c, e, ...(shot ? { shot: at(shot) } : {}) };
+      }),
+      found: qa.findings.flatMap((f, i) => (ps[i] ? [{ pid: ps[i], title: f.title, seen: f.seen }] : [])),
+    };
+  }
+  return { crit, found: [] };
+}
+
+/** ADR 0028: a check's screenshot, inside its round's QA folder only; null for anything else. */
+export function qaShot(repo: string, id: string, round: number, rel: string): string | null {
+  if (!/\.(png|jpe?g)$/i.test(rel)) return null;
+  const qd = path.resolve(qaDir(jobDirOf(repo, id), round));
+  const f = path.resolve(qd, rel);
+  return f.startsWith(`${qd}${path.sep}`) && fs.existsSync(f) && fs.statSync(f).isFile() ? f : null;
+}
 
 /** ticket.md's body: everything after the `# <title>` line, at most 4,000 characters. */
 export function ticketText(dir: string): string {
@@ -43,6 +87,9 @@ export function ticketText(dir: string): string {
     return "";
   }
 }
+
+/** ADR 0028 §5: a schedule's interval as the Activity says it: daily, hourly, every 2 hours. */
+const often = (every?: string) => (every === "day" ? "daily" : every === "hour" ? "hourly" : `every ${every ?? "tick"}`);
 
 const EVENTS_PER_SEG = 160;
 /** A move that sends a job back: to a person (intake asking its question is not a failure), or to an earlier lane. */
@@ -164,8 +211,8 @@ export async function detail(repo: string, ref: string): Promise<Detail> {
   // ADR 0022: the first line says where the job came from.
   tl[0]?.evs.unshift({
     c: "sys",
-    t: `${j.from ? `Filed from the Outer loop · ${j.from.label}` : "Filed by you (New ticket)"}${target !== defaultTarget ? ` · into ${target}` : ""}`,
+    t: `${j.from ? `Filed from the Outer loop · ${j.from.label}` : j.check?.filedBy === "schedule" ? `Filed by its schedule (${often(j.check.every)})` : "Filed by you (New ticket)"}${target !== defaultTarget ? ` · into ${target}` : ""}`,
     at: j.startedAt,
   });
-  return { id: j.id, tl, crit: critOf(dir, j.round), ticket: ticketText(dir) };
+  return { id: j.id, tl, ...(isCheck(j) ? checkTab(dir, j) : { crit: critOf(dir, j.round) }), ticket: ticketText(dir) };
 }

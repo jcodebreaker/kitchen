@@ -14,7 +14,8 @@
 //   instead doubled the wall time of two tickets that only shared a route file and the README. Jobs with different
 //   targets never meet: their merges take different locks (ADR 0026 §5).
 // - Paused, waiting-for-you and finished jobs are listed, never started.
-import { isLane, type Job, type Lane, PR_OPEN_WORDS, prOpen } from "./machine.ts";
+// - ADR 0028: a check (intake → QA → done) is never sent to Build: one found there (moved by hand) waits for you.
+import { isCheck, isLane, type Job, type Lane, PR_OPEN_WORDS, prOpen } from "./machine.ts";
 
 export type Plan = {
   /** Lanes to start now, in order. `restart`: the job was left running by an orchestrator that is gone. */
@@ -51,6 +52,8 @@ export function planWave(jobs: Job[], o: { parallel: number; restartStranded?: b
     else if (prOpen(j)) plan.you.push({ id: j.id, stage: j.stage, why: `${PR_OPEN_WORDS} (PR #${j.pr?.number}${j.pr?.url ? ` ${j.pr.url}` : ""})` });
     else if (j.stage === "ready") plan.you.push({ id: j.id, stage: j.stage, why: j.held ?? "ready for a person to merge" });
     else if (j.stage === "paused") plan.you.push({ id: j.id, stage: j.stage, why: j.pausedReason ?? "paused" });
+    else if (j.stage === "build" && isCheck(j))
+      plan.you.push({ id: j.id, stage: j.stage, why: "a check never builds: kitchen feedback it to qa, or file the change as its own ticket" });
     else if (isLane(j.stage)) {
       if (j.running && !o.restartStranded) plan.running.push({ id: j.id, lane: j.running.lane, since: j.running.at });
       else cands.push({ j, restart: j.running ? true : undefined });
