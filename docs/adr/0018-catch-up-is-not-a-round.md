@@ -42,3 +42,24 @@ Kitchen, in code. At the failed merge it knows why: conflict, or red checks. A r
 - "First pass" measures quality again. Catch-ups are measured on their own.
 - A catch-up costs about the same wall time but fewer tokens: no fresh exploration in QA, and a small review.
 - A job on a hot file can still catch up 3 times and go to a person. That's the signal to split the work differently.
+
+## Amendment, 2026-11-23: how it is built
+
+**§3, who decides.** `isCatchUp` in `machine.ts`, pure. The trial merge (`staging.ts`) now says why it failed (`cause`: conflict or checks) and onto which tip of `staging`. At `job finish`, Kitchen calls it a catch-up when:
+- the merge conflicted, or
+- the checks went red on the merged result, the same checks were green on the job branch alone, and `staging` has commits the reviewed head doesn't.
+
+"Green on the branch alone" is the round's `checks.json`, from Build's `job finish`: no second run. Since Build refuses red checks, that run is always green by the time a job merges, so in practice the test is whether `staging` moved. Red checks on a merge when `staging` hadn't moved are a round. So are a weakened map (the backstop), a QA FAIL, a blocking review and a red merge check (regress).
+
+**§1, the counter.** `move(…, "build", { catchUp: true })` adds 1 to `round` (the new round folder holds the evidence), to `roundStart` and to `catchUps`, so `roundsUsed` stays the same. A catch-up ignores the round budget: a job out of rounds still catches up. Before, a merge that failed with no rounds left stopped at Ready.
+- `catchUps` counts catch-ups in a row. A real round clears it, landing (`done`) clears it, and so does a person taking the job back from needs-human. While it is above 0, the current round is a catch-up, and the briefs read it that way.
+- With 3 already used, the next failed merge goes to needs-human: "staging keeps moving under it (3 catch-ups)".
+- The ledger's move line carries `detail.catchUp: true`. That's what the report counts, since `catchUps` resets.
+
+**§2, light.**
+- **Build:** the brief keeps the "staging moved: resolve the merge first" section and adds "A catch-up, not a new round": make the merge work, fix only what the merged result breaks, change nothing else. Why the merge failed is under "Earlier rounds", as before.
+- **QA:** unchanged. The ADR 0017 §5 re-drive applies by itself: the last QA passed and the criteria are the same. A test checks it.
+- **Review:** when a review passes, Kitchen keeps its head and round on the job (`reviewed`). A catch-up's review brief gives `git diff <reviewed> <head>` (`staging`'s new commits come along with it) and `git show --remerge-diff` for the merge commits since then, which shows the resolution alone. It also points to the whole-job diff and that review's file and findings, and says to block only on what the resolution breaks.
+- **Merge check:** unchanged.
+
+**Report.** `kitchen report`: "first pass" counts ended jobs whose `round` minus their catch-ups (from the ledger) is 1. Mean rounds uses the same count. Review sent-backs leave catch-ups out. A new count, `caughtUp`, prints as "caught up with staging N times". Dashboard cards show `round` less catch-ups the same way. Folders and the detail timeline keep the real round number.
