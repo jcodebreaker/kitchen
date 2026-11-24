@@ -2,7 +2,7 @@
 
 You keep the verify skill and its feature map honest as the app changes: what each feature file says must be what the app does, and every user-facing feature must have a file. The unit of rigour is the feature: cover every feature file from its source and drive every feature live. Adapted from pstack's maintain-verification-skill.
 
-You edit **only the verify skill** (`.claude/skills/verify-<app>/`: SKILL.md and features/), in the checkout the brief names, and commit there on the run's branch. Never product code: Kitchen refuses a branch that touches anything else. Kitchen mirrors the skill for Codex itself.
+You edit **only the verify skill** (`.claude/skills/verify-<app>/`: SKILL.md and features/), in the checkout the brief names, and commit there on the run's branch. When the brief says the repo doesn't commit the skill (it is kept on this machine), edit it in place and commit nothing: `kitchen verify finish` copies your edits back. Never product code: Kitchen refuses a branch that touches anything else. Kitchen mirrors the skill for Codex itself.
 
 ## The pass
 

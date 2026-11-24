@@ -98,7 +98,7 @@ A job whose QA and review pass is merged into `staging`, after Kitchen runs your
   <img alt="You tell Claude Code what you want and it files a ticket. The orchestrator session plans waves and moves each job only through kitchen job verbs. One fresh agent per lane: intake, build, QA, review. QA starts your app and checks it with Playwright, following and keeping the verify map: one file per feature. After review, a merge check drives the features the merge touches on the merged result; green lands in staging with its Report, and you merge staging onward." src="docs/img/how-it-works-light.svg">
 </picture>
 
-QA follows and keeps a **verify skill** in your repo (`.claude/skills/verify-<app>/`): one file per feature saying how to check it and which files are behind it. Before a job merges, a **merge check** drives every feature whose files the merge changes, on the merged result, so one job breaking another's feature goes back to Build instead of landing. More: [the verify map](docs/guide.md#the-verify-map).
+QA follows and keeps a **verify skill** in your repo (`.claude/skills/verify-<app>/`): one file per feature saying how to check it and which files are behind it. A repo that ignores `.claude/` keeps it on your machine instead (`.kitchen/verify/skill/`, `verify.map: local` in kitchen.yaml): Kitchen copies it into each job and never commits it. Before a job merges, a **merge check** drives every feature whose files the merge changes, on the merged result, so one job breaking another's feature goes back to Build instead of landing. More: [the verify map](docs/guide.md#the-verify-map).
 
 ## Why Kitchen
 

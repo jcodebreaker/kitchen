@@ -1,56 +1,15 @@
 // The map moves only through Kitchen (ADR 0017 §2, §4): QA writes the files it changed in its QA folder under
 // `map/`; `kitchen job finish` checks them against the feature file contract and the weakening rule (map.ts), then
-// copies them into the job branch as a Kitchen commit, into both tools' copies of the skill. Builders never edit
+// copies them into the job branch as a Kitchen commit, into both tools' copies of the skill (or, for a map kept on
+// this machine, into .kitchen/verify/skill: ADR 0027, where.ts). Builders never edit
 // `verify-*/`: a build whose own commits touch it is refused.
 import fs from "node:fs";
 import path from "node:path";
 import type { Config } from "../config.ts";
-import { git, gitOut } from "../engine/git.ts";
+import { git } from "../engine/git.ts";
 import { writeAtomic } from "../engine/store.ts";
-import {
-  contractProblems,
-  type Feature,
-  type FeatureMap,
-  featuresRel,
-  isVerifyPath,
-  namedBy,
-  parseFeature,
-  type Removal,
-  readMap,
-  removals,
-  SKILL_ROOTS,
-} from "./map.ts";
-import { writeVerifySkill } from "./skill.ts";
-
-export const KITCHEN_IDENTITY = ["-c", "user.name=Kitchen", "-c", "user.email=kitchen@localhost", "-c", "commit.gpgSign=false"];
-
-/** The map at a commit (read through git, no checkout), or an empty map. */
-export async function mapAt(repo: string, rev: string): Promise<FeatureMap & { name: string | null }> {
-  if (!rev) return { name: null, readme: null, features: [] };
-  const ls = await git(repo, ["ls-tree", "-r", "--name-only", rev, "--", ...SKILL_ROOTS], { allowFail: true });
-  const files = ls.code ? [] : ls.stdout.split("\n").filter(Boolean);
-  let name: string | null = null;
-  let root = "";
-  for (const r of SKILL_ROOTS) {
-    const hit = files
-      .map((f) => new RegExp(`^${r.replace(".", "\\.")}/(verify-[\\w.-]+)/SKILL\\.md$`).exec(f)?.[1])
-      .filter((x): x is string => !!x)
-      .sort()[0];
-    if (hit) {
-      name = hit;
-      root = r;
-      break;
-    }
-  }
-  if (!name) return { name: null, readme: null, features: [] };
-  const dir = `${root}/${name}/features/`;
-  const show = async (p: string) => (await git(repo, ["show", `${rev}:${p}`])).stdout;
-  const mds = files.filter((f) => f.startsWith(dir) && !f.slice(dir.length).includes("/") && f.endsWith(".md"));
-  const readmePath = mds.find((f) => f.endsWith("/README.md"));
-  const features: Feature[] = [];
-  for (const f of mds.filter((x) => x !== readmePath).sort()) features.push(parseFeature(path.basename(f, ".md"), await show(f)));
-  return { name, readme: readmePath ? await show(readmePath) : null, features };
-}
+import { contractProblems, type Feature, isVerifyPath, namedBy, parseFeature, type Removal, removals } from "./map.ts";
+import { landMap, mapIn, mapOf } from "./where.ts";
 
 /** The files QA left in `<qa folder>/map/` (only `*.md` directly in it). */
 export function mapUpdates(qaFolder: string): string[] {
@@ -63,12 +22,13 @@ export function mapUpdates(qaFolder: string): string[] {
 }
 
 export type MapChange = Removal & { by: string };
-export type Admitted = { files: string[]; sha: string | null; changes: MapChange[]; note?: string };
+/** `skipped`: the files passed the checks but couldn't be written or committed (ADR 0027 §3): the change moves on. */
+export type Admitted = { files: string[]; sha: string | null; changes: MapChange[]; note?: string; skipped?: string };
 
 /**
- * Check QA's map updates and commit them into the job's worktree. `base`: the commit the job started from (staging,
- * where the earlier checks live); `changes`: intake's CHANGES: entries. Refused when a file breaks the contract or a
- * removal isn't named by CHANGES.
+ * Check QA's map updates and land them (ADR 0027: committed into the job's worktree, or written to this machine's
+ * map). `base`: the commit the job started from (staging, where the earlier checks live); `changes`: intake's
+ * CHANGES: entries. Refused when a file breaks the contract or a removal isn't named by CHANGES.
  */
 export async function admitMap(
   repo: string,
@@ -78,10 +38,6 @@ export async function admitMap(
 ): Promise<Admitted | { refused: string }> {
   const files = mapUpdates(qaFolder);
   if (!files.length) return { files: [], sha: null, changes: [] };
-  // Staging has no verify skill yet (init's files weren't committed): the first map commit brings the skeleton.
-  if (!readMap(wt).name) writeVerifySkill(wt, o.cfg);
-  const here = readMap(wt);
-  if (!here.name) return { refused: "could not write the verify skill into the worktree" };
   const bad = files.find((f) => !/^[\w.-]+\.md$/.test(f));
   if (bad) return { refused: `map/${bad}: a feature file name is letters, digits, . _ - and .md` };
   const updated = new Map<string, Feature>();
@@ -91,8 +47,9 @@ export async function admitMap(
     if (p.length) return { refused: `map/${f} breaks the feature file contract: it needs ${p.join("; ")}` };
     updated.set(feat.id, feat);
   }
+  const here = mapIn(repo, o.cfg, wt);
   const after = [...here.features.filter((x) => !updated.has(x.id)), ...updated.values()];
-  const before = (await mapAt(repo, o.base)).features;
+  const before = (await mapOf(repo, o.cfg, o.base)).features;
   const rs = removals(before, after);
   const unnamed = rs.filter((r) => !namedBy(r, o.changes));
   if (unnamed.length)
@@ -105,21 +62,9 @@ export async function admitMap(
         )
         .join("; ")}. Keep it (fix how to reach it, never what is expected), or FAIL the criterion`,
     };
-  for (const root of SKILL_ROOTS) {
-    const d = path.join(wt, featuresRel(here.name, root));
-    fs.mkdirSync(d, { recursive: true });
-    for (const f of files) fs.copyFileSync(path.join(qaFolder, "map", f), path.join(d, f));
-    // The other tool's copy gets the skill file too, so both read the same skill.
-    const skill = path.join(wt, root, here.name, "SKILL.md");
-    const src = SKILL_ROOTS.map((r) => path.join(wt, r, here.name as string, "SKILL.md")).find((p) => fs.existsSync(p));
-    if (!fs.existsSync(skill) && src) fs.copyFileSync(src, skill);
-  }
-  await git(wt, ["add", "-A", "--", ...SKILL_ROOTS.map((r) => `${r}/${here.name}`)]);
-  const staged = (await git(wt, ["diff", "--cached", "--name-only"])).stdout.trim();
   const changes = rs.map((r) => ({ ...r, by: namedBy(r, o.changes) as string }));
-  if (!staged) return { files, sha: null, changes };
-  await git(wt, [...KITCHEN_IDENTITY, "commit", "-q", "-m", o.message]);
-  return { files, sha: await gitOut(wt, ["rev-parse", "HEAD"]), changes };
+  const landed = await landMap(repo, o.cfg, wt, path.join(qaFolder, "map"), files, o.message);
+  return { files, changes, ...landed };
 }
 
 /**
