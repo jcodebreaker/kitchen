@@ -88,7 +88,22 @@ const INSTALL_LINES = (pm: string) => ["# A frozen install from the lockfile, ru
  * proposed that the person hasn't accepted: written commented out, so nothing runs them until they do.
  */
 export function checksYaml(d: Detected, o: { proposed?: boolean } = {}): string {
-  const lines = ["checks:", ...d.checks.map((c) => `  - { name: ${scalar(c.name)}, run: ${scalar(c.run)} }`), ...(d.install ? INSTALL_LINES(d.install) : [])];
+  const one = (c: Detected["checks"][number]) => {
+    const extra = c.when ? `, when: ${c.when}, needs_app: ${!!c.needsApp}${c.timeoutSec ? `, timeout_sec: ${c.timeoutSec}` : ""}` : "";
+    return `  - { name: ${scalar(c.name)}, run: ${scalar(c.run)}${extra} }`;
+  };
+  const merge = d.checks.find((c) => c.when === "merge");
+  const lines = [
+    "checks:",
+    ...d.checks.filter((c) => !c.when).map(one),
+    ...(merge
+      ? [
+          `  # Your end-to-end suite: only on the trial merge into staging, never after Build (when: merge)${merge.needsApp ? ", with the app started from the merged result and its URL in $BASE_URL (needs_app)" : ""}`,
+          one(merge),
+        ]
+      : []),
+    ...(d.install ? INSTALL_LINES(d.install) : []),
+  ];
   return [
     o.proposed
       ? "# Checks an agent proposed from reading the repo. NOT used and never run until you uncomment them (review them first):"

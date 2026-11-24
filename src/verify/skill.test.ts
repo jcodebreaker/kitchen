@@ -85,3 +85,44 @@ test("an existing verify skill keeps its name; handles skip tests and dependenci
   const h = detectHandles(r);
   assert.ok(h.includes("#member") && !h.includes("#dep-thing") && !h.includes("#test-thing"), h.join());
 });
+
+test("ADR 0021 §2: SKILL.md's Your tests: the suite, its page objects, fixtures and helpers, login and seed helpers, one spec's command", () => {
+  const r = app("suite");
+  const put = (f: string, t: string) => {
+    fs.mkdirSync(path.dirname(path.join(r, f)), { recursive: true });
+    fs.writeFileSync(path.join(r, f), t);
+  };
+  put("playwright.config.ts", 'export default { testDir: "./e2e", use: { baseURL: process.env.BASE_URL } };\n');
+  put("e2e/cart.spec.ts", "");
+  put("e2e/checkout.spec.ts", "");
+  put("e2e/pages/cart.page.ts", "export class CartPage {}\n");
+  put("e2e/fixtures.ts", "export async function loginAs(page, who) {}\nexport const seedCart = async () => {};\nexport const money = 1;\n");
+  const c = parseConfig('app: { start: "npm start" }\nchecks: [{ name: e2e, run: "npm run test:e2e", when: merge, needs_app: true }]\n');
+  writeVerifySkill(r, c);
+  const md = fs.readFileSync(path.join(r, ".claude/skills/verify-library-demo/SKILL.md"), "utf8");
+  const sec = /## Your tests\n([\s\S]*?)\n## Drive/.exec(md)?.[1] ?? "";
+  assert.match(sec, /Playwright suite[\s\S]*Kitchen runs the whole suite \(`npm run test:e2e`\) on every merge into staging/);
+  assert.match(
+    sec,
+    /Where: `e2e\/` \(2 specs, e\.g\. `e2e\/cart\.spec\.ts`, `e2e\/checkout\.spec\.ts`\)\. Config: `playwright\.config\.ts` \(reads `BASE_URL`/,
+  );
+  assert.match(sec, /Page objects, fixtures, helpers: `e2e\/pages\/`, `e2e\/fixtures\.ts`, `e2e\/pages\/cart\.page\.ts`/);
+  assert.match(sec, /Logging in and seeding: `loginAs \(e2e\/fixtures\.ts\)`, `seedCart \(e2e\/fixtures\.ts\)`\./);
+  assert.ok(!sec.includes("money"));
+  assert.match(sec, /`BASE_URL=<url> PLAYWRIGHT_BASE_URL=<url> npx playwright test <spec> --reporter=line --output <evidence folder>\/pw > /);
+  assert.match(sec, /Never edit the suite/);
+  assert.ok(untouched(md), "still Kitchen's: a later init refreshes it");
+  // Cypress: its own one-spec command and env.
+  const cy = app("cy");
+  fs.writeFileSync(path.join(cy, "cypress.config.js"), "module.exports = {}\n");
+  fs.mkdirSync(path.join(cy, "cypress/e2e"), { recursive: true });
+  fs.mkdirSync(path.join(cy, "cypress/support"), { recursive: true });
+  fs.writeFileSync(path.join(cy, "cypress/e2e/cart.cy.js"), "");
+  fs.writeFileSync(path.join(cy, "cypress/support/commands.js"), 'Cypress.Commands.add("login", () => {})\n');
+  writeVerifySkill(cy, cfg);
+  const cmd = fs.readFileSync(path.join(cy, ".claude/skills/verify-library-demo/SKILL.md"), "utf8");
+  assert.match(cmd, /`CYPRESS_BASE_URL=<url> npx cypress run --spec <spec> --config video=false/);
+  assert.match(cmd, /`cypress\/support\/`[\s\S]*`cy\.login \(cypress\/support\/commands\.js\)`/);
+  // No suite: says so.
+  assert.match(fs.readFileSync(path.join(root, "a", ".claude/skills/verify-library-demo/SKILL.md"), "utf8"), /## Your tests\n\nNo end-to-end suite was found/);
+});

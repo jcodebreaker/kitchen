@@ -11,7 +11,7 @@ import * as control from "../engine/control.ts";
 import { qaDir } from "../engine/lanes.ts";
 import { findJob, jobDirOf } from "../engine/store.ts";
 import { orchestratorCommand, scrubbedEnv, streamLine } from "../run/orchestrator.ts";
-import { appDown, appReset, appUp, http, page } from "./app.ts";
+import { appDown, appEnv, appReset, appUp, composeProject, http, page, reachable, stopApp, stopCommand } from "./app.ts";
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kitchen-qa-"));
 const lines: string[] = [];
@@ -100,4 +100,29 @@ test("kitchen run: a headless claude -p running the /kitchen skill, its tools al
     null,
   );
   assert.match(String(streamLine(JSON.stringify({ type: "result", total_cost_usd: 1.5, result: "done" }))), /finished · \$1\.50: done/);
+});
+
+test("ADR 0021 §4: a compose app runs in its job's own project; qa down brings it down (env and commands only, no Docker)", async () => {
+  const compose = { start: "docker compose up --build", stop: undefined };
+  assert.equal(composeProject(compose, "007-add-cart"), "kq007");
+  assert.equal(composeProject({ start: "docker-compose up" }, "012-x"), "kq012");
+  assert.equal(composeProject(compose, "sweep-20261124-101500"), "kq-sweep-20261124-101500");
+  assert.equal(composeProject({ start: "npm start" }, "007-add-cart"), null, "not compose: no project");
+  assert.equal(composeProject({ start: "./docker-composer" }, "007-x"), null);
+  assert.deepEqual(appEnv({ port: 4100, project: "kq007" }), { PORT: "4100", COMPOSE_PROJECT_NAME: "kq007" });
+  assert.deepEqual(appEnv({ port: 4100, project: null }), { PORT: "4100" });
+  assert.equal(stopCommand(compose, "kq007"), "docker compose -p kq007 down -v");
+  assert.equal(stopCommand({ stop: "make down" }, "kq007"), "make down", "app.stop wins");
+  assert.equal(stopCommand({}, null), null);
+  // The stop command runs in the app's folder with the env it started with.
+  const wt = fs.mkdtempSync(path.join(root, "stop-"));
+  await stopApp({ wt, stop: 'echo "$COMPOSE_PROJECT_NAME $PORT" > stopped.txt', env: appEnv({ port: 4100, project: "kq007" }) });
+  assert.equal(fs.readFileSync(path.join(wt, "stopped.txt"), "utf8"), "kq007 4100\n");
+});
+
+test("ADR 0021 §3: only this machine, or the deployed URL a --url sweep drives", () => {
+  assert.ok(reachable("http://127.0.0.1:4100/x", null));
+  assert.ok(!reachable("https://staging.example.com/cart", null));
+  assert.ok(reachable("https://staging.example.com/cart", "https://staging.example.com"));
+  assert.ok(!reachable("https://evil.example.com/", "https://staging.example.com"));
 });

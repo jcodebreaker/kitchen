@@ -32,7 +32,7 @@ npm i -g devkitchen
 kitchen init
 ```
 
-It checks what it needs, finds your checks and how to start your app, installs guard hooks into `.claude/settings.json`, creates a `staging` branch and runs your checks. It takes seconds.
+It checks what it needs, finds your checks, your end-to-end suite (run on every merge into staging, against the app) and how to start your app, installs guard hooks into `.claude/settings.json`, creates a `staging` branch and runs your checks. It takes seconds.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/term-init-dark.webp">

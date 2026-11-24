@@ -84,11 +84,25 @@ export function runShell(cmd: string, o: { cwd: string; timeoutSec: number; log?
   });
 }
 
+/** The app for a `needs_app` check (ADR 0021): started, with the env that names its URL, and how to stop it. */
+export type AppForCheck = () => Promise<{ ok: true; url: string; stop: () => Promise<void> } | { ok: false; why: string }>;
+
+/** Pure: the env a `needs_app` check gets: the app's URL under the names the usual suites read. */
+export const baseUrlEnv = (url: string): Record<string, string> => ({ BASE_URL: url, PLAYWRIGHT_BASE_URL: url, CYPRESS_BASE_URL: url });
+
 /**
  * The checks in `dir`, in order; the first failure stops them. `prepare` runs first unless it already ran there
- * for the same command and dependency files (a marker in `stateDir`). `log`: every command's full output.
+ * for the same command and dependency files (a marker in `stateDir`). `log`: every command's full output. A
+ * `needs_app` check runs with the app `app` starts (its URL in $BASE_URL), and the app is always stopped after it.
  */
-export async function runChecks(o: { dir: string; checks: CheckSpec[]; prepare?: string; stateDir?: string; log?: string }): Promise<ChecksResult> {
+export async function runChecks(o: {
+  dir: string;
+  checks: CheckSpec[];
+  prepare?: string;
+  stateDir?: string;
+  log?: string;
+  app?: AppForCheck;
+}): Promise<ChecksResult> {
   const results: CheckRun[] = [];
   if (o.prepare && o.checks.length) {
     const marker = o.stateDir ? path.join(o.stateDir, "prepared.json") : null;
@@ -113,9 +127,33 @@ export async function runChecks(o: { dir: string; checks: CheckSpec[]; prepare?:
     }
   }
   for (const c of o.checks) {
-    const r = await runShell(c.run, { cwd: o.dir, timeoutSec: c.timeoutSec, log: o.log });
+    const r = c.needsApp ? await withApp(c, o) : await runShell(c.run, { cwd: o.dir, timeoutSec: c.timeoutSec, log: o.log });
     results.push({ name: c.name, run: r.run, ok: r.ok, exit: r.exit, secs: r.secs, tail: r.tail });
     if (!r.ok) break;
   }
   return { ok: results.every((r) => r.ok), results };
+}
+
+/** One `needs_app` check: the app up, the check with its URL, the app down whatever happened. */
+async function withApp(c: CheckSpec, o: { dir: string; log?: string; app?: AppForCheck }): Promise<CheckRun> {
+  const t0 = Date.now();
+  const fail = (tail: string): CheckRun => ({ name: c.name, run: c.run, ok: false, exit: null, secs: (Date.now() - t0) / 1000, tail });
+  if (!o.app) return fail(`${c.name} needs the app (needs_app), and nothing here starts it`);
+  const a = await o.app();
+  if (!a.ok) {
+    note(o.log, `# ${c.name}: the app did not start: ${a.why}\n\n`);
+    return fail(`the app did not start for ${c.name}: ${a.why}`);
+  }
+  try {
+    note(o.log, `# ${c.name}: the app is up at ${a.url} (BASE_URL)\n`);
+    return { ...(await runShell(c.run, { cwd: o.dir, timeoutSec: c.timeoutSec, log: o.log, env: baseUrlEnv(a.url) })), name: c.name };
+  } finally {
+    await a.stop();
+  }
+}
+
+function note(log: string | undefined, text: string) {
+  if (!log) return;
+  fs.mkdirSync(path.dirname(log), { recursive: true });
+  fs.appendFileSync(log, text);
 }

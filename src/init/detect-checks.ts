@@ -7,9 +7,10 @@
 // quick init then asks one short agent call.
 import fs from "node:fs";
 import path from "node:path";
+import { parse as parseYaml } from "yaml";
 import type { PackageManager } from "../checks/run-checks.ts";
 
-export type DetectedCheck = { name: string; run: string };
+export type DetectedCheck = { name: string; run: string; when?: "merge"; needsApp?: boolean; timeoutSec?: number };
 export type Detected = {
   checks: DetectedCheck[];
   /** The package manager of a frozen install from the lockfile (kitchen.yaml `checks_install`): only with a lockfile. */
@@ -243,8 +244,72 @@ function merge(ds: Detected[]): Detected {
   };
 }
 
-/** The checks the repo's own files name, or null when nothing obvious is there. */
+/** package.json scripts that run an end-to-end suite, best first (ADR 0021 §1). */
+const E2E_SCRIPTS = ["test:e2e", "e2e", "test:integration", "cy:run"];
+const CONFIG_EXT = ["ts", "js", "mjs", "cjs"];
+/**
+ * Pure: why an end-to-end command is no check, or null. It runs only on the trial merge (`when: merge`), a scratch
+ * worktree Kitchen throws away, with nothing else running from it: starting containers is how many suites bring up
+ * their database, so `docker` / `compose` is allowed there. Changing files, watching and serving are not.
+ */
+export const unsafeE2e = (body: string): string | null => {
+  const why = unsafeCheck(body);
+  return why === "starts containers" ? null : why;
+};
+
+/**
+ * The project's end-to-end suite as a `when: merge` check, or why it was skipped: a script (`test:e2e`, `e2e`,
+ * `test:integration`, `cy:run`), else a Playwright or Cypress config, else a Makefile `e2e` / `integration` target.
+ * `needs_app` is set by init, which knows whether there is an app to start.
+ */
+export function detectE2e(repo: string): { check?: DetectedCheck; skipped?: { name: string; body: string; why: string }; from?: string } {
+  const e2e = (run: string): DetectedCheck => ({ name: "e2e", run, when: "merge", timeoutSec: 900 });
+  let scripts: Record<string, string> = {};
+  try {
+    scripts = (JSON.parse(read(repo, "package.json") ?? "{}") as { scripts?: Record<string, string> }).scripts ?? {};
+  } catch {}
+  const s = E2E_SCRIPTS.find((k) => typeof scripts[k] === "string");
+  if (s) {
+    const why = unsafeE2e(scripts[s]);
+    if (why) return { skipped: { name: "e2e", body: scripts[s], why } };
+    const found = packageManager((f) => exists(repo, f));
+    const pm = found.pm === "yarn" && !yarnBerry(repo) ? "npm" : found.pm;
+    return { check: e2e(pm === "npm" ? `npm run ${s}` : pm === "bun" ? `bun run ${s}` : `${pm} ${s}`), from: "package.json" };
+  }
+  const cfgFile = (tool: string) => CONFIG_EXT.map((x) => `${tool}.config.${x}`).find((f) => exists(repo, f));
+  const pw = cfgFile("playwright");
+  if (pw) return { check: e2e("npx playwright test"), from: pw };
+  const cy = cfgFile("cypress");
+  if (cy) return { check: e2e("npx cypress run"), from: cy };
+  const mk = read(repo, "Makefile") ?? read(repo, "makefile");
+  if (mk) {
+    const rules = makeRules(mk);
+    const t = ["e2e", "integration"].find((x) => rules.has(x));
+    if (t) {
+      const r = rules.get(t) as { recipe: string; deps: string[] };
+      const why = unsafeE2e(`${r.recipe} ${r.deps.join(" ")}`);
+      if (why) return { skipped: { name: `make ${t}`, body: r.recipe.trim().split("\n")[0] ?? "", why } };
+      return { check: e2e(`make ${t}`), from: "Makefile" };
+    }
+  }
+  return {};
+}
+
+/** The checks the repo's own files name, or null when nothing obvious is there. The e2e suite comes last, `when: merge`. */
 export function detectChecks(repo: string): Detected | null {
+  const d = unitChecks(repo);
+  const e = detectE2e(repo);
+  if (!e.check && !e.skipped) return d;
+  const base: Detected = d ?? { checks: [], from: [] };
+  return {
+    ...base,
+    checks: e.check ? [...base.checks, e.check] : base.checks,
+    ...(e.skipped ? { skipped: [...(base.skipped ?? []), e.skipped] } : {}),
+    from: e.from && !base.from.includes(e.from) ? [...base.from, e.from] : base.from,
+  };
+}
+
+function unitChecks(repo: string): Detected | null {
   const make = fromMakefile(repo);
   const eco = [fromPackageJson(repo), fromPyproject(repo), fromGo(repo), fromCargo(repo)].filter((d): d is Detected => d !== null);
   // A Makefile with test or check is the project's own entry point: it wins (the ecosystem still says how to install and run one test).
@@ -252,4 +317,46 @@ export function detectChecks(repo: string): Detected | null {
     return { ...merge([make, ...eco.map((d) => ({ ...d, checks: [], skipped: [] }))]), from: ["Makefile"] };
   const all = [...(make ? [make] : []), ...eco];
   return all.length ? merge(all) : null;
+}
+
+const COMPOSE_FILES = ["compose.yaml", "compose.yml", "docker-compose.yml", "docker-compose.yaml"];
+
+/**
+ * Pure: the host ports a compose file publishes as fixed numbers (`"5432:5432"`, `127.0.0.1:3000:3000`, long syntax
+ * `published: 3000`), as `service: spec`. Two jobs' stacks can't both bind one; `${PORT}:3000` can (ADR 0021 §4).
+ */
+export function fixedComposePorts(text: string): string[] {
+  let doc: { services?: Record<string, { ports?: unknown[] }> };
+  try {
+    doc = (parseYaml(text) ?? {}) as typeof doc;
+  } catch {
+    return [];
+  }
+  const out: string[] = [];
+  for (const [svc, def] of Object.entries(doc.services ?? {})) {
+    for (const p of Array.isArray(def?.ports) ? def.ports : []) {
+      if (p && typeof p === "object") {
+        const pub = (p as { published?: unknown }).published;
+        if (pub !== undefined && /^\d+(-\d+)?$/.test(String(pub))) out.push(`${svc}: published ${pub}`);
+        continue;
+      }
+      const spec = String(p);
+      if (spec.includes("$")) continue;
+      // [ip:]host:container[/proto]: a host part that is a number (or a range) is fixed; a bare container port is not.
+      const parts = spec.replace(/\/\w+$/, "").split(":");
+      if (parts.length >= 2 && /^\d+(-\d+)?$/.test(parts[parts.length - 2])) out.push(`${svc}: "${spec}"`);
+    }
+  }
+  return out;
+}
+
+/** The compose file and its fixed published ports, when there is one that has any. */
+export function composeWarning(repo: string): { file: string; ports: string[] } | null {
+  for (const f of COMPOSE_FILES) {
+    const t = read(repo, f);
+    if (t === null) continue;
+    const ports = fixedComposePorts(t);
+    return ports.length ? { file: f, ports } : null;
+  }
+  return null;
 }

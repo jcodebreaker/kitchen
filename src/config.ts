@@ -14,9 +14,19 @@ export type ModelTier = (typeof TIERS)[number];
 
 const Check = z.union([
   z.string().min(1),
-  z.object({ name: z.string().min(1), run: z.string().min(1), timeout_sec: z.number().int().positive().optional() }).strict(),
+  z
+    .object({
+      name: z.string().min(1),
+      run: z.string().min(1),
+      timeout_sec: z.number().int().positive().optional(),
+      /** ADR 0021: `build` (default) runs after every Build and on the trial merge; `merge` only on the trial merge. */
+      when: z.enum(["build", "merge"]).optional(),
+      /** ADR 0021: start the app (`app:`) from the trial merge first and pass its URL in $BASE_URL. Needs `when: merge`. */
+      needs_app: z.boolean().optional(),
+    })
+    .strict(),
 ]);
-export type CheckSpec = { name: string; run: string; timeoutSec: number };
+export type CheckSpec = { name: string; run: string; timeoutSec: number; when: "build" | "merge"; needsApp: boolean };
 
 const DEFAULT_MODELS: Record<"claude" | "codex", Record<ModelTier, string>> = {
   claude: { strong: "opus", medium: "sonnet", cheap: "haiku" },
@@ -35,6 +45,8 @@ const App = z
     health: z.string().default("/"),
     /** Run before the app starts (and between QA runs): put the data back to its seed. */
     reset: z.string().optional(),
+    /** Run when the app stops (after the process is ended), e.g. `docker compose down`. Default for a compose app: `docker compose -p <project> down -v`. */
+    stop: z.string().optional(),
     /** Seconds to wait for the health check. */
     ready_timeout_sec: z.number().int().positive().default(60),
   })
@@ -214,9 +226,18 @@ export function parseConfig(text: string): Config {
   const st = r.data.staging;
   if (st.branch === st.base || ["main", "master"].includes(st.branch))
     throw new ConfigError(`kitchen.yaml: staging.branch is ${st.branch}: Kitchen never merges into ${st.base}, main or master`);
-  const checkList = r.data.checks.map((c, i) =>
-    typeof c === "string" ? { name: `check${i + 1}`, run: c, timeoutSec: 600 } : { name: c.name, run: c.run, timeoutSec: c.timeout_sec ?? 600 },
+  const checkList: CheckSpec[] = r.data.checks.map((c, i) =>
+    typeof c === "string"
+      ? { name: `check${i + 1}`, run: c, timeoutSec: 600, when: "build", needsApp: false }
+      : { name: c.name, run: c.run, timeoutSec: c.timeout_sec ?? 600, when: c.when ?? "build", needsApp: c.needs_app ?? false },
   );
+  const early = checkList.find((c) => c.needsApp && c.when !== "merge");
+  if (early)
+    throw new ConfigError(
+      `kitchen.yaml: checks: ${early.name} has needs_app: true, which only a when: merge check can have (the app starts from the trial merge)`,
+    );
+  const noApp = checkList.find((c) => c.needsApp) && !r.data.app.start;
+  if (noApp) throw new ConfigError("kitchen.yaml: a check has needs_app: true but app.start is empty: say how to start the app, or set needs_app: false");
   return { ...r.data, checkList, dropped: u.dropped };
 }
 
@@ -236,6 +257,10 @@ export function modelFor(cfg: Config, role: LaneRole): string {
 export function tierModel(cfg: Config, tier: ModelTier): string {
   return { ...DEFAULT_MODELS[cfg.agent.tool], ...cfg.agent.models }[tier] as string;
 }
+
+/** The checks that run at a point: `build` after every Build round (and on the trial merge); `merge` all of them. */
+export const checksFor = (cfg: Pick<Config, "checkList">, at: "build" | "merge"): CheckSpec[] =>
+  at === "merge" ? cfg.checkList : cfg.checkList.filter((c) => c.when === "build");
 
 /** Pure: the app's URL with `{port}` filled in, or null when there is no app to start. */
 export function appUrl(app: AppConfig): string | null {

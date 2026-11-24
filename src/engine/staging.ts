@@ -9,9 +9,10 @@
 import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { prepareOf, runChecks } from "../checks/run-checks.ts";
-import type { Config } from "../config.ts";
+import { type AppForCheck, prepareOf, runChecks } from "../checks/run-checks.ts";
+import { type Config, checksFor } from "../config.ts";
 import { withFileLock } from "../lock.ts";
+import { composeProject, startApp, stopApp } from "../qa/app.ts";
 import { branchExists, git, gitOut, revParse, worktrees } from "./git.ts";
 import type { Job } from "./machine.ts";
 import { kitchenDir } from "./store.ts";
@@ -25,7 +26,7 @@ export type MergeOutcome =
    * `back`: the work goes back to Build (a conflict, checks red on staging); else it stops at Ready. `cause` and
    * `onto` (staging's tip it merged onto) let Kitchen tell a catch-up from a round (ADR 0018 §3).
    */
-  | { ok: false; why: string; back: boolean; log?: string; drive?: undefined; cause?: "conflict" | "checks"; onto?: string }
+  | { ok: false; why: string; back: boolean; log?: string; drive?: undefined; cause?: "conflict" | "checks"; onto?: string; tail?: string }
   /** Not merged yet: these features must be driven on the trial merge first (its worktree is kept). */
   | { ok: false; why: string; back: false; drive: Drive };
 
@@ -117,6 +118,24 @@ export async function dropTrial(repo: string, wt: string) {
   fs.rmSync(wt, { recursive: true, force: true });
 }
 
+/**
+ * ADR 0021 §1: the app for a `needs_app` merge check, started from the trial merge's folder like `kitchen qa up`
+ * starts a job's (reset, a free port, the health check). A compose app runs in its own project, `kq<job>-merge`, so
+ * it never shares containers or volumes with the job's QA stack.
+ */
+function mergeApp(cfg: Config, job: Job, wt: string, log: string): AppForCheck {
+  return async () => {
+    const project = composeProject(cfg.app, job.id);
+    const r = await startApp(cfg, { wt, log, project: project ? `${project}-merge` : null });
+    if (!r.ok) {
+      if (r.app) await stopApp(r.app, log);
+      return { ok: false, why: r.why };
+    }
+    const app = r.app;
+    return { ok: true, url: app.url, stop: () => stopApp(app, log) };
+  };
+}
+
 /** Merge `head` (the reviewed commit of the job branch) onto `onto` in a scratch worktree, then run the checks there. */
 async function trialMerge(
   repo: string,
@@ -125,7 +144,7 @@ async function trialMerge(
   onto: string,
   head: string,
   log: string,
-): Promise<{ ok: true; sha: string; wt: string } | { ok: false; why: string; back: boolean; wt: string; cause: "conflict" | "checks" }> {
+): Promise<{ ok: true; sha: string; wt: string } | { ok: false; why: string; back: boolean; wt: string; cause: "conflict" | "checks"; tail?: string }> {
   const wt = trialWorktree(repo, job.id);
   await dropTrial(repo, wt);
   await git(repo, ["worktree", "add", "-q", "--detach", wt, onto]);
@@ -141,15 +160,17 @@ async function trialMerge(
       cause: "conflict",
     };
   }
-  const checks = await runChecks({ dir: wt, checks: cfg.checkList, prepare: prepareOf(cfg), log });
+  // Every check, the `when: merge` ones too (ADR 0021); a `needs_app` one gets the app started from this merge.
+  const checks = await runChecks({ dir: wt, checks: checksFor(cfg, "merge"), prepare: prepareOf(cfg), log, app: mergeApp(cfg, job, wt, log) });
   if (!checks.ok) {
     const bad = checks.results.find((r) => !r.ok);
     return {
       ok: false,
-      why: `the checks fail on ${cfg.staging.branch} with this change merged (${bad?.name}: exit ${bad?.exit ?? "timeout"})`,
+      why: `the checks fail on ${cfg.staging.branch} with this change merged (${bad?.name}: ${bad?.exit !== null ? `exit ${bad?.exit}` : bad.tail.startsWith("the app did not start") ? "the app did not start" : "timeout"})`,
       back: true,
       wt,
       cause: "checks",
+      tail: bad?.tail,
     };
   }
   return { ok: true, sha: await gitOut(wt, ["rev-parse", "HEAD"]), wt };
@@ -192,7 +213,7 @@ export async function mergeToStaging(
         if (o.drove && o.drove.onto === onto) sha = o.drove.sha;
         else {
           t = await trialMerge(repo, cfg, job, onto, reviewedHead, o.log);
-          if (!t.ok) return { ok: false, why: t.why, back: t.back, log: o.log, cause: t.cause, onto };
+          if (!t.ok) return { ok: false, why: t.why, back: t.back, log: o.log, cause: t.cause, onto, ...(t.tail ? { tail: t.tail } : {}) };
           sha = t.sha;
           const features = o.gate ? await o.gate({ onto, sha, wt: t.wt }) : [];
           if (features.length) {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
-import { appUrl, ConfigError, modelFor, parseConfig } from "./config.ts";
+import { appUrl, ConfigError, checksFor, modelFor, parseConfig } from "./config.ts";
 
 test("defaults: staging from main, 400 lines, four lanes at once, no app", () => {
   const c = parseConfig("");
@@ -41,4 +41,29 @@ test("a kitchen.yaml from before ADR 0016 still loads: its old keys are dropped 
 
 test("the app's URL fills {port}", () => {
   assert.equal(appUrl(parseConfig("app: { start: npm start, port: 4100 }").app), "http://127.0.0.1:4100");
+});
+
+test("ADR 0021: a check is when: build (default) or merge; needs_app only on a merge check with an app to start", () => {
+  const c = parseConfig(
+    'app: { start: "npm start", stop: "make down" }\nchecks: [npm test, { name: e2e, run: "npm run test:e2e", when: merge, needs_app: true, timeout_sec: 900 }]\n',
+  );
+  assert.deepEqual(
+    c.checkList.map((x) => [x.name, x.when, x.needsApp, x.timeoutSec]),
+    [
+      ["check1", "build", false, 600],
+      ["e2e", "merge", true, 900],
+    ],
+  );
+  assert.deepEqual(
+    checksFor(c, "build").map((x) => x.name),
+    ["check1"],
+  );
+  assert.deepEqual(
+    checksFor(c, "merge").map((x) => x.name),
+    ["check1", "e2e"],
+  );
+  assert.equal(c.app.stop, "make down");
+  assert.throws(() => parseConfig('app: { start: "npm start" }\nchecks: [{ name: e2e, run: x, needs_app: true }]\n'), /only a when: merge check/);
+  assert.throws(() => parseConfig("checks: [{ name: e2e, run: x, when: merge, needs_app: true }]\n"), /app\.start is empty/);
+  assert.throws(() => parseConfig("checks: [{ name: e2e, run: x, when: later }]\n"), ConfigError);
 });

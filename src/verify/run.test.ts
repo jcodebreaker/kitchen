@@ -9,7 +9,7 @@ import path from "node:path";
 import { afterAll, test } from "vitest";
 import { loadConfig } from "../config.ts";
 import { ensureStaging } from "../engine/staging.ts";
-import { http } from "../qa/app.ts";
+import { appDown, appReset, appUp, http } from "../qa/app.ts";
 import { runEvidence } from "./paths.ts";
 import { finishRun, prepare, readRun } from "./run.ts";
 import { writeVerifySkill } from "./skill.ts";
@@ -47,7 +47,7 @@ Preconditions:
 Code: \`server.js\`
 `;
 
-async function repo(): Promise<string> {
+async function repo(o: { seeded?: boolean } = {}): Promise<string> {
   const r = path.join(root, `r${++n}`);
   fs.mkdirSync(r);
   g(r, "init", "-q", "-b", "main");
@@ -61,7 +61,11 @@ async function repo(): Promise<string> {
   writeVerifySkill(r, loadConfig(r));
   for (const root of [".claude", ".agents"]) {
     fs.writeFileSync(path.join(r, root, "skills/verify-demo/features/health.md"), FEATURE("health"));
-    fs.writeFileSync(path.join(r, root, "skills/verify-demo/features/zeta.md"), FEATURE("zeta"));
+    const zeta = FEATURE("zeta");
+    fs.writeFileSync(
+      path.join(r, root, "skills/verify-demo/features/zeta.md"),
+      o.seeded ? zeta.replace("- The app is up.", "- The app is up on seed data (`kitchen qa reset <id>`).") : zeta,
+    );
     fs.appendFileSync(path.join(r, root, "skills/verify-demo/features/README.md"), "\n- [Zeta](./zeta.md)\n- [Health](./health.md)\n");
   }
   g(r, "add", "-A");
@@ -150,4 +154,75 @@ test("maintain: map fixes on its branch land in staging for both tools; product 
   assert.equal(g(r, "show", "staging:server.js").includes("createServer"), true);
   assert.equal(g(r, "show", "main:server.js").includes("createServer"), true);
   assert.match(fs.readFileSync(path.join(r, ".kitchen/verify", p.id, "report.html"), "utf8"), /zeta: the zeta page is gone/);
+});
+
+test("ADR 0021 §3: sweep --url drives a deployed environment: nothing starts, seed recipes are not run, the report names the URL", async () => {
+  const r = await repo({ seeded: true });
+  const http0 = await import("node:http");
+  const srv = http0.createServer((q, s) => s.end(JSON.stringify({ deployed: true, url: q.url })));
+  await new Promise<void>((ok) => srv.listen(0, "127.0.0.1", ok));
+  const url = `http://localhost:${(srv.address() as { port: number }).port}`;
+  try {
+    await assert.rejects(
+      prepare(r, "maintain", () => {}, new Date("2026-11-24T09:00:00Z"), { url }),
+      /--url is for kitchen verify sweep/,
+    );
+    const lines: string[] = [];
+    const p = await prepare(r, "sweep", (l) => lines.push(l), new Date("2026-11-24T10:00:00Z"), { url: `${url}/` });
+    assert.match(lines[0], new RegExp(`app: the deployed environment at ${url} \\(nothing started locally\\)`));
+    assert.ok(!fs.existsSync(path.join(r, ".kitchen/verify", p.id, "app.json")), "no local app");
+    const brief = fs.readFileSync(p.brief, "utf8");
+    assert.match(brief, new RegExp(`- The app: the deployed environment at ${url}\\. Kitchen started nothing`));
+    assert.match(brief, /need a reset or fresh seed data[\s\S]*"result": "NOT_RUN"[\s\S]*not run: needs a fresh seed[\s\S]*: zeta\./);
+    assert.match(brief, /## Against a deployed environment \(`kitchen verify sweep --url`\)/, "the role says how");
+    // The run's tools go to the URL; there is nothing to start or reset.
+    assert.equal(await http(r, p.id, "GET", "/healthz", { name: "health-health", headers: [] }, () => {}), 0);
+    const ev = runEvidence(r, p.id);
+    assert.match(fs.readFileSync(path.join(ev, "health-health.http.txt"), "utf8"), /"deployed":true/);
+    const said: string[] = [];
+    assert.equal(await appUp(r, p.id, (l) => said.push(l)), 1);
+    assert.equal(await appReset(r, p.id, (l) => said.push(l)), 1);
+    assert.match(said.join("\n"), /starts nothing here[\s\S]*can't reset it/);
+    const verdict = (zeta: string) =>
+      fs.writeFileSync(
+        path.join(ev, "verdict.json"),
+        JSON.stringify({
+          verdict: "PASS",
+          features: [
+            { id: "zeta", result: zeta, evidence: [], note: "not run: needs a fresh seed" },
+            { id: "health", result: "PASS", evidence: ["health-health.http.txt"], note: "200" },
+          ],
+        }),
+      );
+    const out: string[] = [];
+    verdict("NOT_RUN");
+    assert.equal(await finishRun(r, p.id, (l) => out.push(l)), 0, out.join("\n"));
+    assert.match(out.at(-1) as string, new RegExp(`PASS \\(1 of 2 features, 1 not run: need a fresh seed\\) against ${url}`));
+    const html = fs.readFileSync(path.join(r, ".kitchen/verify", p.id, "report.html"), "utf8");
+    assert.match(html, new RegExp(`against the deployed environment at ${url}`));
+    assert.match(html, />NOT RUN</);
+    assert.ok(!fs.existsSync(path.join(r, ".kitchen/jobs")) || !JSON.stringify(fs.readdirSync(path.join(r, ".kitchen/jobs"))).includes("localhost"));
+  } finally {
+    srv.close();
+  }
+});
+
+test("NOT_RUN is refused outside a --url sweep's seed recipes", async () => {
+  const r = await repo();
+  const p = await prepare(r, "sweep", () => {}, new Date("2026-11-24T11:00:00Z"));
+  const ev = runEvidence(r, p.id);
+  fs.writeFileSync(path.join(ev, "h.txt"), "ok\n");
+  fs.writeFileSync(
+    path.join(ev, "verdict.json"),
+    JSON.stringify({
+      features: [
+        { id: "zeta", result: "NOT_RUN", evidence: [], note: "x" },
+        { id: "health", result: "PASS", evidence: ["h.txt"], note: "x" },
+      ],
+    }),
+  );
+  const out: string[] = [];
+  assert.equal(await finishRun(r, p.id, (l) => out.push(l)), 1);
+  assert.match(out[0], /NOT_RUN is only for a recipe that needs a fresh seed/);
+  await appDown(r, p.id);
 });

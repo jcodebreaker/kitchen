@@ -204,7 +204,8 @@ export function readQa(jobDir: string, round: number, criteria: Criterion[]): Qa
 }
 
 export const regressDir = (jobDir: string, round: number) => path.join(roundDir(jobDir, round), "regress");
-export type FeatureRow = { id: string; result: "PASS" | "FAIL"; evidence: string[]; note: string };
+/** NOT_RUN: only a `--url` sweep's, for a recipe the deployed environment can't run (it needs a reset or seed). */
+export type FeatureRow = { id: string; result: "PASS" | "FAIL" | "NOT_RUN"; evidence: string[]; note: string };
 export type FeatureVerdict = { verdict: "PASS" | "FAIL"; features: FeatureRow[] };
 
 /**
@@ -212,7 +213,7 @@ export type FeatureVerdict = { verdict: "PASS" | "FAIL"; features: FeatureRow[] 
  * `{ verdict, features: [{ id, result, evidence, note }] }`. Every feature in `ids` has a row citing evidence files
  * that exist in the folder and aren't empty; the verdict is PASS only when every row is.
  */
-export function readFeatureVerdict(folder: string, ids: string[]): FeatureVerdict | { refused: string } {
+export function readFeatureVerdict(folder: string, ids: string[], o: { notRun?: string[] } = {}): FeatureVerdict | { refused: string } {
   let raw: unknown;
   try {
     raw = JSON.parse(fs.readFileSync(path.join(folder, "verdict.json"), "utf8"));
@@ -221,19 +222,26 @@ export function readFeatureVerdict(folder: string, ids: string[]): FeatureVerdic
   }
   const v = raw as { verdict?: unknown; features?: unknown };
   if (!Array.isArray(v.features)) return { refused: "verdict.json needs a features array" };
+  const result = (r: Record<string, unknown>) =>
+    String(r?.result ?? "")
+      .toUpperCase()
+      .replace(/[ -]/g, "_");
   const rows: FeatureRow[] = (v.features as Record<string, unknown>[]).map((r) => ({
     id: String(r?.id ?? ""),
-    result: String(r?.result ?? "").toUpperCase() === "PASS" ? "PASS" : "FAIL",
+    result: result(r) === "PASS" ? "PASS" : result(r) === "NOT_RUN" ? "NOT_RUN" : "FAIL",
     evidence: Array.isArray(r?.evidence) ? (r.evidence as unknown[]).map(String) : [],
     note: String(r?.note ?? ""),
   }));
   for (const r of v.features as Record<string, unknown>[]) {
-    const res = String(r?.result ?? "").toUpperCase();
-    if (res !== "PASS" && res !== "FAIL") return { refused: `${String(r?.id)}: result is PASS or FAIL` };
+    const res = result(r);
+    if (res === "NOT_RUN" && !o.notRun?.includes(String(r?.id)))
+      return { refused: `${String(r?.id)}: NOT_RUN is only for a recipe that needs a fresh seed on a deployed environment (a --url sweep)` };
+    if (res !== "PASS" && res !== "FAIL" && res !== "NOT_RUN") return { refused: `${String(r?.id)}: result is PASS or FAIL` };
   }
   for (const id of ids) {
     const row = rows.find((r) => r.id === id);
     if (!row) return { refused: `no row for feature ${id}` };
+    if (row.result === "NOT_RUN") continue;
     if (!row.evidence.length) return { refused: `${id} cites no evidence file` };
     for (const f of row.evidence) {
       const p = path.resolve(folder, f);
@@ -241,7 +249,7 @@ export function readFeatureVerdict(folder: string, ids: string[]): FeatureVerdic
       if (!fs.existsSync(p) || !fs.statSync(p).isFile() || fs.statSync(p).size === 0) return { refused: `${id}: evidence ${f} is missing or empty` };
     }
   }
-  const allPass = ids.every((id) => rows.find((r) => r.id === id)?.result === "PASS");
+  const allPass = ids.every((id) => rows.find((r) => r.id === id)?.result !== "FAIL");
   if (String(v.verdict ?? "").toUpperCase() === "PASS" && !allPass) return { refused: "verdict PASS, but a feature's row is FAIL" };
   return { verdict: allPass ? "PASS" : "FAIL", features: rows.filter((r) => ids.includes(r.id)) };
 }

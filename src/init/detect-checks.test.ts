@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, test } from "vitest";
 import { parseConfig } from "../config.ts";
-import { detectChecks, makeTargetSafety, makeTargets, unsafeCheck } from "./detect-checks.ts";
+import { composeWarning, type DetectedCheck, detectChecks, fixedComposePorts, makeTargetSafety, makeTargets, unsafeCheck, unsafeE2e } from "./detect-checks.ts";
 import { checksYaml } from "./files.ts";
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kitchen-detect-"));
@@ -204,4 +204,71 @@ test("Yarn 1 or Berry decides the install: Berry by .yarnrc.yml, a __metadata bl
   const pm1 = fixture("yarn-pm1", { "package.json": JSON.stringify({ ...JSON.parse(pkg), packageManager: "yarn@1.22.22" }), "yarn.lock": "" });
   assert.equal(detectChecks(pm1)?.install, "yarn-classic");
   assert.equal(parseConfig("checks_install: yarn-classic\n").checks_install, "yarn-classic");
+});
+
+test("ADR 0021: the e2e suite is a when: merge check: a script first, then a Playwright or Cypress config, then a Makefile target", () => {
+  const e2e = (d: string) => detectChecks(d)?.checks.find((c) => c.when === "merge");
+  const pkg = (scripts: Record<string, string>) => JSON.stringify({ scripts: { test: "node --test", ...scripts } });
+  assert.deepEqual(e2e(fixture("e2e-script", { "package.json": pkg({ "test:e2e": "playwright test" }), "playwright.config.ts": "" })), {
+    name: "e2e",
+    run: "npm run test:e2e",
+    when: "merge",
+    timeoutSec: 900,
+  });
+  assert.equal(e2e(fixture("e2e-cy", { "package.json": pkg({ "cy:run": "cypress run" }) }))?.run, "npm run cy:run");
+  assert.equal(e2e(fixture("e2e-pw", { "package.json": pkg({}), "playwright.config.mjs": "" }))?.run, "npx playwright test");
+  assert.equal(e2e(fixture("e2e-cyc", { "package.json": pkg({}), "cypress.config.js": "" }))?.run, "npx cypress run");
+  assert.equal(e2e(fixture("e2e-make", { Makefile: "test:\n\tgo test ./...\nintegration:\n\tgo test -tags integration ./...\n" }))?.run, "make integration");
+  assert.deepEqual(
+    detectChecks(fixture("e2e-order", { "package.json": pkg({ "test:e2e": "playwright test" }) }))?.checks.map((c) => c.name),
+    ["test", "e2e"],
+    "after the unit-level checks",
+  );
+  // A suite that brings up its database with docker is fine on the merge; a watcher is never a check.
+  assert.equal(e2e(fixture("e2e-docker", { "package.json": pkg({ e2e: "docker compose up -d db && playwright test" }) }))?.run, "npm run e2e");
+  const watch = detectChecks(fixture("e2e-watch", { "package.json": pkg({ "test:e2e": "cypress open --watch" }) }));
+  assert.equal(
+    watch?.checks.find((c) => c.when),
+    undefined,
+  );
+  assert.deepEqual(watch?.skipped?.[0], { name: "e2e", body: "cypress open --watch", why: "never ends" });
+  assert.equal(unsafeCheck("docker compose up -d db && playwright test"), "starts containers", "still refused as a build check");
+  assert.equal(unsafeE2e("docker compose up -d db && playwright test"), null);
+  // Written with needs_app and its timeout, under a line that says when it runs.
+  const yaml = checksYaml({
+    checks: [
+      { name: "test", run: "npm test" },
+      { ...(e2e(fixture("e2e-y", { "playwright.config.ts": "" })) as DetectedCheck), needsApp: true },
+    ],
+    from: ["x"],
+  });
+  assert.match(
+    yaml,
+    /# Your end-to-end suite: only on the trial merge.*needs_app\)\n {2}- \{ name: "e2e", run: "npx playwright test", when: merge, needs_app: true, timeout_sec: 900 \}/,
+  );
+  assert.deepEqual(
+    parseConfig(`app: { start: "npm start" }\n${yaml}`).checkList.map((c) => [c.name, c.when, c.needsApp]),
+    [
+      ["test", "build", false],
+      ["e2e", "merge", true],
+    ],
+  );
+});
+
+test("ADR 0021 §4: a compose file's fixed published host ports are named; PORT-templated and container-only ports are not", () => {
+  const text = `services:
+  web:
+    ports: ["\${PORT}:3000", "9229"]
+  db:
+    ports:
+      - "5432:5432"
+      - 127.0.0.1:6379:6379/tcp
+  mail:
+    ports:
+      - target: 1025
+        published: 1025
+`;
+  assert.deepEqual(fixedComposePorts(text), ['db: "5432:5432"', 'db: "127.0.0.1:6379:6379/tcp"', "mail: published 1025"]);
+  assert.deepEqual(composeWarning(fixture("compose", { "docker-compose.yml": text }))?.file, "docker-compose.yml");
+  assert.equal(composeWarning(fixture("compose-ok", { "compose.yaml": `services:\n  web:\n    ports: ["$\{PORT}:3000"]\n` })), null);
 });
