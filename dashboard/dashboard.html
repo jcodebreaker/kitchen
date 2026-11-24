@@ -61,7 +61,6 @@ kbd{font:500 11px var(--sans);color:var(--mute);border:1px solid var(--line2);bo
 .nav .c.act{color:var(--act-fg);font-weight:600}
 .side .lbl{font-size:12px;color:var(--faint);padding:18px 8px 6px}
 .side .foot{margin-top:auto;padding:8px;color:var(--faint);font-size:12px;display:flex;flex-direction:column;gap:8px}
-.side .keys{display:grid;grid-template-columns:auto 1fr;gap:5px 8px;align-items:center}
 
 /* ── main ── */
 .main{flex:1;min-width:0;background:var(--bg);border-left:1px solid var(--line);display:flex;flex-direction:column;container:main/inline-size}
@@ -468,7 +467,6 @@ a.btn{text-decoration:none}
     <div class="lbl">Project</div>
     <button class="nav" onclick="palette()"><span id="nCoI"></span>Cost <span class="c mono num" id="sCost"></span></button>
     <div class="foot">
-      <div class="keys"><kbd>J</kbd><span>/ <kbd>K</kbd> move</span><kbd>R</kbd><span>message the agent</span><kbd>⌘K</kbd><span>commands</span></div>
       <button class="nav" style="margin:4px -8px -4px;width:auto" onclick="toggleTheme()"><span id="nThI"></span>Theme</button>
     </div>
   </nav>
