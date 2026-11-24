@@ -218,6 +218,7 @@ button.ws.dot:active .logo::after,button.ws.dot[aria-expanded="true"] .logo::aft
 .chead .dot{width:7px;height:7px;border-radius:4px;align-self:center;flex:none}
 .col.ny .dot{background:var(--act)}
 .col.ny:not(.nil) .nm,.col.ny:not(.nil) .n{color:var(--act-fg)}
+.col.ny{flex:1.4 0 300px;max-width:380px}
 .col.nil:not(.ny){flex:0 0 44px;padding:6px 0;align-items:center}
 .col.nil:not(.ny) .chead{writing-mode:vertical-rl;padding:12px 0;gap:8px;color:var(--mute)}
 .col.nil:not(.ny) .chead .nm{font-weight:500}
@@ -262,6 +263,7 @@ button.ws.dot:active .logo::after,button.ws.dot[aria-expanded="true"] .logo::aft
 .cq{font-size:12.5px;line-height:1.45;color:var(--fg2);display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
 .card.ny .btn.act{height:26px;font-size:12.5px;padding:0 13px;border-radius:8px;align-self:flex-start;margin:1px 0 2px}
 .card.ny .tka{flex-wrap:wrap;margin:1px 0 2px}
+.card.ny .tka.rdy{gap:2px;margin-left:-4px;flex-wrap:wrap}.card .tka.rdy .ib{width:26px;height:26px}.card.ny .tka.rdy .btn{font-size:12px;height:26px;margin:0}.card.ny .tka.rdy .btn.act{padding:0 9px}.card .tka.rdy .btn.ghost{padding:0 5px}
 button.a{font-weight:600}button.a:hover{text-decoration:underline;text-underline-offset:3px}
 
 /* inline composer under a row */
@@ -942,6 +944,8 @@ const mergeBtn=j=>`<button type="button" class="btn act sm" data-act="merge" dat
 const reportBtn=j=>j.report?`<a class="btn sm" data-act="report" href="${esc(BASE)}/${esc(j.report)}" target="_blank" rel="noopener">${I.doc}Open report</a>`:"";
 const askBtn=(j,on)=>`<button type="button" class="btn sm" data-act="${on?"ask-cancel":"ask"}" data-id="${esc(j.id)}" title="${on?"Close":`Send ${esc(j.num)} back for round ${j.round+1} with your words`}">${on?"Close":"Ask for changes"}</button>`;
 const readyBtns=(j,on)=>`<span class="tka">${reportBtn(j)}${mergeBtn(j)}${askBtn(j,on)}</span>`;
+/* The Board card's narrower set, on one line: the report as an icon, Merge first, Ask for changes quiet. */
+const readyCardBtns=j=>`<span class="tka rdy">${j.report?`<a class="ib" data-act="report" href="${esc(BASE)}/${esc(j.report)}" target="_blank" rel="noopener" title="Open report" aria-label="Open report">${I.doc}</a>`:""}${mergeBtn(j)}<button type="button" class="btn ghost sm" data-act="ask" data-id="${esc(j.id)}" title="Send ${esc(j.num)} back for round ${j.round+1} with your words">Ask for changes</button></span>`;
 function finLabel(j){if(stopped(j))return "Stopped by you";return j.state==="done"?doneWords(j):"Rejected"}
 /* Kitchen's own messages name commands in backticks: shown as code. */
 const md=t=>esc(t).replace(/`([^`]+)`/g,"<code>$1</code>");
@@ -1007,7 +1011,7 @@ function cardHTML(j){
   const l=j.lane,end=ended(j)||l==="done",idt="#"+j.num;
   const cls=`${l==="you"?"ny":""} ${end?"end":""} ${j.state==="done"?"rdy":""} ${j.state==="rejected"||j.pausedBy==="stop"?"gone":""} ${open===j.id?"open":""} ${sel===j.id?"sel":""} ${just.has(j.id)?"flash":""}`;
   const bot=l==="you"
-    ?held(j)?`<div class="cq">${md(j.q)}</div>${readyBtns(j,false)}`
+    ?held(j)?`<div class="cq">${md(j.q)}</div>${readyCardBtns(j)}`
     :j.waits?waitHTML(j)+(j.waits.for==="confirm"?approveBtns(j,false):`<span class="tka"><button class="btn sm" data-act="message" data-id="${esc(j.id)}">Reply</button></span>`)
     :`<div class="cq">${md(j.q)}</div><button class="btn act sm" data-act="message" data-id="${esc(j.id)}">Reply</button>`
     :`<div class="cbot"><div class="evl" id="lv-${esc(j.id)}">${evLine(j)}</div>${j.state==="rejected"?"":`<button class="ib" title="${j.state==="done"?"Follow up":"Message "+esc(agent(j))} (R)" aria-label="${j.state==="done"?"Follow up":"Message agent"}" data-act="message" data-id="${esc(j.id)}">${I.msg}</button>`}</div>`;
@@ -1186,7 +1190,7 @@ function segHTML(j,s,i,n){
   return `<button class="sg ${can?"exp":""}" ${can?`onclick="togSeg(${i})"`:"tabindex=-1"}>${S[state]||S.wait}<b>${esc(s.nm)}</b><span class="who">${esc(who)}</span><span class="du mono num" ${liveT?`id="segt" data-start="${esc(s.start)}"`:""}>${liveT?clock(elapsed(s.start)):dur}</span></button>
     ${s.sk&&s.sk.length?`<div class="sgsk" title="Skills quoted into this step's prompt">${s.sk.map(n=>`<span class="mono" title="${esc(n)}">${esc(n.split(":").pop())}</span>`).join("")}</div>`:""}
     ${s.sum?`<div class="sgsum ${s.st==="bad"?"bad":""}">${esc(s.sum)}</div>`:""}
-    ${isOpen&&(s.evs.length||last)?`<div class="evs" ${last?'id="evs"':""}>${s.evs.map(e=>evHTML(e)).join("")}</div>`:""}`;
+    ${isOpen&&(s.evs.length||(last&&s.st==="run"&&j.runnerOn))?`<div class="evs" ${last?'id="evs"':""}>${s.evs.map(e=>evHTML(e)).join("")}</div>`:""}`;
 }
 function tabBody(j){
   const d=details[j.id];
@@ -1206,7 +1210,7 @@ function panelUpdate(old,d){
   if(shape(old)!==shape(d)){renderPanel();return}
   const a=old.tl.at(-1),b=d.tl.at(-1);
   if(!a||!b){renderPanel();return}
-  const box=$("#evs"),sc=$("#pscroll");if(!box){renderPanel();return}
+  const box=$("#evs"),sc=$("#pscroll");if(!box){if(b.evs.length!==a.evs.length)renderPanel();else paintHead();return}
   // The call that was running may have finished: repaint the last one, then append the new.
   const prevN=a.evs.length;
   if(prevN&&JSON.stringify(a.evs[prevN-1])!==JSON.stringify(b.evs[prevN-1])){renderPanel();return}
