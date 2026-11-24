@@ -35,6 +35,7 @@ Run every command below from the repo root. (This plugin's skill is `/kitchen:ki
 | continue a paused or stopped job | `kitchen resume <id>` |
 | answer a job's question, "try again with …", follow up on a ready or merged job | `kitchen feedback <id> "<their answer>"` |
 | drop a job | `kitchen reject <id>` |
+| "remove 005", "get rid of it", "I don't want it on the dashboard" (any stage, even while it builds) | `kitchen remove <id>`: stops a working lane, rejects an unfinished job, removes its worktree; a merged one is only hidden. `kitchen restore <id>` brings it back in view |
 | "show me the jobs", "open the dashboard" | `kitchen dashboard` as a background command, then give the user the address it prints (http://127.0.0.1:7357/#<repo>; when a dashboard already runs it adds this repo, prints `already open: …` and exits) |
 | run the queue headless, in the background | `kitchen run --detach` (a separate Claude Code session runs this skill) |
 | how is Kitchen doing | `kitchen report` |

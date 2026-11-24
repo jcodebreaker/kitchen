@@ -144,7 +144,7 @@ kitchen run [--detach] [--max-usd n] | run --stop | run --print
 kitchen status [--json] · kitchen report [--json] · kitchen dashboard [--forget] [--private] [--port n] · kitchen skills
 kitchen feedback <id> ["<text>"] [--to intake|build|qa|review|regress]
 kitchen refine <id> · approve <id>
-kitchen steer <id> "<text>" · pause <id> · stop <id> · resume <id> · reject <id>
+kitchen steer <id> "<text>" · pause <id> · stop <id> · resume <id> · reject <id> · remove <id> · restore <id>
 kitchen job next|start|finish|show …     the orchestrator's verbs
 kitchen qa up|down|reset|page|http <id> …   the QA lane's tools (<id>: a job, or a verify run)
 kitchen verify sweep|maintain [--json] · verify finish <run>   the verify map's runs
@@ -155,6 +155,7 @@ kitchen inbox list|run|hold|bring-back|remove|edit|add|propose|verdict …   the
 - Run them in the repo, or inside a job's worktree (`.worktrees/<id>`, where lane agents work): there they act on the main checkout's jobs, so QA's `kitchen qa up <id>` works from its worktree. A git worktree of your own elsewhere is its own repo.
 - `steer`: a message for the job's next agent; it is quoted into that lane's brief as operator notes and marked read by it.
 - `pause`: the job parks when its current lane finishes. `stop`: it parks now, and the working agent's result is dropped (its `finish` is refused). `resume`: back where it paused.
+- `remove`: off the dashboard, `kitchen status` and the queue, whatever the stage. A lane working on it is stopped (Kitchen's guard hook refuses its agent's next tool call; its `finish` is refused), a job not merged is rejected and its worktree removed (the branch and the job folder stay), a merged job is only hidden (staging is never touched). `kitchen status --all` lists removed jobs; `kitchen restore` shows one again, as it was left. The dashboard's Remove (a row's hover icon, the panel's header) waits five seconds for its Undo before it is sent.
 - `feedback`: answers `needs-info` (back to intake, with your answer in the clarifications) or `needs-human` (back to the stage it stopped in, or `--to`); on a ready or merged job it starts a follow-up round.
 - `refine`: for a job intake sent to be refined with you: writes `.kitchen/jobs/<id>/refine/brief.md` and prints its path, for a Claude Code or Codex session to follow with you (`/kitchen refine <id>`). `approve`: a job `intake.confirm` holds after intake goes to Build on its criteria.
 

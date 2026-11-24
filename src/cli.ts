@@ -20,7 +20,7 @@ Work
   kitchen ticket "<what you want>"       a ticket; intake writes its criteria
   kitchen run [--detach] [--max-usd n]   a headless orchestrator session works the queue (or /kitchen run in Claude Code)
   kitchen run --stop | --print           end it | print the exact command it runs
-  kitchen status [--json]                one row per job
+  kitchen status [--json] [--all]        one row per job (--all: the removed ones too)
   kitchen dashboard                      every repo's jobs in one browser page, on 127.0.0.1:7357: lanes, live activity,
                                          steering; run it in another repo to add that one (--forget removes it)
   kitchen dashboard --private [--port n] this repo alone, on its own server, not added to the list
@@ -30,6 +30,8 @@ Work
   kitchen approve <id>                   a job held for your approval after intake (intake.confirm) → build
   kitchen steer <id> "<text>"            a message the job's next agent reads
   kitchen pause <id> · stop <id> · resume <id> · reject <id>
+  kitchen remove <id> · restore <id>     off the dashboard, any stage (a working lane is stopped, an unfinished job
+                                         rejected, its worktree removed; a merged one only hidden) · back in view
   kitchen report [--json]                what the queue did
   kitchen models [--json] [--tool claude|codex]   each lane's model and the choices the tool has (ADR 0023)
   kitchen models set <lane> <model|tier> [--tool t]   intake, build, qa or review; written to kitchen.yaml
@@ -88,6 +90,9 @@ const COMMAND_HELP: Record<string, string> = {
   feedback:
     'kitchen feedback <id> ["<text>"] [--to <stage>]\n\nAnswers a job that needs you, or sends a ready or done job back to Build with your text.\n  --to <stage>   for a needs-human job: intake, build, qa or review',
   reject: "kitchen reject <id>\n\nCloses a job without merging it.",
+  remove:
+    "kitchen remove <id>\n\nTakes a job off the dashboard, kitchen status and the queue, whatever its stage. A lane working on it is stopped (its agent is refused from its next tool call, its result dropped); a job not merged is rejected and its worktree removed (the branch and the job folder stay); a merged job is only hidden, staging untouched. kitchen status --all lists it; kitchen restore <id> shows it again.",
+  restore: "kitchen restore <id>\n\nA removed job back in view, as it was left (rejected or merged).",
   refine:
     "kitchen refine <id>\n\nFor a job intake sent to be refined with you (needs-info, refine): writes .kitchen/jobs/<id>/refine/brief.md (the ticket, intake's reason and readings, your earlier answers, the verify map's features, the repo's glossary and ADRs) and prints its path. A Claude Code or Codex session follows it with you (/kitchen refine <id>): one question at a time, then kitchen feedback <id> \"<the refined ticket>\" sends it back to intake.",
   approve:
@@ -232,7 +237,7 @@ async function main(argv: string[]): Promise<number> {
       );
     }
     case "status":
-      return cmd.status(repo, out, { json });
+      return cmd.status(repo, out, { json, all: f.flags.has("--all") });
     case "report":
       return cmd.report(repo, out, { json });
     case "resume":
@@ -241,6 +246,10 @@ async function main(argv: string[]): Promise<number> {
       return control.feedback(repo, need(0, "<id>"), f.pos.slice(1).join(" "), out, { to: v("to") });
     case "reject":
       return control.reject(repo, need(0, "<id>"), out);
+    case "remove":
+      return control.remove(repo, need(0, "<id>"), out);
+    case "restore":
+      return control.restore(repo, need(0, "<id>"), out);
     case "approve":
       return control.approve(repo, need(0, "<id>"), out);
     case "refine":

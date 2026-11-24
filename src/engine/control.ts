@@ -8,6 +8,9 @@
 // - resume: back to the stage it paused in.
 // - feedback: answers a job that needs you, or sends a ready or done job back to Build with your words.
 // - approve: a job intake.confirm holds after intake (ADR 0020 §3) goes to Build on intake's criteria.
+// - remove: off the dashboard, any stage: a working lane is stopped (its agent's next tool call is refused by the
+//   guard hook, its result dropped), an unfinished job is rejected, its worktree removed; a merged job is only hidden.
+//   The folder and the branch stay: restore shows it again.
 import fs from "node:fs";
 import path from "node:path";
 import { loadConfig } from "../config.ts";
@@ -19,7 +22,7 @@ import { readIntake } from "./lanes.ts";
 import { BY_YOU, BY_YOU_STOPPED, isActive, type Job, type JobFrom, MoveRefused, move, pausedByYou, STAGES, type Stage } from "./machine.ts";
 import { addMessage, checkText, type Message, type MessageKind } from "./messages.ts";
 import { numOf } from "./refine.ts";
-import { createJob, findJob, jobDirOf, shortTitle, updateJob, writeAtomic } from "./store.ts";
+import { createJob, findJob, jobDirOf, shortTitle, updateJob, worktreeOf, writeAtomic } from "./store.ts";
 
 export type Out = (line: string) => void;
 
@@ -281,6 +284,74 @@ export async function approve(repo: string, ref: string, out: Out): Promise<numb
   const i = readIntake(dir);
   const filed = i?.decision === "ACCEPT" ? await fileSlices(repo, job, i.slices) : "";
   out(`${job.id}  approved → build${filed}`);
+  return 0;
+}
+
+/**
+ * `kitchen remove <id>`: take a job off the dashboard, whatever its stage. A lane working on it is closed now (its
+ * agent is refused from its next tool call; its `job finish` is refused quietly); a job not merged is rejected; its
+ * worktree and trial merge go (the branch and the job folder stay). A merged job is only hidden: staging is never
+ * touched.
+ */
+export async function remove(repo: string, ref: string, out: Out): Promise<number> {
+  const job = findJob(repo, ref);
+  if (job.archived) {
+    out(`${job.id}  is removed already (kitchen restore ${numOf(job.id)} shows it again)`);
+    return 1;
+  }
+  const now = new Date().toISOString();
+  const lane = job.running?.lane;
+  await clearControl(repo, job.id);
+  if (job.running) {
+    // The lane's app (QA, regress) is a process of Kitchen's: stop it now.
+    await (await import("../qa/app.ts")).appDown(repo, job.id).catch(() => {});
+  }
+  const key = job.running?.key;
+  const archive = (j: Job) => {
+    const r = key ? j.agentRuns.find((x) => x.key === key) : undefined;
+    if (r && !r.end) Object.assign(r, { end: now, ok: false, line: "removed by you" });
+    j.running = null;
+    j.archived = { at: now, by: "person" };
+  };
+  const merged = job.stage === "done";
+  if (merged || job.stage === "rejected")
+    await updateJob(repo, job.id, (j) => {
+      archive(j);
+      return j;
+    });
+  else await moveJob(repo, job.id, "rejected", { reason: "removed by you", who: "person", patch: archive });
+  appendLedger(repo, { job: job.id, stage: job.stage, round: job.round, event: "remove", key: `${job.id}/remove/${now}`, detail: { who: "person" } });
+  let gone = "";
+  if (!merged) {
+    const { git } = await import("./git.ts");
+    for (const wt of [job.worktree || worktreeOf(repo, job.id), job.drive?.wt].filter((x): x is string => !!x && x !== repo)) {
+      if (!fs.existsSync(wt)) continue;
+      await git(repo, ["worktree", "remove", "--force", wt], { allowFail: true });
+      fs.rmSync(wt, { recursive: true, force: true });
+      gone = ", its worktree removed";
+    }
+    await git(repo, ["worktree", "prune"], { allowFail: true });
+    if (job.drive) await git(repo, ["update-ref", "-d", `refs/kitchen/drive/${job.id}`], { allowFail: true });
+  }
+  out(
+    `${job.id}  removed${lane ? ` (the ${lane} agent was stopped)` : ""}${merged ? " from view (it stays merged into staging)" : job.stage === "rejected" ? "" : ", rejected"}${gone}; kitchen restore ${numOf(job.id)} shows it again`,
+  );
+  return 0;
+}
+
+/** `kitchen restore <id>`: a removed job back in view, as it was left (rejected, or merged). Its worktree comes back when a lane needs it. */
+export async function restore(repo: string, ref: string, out: Out): Promise<number> {
+  const job = findJob(repo, ref);
+  if (!job.archived) {
+    out(`${job.id}  isn't removed`);
+    return 1;
+  }
+  await updateJob(repo, job.id, (j) => {
+    delete j.archived;
+    return j;
+  });
+  appendLedger(repo, { job: job.id, stage: job.stage, round: job.round, event: "restore", key: `${job.id}/restore/${new Date().toISOString()}` });
+  out(`${job.id}  back in view (${job.stage})`);
   return 0;
 }
 

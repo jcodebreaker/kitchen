@@ -81,6 +81,9 @@ export const ACTIONS: Record<string, (repo: string, b: Body, out: Out) => Promis
   /** ADR 0020 §3: a job held after intake (intake.confirm) goes to Build on intake's criteria. */
   approve: (repo, b, out) => control.approve(repo, idOf(b), out),
   reject: (repo, b, out) => control.reject(repo, idOf(b), out),
+  /** Off the dashboard, any stage (kitchen remove); the page holds it five seconds for its Undo before sending. */
+  remove: (repo, b, out) => control.remove(repo, idOf(b), out),
+  restore: (repo, b, out) => control.restore(repo, idOf(b), out),
   pause: (repo, b, out) => control.pause(repo, idOf(b), out),
   stop: (repo, b, out) => control.stop(repo, idOf(b), out),
   resume: (repo, b, out) => control.resume(repo, idOf(b), out),

@@ -120,7 +120,7 @@ svg{flex:none;display:block}
 
 .rw{border-bottom:1px solid var(--line);position:relative}
 .rw.you::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--act)}
-.row{display:grid;grid-template-columns:18px 42px minmax(0,1fr) auto 108px 76px 28px;column-gap:12px;align-items:center;padding:11px 16px 11px 20px;cursor:default;outline-offset:-2px;transition:background .12s}
+.row{display:grid;grid-template-columns:18px 42px minmax(0,1fr) auto 108px 76px 56px;column-gap:12px;align-items:center;padding:11px 16px 11px 20px;cursor:default;outline-offset:-2px;transition:background .12s}
 .row:hover{background:var(--hover)}
 .rw.sel .row{background:var(--hover)}
 .rw.open .row{background:var(--press)}
@@ -135,6 +135,11 @@ svg{flex:none;display:block}
 .rw.gone .ttl{color:var(--faint)}
 .rw.end .acts{opacity:0;transition:opacity .12s}
 .rw.end .row:hover .acts,.rw.end .row:focus-within .acts,.rw.end.sel .acts{opacity:1}
+.row .acts{display:flex;justify-content:flex-end;gap:0}
+.row .acts .rmj{opacity:0;transition:opacity .12s}
+.row:hover .acts .rmj,.row:focus-within .acts .rmj,.rw.sel .acts .rmj{opacity:1}
+.row .acts .rmj:hover{color:var(--fail)}
+.ph .rmj{margin-right:2px}.ph .rmj:hover{color:var(--fail)}
 .tag{font:400 11px var(--sans);border:1px solid var(--line2);border-radius:10px;padding:0 6px;color:var(--faint);margin-left:8px;vertical-align:1px}
 .sub{margin-top:3px;font-size:12.5px;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:18px}
 .sub.q{color:var(--fg2);white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
@@ -742,7 +747,7 @@ const sv=(d,w=16)=>`<svg width="${w}" height="${w}" viewBox="0 0 16 16" fill="no
 const I={
   msg:sv('<path d="M2.5 4.5a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H8l-3.2 2.4V11.5h-.3a2 2 0 0 1-2-2z"/>'),
   up:sv('<path d="M8 12.5v-9M4 7l4-4 4 4"/>',14), pause:sv('<path d="M5.5 3.5v9M10.5 3.5v9"/>',14), play:sv('<path d="M5 3.2l7.5 4.8L5 12.8z"/>',14),
-  stop:sv('<rect x="4" y="4" width="8" height="8" rx="1.5"/>',14), x:sv('<path d="M4 4l8 8M12 4l-8 8"/>'), back:sv('<path d="M10 3L5 8l5 5"/>'),
+  stop:sv('<rect x="4" y="4" width="8" height="8" rx="1.5"/>',14), trash:sv('<path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.6 4.5l.6 8.4a1 1 0 0 0 1 .9h3.6a1 1 0 0 0 1-.9l.6-8.4"/>',14), x:sv('<path d="M4 4l8 8M12 4l-8 8"/>'), back:sv('<path d="M10 3L5 8l5 5"/>'),
   search:sv('<circle cx="7" cy="7" r="4.2"/><path d="M10.2 10.2L13.5 13.5"/>'), gear:sv('<circle cx="8" cy="8" r="2"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M12.4 3.6L11 5M5 11l-1.4 1.4"/>'),
   box:sv('<path d="M2.5 5L8 2.5 13.5 5v6L8 13.5 2.5 11zM2.5 5L8 7.5 13.5 5M8 7.5v6"/>'),
   copy:sv('<rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 3.5v-.5a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 3v5A1.5 1.5 0 0 0 4 9.5h.5"/>',14),
@@ -829,7 +834,7 @@ async function poll(g){
     if(offline){offline=false;toast("Back in touch with Kitchen")}
     snap=d;
     const before=new Map(jobs.map(j=>[j.id,j]));
-    jobs=d.jobs.map(fromSnap);
+    jobs=d.jobs.filter(x=>!hideJobs.has(x.id)).map(fromSnap);
     for(const j of jobs){const b=before.get(j.id);
       if(b&&!ended(b)&&ended(j)&&j.state==="done"){fresh.add(j.id);toast(`${j.num} ${j.stage==="ready"?"is ready for you":"is merged into staging"}`,"View",()=>openJob(j.id));setTimeout(()=>{fresh.delete(j.id);replaceRow(J(j.id))},20000)}
       if(b&&(b.phase!==j.phase||b.state!==j.state))just.add(j.id);
@@ -930,7 +935,7 @@ function rowHTML(j){
   return `<div class="rw ${g} ${g==="done"?"end":""} ${j.state==="rejected"?"gone":""} ${open===j.id?"open":""} ${sel===j.id?"sel":""} ${just.has(j.id)?"flash":""}" id="rw-${esc(j.id)}" style="view-transition-name:r-${esc(j.id)}">
     <div class="row" tabindex="0" role="button" data-row="${esc(j.id)}">
       <span class="ic">${icon(j)}</span><span class="id mono">${esc(j.num)}</span>
-      <div class="mn"><div class="ttl"><span class="idn mono">${esc(j.num)}</span>${esc(j.title)}${fromTag(j)}</div>${sub}</div>${mid}${tm}${acts}
+      <div class="mn"><div class="ttl"><span class="idn mono">${esc(j.num)}</span>${esc(j.title)}${fromTag(j)}</div>${sub}</div>${mid}${tm}${withRemove(acts,j)}
     </div>${ex?`<div class="inl">${composerHTML(j)}</div>`:""}</div>`;
 }
 /* ───────── board (ADR 0013, dashboard/mockups/board-apple.html) ───────── */
@@ -1080,7 +1085,7 @@ async function post(verb,body){
   }catch(e){return {ok:false,lines:["Kitchen's dashboard server is not answering"]}}
 }
 const said=lines=>(lines.at(-1)||"").replace(/^\S+\s\s/,"");
-function refreshSoon(){clearTimeout(refreshSoon.t);refreshSoon.t=setTimeout(async()=>{const g=gen;try{const d=await getJSON(BASE+"/data.json");if(g!==gen)return;snap=d;const before=new Map(jobs.map(j=>[j.id,j]));jobs=d.jobs.map(fromSnap);paint(before);if(open&&J(open)){const dd=await getJSON(`${BASE}/jobs/${encodeURIComponent(open)}/detail.json`);if(g!==gen)return;const old=details[open];details[open]=dd;panelUpdate(old,dd)}}catch(e){}},120)}
+function refreshSoon(){clearTimeout(refreshSoon.t);refreshSoon.t=setTimeout(async()=>{const g=gen;try{const d=await getJSON(BASE+"/data.json");if(g!==gen)return;snap=d;const before=new Map(jobs.map(j=>[j.id,j]));jobs=d.jobs.filter(x=>!hideJobs.has(x.id)).map(fromSnap);paint(before);if(open&&J(open)){const dd=await getJSON(`${BASE}/jobs/${encodeURIComponent(open)}/detail.json`);if(g!==gen)return;const old=details[open];details[open]=dd;panelUpdate(old,dd)}}catch(e){}},120)}
 function clearDraft(id){drafts[id]="";$$(`textarea[data-draft="${id}"]`).forEach(o=>o.value="");grow()}
 const sureRefine=new Set();
 async function send(id){
@@ -1105,6 +1110,14 @@ async function simple(verb,id,okMsg){const j=J(id);const r=await post(verb,{id:j
 const pause=id=>simple("pause",id,`${J(id).num}: ${J(id).runnerOn?"pausing after the current step":"paused"}`);
 const resume=id=>simple("resume",id,`${J(id).num} resumed`);
 async function stopJob(id){const j=J(id);if(await simple("stop",id,`${j.num} stopped`))toast(`${j.num} stopped`,"Undo",()=>resume(id))}
+/* Remove (kitchen remove): off the dashboard, any stage. Like Reject, held for the toast's five seconds, then sent. */
+const hideJobs=new Set();
+const rmBtn=j=>`<button type="button" class="ib rmj" data-act="remove-job" data-id="${esc(j.id)}" title="Remove from the dashboard${j.state==="done"?" (it stays merged)":j.state==="run"?" (stops its agent)":""}" aria-label="Remove ${esc(j.num)}">${I.trash}</button>`;
+const withRemove=(acts,j)=>acts?acts.replace(/<\/span>$/,rmBtn(j)+"</span>"):`<span class="acts">${rmBtn(j)}</span>`;
+function removeJob(id){const j=J(id);if(!j)return;let undone=false;
+  hideJobs.add(id);if(open===id)closePanel();if(expanded===id)expanded=null;structural(()=>{jobs=jobs.filter(x=>x.id!==id)});
+  toast(`${j.num} removed${j.state==="run"&&j.runnerOn?": its agent stops":j.state==="done"?" from view: it stays merged":""}`,"Undo",()=>{undone=true;hideJobs.delete(id);refreshSoon()});
+  setTimeout(async()=>{if(undone)return;const r=await post("remove",{id:j.id});hideJobs.delete(id);if(!r.ok)toast(said(r.lines)||"Not removed");refreshSoon()},5000)}
 /* Reject has no engine undo, so the page holds it for the toast's five seconds and sends it after. */
 function reject(id){const j=J(id);let undone=false;
   const prev=[j.state,j.lane];j.state="rejected";j.lane="done";if(expanded===id)expanded=null;structural(()=>{});
@@ -1157,7 +1170,7 @@ function renderPanel(scrollEnd){
   const ctl=g==="run"?`<span class="ctl"><button type="button" class="btn sm" data-act="${j.state==="paused"?"resume":"pause"}" data-id="${esc(j.id)}">${j.state==="paused"?I.play+"Resume":I.pause+"Pause"}</button>${j.state==="paused"?"":`<button type="button" class="btn ghost sm stop" data-act="stop" data-id="${esc(j.id)}" title="Stop this job (you can resume it later)">${I.stop}Stop</button>`}</span><span class="div" aria-hidden="true"></span>`:"";
   const sub=[j.kind,j.risk?j.risk+" risk":""].filter(Boolean).join(" · ");
   keepFocus(()=>{$("#pin").innerHTML=`
-    <div class="ph"><button class="ib back" onclick="closePanel()" aria-label="Back">${I.back}</button><span class="mono">${esc(j.num)}</span><span>·</span><span>${esc(sub)}</span><span class="sp"></span>${ctl}<button class="ib" onclick="closePanel()" aria-label="Close" title="Close (Esc)">${I.x}</button></div>
+    <div class="ph"><button class="ib back" onclick="closePanel()" aria-label="Back">${I.back}</button><span class="mono">${esc(j.num)}</span><span>·</span><span>${esc(sub)}</span><span class="sp"></span>${ctl}${rmBtn(j)}<button class="ib" onclick="closePanel()" aria-label="Close" title="Close (Esc)">${I.x}</button></div>
     <div class="pscroll" id="pscroll"><h1>${esc(j.title)}</h1>${(t=>t&&t!==j.title?`<p class="tkt" title="The ticket, as it was filed">${esc(t)}</p>`:"")(details[j.id]&&details[j.id].ticket)}
       <div class="meta"><span class="st ${j.state==="you"?"you":""}" id="pst">${icon(j)}${esc(statusOf(j))}</span><span class="mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span><span class="age" title="Since the ticket came in">age <span class="mono num" id="pt">${clock(secsOf(j))}</span></span><span class="mono num" id="pc">${costTxt(j)}</span>${j.report?`<a href="${esc(BASE)}/${esc(j.report)}" target="_blank" rel="noopener">Open report</a>`:""}${j.pr?`<span>PR #${j.pr}</span>`:""}</div>
       <div class="ptrk ${ss.length>6?"many":""}">${trackHTML(j)}<div class="lbls">${ss.length>6?`<span class="cur ${j.state==="you"?"you":""}">${ended(j)&&j.state==="done"?"All "+ss.length+" steps done":"Step "+(i+1)+" of "+ss.length+" · "+esc(ss[i]?ss[i].nm:"")}</span>`:ss.map((s,k)=>`<span class="${k===i&&!ended(j)?"cur "+(j.state==="you"?"you":""):""}">${esc(s.nm)}</span>`).join("")}</div></div>
@@ -1243,7 +1256,7 @@ document.addEventListener("keydown",e=>{
 document.addEventListener("click",e=>{
   const b=e.target.closest("[data-act]");
   if(b){const id=b.dataset.id,a=b.dataset.act;e.stopPropagation();
-    if(a==="message")message(id);else if(a==="pause")pause(id);else if(a==="resume")resume(id);else if(a==="stop")stopJob(id);else if(a==="reject")reject(id);else if(a==="chip")useChip(id,b);else if(a==="copy")copyRun();else if(a==="start-runner")startRunner();else if(a==="ask")askChanges(id,true);else if(a==="ask-cancel")askChanges(id,false);else if(a==="copy-branch")copyBranch(id);else if(a==="copy-cmd")copyCmd(b.dataset.cmd);else if(a==="approve")approve(id);else if(a==="from")goFrom(id);
+    if(a==="message")message(id);else if(a==="pause")pause(id);else if(a==="resume")resume(id);else if(a==="stop")stopJob(id);else if(a==="reject")reject(id);else if(a==="chip")useChip(id,b);else if(a==="copy")copyRun();else if(a==="start-runner")startRunner();else if(a==="ask")askChanges(id,true);else if(a==="ask-cancel")askChanges(id,false);else if(a==="copy-branch")copyBranch(id);else if(a==="copy-cmd")copyCmd(b.dataset.cmd);else if(a==="approve")approve(id);else if(a==="from")goFrom(id);else if(a==="remove-job")removeJob(id);
     return}
   const r=e.target.closest("[data-row]");if(r)openJob(r.dataset.row);
 });
@@ -1414,7 +1427,7 @@ function asideHTML(p){const i=item(p.items[0]);
     <span class="oacts"><button class="btn sm ghost" data-oact="propose-anyway" data-pid="${p.id}" title="Triage got it wrong: propose it">Propose anyway</button></span></div></div>`}
 /* Sent to the Inner loop: each one with its job number and where it is now; View opens it there. */
 function sentHTML(p){const j=J(p.job),st=j?(j.state==="done"?doneWords(j):j.state==="rejected"?"Rejected":j.state==="you"?"Needs you":stp(j).nm):snap?"Removed":"Intake",ex=oOpen===p.id;
-  return `<div class="orw dim ${ex?"open":""} ${oFresh.has(p.id)?"in":""}" id="o-${p.id}"><div class="orow" tabindex="0" role="button" aria-expanded="${ex}" data-orow="${p.id}"><span class="olead"><span class="gl">${j&&j.state==="done"?S.ok:S.run}</span></span><div class="mn"><div class="ttl">${esc(p.title)}</div>
+  return `<div class="orw dim ${ex?"open":""} ${oFresh.has(p.id)?"in":""}" id="o-${p.id}"><div class="orow" tabindex="0" role="button" aria-expanded="${ex}" data-orow="${p.id}"><span class="olead"><span class="gl">${!j?S.skip:j.state==="done"?S.ok:j.state==="rejected"?S.skip:S.run}</span></span><div class="mn"><div class="ttl">${esc(p.title)}</div>
     <div class="oline">${srcChips(p)}<span class="evd q"><span><span class="mono">${esc(num(p.job))}</span> · ${esc(st)}</span></span></div></div>${prioHTML(p)}<span class="tm">${j?`<button class="btn sm" data-oact="view-job" data-job="${esc(p.job)}" title="Open ${esc(num(p.job))} in the Inner loop">View</button>`:""}</span></div>${ex?expHTML(p):""}</div>`}
 function sentBarHTML(){if(!sentBar)return "";const ids=sentBar.map(num);
   return `<div class="rbar sbar" role="status">${S.run}<span><b>${ids.length} sent to the Inner loop</b> · ${ids.join(", ")} at Intake</span><span class="sp" style="flex:1"></span><button class="btn pri sm" data-oact="view-sent">Show in Inner loop</button><button class="ib" data-oact="sent-x" aria-label="Dismiss" title="Dismiss">${I.x}</button></div>`}

@@ -229,6 +229,8 @@ export type Snapshot = {
   phases: { k: Phase; nm: string }[];
   lanes: { k: Lane; nm: string; who: string }[];
   jobs: JobCard[];
+  /** Jobs the person removed in the last day (kitchen remove): hidden, named so the outer loop can say "Removed". */
+  removed: { id: string; at: string }[];
   corrupt: string[];
 };
 
@@ -262,12 +264,17 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
   const orch = orchestrator(repo, now);
   const jobs: JobCard[] = [];
   const corrupt: string[] = [];
+  const removed: { id: string; at: string }[] = [];
   for (const e of scanJobs(repo)) {
     if (!e.job || !JOB_ID.test(e.job.id)) {
       corrupt.push(e.id);
       continue;
     }
     const j = e.job;
+    if (j.archived) {
+      if (now - Date.parse(j.archived.at) < 86_400_000) removed.push({ id: j.id, at: j.archived.at });
+      continue;
+    }
     const dir = jobDirOf(repo, j.id);
     const crit = critOf(dir, j.round);
     const qaNow = readQa(dir, j.round, criteriaOf(dir));
@@ -348,6 +355,7 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
     phases: PHASES.map((p) => ({ k: p.k, nm: p.nm })),
     lanes: LANES.map((l) => ({ k: l.k, nm: l.nm, who: who[l.k] })),
     jobs: jobs.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+    removed,
     corrupt,
   };
 }

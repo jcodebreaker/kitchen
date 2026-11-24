@@ -59,7 +59,8 @@ export const heartbeatFile = (repo: string) => path.join(kitchenDir(repo), "orch
 
 export function next(repo: string, o: { restartStranded?: boolean } = {}): Plan {
   const cfg = loadConfig(repo);
-  const jobs = listJobs(repo);
+  // A job the person removed is never picked (kitchen remove).
+  const jobs = listJobs(repo).filter((j) => !j.archived);
   const paused = new Set(jobs.filter((j) => !j.running && readControl(jobDirOf(repo, j.id)).pause).map((j) => j.id));
   const plan = planWave(jobs, { parallel: cfg.parallel, restartStranded: o.restartStranded, paused });
   fs.mkdirSync(kitchenDir(repo), { recursive: true });
@@ -325,6 +326,7 @@ export async function start(
   const cfg = loadConfig(repo);
   let job = findJob(repo, id);
   const dir = jobDirOf(repo, job.id);
+  if (job.archived) return { refused: `${job.id} was removed by the person` };
   const why = refuseStart(job, lane, !!o.restart);
   if (why) return { refused: why };
   if (readControl(dir).pause) {
@@ -497,6 +499,7 @@ export async function finish(repo: string, id: string): Promise<Finished | { ref
   const cfg = loadConfig(repo);
   const job = findJob(repo, id);
   const dir = jobDirOf(repo, job.id);
+  if (job.archived) return { refused: `${job.id} was removed by the person: this lane's result is dropped` };
   if (!job.running) {
     if (job.stage === "paused")
       return { refused: `${job.id} was ${job.pausedReason === "by-you: stopped" ? "stopped" : "paused"} by the person: this lane's result is dropped` };

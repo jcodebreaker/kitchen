@@ -123,6 +123,11 @@ export type Job = {
   approved?: string;
   /** ADR 0020: the later slices intake listed (`## Later slices`), each filed once as its own ticket: its text and job id. */
   slices?: { text: string; id: string }[];
+  /**
+   * Removed by the person (`kitchen remove`): hidden from the dashboard, `kitchen status` and the wave plan; the job
+   * folder and branch stay, and `kitchen restore` shows it again. `kitchen report` still counts it.
+   */
+  archived?: { at: string; by: "person" };
   /** ADR 0022: the outer loop's proposal it was filed from, or none (`kitchen ticket`). */
   from?: JobFrom;
   /** Side effects done once (a PR opened): keys. */
