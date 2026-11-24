@@ -106,11 +106,13 @@ export type Job = {
    * The trial merge waiting for its features to be driven (ADR 0017 §3): staging's tip it merged onto, the merged
    * commit (kept under refs/kitchen/drive/<id>), its worktree, and the features Kitchen chose from `Code:` lines.
    */
-  drive?: { onto: string; sha: string; head: string; wt: string; features: string[] };
+  drive?: { onto: string; sha: string; head: string; wt: string; features: string[]; by?: "person" };
   /** Kitchen's own commits on the job branch (QA's map updates): a builder's edit to verify-*\/ is anything else. */
   mapCommits?: string[];
   /** Where it was merged: staging's new tip, how (local or the PR). */
   merged?: { into: string; sha: string; at: string; via: "local" | "github" };
+  /** A person merged it from Ready (`kitchen merge`, the dashboard's Merge into staging); absent: Kitchen auto-merged it. */
+  mergedBy?: "person";
   /**
    * ADR 0020: what a needs-info job waits for beyond an answer. `refine`: intake sent the ticket to be refined with
    * its author (`kitchen refine`); `confirm`: intake accepted it and `intake.confirm` holds it for `kitchen approve`.
@@ -145,7 +147,8 @@ export const MOVES: Record<Stage, readonly Stage[]> = {
   qa: ["review", "build", "needs-human", "rejected", "paused"],
   review: ["build", "regress", "ready", "done", "needs-human", "rejected", "paused"],
   regress: ["build", "ready", "done", "needs-human", "rejected", "paused"],
-  ready: ["build", "done", "rejected"],
+  // kitchen merge: the person's yes runs the merge gate, which may need the merge check lane or another round.
+  ready: ["build", "regress", "done", "needs-human", "rejected"],
   done: ["build"],
   "needs-human": ["intake", "build", "qa", "review", "regress", "rejected"],
   paused: ["intake", "build", "qa", "review", "regress", "rejected"],
@@ -207,6 +210,7 @@ export function move(j: Job, to: Stage, o: { reason?: string; now?: Date; catchU
     if (j.stage === "done" || j.stage === "ready") n.roundStart = n.round;
     delete n.held;
     delete n.merged;
+    delete n.mergedBy;
     delete n.doneAt;
   }
   if (j.stage === "needs-human") {

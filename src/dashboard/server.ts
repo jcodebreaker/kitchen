@@ -11,7 +11,7 @@
 //   GET  /models.json              ADR 0023: each lane's model and the tool's choices (kitchen models; cached ten minutes)
 //   GET  /inbox.json               the outer loop (ADR 0022): sources, the collect running now, items, proposals
 //   GET  /inbox/<item>/evidence/<f> a screenshot or transcript triage kept
-//   POST /api/<action>             steer, answer, approve, follow-up, pause, stop, resume, reject, ticket, start-runner,
+//   POST /api/<action>             steer, answer, approve, follow-up, merge, pause, stop, resume, reject, ticket, start-runner,
 //                                  collect, inbox-run, inbox-hold, inbox-unhold, inbox-remove, inbox-edit, inbox-verdict
 //                                  (actions.ts; one that gives the queue work starts an orchestrator when none runs)
 //

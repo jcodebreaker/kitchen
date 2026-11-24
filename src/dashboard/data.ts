@@ -55,10 +55,11 @@ export function workStage(j: Pick<Job, "stage" | "pausedFrom" | "escalatedFrom">
 export const phaseOf = (s: Stage): Phase => PHASES.find((p) => (p.stages as readonly Stage[]).includes(s))?.k ?? "intake";
 export const agentOf = (s: Stage): string | null => AGENT[s] ?? null;
 export type JobState = "you" | "run" | "paused" | "done" | "rejected";
+/** A job held at Ready waits for the person's merge (or their changes): it needs you, it isn't done. */
 export function stateOf(j: Pick<Job, "stage">): JobState {
-  if (j.stage === "needs-info" || j.stage === "needs-human") return "you";
+  if (j.stage === "needs-info" || j.stage === "needs-human" || j.stage === "ready") return "you";
   if (j.stage === "paused") return "paused";
-  if (j.stage === "done" || j.stage === "ready") return "done";
+  if (j.stage === "done") return "done";
   if (j.stage === "rejected") return "rejected";
   return "run";
 }
@@ -69,7 +70,6 @@ export const LANES = [
   { k: "build", nm: "Build" },
   { k: "qa", nm: "QA" },
   { k: "review", nm: "Review" },
-  { k: "ready", nm: "Ready" },
   { k: "done", nm: "Merged" },
 ] as const;
 export type Lane = (typeof LANES)[number]["k"];
@@ -77,7 +77,6 @@ export type Lane = (typeof LANES)[number]["k"];
 export function laneOf(j: Pick<Job, "stage" | "pausedFrom" | "escalatedFrom" | "pausedReason">): Lane {
   if (stateOf(j) === "you") return "you";
   if (j.stage === "rejected" || j.stage === "done" || (pausedByYou(j) && j.pausedReason === BY_YOU_STOPPED)) return "done";
-  if (j.stage === "ready") return "ready";
   const s = workStage(j);
   return s === "build" || s === "qa" || s === "review" ? s : s === "regress" ? "review" : "intake";
 }
@@ -91,12 +90,12 @@ export function laneWho(cfg: Config | null): Record<Lane, string> {
     build: m("builder", "build agent"),
     qa: m("qa", "QA agent"),
     review: m("reviewer", "review agent"),
-    ready: "you merge",
     done: "staging",
   };
 }
-/** What a job that needs you asks: intake's question (question.md), or why it stopped. */
+/** What a job that needs you asks: intake's question (question.md), why it stopped, or why Kitchen held it at Ready. */
 export function questionOf(j: Job, dir: string): string | null {
+  if (j.stage === "ready") return `Ready for you: ${j.held ?? "a person merges it"}`;
   if (j.stage === "needs-info") {
     try {
       const q = fs

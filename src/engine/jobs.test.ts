@@ -11,7 +11,7 @@ import { loadConfig } from "../config.ts";
 import { listItems } from "../inbox/store.ts";
 import { readLedger } from "../ledger/append.ts";
 import * as control from "./control.ts";
-import { finish, next, start } from "./jobs.ts";
+import { finish, mergeHeld, next, start } from "./jobs.ts";
 import { intakeFile, qaDir, reviewFile } from "./lanes.ts";
 import { refine } from "./refine.ts";
 import { renderReport } from "./report.ts";
@@ -162,6 +162,46 @@ test("high risk, high-risk paths or a big diff stop at Ready for a person: nothi
   await review(r, big);
   assert.match(String(findJob(r, big).held), /changed lines, over 3/);
   assert.equal(g(r, "rev-parse", "staging"), g(r, "rev-parse", "main"), "staging never moved");
+});
+
+test("kitchen merge: refuses a job not held at Ready; a held one merges through the gate, by you; a conflict goes back to Build", async () => {
+  const r = await repo("staging: { max_lines: 3 }\n");
+  const id = await toBuild(r);
+  const b = await toBuild(r, "big too");
+  assert.match(String(((await mergeHeld(r, id)) as { refused: string }).refused), /is build: kitchen merge takes a job held at Ready/);
+  // Both held (over max_lines), both built on the same staging, on the same lines.
+  for (const [x, ch] of [
+    [id, "x"],
+    [b, "y"],
+  ]) {
+    await build(r, x, `${`${ch}\n`.repeat(10)}`);
+    await qa(r, x, "PASS");
+    await review(r, x);
+    assert.equal(findJob(r, x).stage, "ready");
+  }
+  const m = await mergeHeld(r, id);
+  assert.ok("line" in m, JSON.stringify(m));
+  assert.equal(m.to, "done");
+  const j = findJob(r, id);
+  assert.equal(j.mergedBy, "person");
+  assert.equal(j.merged?.sha, g(r, "rev-parse", "staging"));
+  assert.equal(g(r, "show", "staging:app.txt"), "x\n".repeat(10).trim());
+  assert.equal(g(r, "show", "main:app.txt"), "one\ntwo\nthree", "never main");
+  assert.match(fs.readFileSync(path.join(dirOf(r, id), "report.html"), "utf8"), /Merged by you on \d{4}-\d\d-\d\d into staging/);
+  assert.deepEqual(
+    readLedger(r)
+      .filter((l) => l.event === "move" && l.job === id)
+      .at(-1)?.detail,
+    { who: "person" },
+  );
+  assert.match(String(((await mergeHeld(r, id)) as { refused: string }).refused), /is done/);
+  // The second one's trial merge on staging's new tip conflicts: back to Build, nothing merged, not by you.
+  const c = await mergeHeld(r, b);
+  assert.ok("line" in c, JSON.stringify(c));
+  assert.match(c.line, /conflicts with staging in app\.txt → build/);
+  assert.equal(findJob(r, b).stage, "build");
+  assert.equal(findJob(r, b).mergedBy, undefined);
+  assert.equal(g(r, "show", "staging:app.txt"), "x\n".repeat(10).trim(), "staging kept the first job only");
 });
 
 test("a review whose branch moved is refused; a conflict with staging sends the job back to build", async () => {
