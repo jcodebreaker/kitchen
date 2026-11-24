@@ -40,3 +40,11 @@ The server already keeps nothing about a repo in memory: every request reads tha
 - One address, http://127.0.0.1:7357/, for everything. A job in any repo that needs you shows on whichever board you're on.
 - `~/.kitchen/repos.json` is new state outside a repo. It holds only paths, and losing it only empties the switcher.
 - A dashboard started by one Kitchen version serves repos initialised by another. The data it reads (`.kitchen/` job files) is the contract.
+
+## Amendment, 2026-11-23: how it is built
+- **The list** is `src/dashboard/repos.ts`: `{ repos: [{ key, path }], last }`, written to a temp file and renamed. `last` is the repo a hash-less page opens. `$KITCHEN_HOME` moves the folder (tests, trying Kitchen out). A key is the folder name with anything but `A-Za-z0-9._-` turned into `-`; on a clash, `-` and six hex characters of the path's SHA-256.
+- **Adding needs `.kitchen/`.** `kitchen dashboard` in a folder without one says to run `kitchen init` (or use `--private`); `kitchen init` creates `.kitchen/` when it finishes, then adds the repo. A repo without it would only be dropped on the next read.
+- **`--port n` means `--private`**, as the ADR's "(and `--port`)" says. To run a second shared dashboard beside your own (trying out a Kitchen build), `KITCHEN_DASHBOARD_PORT` moves the shared one's port.
+- **`/kitchen.json` also says `private`.** A `--private` server answers it too, so a second `kitchen dashboard` can say "port 7357 already has a Kitchen dashboard for one repo (--private)" instead of adding the repo to a list nobody serves.
+- **`/repos.json`** counts from each repo's `snapshot` (the page's own numbers); the page fetches it with `data.json`, at most every 3 s, and when the menu opens. Paths under the home folder show as `~/…`.
+- **The page** takes `kitchen-mode` (`repos` or `one`) from a meta the server fills, like the token. Every route goes through one `BASE` (`/r/<key>` or empty). Switching bumps a generation counter so an answer for the repo you left is dropped, and resets the list, the panel, drafts and selection. In `one` mode the repo name is not a button (no chevron, no menu).

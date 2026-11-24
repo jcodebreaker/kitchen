@@ -21,7 +21,9 @@ Work
   kitchen run [--detach] [--max-usd n]   a headless orchestrator session works the queue (or /kitchen run in Claude Code)
   kitchen run --stop | --print           end it | print the exact command it runs
   kitchen status [--json]                one row per job
-  kitchen dashboard [--port 7357]        the jobs in a browser, on 127.0.0.1: lanes, live activity, steering
+  kitchen dashboard                      every repo's jobs in one browser page, on 127.0.0.1:7357: lanes, live activity,
+                                         steering; run it in another repo to add that one (--forget removes it)
+  kitchen dashboard --private [--port n] this repo alone, on its own server, not added to the list
   kitchen feedback <id> ["<text>"] [--to <stage>]   answer a job that needs you, or send a ready/done one back
   kitchen steer <id> "<text>"            a message the job's next agent reads
   kitchen pause <id> · stop <id> · resume <id> · reject <id>
@@ -63,7 +65,7 @@ const COMMAND_HELP: Record<string, string> = {
   reject: "kitchen reject <id>\n\nCloses a job without merging it.",
   report: "kitchen report [--json]\n\nWhat the queue did: merged, ready, sent back, rounds, time.",
   dashboard:
-    "kitchen dashboard [--port 7357]\n\nThe jobs in a browser, on 127.0.0.1 only: a list or a board by lane, each job's live activity, criteria and changes. From it you answer, steer, pause, resume, stop, reject, follow up and start the orchestrator.",
+    "kitchen dashboard | dashboard --forget | dashboard --private [--port n]\n\nThe jobs in a browser, on 127.0.0.1 only: a list or a board by lane, each job's live activity, criteria and changes. From it you answer, steer, pause, resume, stop, reject, follow up and start the orchestrator.\nOne page, http://127.0.0.1:7357/, for every repo on ~/.kitchen/repos.json (kitchen init and kitchen dashboard add the repo they run in; the repo name top-left switches). When the dashboard already runs, it adds this repo and prints its address.\n  --forget   take this repo off the list\n  --private  this repo alone, on its own server, not added to the list (--port implies it; default port 7357)",
   skills: "kitchen skills\n\nEvery skill in Kitchen's role registry (skills/registry.json): found or not for the agent tool, and how to install a missing one.",
   init: "kitchen init [--tool claude|codex] [--yes] | init --skill\n\nChecks what Kitchen needs (node, git and a commit, python3 for the hooks, claude or codex signed in, gh optional), then writes kitchen.yaml with the checks and how to start the app it finds (one question at most when none is obvious; --yes asks nothing), installs the /kitchen skill and the guard hooks (merged into .claude/settings.json, with a backup), adds .gitignore entries, creates the staging branch from your branch, and runs the checks once.",
   job: "kitchen job next|start|finish|show …\n\nThe orchestrator's verbs: the single writer of job state. See kitchen --help.",
@@ -142,7 +144,13 @@ async function main(argv: string[]): Promise<number> {
             }
           }
         : undefined;
-      return (await import("./init/quick.ts")).init({ repo, tool: tool as "claude" | "codex" | undefined, ask }, out);
+      const code = await (await import("./init/quick.ts")).init({ repo, tool: tool as "claude" | "codex" | undefined, ask }, out);
+      // On the dashboard's list (ADR 0019): needs .kitchen/, which init doesn't always make.
+      if (code === 0) {
+        fs.mkdirSync(path.join(repo, ".kitchen"), { recursive: true });
+        (await import("./dashboard/repos.ts")).addRepo(repo);
+      }
+      return code;
     }
     case "skills": {
       const r = (await import("./init/skills-report.ts")).skillsReport(repo);
@@ -150,9 +158,17 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     }
     case "dashboard": {
+      if (f.flags.has("--forget")) {
+        const gone = (await import("./dashboard/repos.ts")).forgetRepo(repo);
+        out(gone ? `${path.basename(repo)} is off the dashboard's list` : `${path.basename(repo)} wasn't on the dashboard's list`);
+        return 0;
+      }
       const p = v("port");
-      await (await import("./dashboard/server.ts")).serveDashboard(repo, p ? Number(p) : 7357, out);
-      return await new Promise<number>(() => {});
+      const priv = f.flags.has("--private") || p !== undefined;
+      // KITCHEN_DASHBOARD_PORT moves the shared dashboard (a second one, for trying Kitchen out beside your own).
+      const port = Number(p ?? process.env.KITCHEN_DASHBOARD_PORT ?? 7357);
+      const s = await (await import("./dashboard/server.ts")).serveDashboard(repo, port, out, { private: priv });
+      return s ? await new Promise<number>(() => {}) : 0;
     }
     case "ticket":
       return control.ticket(repo, f.pos.join(" ") || need(0, '"<text>"'), out);

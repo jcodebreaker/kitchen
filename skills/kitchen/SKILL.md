@@ -26,7 +26,7 @@ Run commands from the repo root. If `kitchen` is not on PATH, use
 | continue a paused or stopped job | `kitchen resume <id>` |
 | answer a job's question, "try again with …", follow up on a ready or merged job | `kitchen feedback <id> "<their answer>"` |
 | drop a job | `kitchen reject <id>` |
-| "show me the jobs", "open the dashboard" | `kitchen dashboard` as a background command, then give the user http://127.0.0.1:7357 |
+| "show me the jobs", "open the dashboard" | `kitchen dashboard` as a background command, then give the user the address it prints (http://127.0.0.1:7357/#<repo>; when a dashboard already runs it adds this repo, prints `already open: …` and exits) |
 | run the queue headless, in the background | `kitchen run --detach` (a separate Claude Code session runs this skill) |
 | how is Kitchen doing | `kitchen report` |
 | "sweep", check every feature before a release, "is staging good to ship" | a verify run: see The verify map, below (`kitchen verify sweep`) |
