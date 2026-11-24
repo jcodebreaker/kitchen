@@ -137,7 +137,7 @@ export const JobSchema = z.looseObject({
   pr: z.number().int().nullable(),
   files: z.array(z.string()).optional(),
   after: z.array(z.string()).optional(),
-  running: z.looseObject({ lane: z.enum(["intake", "build", "qa", "review"]), at: z.string(), key: z.string() }).nullable(),
+  running: z.looseObject({ lane: z.enum(["intake", "build", "qa", "review", "regress"]), at: z.string(), key: z.string() }).nullable(),
   agentRuns: z.array(z.looseObject({ key: z.string(), role: z.string(), stage: Stage, round: z.number(), at: z.string() })),
   moves: Count,
   held: z.string().optional(),

@@ -14,7 +14,7 @@
   <img alt="The Kitchen dashboard: jobs in lanes by stage, one waiting for an answer, others merged into staging" src="docs/img/dashboard-board-light.webp">
 </picture>
 
-One Claude Code session runs your queue: an agent per lane writes the criteria, builds, checks the running app in a real browser and reviews. Kitchen moves every job, re-runs your checks and merges what passes into `staging`. You merge `staging` onward.
+One Claude Code session runs your queue: an agent per lane writes the criteria, builds, checks the running app in a real browser and reviews. Kitchen moves every job, re-runs your checks, drives the features a change touches on the merged result, and merges what passes into `staging`. You merge `staging` onward.
 
 > **Why I built it.** New branch. New Claude session. Same speech: here's how you run the server, here's the seed data, no, the other port. I gave that speech enough times that I automated it. Kitchen learns your app once and every agent after that just gets to work. Yes, I named it after food. I was hungry.
 
@@ -84,6 +84,8 @@ A job whose QA and review pass is merged into `staging`, after Kitchen runs your
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/how-it-works-dark.svg">
   <img alt="You tell Claude Code what you want and it files a ticket. The orchestrator session plans waves and moves each job only through kitchen job verbs. One fresh agent per lane: intake, build, QA, review. QA starts your app and checks it with Playwright. Passing work merges into staging; you merge staging onward." src="docs/img/how-it-works-light.svg">
 </picture>
+
+QA follows and keeps a **verify skill** in your repo (`.claude/skills/verify-<app>/`): one file per feature saying how to check it and which files are behind it. Before a job merges, Kitchen drives every feature whose files the merge changes, so one job breaking another's feature goes back to Build instead of landing. More: [the verify map](docs/guide.md#the-verify-map).
 
 ## Why Kitchen
 

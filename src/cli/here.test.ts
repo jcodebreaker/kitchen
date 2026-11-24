@@ -34,6 +34,11 @@ test("inside .worktrees/<job> (any depth) the main checkout; elsewhere the folde
   const own = path.join(root, "my-own-worktree");
   g(repo, "worktree", "add", "-q", "-b", "mine", own);
   assert.equal(kitchenRepo(own), own, "a worktree of your own is its own repo");
+  for (const d of [".kitchen/merge/001-add-a-thing", ".kitchen/verify/sweep-20261123-100000/wt"]) {
+    const t = path.join(repo, d);
+    g(repo, "worktree", "add", "-q", "--detach", t);
+    assert.equal(kitchenRepo(t), repo, `${d}: a regress lane's trial merge and a verify run's checkout are Kitchen's too`);
+  }
   assert.equal(kitchenRepo(root), root, "not a git repo");
   const shown = JSON.parse(execFileSync(process.execPath, [CLI, "job", "show", "1", "--json"], { cwd: path.join(wt, "src"), encoding: "utf8" }));
   assert.equal(shown.id, "001-add-a-thing");

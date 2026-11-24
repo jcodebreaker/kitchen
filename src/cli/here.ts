@@ -16,7 +16,8 @@ export function gitRoot(dir: string): string | null {
 
 /**
  * The repo Kitchen works in, for a command run in `cwd`: the main checkout when `cwd` is inside one of Kitchen's job
- * worktrees (`<repo>/.worktrees/<job>`, where a lane agent works), so `kitchen qa up 001` there finds job 001.
+ * worktrees (`<repo>/.worktrees/<job>`, where a lane agent works), a trial merge (`.kitchen/merge/<job>`) or a
+ * verify run's checkout (`.kitchen/verify/<run>/wt`), so `kitchen qa up 001` there finds job 001.
  * Anywhere else, `cwd` itself (a git worktree of your own keeps its own kitchen.yaml and jobs).
  */
 export function kitchenRepo(cwd: string): string {
@@ -37,8 +38,15 @@ export function kitchenRepo(cwd: string): string {
   }
   if (!top || !common) return cwd;
   const main = path.dirname(common);
-  const rel = path.relative(path.join(main, ".worktrees"), top);
-  return rel && !rel.startsWith("..") && !path.isAbsolute(rel) && fs.existsSync(path.join(main, ".kitchen")) ? main : cwd;
+  // Kitchen's own checkouts: job worktrees, the trial merge a regress lane drives, a verify run's checkout.
+  const inside = (d: string) => {
+    const rel = path.relative(path.join(main, d), top);
+    return !!rel && !rel.startsWith("..") && !path.isAbsolute(rel);
+  };
+  return (inside(".worktrees") || inside(path.join(".kitchen", "merge")) || inside(path.join(".kitchen", "verify"))) &&
+    fs.existsSync(path.join(main, ".kitchen"))
+    ? main
+    : cwd;
 }
 
 export function hereLine(cwd: string): string {

@@ -15,7 +15,7 @@ One run of Kitchen on one Ticket, from intake to a change merged into Staging or
 _Avoid_: Run, build, pipeline run
 
 **Stage**:
-Where a Job is: intake, build, QA, review (the Lanes), ready (held for a person), done (merged into Staging), or waiting: needs-info, needs-human, paused, rejected.
+Where a Job is: intake, build, QA, review, regress (the Lanes), ready (held for a person), done (merged into Staging), or waiting: needs-info, needs-human, paused, rejected.
 _Avoid_: Phase, step
 
 **Risk**:
@@ -45,7 +45,7 @@ The lanes the Orchestrator starts at once, from `kitchen job next`: downstream f
 _Avoid_: Batch, tick
 
 **Lane**:
-A Stage an agent works in: intake, build, QA, review. One fresh agent per Lane per Job, briefed by `kitchen job start`, its result read by `kitchen job finish`.
+A Stage an agent works in: intake, build, QA, review, regress. One fresh agent per Lane per Job, briefed by `kitchen job start`, its result read by `kitchen job finish`.
 _Avoid_: Worker, step
 
 **Role skill**:
@@ -69,8 +69,46 @@ The branch passing Jobs merge into, after Kitchen re-runs the checks on the merg
 _Avoid_: Release branch, main
 
 **Report**:
-The HTML page a Job ends with: what a person must check, then each criterion with its Evidence, the review and the diff.
+The HTML page a Job ends with: what a person must check (every Changed earlier check among it), then each criterion with its Evidence, the Features driven before the merge, the review and the diff.
 _Avoid_: Summary, PR description
+
+### The verify map
+
+**Verify skill**:
+The skill in the person's repo that says how to check their app: `.claude/skills/verify-<app>/` (and the same for Codex under `.agents/skills/`), with a `SKILL.md` (Launch, Doctor, Drive, Evidence, Cleanup) and the Feature map. `kitchen init` writes its skeleton; QA keeps its map.
+_Avoid_: Toolkit (the removed up-front build), test suite
+
+**Feature map**:
+The Verify skill's `features/` folder: a README index (baseline preconditions, driving conventions, the sweep order) and one Feature file per user-facing feature. It grows with features, not tickets.
+_Avoid_: Test plan, spec
+
+**Feature file**:
+One user-facing feature in the Feature map: a title and paragraph, then `Sub-features`, `How to get to it (user POV)`, `Driving it with kitchen qa` (the Recipe) and `Gotchas`, ending with a `Code:` line naming the files behind it.
+_Avoid_: Test case, spec file
+
+**Recipe**:
+A Feature file's steps: each a bold label, the action a person takes, the exact `kitchen qa` command and the result anyone can see. Prose an agent drives, never a saved script. Never weakened: fix how to reach something, never what is expected.
+_Avoid_: Test script, e2e test
+
+**Touched feature**:
+A Feature whose `Code:` line covers a file a change touches. Kitchen's code decides which features are touched; an agent drives them.
+_Avoid_: Affected test
+
+**Regress**:
+The Lane between review and the merge into Staging: one agent drives the Touched features' Recipes on the trial merge (Staging as it is, with the Job merged). Red sends the Job back to Build with the Evidence; green lands that merge. The dashboard calls it the merge check.
+_Avoid_: Regression suite, smoke test
+
+**CHANGES**:
+Intake's line naming the sub-features (`<feature>/<sub-feature>`) a Ticket changes on purpose. Only those may lose a sub-feature, a step or an expected result; Kitchen refuses any other weakening. The Report shows each one as a **Changed earlier check: was …, now …**.
+_Avoid_: Breaking change, waiver
+
+**Sweep**:
+`kitchen verify sweep`: one agent drives every Feature in the README's order against Staging before a person merges it onward, and writes a sweep report. It changes nothing.
+_Avoid_: Release test, full regression
+
+**Map upkeep**:
+`kitchen verify maintain`: one agent keeps the Feature map honest (prune, merge duplicates, fix drift from each `Code:`, drive every Feature) on a branch of Staging; a product regression becomes a new Ticket, never a weaker map.
+_Avoid_: Healing, test maintenance
 
 ### Learning
 

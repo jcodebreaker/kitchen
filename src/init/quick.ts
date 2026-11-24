@@ -10,6 +10,7 @@ import { currentBranch, git, revParse } from "../engine/git.ts";
 import { ensureStaging } from "../engine/staging.ts";
 import { writeAtomic } from "../engine/store.ts";
 import { appendLedger } from "../ledger/append.ts";
+import { writeVerifySkill } from "../verify/skill.ts";
 import { type DetectedApp, detectApp } from "./detect-app.ts";
 import { detectChecks } from "./detect-checks.ts";
 import { addGitignore, hasOwnChecks, installSkill, toolFor, writeConfig } from "./files.ts";
@@ -110,6 +111,16 @@ export async function init(o: InitOpts, out: (l: string) => void): Promise<numbe
     roleSkills = skillsReport(repo).short;
   } catch {}
   out(phaseLine(true, "Installed the skill", `/kitchen for Claude Code and Codex · role skills: ${roleSkills} (kitchen skills)`));
+  const vs = writeVerifySkill(repo, cfg);
+  const wrote = vs.files.filter((f) => f.did === "wrote" || f.did === "refreshed").length;
+  const kept = vs.files.filter((f) => f.did === "kept").length;
+  out(
+    phaseLine(
+      true,
+      "Verify skill",
+      `${vs.name} for Claude Code and Codex: ${wrote ? `${wrote} file${wrote === 1 ? "" : "s"} written` : "up to date"}${kept ? `, ${kept} you changed kept as they are` : ""} · the feature map fills in as QA touches features`,
+    ),
+  );
   const h = installHooks(repo);
   out(
     phaseLine(
@@ -169,6 +180,7 @@ export async function init(o: InitOpts, out: (l: string) => void): Promise<numbe
       "No app.reset found: QA's restarts keep the data earlier checks left. If the app stores data, add app.reset to kitchen.yaml (a command that puts it back to its seed, e.g. rm -f data/*.json) so kitchen qa reset starts it fresh.",
     );
   out('Next: kitchen ticket "<what you want>"  then  kitchen run  (or /kitchen run in Claude Code)');
-  out("      commit kitchen.yaml, .gitignore, .claude/settings.json and the skill and hook folders when you like");
+  out("      commit kitchen.yaml, .gitignore, .claude/settings.json and the skill and hook folders (the verify skill too) before the first run:");
+  out("      jobs start from staging, so the verify skill must be on it for QA to keep the map");
   return 0;
 }

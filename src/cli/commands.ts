@@ -32,6 +32,8 @@ export function statusLine(j: Job, jobDir: string): string {
 /** The orchestrator in one line: `kitchen run`'s session, or the last `kitchen job next` of an in-session one. */
 export function orchestratorLine(repo: string): string {
   const r = liveRun(repo);
+  // Inside that session (`kitchen run` sets KITCHEN_ORCHESTRATOR), it is this session, not a second one.
+  if (r && process.env.KITCHEN_ORCHESTRATOR) return `orchestrator: this session (kitchen run, pid ${r.pid})`;
   if (r) return `orchestrator: running (kitchen run, pid ${r.pid}, log ${r.log})`;
   try {
     const h = JSON.parse(fs.readFileSync(heartbeatFile(repo), "utf8")) as { at: string };
@@ -90,7 +92,7 @@ export function report(repo: string, out: Out, opts: { json?: boolean } = {}): n
     ready: by("ready"),
     needsYou: by("needs-info") + by("needs-human"),
     rejected: by("rejected"),
-    inFlight: jobs.filter((j) => ["intake", "build", "qa", "review"].includes(j.stage)).length,
+    inFlight: jobs.filter((j) => ["intake", "build", "qa", "review", "regress"].includes(j.stage)).length,
     firstPass,
     roundsMean: ended.length ? ended.reduce((a, j) => a + j.round, 0) / ended.length : 0,
     medianMinutes: secs.length ? Math.round(secs[Math.floor(secs.length / 2)] / 60) : 0,

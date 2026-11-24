@@ -191,8 +191,8 @@ export async function feedback(repo: string, ref: string, text: string, out: Out
   }
   if (job.stage === "needs-human") {
     const to = (o.to ?? job.escalatedFrom ?? "build") as Stage;
-    if (!STAGE_LIST.includes(to) || !["intake", "build", "qa", "review"].includes(to)) {
-      out(`${job.id}  --to takes intake, build, qa or review`);
+    if (!STAGE_LIST.includes(to) || !["intake", "build", "qa", "review", "regress"].includes(to)) {
+      out(`${job.id}  --to takes intake, build, qa, review or regress`);
       return 1;
     }
     await say("answer");
