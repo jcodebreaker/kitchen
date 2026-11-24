@@ -46,3 +46,12 @@ The dashboard's outer loop lists **Proposed** (with a checkbox), **Held**, **In 
 
 ## Later (own ADRs)
 A gardening buffer (scans append to a document; a collect reads it every few days and proposes one root-cause ticket); auto-run rules (a reproduced low-risk bug runs without a click); a daily "what landed on staging" digest with a sample to read.
+
+## Amendment, 2026-11-24: GitHub and Slack first, read by Kitchen's code
+
+After researching how tools take in work (notes: GitHub's REST `since` + ETag polling, Slack's 2025 limits for unlisted apps, super-board's scheduled intake), the user chose GitHub and Slack as the only sources for now, read by code rather than by an agent:
+- `/kitchen sources` still sets them up by talking, but writes a config, not a recipe: `github: { repo, label: kitchen }` (issues with the label, via `gh api` with `since` and the saved ETag: a 304 costs nothing) and `slack: { channel, emoji: kitchen }` (threads in the channel that carry the emoji, via `conversations.history`/`replies` with an `oldest` watermark). Kitchen's code reads them: no tokens spent, deterministic, testable.
+- Slack: each user creates their own internal app from a manifest Kitchen ships (internal apps keep the normal rate limits; an unlisted distributed app is held to 1 request a minute since 2025-05-29). The bot token is stored where `gh` keeps its own (the OS keychain), never in the repo.
+- Every item is keyed `source:native_id` (`github:<repo>#<number>`, `slack:<channel>:<ts>`); each source keeps a watermark, refetched with a small overlap; a content hash makes an edited item a new sighting, not a duplicate. One collect at a time (a lock per repo; a busy collect exits without writing). A source that can't be reached is reported "unavailable", never "empty", and its watermark doesn't move after a partial read.
+- Scheduling: `kitchen collect` by hand, from the dashboard, or on a schedule (`kitchen collect --install-schedule` writes a launchd `StartCalendarInterval` job on macOS or a systemd timer with `Persistent=true` on Linux, so a run missed while asleep happens on wake).
+- Agent-read recipes for other sources (Linear, Sentry, email), and instant triggers (a Slack Socket Mode listener for the emoji, a GitHub Action on the label), are later decisions.
