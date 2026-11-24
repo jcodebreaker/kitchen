@@ -7,7 +7,7 @@ ignored, and `kitchen init` names them). The schema is `src/config.ts` (`ConfigS
 version: 1
 agent: { tool: claude, max_usd: 20 }          # max_usd: kitchen run's spend cap
 round_limit: 3                                 # Build → QA → Review rounds before a person is asked
-parallel: 3                                    # lane agents at once
+parallel: 4                                    # lane agents at once
 checks: [{ name: test, run: "npm test" }]      # Kitchen runs them after Build and on staging before a merge
 checks_install: npm                            # a frozen install in each fresh worktree
 app: { start: "npm start", health: "/healthz", reset: "npm run seed" }
@@ -18,7 +18,7 @@ forge: { kind: github, repo: you/your-repo }   # merge into staging through a PR
 | key | default | what |
 |---|---|---|
 | `round_limit` | 3 | rounds (QA or review sending the job back to Build) before it goes to a person |
-| `parallel` | 3 | lane agents at once; the wave plan holds the rest |
+| `parallel` | 4 | lane agents at once; the wave plan holds the rest. Intake lanes are never held: every job in intake starts, and build, QA and review get the room left
 | `models.intake` / `builder` / `qa` / `reviewer` | strong / strong / medium / medium | the model each lane's agent runs on: a tier, or a model name |
 | `agent.tool` | claude | the orchestrator's tool (`kitchen run` starts Claude Code) |
 | `agent.command` | `claude` on PATH | the argv prefix `kitchen run` starts |

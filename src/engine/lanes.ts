@@ -69,6 +69,15 @@ export function parseIntake(text: string): Intake | { refused: string } {
 }
 
 export const intakeFile = (jobDir: string) => path.join(jobDir, "intake.md");
+/** What intake considered and left out (its LEFT OUT: line), or "" when nothing was. */
+export function leftOutOf(jobDir: string): string {
+  try {
+    const v = header(fs.readFileSync(intakeFile(jobDir), "utf8"), "LEFT OUT");
+    return /^(nothing|none|-|n\/a)?\.?$/i.test(v) ? "" : v;
+  } catch {
+    return "";
+  }
+}
 /** The accepted intake's criteria, or [] before intake accepted it. */
 export function criteriaOf(jobDir: string): Criterion[] {
   try {

@@ -268,3 +268,31 @@ test("steering reaches the next lane; pause parks after the lane; stop drops the
   const again = await open(r, q, "intake");
   assert.match(fs.readFileSync(again.brief, "utf8"), /Better how\?[\s\S]*> faster/);
 });
+
+test("intake sees the other jobs: accepted ones by criteria and FILES, ones still in intake by their ticket; AFTER from it holds the job, and the builder sees what it builds on", async () => {
+  const r = await repo();
+  const a = await toBuild(r, "add a fourth line");
+  await control.ticket(r, "let people search books by title or author", quiet);
+  await control.ticket(r, "on the page show my overdue loans in red and add a search box above the book list", quiet);
+  const [b, c] = [findJob(r, "2").id, findJob(r, "3").id];
+  await open(r, b, "intake");
+  const s = await open(r, c, "intake");
+  const text = fs.readFileSync(s.brief, "utf8");
+  const section = text.slice(text.indexOf("## Other jobs in the queue"));
+  assert.ok(text.includes("## Other jobs in the queue"), text);
+  assert.match(section, /- 001 "Add four" · build\n {2}- C1 \(cmd\): app\.txt has a fourth line\n {2}- FILES: app\.txt/);
+  assert.match(section, /- 002 "[^"]*" · intake\n {2}- ticket \(intake not accepted yet\): "let people search books by title or author"/);
+  assert.doesNotMatch(section.slice(0, section.indexOf("# Role: intake")), /- 003 /, "not itself");
+  fs.writeFileSync(intakeFile(dirOf(r, c)), INTAKE("low", "app.txt").replace("FILES: app.txt", "FILES: app.txt\nAFTER: 001"));
+  await fin(r, c);
+  assert.deepEqual(findJob(r, c).after, ["001"]);
+  assert.match(next(r).held.find((h) => h.id === c)?.why ?? "", /waits for 001-.* \(build\): named on its AFTER: line/);
+  await build(r, a);
+  await qa(r, a, "PASS");
+  await review(r, a);
+  const bc = fs.readFileSync((await open(r, c, "build")).brief, "utf8");
+  assert.match(
+    bc,
+    /## Jobs this one builds on[\s\S]*- 001 "Add four" · done \(merged into staging, [0-9a-f]{7}\)[\s\S]*its change is in your branch: reuse its code/,
+  );
+});

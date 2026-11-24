@@ -46,7 +46,7 @@ export const ConfigSchema = z
     version: z.literal(1).optional(),
     round_limit: z.number().int().min(1).max(20).default(3),
     /** At most this many lane agents at once (the orchestrator's wave width). */
-    parallel: z.number().int().min(1).max(16).default(3),
+    parallel: z.number().int().min(1).max(16).default(4),
     models: z
       .object({
         intake: z.string().default("strong"),

@@ -51,23 +51,44 @@ test("rounds: QA or review sending a job back starts the next round; a follow-up
   assert.equal(move(job(1, { stage: "build", running: { lane: "build", at: "x", key: "k" } }), "qa").running, null, "a move closes the lane");
 });
 
-test("a wave: downstream first, capped by parallel; running lanes take room", () => {
+test("a wave: intake first and never held for room, then downstream first in the room parallel leaves; running lanes take room", () => {
   const jobs = [job(1, { stage: "intake" }), job(2, { stage: "build" }), job(3, { stage: "qa" }), job(4, { stage: "review" })];
   const p = planWave(jobs, { parallel: 3 });
   assert.deepEqual(
     p.start.map((s) => [s.id.slice(0, 3), s.lane]),
     [
+      ["001", "intake"],
       ["004", "review"],
       ["003", "qa"],
-      ["002", "build"],
     ],
   );
   assert.deepEqual(
     p.held.map((h) => [h.id.slice(0, 3), h.why]),
-    [["001", "waits for room (parallel: 3)"]],
+    [["002", "waits for room (parallel: 3)"]],
   );
-  const busy = planWave([job(1, { stage: "build", running: { lane: "build", at: "t", key: "k" } }), job(2)], { parallel: 1 });
+  const busy = planWave([job(1, { stage: "build", running: { lane: "build", at: "t", key: "k" } }), job(2, { stage: "build" })], { parallel: 1 });
   assert.deepEqual([busy.start.length, busy.running.length, busy.drained], [0, 1, false]);
+});
+
+test("slots: a job still in intake always gets an agent, even past parallel, while three others hold every slot", () => {
+  const running = (n: number, lane: "intake" | "build" | "qa" | "review") => job(n, { stage: lane, running: { lane, at: "t", key: "k" } });
+  // The real run: 001–003 took every slot with parallel 3, and 004 waited minutes for an intake agent.
+  const p = planWave([running(1, "build"), running(2, "qa"), running(3, "review"), job(4, { stage: "intake" })], { parallel: 3 });
+  assert.deepEqual(p.start, [{ id: job(4).id, lane: "intake" }]);
+  assert.deepEqual(p.held, []);
+  // Four new tickets with parallel 2: all four intakes start; the build waits for the room they leave.
+  const burst = planWave([job(1), job(2), job(3), job(4), job(5, { stage: "build" })], { parallel: 2 });
+  assert.deepEqual(
+    burst.start.map((s) => s.lane),
+    ["intake", "intake", "intake", "intake"],
+  );
+  assert.deepEqual(
+    burst.held.map((h) => [h.id.slice(0, 3), h.why]),
+    [["005", "waits for room (parallel: 2)"]],
+  );
+  // A running intake takes room like any lane; a pause still holds an intake.
+  assert.deepEqual(planWave([running(1, "intake"), job(2, { stage: "build" })], { parallel: 1 }).held[0].why, "waits for room (parallel: 1)");
+  assert.deepEqual(planWave([job(3)], { parallel: 2, paused: new Set([job(3).id]) }).held[0].why, "a pause is requested");
 });
 
 test("dependencies: jobs touching one file run side by side; only AFTER: holds; a finished job holds nothing", () => {
