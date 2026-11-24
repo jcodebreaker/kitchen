@@ -1,5 +1,9 @@
-// `kitchen dashboard [--port n]`: the page (dashboard/dashboard.html) and its data, on 127.0.0.1 only.
+// `kitchen dashboard`: the page (dashboard/dashboard.html) and its data, on 127.0.0.1 only, for every repo on the
+// list (repos.ts, ADR 0019); the routes below sit under /r/<key>/, and a key not on the list is a 404.
+// `kitchen dashboard --private` (or --port n) serves the one repo it runs in, on the routes as written.
 //   GET  /                         the page, with this launch's token in it (no CDN, nothing from elsewhere; system fonts)
+//   GET  /kitchen.json             { kitchen: true, version, private }: a second `kitchen dashboard` asks the port who holds it
+//   GET  /repos.json               (the list) each repo's key, name, path and its needs-you, running and job counts
 //   GET  /data.json                snapshot(repo): every job, read from .kitchen/ on each request, and this launch's
 //                                  id (not the token): a tab from an earlier launch sees it changed and reloads once
 //   GET  /jobs/<id>/detail.json    one job: stage history with its agents' activity, thread, criteria
@@ -19,8 +23,10 @@ import { JOB_ID, jobDirOf, scanJobs } from "../engine/store.ts";
 import { act, BadRequest } from "./actions.ts";
 import { snapshot } from "./data.ts";
 import { detail } from "./detail.ts";
+import { addRepo, type RepoEntry, type RepoList, readRepos, shownPath } from "./repos.ts";
 
 export const DASHBOARD_HTML = path.resolve(import.meta.dirname, "..", "..", "dashboard", "dashboard.html");
+const VERSION = (JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "..", "..", "package.json"), "utf8")) as { version: string }).version;
 /** A POST body larger than this is refused unread. */
 export const MAX_BODY = 16 * 1024;
 
@@ -51,7 +57,9 @@ export function refusePost(h: http.IncomingHttpHeaders, token: string, port: num
   return null;
 }
 
-export function dashboardServer(repo: string, o: { token?: string } = {}): http.Server & { token: string; launch: string } {
+/** `one`: that repo alone, on the routes without /r/<key> (--private). null: every repo `list` gives, read on each request. */
+export function dashboardServer(one: string | null, o: { token?: string; list?: () => RepoList } = {}): http.Server & { token: string; launch: string } {
+  const list = o.list ?? (() => readRepos());
   const token = o.token ?? randomBytes(32).toString("hex");
   // Not a secret: it only tells a tab from an earlier launch (holding that launch's token) that the server restarted.
   const launch = randomBytes(8).toString("hex");
@@ -67,9 +75,31 @@ export function dashboardServer(repo: string, o: { token?: string } = {}): http.
     if (!LOCAL.includes(host)) return send(403, "text/plain", "localhost only\n");
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     const port = (s.address() as { port?: number } | null)?.port ?? 0;
+    const get = req.method === "GET" || req.method === "HEAD";
     const run = async () => {
+      if (get && url.pathname === "/kitchen.json") return json(200, { kitchen: true, version: VERSION, private: one !== null });
+      if (get && (url.pathname === "/" || url.pathname === "/index.html")) {
+        page ??= fs
+          .readFileSync(DASHBOARD_HTML, "utf8")
+          .replace("__KITCHEN_TOKEN__", token)
+          .replace("__KITCHEN_LAUNCH__", launch)
+          .replace("__KITCHEN_MODE__", one === null ? "repos" : "one");
+        return send(200, "text/html; charset=utf-8", page, { "content-security-policy": PAGE_CSP });
+      }
+      // Which repo, and the route inside it: the one repo, or the listed repo /r/<key>/ names.
+      let repo = one ?? "";
+      let route = url.pathname;
+      if (one === null) {
+        const { repos, last } = list();
+        if (get && route === "/repos.json") return json(200, { repos: await Promise.all(repos.map(counts)), last, launch });
+        const r = /^\/r\/([A-Za-z0-9._-]+)(\/.*)$/.exec(route);
+        const e = r && repos.find((x) => x.key === r[1]);
+        if (!r || !e) return send(404, "text/plain", "not found\n");
+        repo = e.path;
+        route = r[2];
+      }
       if (req.method === "POST") {
-        const m = /^\/api\/([a-z-]+)$/.exec(url.pathname);
+        const m = /^\/api\/([a-z-]+)$/.exec(route);
         if (!m) return send(404, "text/plain", "not found\n");
         // A refused POST is answered without reading its body, and the connection is closed after the answer.
         const refuse = (code: number, why: string) => {
@@ -102,13 +132,9 @@ export function dashboardServer(repo: string, o: { token?: string } = {}): http.
           throw e;
         }
       }
-      if (req.method !== "GET" && req.method !== "HEAD") return send(405, "text/plain", "GET, HEAD or POST\n", { allow: "GET, HEAD, POST" });
-      if (url.pathname === "/" || url.pathname === "/index.html") {
-        page ??= fs.readFileSync(DASHBOARD_HTML, "utf8").replace("__KITCHEN_TOKEN__", token).replace("__KITCHEN_LAUNCH__", launch);
-        return send(200, "text/html; charset=utf-8", page, { "content-security-policy": PAGE_CSP });
-      }
-      if (url.pathname === "/data.json") return json(200, { ...(await snapshot(repo)), launch });
-      const m = /^\/jobs\/([^/]+)\/(report\.html|detail\.json)$/.exec(url.pathname);
+      if (!get) return send(405, "text/plain", "GET, HEAD or POST\n", { allow: "GET, HEAD, POST" });
+      if (route === "/data.json") return json(200, { ...(await snapshot(repo)), launch });
+      const m = /^\/jobs\/([^/]+)\/(report\.html|detail\.json)$/.exec(route);
       if (m) {
         let id: string;
         try {
@@ -133,13 +159,58 @@ export function dashboardServer(repo: string, o: { token?: string } = {}): http.
   return Object.assign(s, { token, launch });
 }
 
-export async function serveDashboard(repo: string, port: number, print: (l: string) => void): Promise<http.Server> {
-  const s = dashboardServer(repo);
-  await new Promise<void>((resolve, reject) => {
-    s.once("error", reject);
-    s.listen(port, "127.0.0.1", () => resolve());
-  });
+/** A repo's line in the switcher: needs you, running, jobs (the page's own counts, from the same snapshot). */
+async function counts(e: RepoEntry) {
+  const s = await snapshot(e.path);
+  const n = (st: string) => s.jobs.filter((j) => j.state === st && j.pausedBy !== "stop").length;
+  return { key: e.key, name: path.basename(e.path), path: shownPath(e.path), you: n("you"), running: n("run"), jobs: s.jobs.length };
+}
+
+/** What holds the port: a Kitchen dashboard (shared or --private), or something else. */
+async function whoHolds(port: number): Promise<{ kitchen: true; private: boolean } | null> {
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}/kitchen.json`, { signal: AbortSignal.timeout(2000) });
+    const d = (await r.json()) as { kitchen?: unknown; private?: unknown };
+    return d.kitchen === true ? { kitchen: true, private: d.private === true } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** `kitchen dashboard`: adds the repo to the list, then serves the list on `port`, or, when a Kitchen dashboard already
+ *  serves it there, says where and returns null. Something else on the port is an error; it never takes another port.
+ *  `private`: this repo alone, not on the list (--private, --port). */
+export async function serveDashboard(
+  repo: string,
+  port: number,
+  print: (l: string) => void,
+  o: { private?: boolean; file?: string } = {},
+): Promise<http.Server | null> {
+  let key = "";
+  if (!o.private) {
+    if (!fs.existsSync(path.join(repo, ".kitchen"))) throw new Error(`${repo} has no .kitchen/ yet: kitchen init first (or kitchen dashboard --private)`);
+    key = addRepo(repo, o.file).key;
+  }
+  const s = o.private ? dashboardServer(repo) : dashboardServer(null, o.file ? { list: () => readRepos(o.file) } : {});
+  try {
+    await new Promise<void>((resolve, reject) => {
+      s.once("error", reject);
+      s.listen(port, "127.0.0.1", () => resolve());
+    });
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "EADDRINUSE") throw e;
+    const who = await whoHolds(port);
+    if (who && !who.private && !o.private) {
+      print(`already open: http://127.0.0.1:${port}/#${key}`);
+      return null;
+    }
+    throw new Error(
+      who
+        ? `port ${port} already has a Kitchen dashboard${who.private ? " for one repo (--private)" : ""}: stop it, or pick another with --port`
+        : `port ${port} is taken by something that isn't a Kitchen dashboard (or a Kitchen too old to answer /kitchen.json): stop it, or pick a port with --port`,
+    );
+  }
   const a = s.address();
-  print(`dashboard: http://127.0.0.1:${typeof a === "object" && a ? a.port : port}/  (this machine only; Ctrl-C stops it)`);
+  print(`dashboard: http://127.0.0.1:${typeof a === "object" && a ? a.port : port}/${key ? `#${key}` : ""}  (this machine only; Ctrl-C stops it)`);
   return s;
 }

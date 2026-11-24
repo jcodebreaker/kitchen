@@ -33,7 +33,7 @@ Run every command below from the repo root. (This plugin's skill is `/kitchen:ki
 | continue a paused or stopped job | `kitchen resume <id>` |
 | answer a job's question, "try again with …", follow up on a ready or merged job | `kitchen feedback <id> "<their answer>"` |
 | drop a job | `kitchen reject <id>` |
-| "show me the jobs", "open the dashboard" | `kitchen dashboard` as a background command, then give the user http://127.0.0.1:7357 |
+| "show me the jobs", "open the dashboard" | `kitchen dashboard` as a background command, then give the user the address it prints (http://127.0.0.1:7357/#<repo>; when a dashboard already runs it adds this repo, prints `already open: …` and exits) |
 | run the queue headless, in the background | `kitchen run --detach` (a separate Claude Code session runs this skill) |
 | how is Kitchen doing | `kitchen report` |
 | "sweep", check every feature before a release, "is staging good to ship" | a verify run: see The verify map, below (`kitchen verify sweep`) |
@@ -54,6 +54,19 @@ Then it writes `kitchen.yaml` (the checks, how to start the app, staging), insta
 into `.claude/settings.json` (merged, backed up), creates the `staging` branch and runs the checks once. Relay its
 lines. If the checks fail, say so plainly: every job's checks would fail too. If it found no way to start the app,
 ask the user for the command once and add `app: { start: "<command>" }` to `kitchen.yaml`.
+
+## The dashboard: one page, one port
+
+There is one Kitchen dashboard per machine, at http://127.0.0.1:7357/, and it shows every repo the user ran Kitchen
+in (a switcher, top left). Never start a second one for another repo:
+- Run `kitchen dashboard` with no flags, in the repo. If a dashboard already runs, it adds this repo and prints
+  `already open: http://127.0.0.1:7357/#<repo>`: give the user that link. Don't stop or restart theirs.
+- Never pass `--port` or `--private` to get around a busy port, and never pick another port yourself.
+- If it says the port is held by something that isn't a Kitchen dashboard, or by an older Kitchen, tell the user
+  what it printed and that they can stop that process (Ctrl-C where it runs) and run `kitchen dashboard` again.
+  Leave the choice to them.
+- `--private` is only for a throwaway copy you made yourself (a test run), so it stays off the user's list: stop
+  it when you are done.
 
 ## Running the queue (you are the orchestrator)
 
