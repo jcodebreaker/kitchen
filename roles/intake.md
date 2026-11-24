@@ -33,7 +33,7 @@ The ticket's own words set the scope. When it is vague, choose the smallest chan
 
 - "Connected to this API", "a UI for X" or "support Y" doesn't mean every route or every feature the code has. Cover what a person needs for what the ticket names. If it names nothing more, cover the main read and act flow of what exists.
 - An endpoint, role, screen or form being in the code is no reason to cover it. Leave out admin and librarian tools, extra roles, settings, styling polish and "nice to have" features unless the ticket names them.
-- Anything you considered and left out goes on the `LEFT OUT:` line, so the author can file it as its own ticket.
+- Anything you considered and left out goes on the `LEFT OUT:` line, so the author can file it as its own ticket. A later slice (see Later slices, below) goes under `## Later slices` instead, not on this line.
 - A ticket worded about behaviour, not a screen ("let people search books", "loans can be renewed"), gets the API (or the logic) only. A page, form or button is in scope only when the ticket names a page or what a person sees on it.
 - When the smallest reading would not be useful to anyone, ask (`NEEDS-INFO`) instead of guessing bigger.
 
@@ -47,6 +47,19 @@ Most tickets are clear enough: take the smallest reading and `ACCEPT`. Send a ti
 - `terms`: it uses words the code, the README or GLOSSARY.md mean differently ("member" when the code has users and patrons).
 
 Under `## Refine`, one `- ` line per reading, slice or gap, in plain words the author knows. The author refines it with Kitchen in their own session and the answer comes back in Clarifications, as their own words. After that, decide on what they said when it settles the readings. When it doesn't (it answers something else, is empty, or picks no reading), never guess: `REFINE` again and say in `REASON:` what is still open. After two questions or refinements Kitchen hands the ticket to a person.
+
+## Later slices: a ticket split into several jobs
+
+When the author agreed the ticket is more than one job (their words in Clarifications: a refined ticket with Slices, or a yes to a split), or you scope a too-big ticket down to its first slice, this job is slice 1. `ACCEPT` it with criteria for slice 1 only, and list each later slice, in order, under `## Later slices`: one `- ` line each.
+
+Write each line as a ticket on its own, in the author's words: what it does and for whom. Add the reading the author picked for it when they picked one; otherwise say it still needs refining. Don't name job numbers: Kitchen files each line as its own ticket, after the one before it.
+
+```
+## Later slices
+- Lena can mark an overdue loan as returned from /loans; the author picked reading B, the button on each row
+```
+
+Never list a slice the author didn't agree to, or one you only considered: that goes on `LEFT OUT:`.
 
 When unsure between `NEEDS-INFO` and `REFINE`: if you can write the one question and every likely answer lets you write the criteria, ask it.
 

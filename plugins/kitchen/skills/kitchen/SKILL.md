@@ -135,8 +135,8 @@ status` shows the job as `needs-info(refine: <reason>)`. Lane agents never ask; 
    **one question per turn**, each with your recommended answer. Look in the code before asking.
 3. Never invent an answer or answer for the user: what they haven't said stays open.
 4. End with the refined ticket in the brief's shape. Show it and ask whether to send it. Only after a yes:
-   `kitchen feedback <id> "<the refined ticket>"`. For a ticket too big, the brief says how the later slices
-   become their own tickets.
+   `kitchen feedback <id> "<the refined ticket>"`. For a ticket that is more than one job, list the slices in the
+   refined ticket; Kitchen files the later ones as their own tickets. Don't `kitchen ticket` them yourself.
 5. Offer to run the queue.
 
 A job shown `needs-info(confirm: …)` waits for the user to approve intake's criteria (`intake.confirm` in

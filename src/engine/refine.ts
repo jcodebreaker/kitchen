@@ -1,7 +1,8 @@
 // ADR 0020: a ticket refined with its author before it is built. Intake (unattended) only flags it: `DECISION: REFINE`
 // moves the job to needs-info, marked `waits: refine`. `kitchen refine <id>` writes a brief for a session with the
 // person in it (the /kitchen skill in Claude Code or Codex): grill the ticket one question at a time, agree a refined
-// ticket, then `kitchen feedback` sends it back to intake as the author's own words. Lane agents never grill.
+// ticket, then `kitchen feedback` sends it back to intake as the author's own words. Lane agents never grill. A ticket
+// split into slices is filed by Kitchen, from intake's `## Later slices` (jobs.ts), never by the session.
 import fs from "node:fs";
 import path from "node:path";
 import { loadConfig } from "../config.ts";
@@ -148,7 +149,7 @@ export async function refineBrief(repo: string, job: Job, file: string): Promise
     "   - <what it doesn't do>",
     "   Criteria (agreed with you):",
     "   - <a behaviour someone can check on the running app: a page, a request, a test or a command>",
-    "   Slices (only when too big, in order):",
+    "   Slices (only when more than one job, in order):",
     "   1. <this job>",
     "   2. <the next one>",
     "   ```",
@@ -156,7 +157,7 @@ export async function refineBrief(repo: string, job: Job, file: string): Promise
     `7. Show it to the person and ask whether to send it to Kitchen. Change it until they say yes.`,
     `8. Send it: \`kitchen feedback ${n} "<the refined ticket>"\`. Intake reads it as the author's own words and writes the criteria from it.`,
     "",
-    `${reason === "too-big" ? "Too big" : "If it turns out to be more than one job"}: job ${n} becomes slice 1. Its refined ticket says so and lists the later slices under Out. After the feedback, file each later slice as its own ticket, in order, naming the job it comes after: \`kitchen ticket "<slice 2>. Comes after job ${n}."\` (\`kitchen ticket\` prints the new job's number, for the next slice to name). Intake reads that as \`AFTER:\`.`,
+    `${reason === "too-big" ? "Too big" : "If it turns out to be more than one job"}: job ${n} becomes slice 1. List every slice in order under Slices in the refined ticket, each one a ticket on its own (what, for whom, and the reading the person picked, or that it still needs refining). Don't file them yourself: intake lists the later slices and Kitchen files each as its own ticket, after the one before it.`,
     "",
   ].join("\n");
 }

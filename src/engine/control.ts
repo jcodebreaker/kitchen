@@ -57,12 +57,18 @@ export async function moveJob(
 }
 
 export async function ticket(repo: string, text: string, out: Out): Promise<number> {
+  const job = await fileTicket(repo, text);
+  out(`ticket ${job.id}  "${job.title}"  → intake`);
+  return 0;
+}
+
+/** A new job from a person's ticket text: what `kitchen ticket` does, and Kitchen for an intake's later slices. */
+export async function fileTicket(repo: string, text: string): Promise<Job> {
   const cfg = loadConfig(repo);
   const t = PromptSource.ticket(text);
   const job = await createJob(repo, { title: t.title, ticket: t.ref, body: t.body, roundLimit: cfg.round_limit });
   appendLedger(repo, { job: job.id, stage: "intake", round: 1, event: "ticket", key: `${job.id}/ticket` });
-  out(`ticket ${job.id}  "${job.title}"  → intake`);
-  return 0;
+  return job;
 }
 
 type Control = { pause?: string };

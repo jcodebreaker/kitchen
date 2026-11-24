@@ -28,6 +28,14 @@ test("intake.md: ACCEPT needs criteria with a check kind; NEEDS-INFO needs its q
   assert.ok("refused" in parseIntake("DECISION: maybe\n"));
 });
 
+test("intake.md ACCEPT (ADR 0020): the `- ` lines under ## Later slices are its slices, none when it has none", () => {
+  const base = "DECISION: ACCEPT\nKIND: feature\nRISK: low\n\n## Criteria\n- C1 (http): GET /loans → 200\n";
+  const i = parseIntake(`${base}\n## Later slices\n- Lena can mark an overdue loan returned\n- members get an email\n\n## Notes\n- not this\n`);
+  assert.deepEqual("decision" in i && i.decision === "ACCEPT" && i.slices, ["Lena can mark an overdue loan returned", "members get an email"]);
+  const none = parseIntake(base);
+  assert.deepEqual("decision" in none && none.decision === "ACCEPT" && none.slices, []);
+});
+
 test("intake.md REFINE (ADR 0020): a REASON from the four and at least one line under ## Refine", () => {
   assert.deepEqual(
     parseIntake("DECISION: REFINE\nTITLE: Overdue\nREASON: too big: three jobs\n\n## Refine\n- 1: the flag\n- 2: the page\n\n## Notes\n- not this\n"),
