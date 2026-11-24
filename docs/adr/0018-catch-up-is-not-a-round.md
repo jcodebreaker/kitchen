@@ -1,6 +1,6 @@
 # Catching up with staging is not a round
 
-**Status.** Proposed, 2026-11-23. Amends ADR 0016 (its amendment "file overlap no longer holds a job") and the round budget in `machine.ts`.
+**Status.** Accepted, 2026-11-23, by the user ("good go ahead"). Amends ADR 0016 (its amendment "file overlap no longer holds a job") and the round budget in `machine.ts`.
 
 ## Why
 
