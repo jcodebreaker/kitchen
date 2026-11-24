@@ -744,7 +744,9 @@ function order(){if(view==="board")return lanes().flatMap(l=>inLane(l.k));
 /* Jobs in a lane move only while an orchestrator works the queue (kitchen run, or /kitchen run in Claude Code); with
    none they are queued. The header, the sidebar and the list (or Board) all take their words from here. */
 function queueWords(runnerRunning,run){
-  if(runnerRunning)return {count:`<b>${run.length}</b> running`,group:"Running",hint:"Your message reaches the job's next agent",empty:"Nothing running. Start one with New ticket.",busy:run.length>0};
+  /* A paused job sits in this group but isn't running: the header counts it apart, like the repo switcher does. */
+  const going=run.filter(j=>j.state==="run").length,held=run.length-going;
+  if(runnerRunning)return {count:`<b>${going}</b> running${held?` · <b>${held}</b> paused`:""}`,group:"Running",hint:"Your message reaches the job's next agent",empty:"Nothing running. Start one with New ticket.",busy:run.length>0};
   return {count:`<b>${run.length}</b> waiting`,group:"Queued",hint:"Waiting for the orchestrator: start it and they move",empty:"Nothing queued. Start one with New ticket.",busy:false};
 }
 /* queue-words:end */
