@@ -999,6 +999,7 @@ function repoMenu(force){if(MODE!=="repos")return;const m=$("#rmenu"),show=force
 function setRepo(k){CUR=k;BASE="/r/"+encodeURIComponent(k);gen++;if(location.hash.slice(1)!==k)history.replaceState(null,"","#"+k)}
 function switchRepo(k){repoMenu(false);if(k===CUR||!repos.some(r=>r.key===k))return;
   setRepo(k);open=null;expanded=null;drafts={};sel=null;snap=null;jobs=[];details={};sigs={};pending={};fresh.clear();just.clear();typing.clear();
+  paint.runner=undefined; // the next snapshot redraws the whole board, even when the new repo has no jobs
   renderList();renderPanel();otherBadge();poll(gen)}
 if(MODE!=="repos")$("#wsb").classList.add("one");
 $("#rmenu").addEventListener("click",e=>{const b=e.target.closest("[data-repo]");if(b)switchRepo(b.dataset.repo)});
