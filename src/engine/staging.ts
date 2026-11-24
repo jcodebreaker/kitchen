@@ -26,7 +26,7 @@ export type MergeOutcome =
    * `back`: the work goes back to Build (a conflict, checks red on staging); else it stops at Ready. `cause` and
    * `onto` (staging's tip it merged onto) let Kitchen tell a catch-up from a round (ADR 0018 §3).
    */
-  | { ok: false; why: string; back: boolean; log?: string; drive?: undefined; cause?: "conflict" | "checks"; onto?: string; tail?: string }
+  | { ok: false; why: string; back: boolean; log?: string; drive?: undefined; cause?: "conflict" | "checks"; onto?: string; tail?: string; mergeOnly?: boolean }
   /** Not merged yet: these features must be driven on the trial merge first (its worktree is kept). */
   | { ok: false; why: string; back: false; drive: Drive };
 
@@ -144,7 +144,10 @@ async function trialMerge(
   onto: string,
   head: string,
   log: string,
-): Promise<{ ok: true; sha: string; wt: string } | { ok: false; why: string; back: boolean; wt: string; cause: "conflict" | "checks"; tail?: string }> {
+): Promise<
+  | { ok: true; sha: string; wt: string }
+  | { ok: false; why: string; back: boolean; wt: string; cause: "conflict" | "checks"; tail?: string; mergeOnly?: boolean }
+> {
   const wt = trialWorktree(repo, job.id);
   await dropTrial(repo, wt);
   await git(repo, ["worktree", "add", "-q", "--detach", wt, onto]);
@@ -171,6 +174,7 @@ async function trialMerge(
       wt,
       cause: "checks",
       tail: bad?.tail,
+      mergeOnly: cfg.checkList.find((c) => c.name === bad?.name)?.when === "merge",
     };
   }
   return { ok: true, sha: await gitOut(wt, ["rev-parse", "HEAD"]), wt };
@@ -213,7 +217,17 @@ export async function mergeToStaging(
         if (o.drove && o.drove.onto === onto) sha = o.drove.sha;
         else {
           t = await trialMerge(repo, cfg, job, onto, reviewedHead, o.log);
-          if (!t.ok) return { ok: false, why: t.why, back: t.back, log: o.log, cause: t.cause, onto, ...(t.tail ? { tail: t.tail } : {}) };
+          if (!t.ok)
+            return {
+              ok: false,
+              why: t.why,
+              back: t.back,
+              log: o.log,
+              cause: t.cause,
+              onto,
+              ...(t.tail ? { tail: t.tail } : {}),
+              ...(t.mergeOnly ? { mergeOnly: true } : {}),
+            };
           sha = t.sha;
           const features = o.gate ? await o.gate({ onto, sha, wt: t.wt }) : [];
           if (features.length) {

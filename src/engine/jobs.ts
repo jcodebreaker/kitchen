@@ -726,7 +726,7 @@ function greenAlone(dir: string, round: number): boolean {
 async function mergeFailed(
   repo: string,
   job: Job,
-  m: { why: string; back: boolean; cause?: "conflict" | "checks"; onto?: string; tail?: string },
+  m: { why: string; back: boolean; cause?: "conflict" | "checks"; onto?: string; tail?: string; mergeOnly?: boolean },
   head?: string,
 ): Promise<Finished> {
   const dir = jobDirOf(repo, job.id);
@@ -734,7 +734,7 @@ async function mergeFailed(
   // The red check's last lines go with it: the next builder reads them (an e2e suite's failure says what broke).
   writeAtomic(path.join(roundDir(dir, job.round), "merge.txt"), `${m.why}\n${m.tail ? `${fence(m.tail)}\n${m.tail}\n${fence(m.tail)}\n` : ""}`);
   const stagingAhead = !!(m.onto && head) && (await git(repo, ["merge-base", "--is-ancestor", m.onto, head], { allowFail: true })).code !== 0;
-  if (m.back && isCatchUp({ cause: m.cause, greenAlone: greenAlone(dir, job.round), stagingAhead })) {
+  if (m.back && isCatchUp({ cause: m.cause, greenAlone: greenAlone(dir, job.round), stagingAhead, mergeOnly: m.mergeOnly })) {
     if (outOfCatchUps(job))
       return moveOn(
         repo,

@@ -75,7 +75,7 @@ async function fin(r: string, id: string) {
   assert.ok("line" in f, JSON.stringify(f));
   return f;
 }
-async function throughReview(r: string, id: string, title: string): Promise<string> {
+async function throughReview(r: string, id: string, title: string, beforeReview?: () => void): Promise<string> {
   const b = await start(r, id, "build");
   assert.ok("cwd" in b, JSON.stringify(b));
   fs.writeFileSync(path.join(b.cwd, "title.txt"), title);
@@ -91,6 +91,7 @@ async function throughReview(r: string, id: string, title: string): Promise<stri
     JSON.stringify({ verdict: "PASS", criteria: [{ id: "C1", result: "PASS", evidence: ["c1.txt"], note: "ok" }] }),
   );
   await fin(r, id);
+  beforeReview?.();
   await start(r, id, "review");
   fs.writeFileSync(reviewFile(jobDirOf(r, j.id), findJob(r, id).round), JSON.stringify({ summary: "ok", findings: [] }));
   return (await fin(r, id)).line;
@@ -128,15 +129,24 @@ test("a when: merge needs_app check: skipped after Build, run on the trial merge
   assert.ok(await down(url), "the app is stopped after the check");
   assert.match(fs.readFileSync(path.join(roundDir(jobDirOf(r, a), 1), "merge.log"), "utf8"), /e2e against http:\/\/127\.0\.0\.1:\d+[\s\S]*1 passed/);
 
-  // Red: the page loses its heading; the unit-level checks still pass, the suite on the merge doesn't.
+  // Red: the page loses its heading; the unit-level checks still pass, the suite on the merge doesn't. Staging moves
+  // meanwhile (another job's unrelated file): a red merge-only check is still a round, never a catch-up (ADR 0021).
   await control.ticket(r, "retitle", () => {});
   const b = findJob(r, "2").id;
   await start(r, b, "intake");
   fs.writeFileSync(intakeFile(jobDirOf(r, b)), INTAKE);
   await fin(r, b);
-  const red = await throughReview(r, b, "Store\n");
+  const red = await throughReview(r, b, "Store\n", () => {
+    const side = path.join(root, "side");
+    g(r, "worktree", "add", "-q", side, "staging");
+    fs.writeFileSync(path.join(side, "other.txt"), "another job\n");
+    g(side, "add", "-A");
+    g(side, "commit", "-qm", "another job");
+    g(r, "worktree", "remove", "--force", side);
+  });
   assert.match(red, /the checks fail on staging with this change merged \(e2e: exit 1\) → build \(round 2\)/, red);
   assert.equal(findJob(r, b).stage, "build");
+  assert.doesNotMatch(red, /catch-up/);
   assert.equal(g(r, "show", "staging:title.txt"), "Shop", "nothing landed");
   assert.equal(urls().length, 2);
   assert.ok(await down(urls()[1].split(" ")[0]), "the app is stopped after a red check too");
