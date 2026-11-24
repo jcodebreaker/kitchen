@@ -18,6 +18,7 @@ Run commands from the repo root. If `kitchen` is not on PATH, use
 |---|---|
 | set up Kitchen, first use | `kitchen init` (seconds; see Setup) |
 | "do X", "fix Y", "add Z" (a request for work) | `kitchen ticket "<the request>"` (see Tickets), then relay its line: it starts Kitchen in the background when nothing works the queue ("→ intake · Kitchen started"). When the user wants to run the queue in this session instead, `kitchen ticket --no-run "<the request>"` |
+| work aimed at another branch: "do X on feature/checkout", "this goes into release/2.1" | `kitchen ticket --into <branch> "<the request>"`: the job starts from that branch and merges into it, not staging. The branch must exist (Kitchen never creates it); with `staging.merge: kitchen` the base branch, main and master are refused |
 | `run`, start, "go", work the queue, or your prompt is `/kitchen run` | be the orchestrator yourself: Running the queue, below. Never call `kitchen run` for this: it starts another session, and inside one `kitchen run` started it refuses. When `kitchen status` shows an orchestrator already running, say Kitchen is working the queue and don't start another |
 | what's happening, status, progress | `kitchen status`; when a job shows `needs-info(refine: …)`, offer to refine it with them (see Refining a ticket) |
 | "refine 004", "let's clarify 004", or your prompt is `/kitchen refine 004` | Refining a ticket, below |
@@ -26,7 +27,8 @@ Run commands from the repo root. If `kitchen` is not on PATH, use
 | "hold 005", "pause it after this step" | `kitchen pause <id>` |
 | "stop 005 now" | `kitchen stop <id>` |
 | continue a paused or stopped job | `kitchen resume <id>` |
-| "merge 002", "ship 002 to staging" (a job `kitchen status` shows `ready(held)`) | `kitchen merge 002`: the same checks as an auto-merge (a trial merge on staging's tip, every check, the merge check when it touches features), into staging only, never main; a conflict or red checks send it back to Build |
+| "merge 002", "ship 002 to staging" (a job `kitchen status` shows `ready(held)`) | `kitchen merge 002`: the same checks as an auto-merge (a trial merge on its target's tip, every check, the merge check when it touches features), into its target (staging unless its ticket named one), never main; a conflict or red checks send it back to Build |
+| a job `kitchen status` shows `ready(PR open)` | its PR waits for review on GitHub (`staging.merge: pr`): the user merges or closes it there, never `kitchen merge`. Kitchen notices within a minute (merged → done, closed → rejected). `kitchen reject` or `kitchen remove` on it closes the PR on GitHub |
 | answer a job's question, "try again with …", follow up on a ready or merged job | `kitchen feedback <id> "<their answer>"` |
 | drop a job | `kitchen reject <id>` |
 | "remove 005", "get rid of it", "I don't want it on the dashboard" (any stage, even while it builds) | `kitchen remove <id>`: stops a working lane, rejects an unfinished job, removes its worktree; a merged one is only hidden. `kitchen restore <id>` brings it back in view |
@@ -80,9 +82,11 @@ only through `kitchen job` verbs, which refuse any illegal move. The Agent tool 
 1. `kitchen job next --json` (the **first** call of a run: add `--restart-stranded`, which hands back lanes an
    earlier session left open). It returns `start` (lanes to open now: every job in intake, then downstream first;
    a lane is intake, build, qa, review or **regress**, the short pass that drives the features a job touches on
-   staging with the job merged, before Kitchen merges it), `running`, `held` (each
+   the job's target with the job merged, before Kitchen merges it), `running`, `held` (each
    with why: a job it names on its `AFTER:` line, or no room; jobs touching the same files run side by side) and
-   `you` (jobs waiting on the person). Tell the user the wave in one line.
+   `you` (jobs waiting on the person, a PR waiting for review on GitHub among them), and `prs`: what became of open
+   PRs since the last look (merged, closed, the merge check re-run because the target moved). Tell the user the wave
+   in one line.
 2. For **every** entry in `start`, in parallel:
    - `kitchen job start <id> <lane> --json` (`--restart` when the entry says `restart`). It prepares the job's
      worktree and brief, hands over the person's unread messages, and returns `{ prompt, model, cwd, brief }`, or
@@ -93,14 +97,15 @@ only through `kitchen job` verbs, which refuse any illegal move. The Agent tool 
      job: never reuse one, never give one two jobs, never do a lane yourself.
 3. When an agent returns, run `kitchen job finish <id> --json` for its job, at once. Kitchen reads the files the
    lane left (intake.md, the commits, the QA verdict, evidence and map updates, review.json, the regress verdict),
-   runs the checks itself, merges into staging when review passes and the features the merge touches still work
-   (or opens a regress lane to drive them first), and moves the job, or refuses and says why (the lane runs again in the next wave;
+   runs the checks itself, merges into the job's target (staging unless its ticket named one) when review passes and
+   the features the merge touches still work (or opens a regress lane to drive them first; with `staging.merge: pr`
+   it opens the PR for a person instead), and moves the job, or refuses and says why (the lane runs again in the next wave;
    three refusals go to a person). Relay its `line`. Never argue with a refusal and never write the lane's files
    yourself.
 4. Between waves, read nothing else: steering reaches the next agent through `kitchen job start`. Then go to 1.
 
-When the plan is `drained`, report: what merged into staging (with the short shas), what stopped at Ready and
-why, and what needs the user (`kitchen status`). Then stop. Never merge `staging` into the base branch or main,
+When the plan is `drained`, report: what merged and into which branch (with the short shas), which PRs wait for
+review (with their links), what stopped at Ready and why, and what needs the user (`kitchen status`). Then stop. Never merge `staging` into the base branch or main,
 never push either: that is the user's.
 
 If `kitchen job start` or `finish` fails with an error (not a refusal), show its last line and stop the run.

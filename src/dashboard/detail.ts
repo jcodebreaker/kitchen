@@ -3,8 +3,8 @@
 // Read from .kitchen/ only.
 import fs from "node:fs";
 import path from "node:path";
-import { loadConfig } from "../config.ts";
-import { CATCH_UP_LIMIT, isActive, type Job, STAGES, type Stage } from "../engine/machine.ts";
+import { loadConfig, targetOf } from "../config.ts";
+import { CATCH_UP_LIMIT, isActive, type Job, prOpen, STAGES, type Stage } from "../engine/machine.ts";
 import { type Message, readMessages } from "../engine/messages.ts";
 import { findJob, jobDirOf } from "../engine/store.ts";
 import { type LedgerLine, readLedger } from "../ledger/append.ts";
@@ -52,11 +52,15 @@ const sentBack = (from: Stage, to: string) =>
   to === "rejected" ||
   (isActive(from) && isActive(to as Stage) && STAGES.indexOf(to as Stage) < STAGES.indexOf(from));
 
-/** How a wait at Ready ended, as its segment says: the person merged it, or the merge check went first. */
-const READY_ENDS: Partial<Record<string, string>> = {
-  done: "You merged it into staging",
-  regress: "You said merge: the merge check drives the features it touches first",
-};
+/** How a wait at Ready ended, as its segment says: the person merged it (here or its PR on GitHub), or the merge check went first. */
+const readyEnd = (to: string, j: Job, target: string): string | null =>
+  to === "done"
+    ? j.mergedBy === "github"
+      ? `Its PR merged into ${target} on GitHub`
+      : `You merged it into ${target}`
+    : to === "regress"
+      ? "You said merge: the merge check drives the features it touches first"
+      : null;
 
 const msgStatus = (m: Message) =>
   m.kind === "answer"
@@ -77,9 +81,13 @@ export async function detail(repo: string, ref: string): Promise<Detail> {
   let start = j.startedAt;
   /** ADR 0018: catch-ups in a row so far; a catch-up is a normal step (staging moved), never drawn as a failure. */
   let caught = 0;
-  let staging = "staging";
+  // ADR 0026: the job's target (staging.branch unless it names another).
+  let target = j.target || "staging";
+  let defaultTarget = "staging";
   try {
-    staging = loadConfig(repo).staging.branch;
+    const cfg = loadConfig(repo);
+    target = targetOf(cfg, j);
+    defaultTarget = cfg.staging.branch;
   } catch {}
   const close = (m: number, end: string | null, to: string | null, l?: LedgerLine) => {
     const catchUp = !!l?.detail?.catchUp;
@@ -89,6 +97,7 @@ export async function detail(repo: string, ref: string): Promise<Detail> {
     const who = waited ? "you" : [...new Set(runs.map((r) => `${r.role}${r.model ? ` · ${r.model}` : ""}`))].join(", ");
     const bad = to !== null && !catchUp && sentBack(stage, to);
     const reason = typeof l?.detail?.reason === "string" ? l.detail.reason : "";
+    const readyEnded = stage === "ready" && to ? readyEnd(to, j, target) : null;
     tl.push({
       stage,
       nm: STAGE_NAMES[stage],
@@ -99,9 +108,9 @@ export async function detail(repo: string, ref: string): Promise<Detail> {
       start,
       end,
       sum: (catchUp
-        ? `Caught up with ${staging} (${caught} of ${CATCH_UP_LIMIT}) · no round spent`
-        : stage === "ready" && to && READY_ENDS[to]
-          ? READY_ENDS[to]
+        ? `Caught up with ${target} (${caught} of ${CATCH_UP_LIMIT}) · no round spent`
+        : readyEnded
+          ? readyEnded
           : bad && reason
             ? reason
             : (runs.at(-1)?.line ?? reason)
@@ -123,7 +132,15 @@ export async function detail(repo: string, ref: string): Promise<Detail> {
     last.stage = j.stage;
     last.nm = STAGE_NAMES[j.stage];
     const state = stateOf(j);
-    if (state === "you") {
+    if (prOpen(j) && j.pr) {
+      // ADR 0026 §4: a person merges it on GitHub; Kitchen says what it did, plainly, and asks nothing here.
+      last.st = "you";
+      last.nm = "PR open";
+      last.evs.push(
+        { c: "sys", t: `Pushed ${j.branch} and opened PR #${j.pr.number} into ${target}, with the report in its body`, at: last.start },
+        { c: "sys", t: "A person merges it on GitHub; Kitchen moves it to Done when it merges", at: last.start },
+      );
+    } else if (state === "you") {
       last.st = "you";
       last.evs.push({
         c: "ask",
@@ -145,6 +162,10 @@ export async function detail(repo: string, ref: string): Promise<Detail> {
     seg.evs.splice(i < 0 ? seg.evs.length : i, 0, { c: "you", t: m.text, at: m.at, kind: m.kind, status: msgStatus(m), sent: m.status === "sent" });
   }
   // ADR 0022: the first line says where the job came from.
-  tl[0]?.evs.unshift({ c: "sys", t: j.from ? `Filed from the Outer loop · ${j.from.label}` : "Filed by you (New ticket)", at: j.startedAt });
+  tl[0]?.evs.unshift({
+    c: "sys",
+    t: `${j.from ? `Filed from the Outer loop · ${j.from.label}` : "Filed by you (New ticket)"}${target !== defaultTarget ? ` · into ${target}` : ""}`,
+    at: j.startedAt,
+  });
   return { id: j.id, tl, crit: critOf(dir, j.round), ticket: ticketText(dir) };
 }

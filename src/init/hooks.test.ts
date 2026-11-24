@@ -101,6 +101,9 @@ test("guard-worktree: worktrees only under .worktrees/; a bound lane agent write
   assert.match(String(hook("guard-worktree.py", write(path.join(wt, "server.js"), "agent-1"), env)), /the person removed job 001-add-x\. Stop now/);
   assert.match(String(hook("guard-worktree.py", { ...bash("npm test", wt), agent_id: "agent-1" }, env)), /Stop now/);
   assert.equal(hook("guard-worktree.py", write(path.join(repo, "notes.md")), env), null);
+  // ADR 0026: its PR merged on GitHub mid-lane: done with no lane open, so the bound agent stops the same way.
+  fs.writeFileSync(path.join(job, "job.json"), JSON.stringify({ id, stage: "done", running: null, worktree: wt }));
+  assert.match(String(hook("guard-worktree.py", write(path.join(wt, "server.js"), "agent-1"), env)), /job 001-add-x ended while you worked \(merged\)/);
 });
 
 test("the activity hook: a bound agent's calls land in its lane's stream, as stream-json tool_use / tool_result", () => {

@@ -87,11 +87,15 @@ export async function init(o: InitOpts, out: (l: string) => void): Promise<numbe
   if (gh && cfgW.written) {
     const ghOk = (await import("./preflight.ts")).runCmd(process.env);
     const t = await ghOk(process.env.KITCHEN_GH_BIN || "gh", ["auth", "token"]);
-    if (t.code === 0)
-      fs.appendFileSync(
-        path.join(repo, "kitchen.yaml"),
-        `# origin is on GitHub: passing jobs merge into staging through a pull request\nforge: { kind: github, repo: ${gh} }\n`,
+    if (t.code === 0) {
+      // ADR 0026 §4: on GitHub a person merges: Kitchen opens the PR with the Report (staging.merge: pr).
+      const f = path.join(repo, "kitchen.yaml");
+      const text = fs.readFileSync(f, "utf8").replace(/^(staging: \{.*?)( \})$/m, "$1, merge: pr$2");
+      fs.writeFileSync(
+        f,
+        `${text}# origin is on GitHub: passing jobs go to their target through a pull request a person merges (staging.merge: pr)\nforge: { kind: github, repo: ${gh} }\n`,
       );
+    }
   }
   const cfg = loadConfig(repo);
   const n = cfg.checkList.length;

@@ -107,7 +107,7 @@ test("a ticket through every lane merges into staging: main untouched, the Repor
       .map((l) => `${l.stage}→${l.result}`),
     ["intake→build", "build→qa", "qa→review", "review→done"],
   );
-  assert.ok(fs.existsSync(path.join(r, ".kitchen", "orchestrator.json")) || next(r).drained);
+  assert.ok(fs.existsSync(path.join(r, ".kitchen", "orchestrator.json")) || (await next(r)).drained);
 });
 
 test("refusals: no lane open, the wrong lane, uncommitted work, red checks; three refusals go to a person", async () => {
@@ -230,7 +230,7 @@ test("two jobs on one file run at once; the one that conflicts is rebuilt on sta
   const a = await toBuild(r, "add a fourth line");
   const b = await toBuild(r, "shout the third line");
   assert.deepEqual(
-    next(r).start.map((s) => [s.id, s.lane]),
+    (await next(r)).start.map((s) => [s.id, s.lane]),
     [
       [a, "build"],
       [b, "build"],
@@ -355,7 +355,7 @@ test("intake sees the other jobs: accepted ones by criteria and FILES, ones stil
   fs.writeFileSync(intakeFile(dirOf(r, c)), INTAKE("low", "app.txt").replace("FILES: app.txt", "FILES: app.txt\nAFTER: 001"));
   await fin(r, c);
   assert.deepEqual(findJob(r, c).after, ["001"]);
-  assert.match(next(r).held.find((h) => h.id === c)?.why ?? "", /waits for 001-.* \(build\): named on its AFTER: line/);
+  assert.match((await next(r)).held.find((h) => h.id === c)?.why ?? "", /waits for 001-.* \(build\): named on its AFTER: line/);
   await build(r, a);
   await qa(r, a, "PASS");
   await review(r, a);
@@ -491,7 +491,7 @@ test("kitchen remove: a job in Build has its lane stopped, is rejected, archived
   // The agent's late finish is refused quietly; the plan and status don't show it; --all does; report counts it.
   const f = await finish(r, id);
   assert.ok("refused" in f && /removed by the person/.test(f.refused));
-  assert.ok(!next(r).start.some((x) => x.id === id) && !next(r).you.some((x) => x.id === id));
+  assert.ok(!(await next(r)).start.some((x) => x.id === id) && !(await next(r)).you.some((x) => x.id === id));
   const plain: string[] = [];
   report(r, (l) => plain.push(l));
   assert.match(plain[0], /jobs 1: .* rejected 1/);

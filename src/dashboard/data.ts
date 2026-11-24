@@ -4,11 +4,11 @@
 // written by the activity hook). Read-only.
 import fs from "node:fs";
 import path from "node:path";
-import { type Config, LANE_ROLES, loadConfig, modelFor } from "../config.ts";
+import { type Config, LANE_ROLES, loadConfig, modelFor, targetOf } from "../config.ts";
 import { diffSize } from "../engine/git.ts";
-import { heartbeatFile } from "../engine/jobs.ts";
+import { heartbeatFile, syncPrs } from "../engine/jobs.ts";
 import { criteriaOf, leftOutOf, readIntake, readQa, readReview } from "../engine/lanes.ts";
-import { BY_YOU_STOPPED, isActive, type Job, pausedByYou, type Stage } from "../engine/machine.ts";
+import { BY_YOU_STOPPED, isActive, type Job, PR_OPEN_WORDS, pausedByYou, prOpen, type Stage } from "../engine/machine.ts";
 import { JOB_ID, jobDirOf, scanJobs } from "../engine/store.ts";
 import { type LedgerLine, readLedger } from "../ledger/append.ts";
 import { liveRun } from "../run/orchestrator.ts";
@@ -55,7 +55,10 @@ export function workStage(j: Pick<Job, "stage" | "pausedFrom" | "escalatedFrom">
 export const phaseOf = (s: Stage): Phase => PHASES.find((p) => (p.stages as readonly Stage[]).includes(s))?.k ?? "intake";
 export const agentOf = (s: Stage): string | null => AGENT[s] ?? null;
 export type JobState = "you" | "run" | "paused" | "done" | "rejected";
-/** A job held at Ready waits for the person's merge (or their changes): it needs you, it isn't done. */
+/**
+ * A job held at Ready waits for the person's merge (or their changes): it needs you, it isn't done. So does one whose
+ * PR waits for review on GitHub (ADR 0026 §4: Ready with an open PR).
+ */
 export function stateOf(j: Pick<Job, "stage">): JobState {
   if (j.stage === "needs-info" || j.stage === "needs-human" || j.stage === "ready") return "you";
   if (j.stage === "paused") return "paused";
@@ -95,6 +98,7 @@ export function laneWho(cfg: Config | null): Record<Lane, string> {
 }
 /** What a job that needs you asks: intake's question (question.md), why it stopped, or why Kitchen held it at Ready. */
 export function questionOf(j: Job, dir: string): string | null {
+  if (prOpen(j)) return PR_OPEN_WORDS;
   if (j.stage === "ready") return `Ready for you: ${j.held ?? "a person merges it"}`;
   if (j.stage === "needs-info") {
     try {
@@ -219,7 +223,12 @@ export type JobCard = {
   pausedSecs: number | null;
   step: string | null;
   active: boolean;
+  /** Its PR's number (GitHub), as the page shows it today. */
   pr: number | null;
+  /** ADR 0026 §4: its PR in full: open while it waits for review on GitHub (staging.merge: pr), merged or closed after. */
+  pull: { number: number; url: string; state: "open" | "merged" | "closed" | null } | null;
+  /** ADR 0026: the branch it merges into, only when it isn't staging.branch. */
+  target?: string;
   report: string | null;
   branch: string;
   state: JobState;
@@ -237,7 +246,8 @@ export type JobCard = {
   lane: Lane;
   proof: "pass" | "fail" | null;
   held: string | null;
-  merged: { into: string; sha: string } | null;
+  /** Where it merged, and who: a person (here), GitHub (its PR merged there, ADR 0026 §4), or Kitchen (null). */
+  merged: { into: string; sha: string; by: "person" | "github" | null } | null;
   waits: Waits | null;
   /** ADR 0022: where it came from in the outer loop ("GitHub #17", "3 reports"), or null (New ticket). */
   from: string | null;
@@ -247,6 +257,8 @@ export type JobCard = {
 
 export type Snapshot = {
   repo: string;
+  /** ADR 0026: the default target (staging.branch); a card names its own only when it differs. */
+  target: string;
   at: string;
   usdToday: number;
   usdTotal: number;
@@ -279,6 +291,13 @@ export function orchestrator(repo: string, now = Date.now()): { running: boolean
 }
 
 export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot> {
+  // ADR 0026 §4: what became of the open PRs, at most once a minute; in the background (a moved target re-runs the
+  // merge check), so this snapshot never waits for it: the next poll shows the result.
+  void syncPrs(repo).catch(() => {});
+  let cfg: Config | null = null;
+  try {
+    cfg = loadConfig(repo);
+  } catch {}
   const lines = readLedger(repo);
   const lastLine = new Map<string, LedgerLine>();
   const moves = new Map<string, LedgerLine[]>();
@@ -343,7 +362,9 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
           .filter(Boolean)
           .join(" · ") || null,
       active,
-      pr: j.pr,
+      pr: j.pr?.number ?? null,
+      pull: j.pr ? { number: j.pr.number, url: j.pr.url, state: j.pr.state ?? null } : null,
+      ...(cfg && targetOf(cfg, j) !== cfg.staging.branch ? { target: targetOf(cfg, j) } : {}),
       report: fs.existsSync(path.join(dir, "report.html")) ? `jobs/${encodeURIComponent(j.id)}/report.html` : null,
       branch: j.branch,
       state: stateOf(j),
@@ -360,21 +381,18 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
       lane: laneOf(j),
       proof: j.stage === "rejected" ? null : "criteria" in qaNow ? (qaNow.verdict === "PASS" ? "pass" : "fail") : null, // no QA verdict yet: no pill (the Toolkit's "proven" is gone)
       held: j.held ?? null,
-      merged: j.merged ? { into: j.merged.into, sha: j.merged.sha } : null,
+      merged: j.merged ? { into: j.merged.into, sha: j.merged.sha, by: j.mergedBy ?? null } : null,
       waits: waitsOf(j, dir),
       from: j.from?.label ?? null,
       checking: checkingOf(j, dir),
     });
   }
-  let cfg: Config | null = null;
-  try {
-    cfg = loadConfig(repo);
-  } catch {}
   const who = laneWho(cfg);
   const today = new Date(now).toDateString();
   const priced = lines.filter((l) => typeof l.usd === "number");
   return {
     repo: path.basename(repo),
+    target: cfg?.staging.branch ?? "staging",
     at: new Date(now).toISOString(),
     usdToday: priced.filter((l) => new Date(l.t).toDateString() === today).reduce((a, l) => a + (l.usd as number), 0),
     usdTotal: priced.reduce((a, l) => a + (l.usd as number), 0),

@@ -17,9 +17,10 @@ Setup
   kitchen skills                         which role skills are found for the agent tool
 
 Work
-  kitchen ticket "<what you want>" [--no-run]   a ticket; intake writes its criteria. Kitchen starts (kitchen run
-                                         --detach) when nothing works the queue, as after approve, feedback, resume
-                                         and inbox run; --no-run files it only
+  kitchen ticket "<what you want>" [--into <branch>] [--no-run]   a ticket; intake writes its criteria. Kitchen
+                                         starts (kitchen run --detach) when nothing works the queue, as after approve,
+                                         feedback, resume and inbox run; --no-run files it only; --into: the branch it
+                                         starts from and goes into (default staging; it must exist)
   kitchen run [--detach] [--max-usd n]   a headless orchestrator session works the queue (or /kitchen run in Claude Code)
   kitchen run --stop | --print           end it | print the exact command it runs
   kitchen status [--json] [--all]        one row per job (--all: the removed ones too)
@@ -30,8 +31,9 @@ Work
   kitchen refine <id>                    a job intake sent to be refined with you: the brief for Claude Code or Codex
                                          (/kitchen refine <id>), which grills the ticket with you, then sends it back
   kitchen approve <id>                   a job held for your approval after intake (intake.confirm) → build
-  kitchen merge <id>                     a job held at Ready (ready(held)) into staging: the same checks as an
-                                         auto-merge, on staging only, never main
+  kitchen merge <id>                     a job held at Ready (ready(held)) into its target: the same checks as an
+                                         auto-merge, never main. With staging.merge: pr a person merges its PR on
+                                         GitHub instead (ready(PR open)); Kitchen sees it merged or closed
   kitchen steer <id> "<text>"            a message the job's next agent reads
   kitchen pause <id> · stop <id> · resume <id> · reject <id>
   kitchen remove <id> · restore <id>     off the dashboard, any stage (a working lane is stopped, an unfinished job
@@ -83,7 +85,7 @@ kitchen --version · kitchen <command> --help · docs: README.md in the package`
 
 const COMMAND_HELP: Record<string, string> = {
   ticket:
-    'kitchen ticket "<what you want>" [--no-run]\n\nFiles a ticket for intake. When no orchestrator works the queue, Kitchen starts one (kitchen run --detach) and says so: "→ intake · Kitchen started"; when one does, it picks the ticket up ("· Kitchen is already working the queue"). approve, feedback, resume and inbox run do the same.\n  --no-run   file it only; kitchen run works the queue later',
+    'kitchen ticket "<what you want>" [--into <branch>] [--no-run]\n\nFiles a ticket for intake. When no orchestrator works the queue, Kitchen starts one (kitchen run --detach) and says so: "→ intake · Kitchen started"; when one does, it picks the ticket up ("· Kitchen is already working the queue"). approve, feedback, resume and inbox run do the same.\n  --no-run   file it only; kitchen run works the queue later\n  --into <branch>   the job\'s target (ADR 0026): its Build starts from that branch\'s tip and it merges into it, not staging. The branch must exist (on origin with forge github, else locally); Kitchen never creates it. With staging.merge: kitchen, the base branch, main and master are refused; with merge: pr any branch is fine, since a person merges the PR.',
   run: "kitchen run [--detach] [--max-usd n] | run --stop | run --print\n\nStarts a headless Claude Code session that runs /kitchen run: it plans waves and spawns one agent per lane (intake, build, QA, review), moving jobs only through kitchen job verbs. One per repo.\n  --detach   in the background; the log is .kitchen/run.log\n  --max-usd  the session's spend cap (claude --max-budget-usd); default agent.max_usd in kitchen.yaml\n  --stop     end it (jobs keep their state)\n  --print    print the command and run nothing",
   status:
     "kitchen status [--json]\n\nThe orchestrator, then one row per job: id, title, stage (* while an agent works on it), round, when it last moved, the merge, the Report.",
@@ -101,7 +103,7 @@ const COMMAND_HELP: Record<string, string> = {
   refine:
     "kitchen refine <id>\n\nFor a job intake sent to be refined with you (needs-info, refine): writes .kitchen/jobs/<id>/refine/brief.md (the ticket, intake's reason and readings, your earlier answers, the verify map's features, the repo's glossary and ADRs) and prints its path. A Claude Code or Codex session follows it with you (/kitchen refine <id>): one question at a time, then kitchen feedback <id> \"<the refined ticket>\" sends it back to intake.",
   merge:
-    "kitchen merge <id>\n\nFor a job held at Ready for you (kitchen status shows ready(held)): merges it into staging through the same gate as an auto-merge, without the hold. The reviewed head is merged onto staging's tip in a scratch worktree, every check runs there (the when: merge ones too), and when the merge touches features on the verify map the job goes to Merge check first (the orchestrator drives them, then it lands). A conflict or red checks send it back to Build; staging checked out or the branch moved leave it at Ready. On GitHub it goes through its PR into staging. Never into main or the base branch.",
+    "kitchen merge <id>\n\nFor a job held at Ready for you (kitchen status shows ready(held)): merges it into its target (staging, or the branch its ticket named with --into) through the same gate as an auto-merge, without the hold. The reviewed head is merged onto the target's tip in a scratch worktree, every check runs there (the when: merge ones too), and when the merge touches features on the verify map the job goes to Merge check first (the orchestrator drives them, then it lands). A conflict or red checks send it back to Build; the target checked out or the branch moved leave it at Ready. On GitHub it goes through its PR into the target. Never into main or the base branch.\n\nWith staging.merge: pr (kitchen init sets it when origin is on GitHub), Kitchen never merges: after the merge check passes it pushes the job branch and opens (or updates) a PR into the target with the Report as its body, and the job waits at Ready as ready(PR open). kitchen job next and the dashboard ask GitHub about it at most once a minute: merged → done (merged on GitHub), closed → rejected; when the target moves under an open PR the merge check re-runs (a conflict or a red the target caused is a catch-up, no round; its own red goes back to Build) and the PR is updated. kitchen merge refuses such a job: merge the PR on GitHub. A PR merged or closed while its job is back in a lane (a catch-up) ends the job too, and the lane's agent is stopped. kitchen reject or kitchen remove on a job whose PR is open closes the PR on GitHub with a comment; kitchen restore doesn't reopen it.",
   approve:
     'kitchen approve <id>\n\nFor a job held after intake for your approval (intake: { confirm: true } in kitchen.yaml): sends it to Build on intake\'s criteria. To change them instead: kitchen feedback <id> "<what to change>".',
   report: "kitchen report [--json]\n\nWhat the queue did: merged, ready, sent back, rounds, time.",
@@ -165,7 +167,7 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
   const { INBOX_FLAGS } = await import("./inbox/cli.ts");
-  const f = parse(rest, ["repo", "to", "port", "tool", "max-usd", "name", "script", "header", "data", "url", ...INBOX_FLAGS]);
+  const f = parse(rest, ["repo", "to", "into", "port", "tool", "max-usd", "name", "script", "header", "data", "url", ...INBOX_FLAGS]);
   // Inside a job's worktree (.worktrees/<job>), the main checkout: that is where the jobs live.
   const repo = f.vals.repo?.[0] ? path.resolve(f.vals.repo[0]) : (await import("./cli/here.ts")).kitchenRepo(process.cwd());
   const v = (k: string) => f.vals[k]?.[0];
@@ -234,7 +236,7 @@ async function main(argv: string[]): Promise<number> {
       return s ? await new Promise<number>(() => {}) : 0;
     }
     case "ticket":
-      return waking((o) => control.ticket(repo, f.pos.join(" ") || need(0, '"<text>"'), o));
+      return waking((o) => control.ticket(repo, f.pos.join(" ") || need(0, '"<text>"'), o, { into: v("into") }));
     case "run": {
       // `kitchen run` starts a paid session: a flag it doesn't know (a typo, `--status`) stops it instead.
       const odd = [...[...f.flags].filter((x) => !["--detach", "--stop", "--print", "--json"].includes(x)), ...f.pos];
@@ -311,9 +313,10 @@ async function jobVerb(repo: string, f: Flags, json: boolean, out: (l: string) =
   const jobs = await import("./engine/jobs.ts");
   const [verb, id, lane] = f.pos;
   if (verb === "next") {
-    const p = jobs.next(repo, { restartStranded: f.flags.has("--restart-stranded") });
+    const p = await jobs.next(repo, { restartStranded: f.flags.has("--restart-stranded") });
     if (json) out(JSON.stringify(p, null, 2));
     else {
+      for (const l of p.prs) out(`pr     ${l}`);
       for (const s of p.start) out(`start  ${s.id}  ${s.lane}${s.restart ? " (restart: its last agent is gone)" : ""}`);
       for (const r of p.running) out(`busy   ${r.id}  ${r.lane} since ${r.since}`);
       for (const h of p.held) out(`held   ${h.id}  ${h.lane}: ${h.why}`);

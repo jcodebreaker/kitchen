@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { readMapChanges } from "../verify/admit.ts";
 import { criteriaOf, leftOutOf, qaDir, readQa, readReview, regressDir } from "./lanes.ts";
-import type { Job } from "./machine.ts";
+import { type Job, prOpen } from "./machine.ts";
 import { readMessages } from "./messages.ts";
 import { findJob, JOB_ID, jobDirOf, roundDir, writeAtomic } from "./store.ts";
 
@@ -14,10 +14,12 @@ const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&
 const MAX_TEXT = 6000;
 const MAX_IMAGE = 3 * 1024 * 1024;
 
-function evidenceHtml(dir: string, f: string): string {
+/** `named`: images by name only (a PR body: GitHub drops data: images and caps the body's size). */
+function evidenceHtml(dir: string, f: string, named = false): string {
   const p = path.join(dir, f);
   if (!fs.existsSync(p)) return `<p class="miss">${esc(f)}: missing</p>`;
   if (/\.(png|jpe?g)$/i.test(f)) {
+    if (named) return `<p>Screenshot <code>${esc(f)}</code> (in the job's evidence folder)</p>`;
     const b = fs.readFileSync(p);
     if (b.length > MAX_IMAGE) return `<p>${esc(f)} (${Math.round(b.length / 1024)} KB, too large to inline)</p>`;
     return `<figure><img alt="${esc(f)}" src="data:image/${/png$/i.test(f) ? "png" : "jpeg"};base64,${b.toString("base64")}"><figcaption>${esc(f)}</figcaption></figure>`;
@@ -27,7 +29,7 @@ function evidenceHtml(dir: string, f: string): string {
 }
 
 /** Pure apart from reading the job folder: the Report's HTML. */
-export function renderReport(repo: string, job: Job, o: { diff?: { p: string; a: number; d: number }[]; checks?: string } = {}): string {
+export function renderReport(repo: string, job: Job, o: { diff?: { p: string; a: number; d: number }[]; checks?: string; named?: boolean } = {}): string {
   const dir = jobDirOf(repo, job.id);
   const crit = criteriaOf(dir);
   const qa = readQa(dir, job.round, crit);
@@ -35,10 +37,12 @@ export function renderReport(repo: string, job: Job, o: { diff?: { p: string; a:
   const qd = qaDir(dir, job.round);
   const status =
     job.stage === "done" && job.merged
-      ? `${job.mergedBy === "person" ? `Merged by you on ${esc(job.merged.at.slice(0, 10))} into` : "Merged into"} ${esc(job.merged.into)} (${esc(job.merged.sha.slice(0, 7))}${job.merged.via === "github" && job.pr ? `, PR #${job.pr}` : ""})`
-      : job.stage === "ready"
-        ? `Ready for you: ${esc(job.held ?? "a person merges it")}`
-        : `${esc(job.stage)}${job.pausedReason ? `: ${esc(job.pausedReason)}` : ""}`;
+      ? `${job.mergedBy === "person" ? `Merged by you on ${esc(job.merged.at.slice(0, 10))} into` : job.mergedBy === "github" ? `Merged on GitHub on ${esc(job.merged.at.slice(0, 10))} into` : "Merged into"} ${esc(job.merged.into)} (${esc(job.merged.sha.slice(0, 7))}${job.merged.via === "github" && job.pr ? `, PR #${job.pr.number}` : ""})`
+      : prOpen(job) && job.pr
+        ? `PR #${job.pr.number} open${job.target ? ` into ${esc(job.target)}` : ""} · waiting for review`
+        : job.stage === "ready"
+          ? `Ready for you: ${esc(job.held ?? "a person merges it")}`
+          : `${esc(job.stage)}${job.pausedReason ? `: ${esc(job.pausedReason)}` : ""}`;
   const check: string[] = [];
   if (job.held) check.push(job.mergedBy === "person" ? `Kitchen held it for you (${esc(job.held)}); you merged it.` : esc(job.held));
   if ("findings" in review)
@@ -61,7 +65,7 @@ export function renderReport(repo: string, job: Job, o: { diff?: { p: string; a:
   const rows = crit
     .map((c) => {
       const r = "criteria" in qa ? qa.criteria.find((x) => x.id === c.id) : undefined;
-      return `<tr><td>${esc(c.id)}</td><td>${esc(c.text)}<br><small>${esc(c.check)}</small></td><td class="${r?.result === "PASS" ? "ok" : "bad"}">${esc(r?.result ?? "not checked")}</td><td>${esc(r?.note ?? "")}${(r?.evidence ?? []).map((f) => evidenceHtml(qd, f)).join("")}</td></tr>`;
+      return `<tr><td>${esc(c.id)}</td><td>${esc(c.text)}<br><small>${esc(c.check)}</small></td><td class="${r?.result === "PASS" ? "ok" : "bad"}">${esc(r?.result ?? "not checked")}</td><td>${esc(r?.note ?? "")}${(r?.evidence ?? []).map((f) => evidenceHtml(qd, f, o.named)).join("")}</td></tr>`;
     })
     .join("\n");
   const findings =
@@ -94,7 +98,7 @@ pre{background:var(--card);padding:8px;border-radius:6px;overflow:auto;font-size
 <h2>Criteria, checked against the running app</h2>
 <table>${rows || "<tr><td>No criteria.</td></tr>"}</table>
 ${"refused" in qa ? `<p class="bad">QA: ${esc(qa.refused)}</p>` : ""}
-${drives(dir, job.round)}
+${drives(dir, job.round, o.named)}
 <h2>Review</h2>${"summary" in review && review.summary ? `<p>${esc(review.summary)}</p>` : ""}${findings}
 <h2>Checks</h2><pre>${esc(o.checks ?? readChecks(dir, job.round))}</pre>
 <h2>What changed</h2>${diff}
@@ -113,7 +117,7 @@ function titleOf(repo: string, id: string): string | null {
 }
 
 /** ADR 0017 §3: the touched features driven on the trial merge before it landed, newest round first. */
-function drives(dir: string, round: number): string {
+function drives(dir: string, round: number, named = false): string {
   for (let r = round; r >= 1; r--) {
     const f = path.join(regressDir(dir, r), "verdict.json");
     if (!fs.existsSync(f)) continue;
@@ -122,7 +126,7 @@ function drives(dir: string, round: number): string {
       const rows = (v.features ?? [])
         .map(
           (x) =>
-            `<tr><td>${esc(String(x.id))}</td><td class="${String(x.result).toUpperCase() === "PASS" ? "ok" : "bad"}">${esc(String(x.result))}</td><td>${esc(String(x.note ?? ""))}${(x.evidence ?? []).map((e) => evidenceHtml(regressDir(dir, r), String(e))).join("")}</td></tr>`,
+            `<tr><td>${esc(String(x.id))}</td><td class="${String(x.result).toUpperCase() === "PASS" ? "ok" : "bad"}">${esc(String(x.result))}</td><td>${esc(String(x.note ?? ""))}${(x.evidence ?? []).map((e) => evidenceHtml(regressDir(dir, r), String(e), named)).join("")}</td></tr>`,
         )
         .join("");
       return `<h2>Features driven before the merge (round ${r})</h2><p class="st">Kitchen chose them from the verify map: their <code>Code:</code> covers files this merge changed.</p><table>${rows}</table>`;
@@ -140,6 +144,19 @@ function readChecks(dir: string, round: number): string {
   } catch {
     return "not run";
   }
+}
+
+/** GitHub's cap on a PR body is 65,536 characters. */
+const PR_BODY_MAX = 60_000;
+
+/**
+ * ADR 0026 §4: the Report as a PR body: its <main> (GitHub renders the HTML, drops the page's styles), screenshots
+ * named rather than inlined, cut to fit GitHub's limit.
+ */
+export function prReport(repo: string, job: Job, diff?: { p: string; a: number; d: number }[]): string {
+  const html = renderReport(repo, job, { diff, named: true });
+  const main = /<main>([\s\S]*)<\/main>/.exec(html)?.[1]?.trim() ?? "";
+  return main.length > PR_BODY_MAX ? `${main.slice(0, PR_BODY_MAX)}\n\n…(cut: the full Report is report.html in the job's folder)` : main;
 }
 
 export function writeReport(repo: string, job: Job, o: { diff?: { p: string; a: number; d: number }[] } = {}): string {

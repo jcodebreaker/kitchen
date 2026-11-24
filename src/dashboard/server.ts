@@ -8,6 +8,7 @@
 //                                  id (not the token): a tab from an earlier launch sees it changed and reloads once
 //   GET  /jobs/<id>/detail.json    one job: stage history with its agents' activity, thread, criteria
 //   GET  /jobs/<id>/report.html    a job's rendered Report
+//   GET  /branches.json          ADR 0026: the New ticket sheet's target choices (branches.ts; asked when the sheet opens)
 //   GET  /models.json              ADR 0023: each lane's model and the tool's choices (kitchen models; cached ten minutes)
 //   GET  /inbox.json               the outer loop (ADR 0022): sources, the collect running now, items, proposals
 //   GET  /inbox/<item>/evidence/<f> a screenshot or transcript triage kept
@@ -27,6 +28,7 @@ import { loadConfig } from "../config.ts";
 import { JOB_ID, jobDirOf, scanJobs } from "../engine/store.ts";
 import { type Listing, listModels } from "../models/models.ts";
 import { act, BadRequest } from "./actions.ts";
+import { branchesOf } from "./branches.ts";
 import { snapshot } from "./data.ts";
 import { detail } from "./detail.ts";
 import { evidenceFile, inboxSnapshot } from "./inbox.ts";
@@ -143,6 +145,7 @@ export function dashboardServer(one: string | null, o: { token?: string; list?: 
       if (route === "/data.json") return json(200, { ...(await snapshot(repo)), launch });
       if (route === "/inbox.json") return json(200, inboxSnapshot(repo));
       if (route === "/models.json") return json(200, await modelsListing(repo));
+      if (route === "/branches.json") return json(200, await branchesOf(repo));
       if (route.startsWith("/inbox/")) {
         let rel: string;
         try {

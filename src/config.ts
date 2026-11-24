@@ -105,6 +105,11 @@ export const ConfigSchema = z
         max_lines: z.number().int().positive().default(400),
         /** false: every job stops at Ready. */
         auto_merge: z.boolean().default(true),
+        /**
+         * ADR 0026 §4: who merges a passing job into its target. `kitchen`: Kitchen merges it. `pr`: Kitchen opens (or
+         * updates) a PR into the target with the Report and a person merges it on GitHub (needs `forge.kind: github`).
+         */
+        merge: z.enum(["kitchen", "pr"]).default("kitchen"),
       })
       .strict()
       .prefault({}),
@@ -238,8 +243,9 @@ export function parseConfig(text: string): Config {
     throw new ConfigError(`kitchen.yaml: ${first.path.join(".") || "(top)"}: ${first.message}`);
   }
   const st = r.data.staging;
-  if (st.branch === st.base || ["main", "master"].includes(st.branch))
-    throw new ConfigError(`kitchen.yaml: staging.branch is ${st.branch}: Kitchen never merges into ${st.base}, main or master`);
+  if (protectedTarget(r.data, st.branch)) throw new ConfigError(`kitchen.yaml: staging.branch is ${st.branch}: ${neverMerges(r.data)}`);
+  if (st.merge === "pr" && r.data.forge.kind !== "github")
+    throw new ConfigError("kitchen.yaml: staging.merge: pr opens pull requests on GitHub: it needs forge: { kind: github }");
   const checkList: CheckSpec[] = r.data.checks.map((c, i) =>
     typeof c === "string"
       ? { name: `check${i + 1}`, run: c, timeoutSec: 600, when: "build", needsApp: false }
@@ -254,6 +260,17 @@ export function parseConfig(text: string): Config {
   if (noApp) throw new ConfigError("kitchen.yaml: a check has needs_app: true but app.start is empty: say how to start the app, or set needs_app: false");
   return { ...r.data, checkList, dropped: u.dropped };
 }
+
+/** Pure: a branch Kitchen never merges into itself: the base, main or master. */
+export const protectedTarget = (cfg: Pick<RawConfig, "staging">, branch: string) => [cfg.staging.base, "main", "master"].includes(branch);
+/** The guard's words (kitchen.yaml, `kitchen ticket --into`, the merge itself). */
+export const neverMerges = (cfg: Pick<RawConfig, "staging">) => {
+  const names = [...new Set([cfg.staging.base, "main", "master"])];
+  return `Kitchen never merges into ${names.slice(0, -1).join(", ")} or ${names.at(-1)}`;
+};
+
+/** ADR 0026 §1: the branch a job merges into: the one its ticket named, else staging. */
+export const targetOf = (cfg: Pick<RawConfig, "staging">, job: { target?: string }): string => job.target || cfg.staging.branch;
 
 export const configFile = (repo: string) => path.join(repo, "kitchen.yaml");
 

@@ -14,7 +14,7 @@ import { type Config, loadConfig, modelFor } from "../config.ts";
 import { git, gitOut, revParse } from "../engine/git.ts";
 import { readFeatureVerdict } from "../engine/lanes.ts";
 import type { Job } from "../engine/machine.ts";
-import { mergeToStaging, stagingTip } from "../engine/staging.ts";
+import { mergeToTarget, stagingTip } from "../engine/staging.ts";
 import { writeAtomic } from "../engine/store.ts";
 import { addFindings, runFindings } from "../inbox/findings.ts";
 import { appDown, appUp } from "../qa/app.ts";
@@ -283,7 +283,8 @@ async function finishMaintain(repo: string, r: RunInfo, out: Out): Promise<numbe
     if (!cfg.staging.auto_merge) landed = `left on ${branch} (staging.auto_merge is off: a person merges it)`;
     else {
       const job = { id: r.id, title: `Verify map upkeep (${r.id})`, branch, pr: null } as unknown as Job;
-      const m = await mergeToStaging(repo, cfg, job, tip, { log: path.join(runDir(repo, r.id), "merge.log") });
+      // The map's own upkeep lands in staging itself, whoever merges jobs (ADR 0026 §4).
+      const m = await mergeToTarget(repo, cfg, job, tip, { log: path.join(runDir(repo, r.id), "merge.log"), merge: "kitchen" });
       landed = m.ok ? `merged into ${cfg.staging.branch} (${m.sha.slice(0, 7)})` : `not merged: ${m.why} (the branch ${branch} stays)`;
     }
   }
