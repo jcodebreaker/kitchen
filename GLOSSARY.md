@@ -72,6 +72,14 @@ _Avoid_: Artifacts, proof files
 The branch passing Jobs merge into, after Kitchen re-runs the checks on the merged result. Never the base branch or main: a person merges staging onward.
 _Avoid_: Release branch, main
 
+**Target**:
+The branch a Job starts from and merges into: Staging, unless its Ticket named another (`kitchen ticket --into`). It must exist; with `merge: kitchen` never the base branch or main (ADR 0026).
+_Avoid_: Destination, base
+
+**PR open**:
+A Job at Ready whose pull request into its Target waits for a person on GitHub (`staging.merge: pr`). Kitchen never merges it; merged there it is done, closed it is rejected (ADR 0026).
+_Avoid_: Pending merge
+
 **Report**:
 The HTML page a Job ends with: what a person must check (every Changed earlier check among it), then each criterion with its Evidence, the Features driven before the merge, the review and the diff.
 _Avoid_: Summary, PR description

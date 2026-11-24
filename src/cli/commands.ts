@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { heartbeatFile } from "../engine/jobs.ts";
-import { type Job, roundsUsed } from "../engine/machine.ts";
+import { type Job, prOpen, roundsUsed } from "../engine/machine.ts";
 import { jobDirOf, scanJobs } from "../engine/store.ts";
 import { readLedger } from "../ledger/append.ts";
 import { liveRun } from "../run/orchestrator.ts";
@@ -18,6 +18,7 @@ const ago = (iso: string) => {
 export function stageLabel(j: Job): string {
   if (j.stage === "paused") return `paused(${j.pausedReason ?? "?"}, from ${j.pausedFrom})`;
   if (j.running) return `${j.stage}*`;
+  if (prOpen(j)) return "ready(PR open)";
   if (j.stage === "ready" && j.held) return "ready(held)";
   if (j.pausedReason && ["needs-info", "needs-human", "rejected"].includes(j.stage)) return `${j.stage}(${j.pausedReason.slice(0, 60)})`;
   return j.stage;
@@ -25,7 +26,14 @@ export function stageLabel(j: Job): string {
 
 export function statusLine(j: Job, jobDir: string): string {
   const report = fs.existsSync(path.join(jobDir, "report.html")) ? `  ${path.join(jobDir, "report.html")}` : "";
-  const merged = j.merged ? `merged ${j.merged.sha.slice(0, 7)}` : j.pr ? `PR #${j.pr}` : "";
+  const into = j.target ? ` into ${j.target}` : "";
+  const merged = j.merged
+    ? `merged${into} ${j.merged.sha.slice(0, 7)}`
+    : j.pr
+      ? `PR #${j.pr.number}${prOpen(j) ? ` open${into}` : ""}`
+      : into
+        ? `→ ${j.target}`
+        : "";
   return `${j.id.padEnd(28)} ${j.title.slice(0, 34).padEnd(34)} ${stageLabel(j).padEnd(16)} round ${roundsUsed(j)}/${j.roundLimit}  moved ${ago(j.updatedAt)}${merged ? `  ${merged}` : ""}${report}`;
 }
 

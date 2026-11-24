@@ -4,12 +4,12 @@
 //   next [--json] [--restart-stranded]   the next wave (plan.ts): which lanes to start now, what waits and why
 //   start <id> <lane> [--restart]        open a lane: the worktree (build), the brief, the agent's prompt and model
 //   finish <id>                          close it: read the lane's files, run what Kitchen proves itself (the checks,
-//                                        the merge into staging), and move the job, or refuse and say why
+//                                        the merge into the job's target), and move the job, or refuse and say why
 //   show <id> [--json]                   one job, as the orchestrator needs it
 import fs from "node:fs";
 import path from "node:path";
 import { type OnCheck, prepareOf, runChecks } from "../checks/run-checks.ts";
-import { type Config, checksFor, type LaneRole, loadConfig, modelFor } from "../config.ts";
+import { type Config, checksFor, type LaneRole, loadConfig, modelFor, targetOf } from "../config.ts";
 import { commentOnMerge } from "../inbox/comment.ts";
 import { addFindings, qaFindings, reviewFindings } from "../inbox/findings.ts";
 import { appendLedger } from "../ledger/append.ts";
@@ -35,13 +35,27 @@ import {
   regressDir,
   reviewFile,
 } from "./lanes.ts";
-import { BY_YOU, CATCH_UP_LIMIT, isCatchUp, isLane, type Job, type Lane, outOfCatchUps, outOfRounds, roundsUsed, type Stage } from "./machine.ts";
+import {
+  BY_YOU,
+  CATCH_UP_LIMIT,
+  isCatchUp,
+  isLane,
+  type Job,
+  type JobPr,
+  type Lane,
+  outOfCatchUps,
+  outOfRounds,
+  PR_OPEN_WORDS,
+  prOpen,
+  roundsUsed,
+  type Stage,
+} from "./machine.ts";
 import { markRead, operatorNotes, unreadMessages } from "./messages.ts";
 import { afterSection, queueSection } from "./others.ts";
 import { type Plan, planWave } from "./plan.ts";
 import { confirmQuestion, refineQuestion } from "./refine.ts";
-import { writeReport } from "./report.ts";
-import { type CatchUp, catchUpWithStaging, dropTrial, type MergeOutcome, mergeToStaging, stagingTip } from "./staging.ts";
+import { prReport, writeReport } from "./report.ts";
+import { type CatchUp, catchUpWithTarget, dropTrial, type MergeOutcome, mergeToTarget, realGh, targetTip } from "./staging.ts";
 import { findJob, intakeCheckoutOf, jobDirOf, kitchenDir, listJobs, roundDir, shortTitle, updateJob, worktreeOf, writeAtomic } from "./store.ts";
 
 export type Out = (line: string) => void;
@@ -57,12 +71,14 @@ export const MAX_TRIES = 3;
 /** The orchestrator's heartbeat: the last `kitchen job next`. The dashboard reads it. */
 export const heartbeatFile = (repo: string) => path.join(kitchenDir(repo), "orchestrator.json");
 
-export function next(repo: string, o: { restartStranded?: boolean } = {}): Plan {
+export async function next(repo: string, o: { restartStranded?: boolean } = {}): Promise<Plan & { prs: string[] }> {
   const cfg = loadConfig(repo);
+  // ADR 0026 §4: what became of the PRs waiting on a person (at most once a minute).
+  const prs = await syncPrs(repo);
   // A job the person removed is never picked (kitchen remove).
   const jobs = listJobs(repo).filter((j) => !j.archived);
   const paused = new Set(jobs.filter((j) => !j.running && readControl(jobDirOf(repo, j.id)).pause).map((j) => j.id));
-  const plan = planWave(jobs, { parallel: cfg.parallel, restartStranded: o.restartStranded, paused });
+  const plan = { ...planWave(jobs, { parallel: cfg.parallel, restartStranded: o.restartStranded, paused, target: (j) => targetOf(cfg, j) }), prs };
   fs.mkdirSync(kitchenDir(repo), { recursive: true });
   writeAtomic(heartbeatFile(repo), JSON.stringify({ at: new Date().toISOString(), pid: process.ppid, drained: plan.drained }));
   return plan;
@@ -70,22 +86,28 @@ export function next(repo: string, o: { restartStranded?: boolean } = {}): Plan 
 
 export type Started = { id: string; lane: Lane; brief: string; cwd: string; model: string; prompt: string };
 
-/** The worktree of a job's first Build: kitchen/<id> from staging's tip (or the base when there is no staging yet). */
+/** The worktree of a job's first Build: kitchen/<id> from its target's tip (or the base when there is no staging yet). */
 async function ensureWorktree(repo: string, cfg: Config, job: Job): Promise<{ wt: string; base: string }> {
   const wt = worktreeOf(repo, job.id);
   if (fs.existsSync(path.join(wt, ".git"))) return { wt, base: job.base || (await gitOut(wt, ["rev-parse", "HEAD"])) };
   if (await branchExists(repo, job.branch)) {
     await git(repo, ["worktree", "add", "-q", wt, job.branch]);
-    return { wt, base: job.base || (await gitOut(repo, ["merge-base", job.branch, cfg.staging.branch]).catch(() => "")) };
+    return { wt, base: job.base || (await gitOut(repo, ["merge-base", job.branch, targetOf(cfg, job)]).catch(() => "")) };
   }
-  const base = await baseCommit(repo, cfg);
+  const base = await baseCommit(repo, cfg, job);
   await git(repo, ["worktree", "add", "-q", "-b", job.branch, wt, base]);
   return { wt, base };
 }
 
-/** What a job's first Build starts from: staging's tip, else `staging.base`, else HEAD. */
-async function baseCommit(repo: string, cfg: Config): Promise<string> {
-  const base = (await stagingTip(repo, cfg)) ?? (await revParse(repo, cfg.staging.base)) ?? (await revParse(repo, "HEAD"));
+/**
+ * What a job's first Build starts from: its target's tip (ADR 0026 §2). For staging, before there is one,
+ * `staging.base`, else HEAD; a named target that is gone is an error (Kitchen never creates one).
+ */
+async function baseCommit(repo: string, cfg: Config, job: Pick<Job, "target">): Promise<string> {
+  const target = targetOf(cfg, job);
+  const tip = await targetTip(repo, cfg, target);
+  if (!tip && target !== cfg.staging.branch) throw new Error(`there is no branch ${target} (the job's target) to start from`);
+  const base = tip ?? (await revParse(repo, cfg.staging.base)) ?? (await revParse(repo, "HEAD"));
   if (!base) throw new Error("the repo has no commit to branch from");
   return base;
 }
@@ -94,9 +116,9 @@ async function baseCommit(repo: string, cfg: Config): Promise<string> {
  * ADR 0025 §1: intake reads the base Build would start from, never the person's checkout (it may be on another
  * branch): a detached checkout of it under .kitchen/intake/<id>, made fresh for each intake lane.
  */
-async function intakeCheckout(repo: string, cfg: Config, id: string): Promise<{ wt: string; base: string }> {
-  const wt = intakeCheckoutOf(repo, id);
-  const base = await baseCommit(repo, cfg);
+async function intakeCheckout(repo: string, cfg: Config, job: Job): Promise<{ wt: string; base: string }> {
+  const wt = intakeCheckoutOf(repo, job.id);
+  const base = await baseCommit(repo, cfg, job);
   await dropTrial(repo, wt);
   await git(repo, ["worktree", "add", "-q", "--detach", wt, base]);
   return { wt, base };
@@ -112,7 +134,8 @@ const fence = (s: string) => {
 };
 
 /** What the previous round left for this lane: red checks, QA's FAIL rows, blocking findings, a refused file. */
-function earlier(dir: string, job: Job): string {
+function earlier(cfg: Config, dir: string, job: Job): string {
+  const target = targetOf(cfg, job);
   const parts: string[] = [];
   for (let r = job.round - 1; r >= Math.max(1, job.round - 2); r--) {
     const rd = roundDir(dir, r);
@@ -134,11 +157,11 @@ function earlier(dir: string, job: Job): string {
       const rows = failedFeatures(rg);
       if (rows.length)
         parts.push(
-          `Round ${r}: before the merge, Kitchen drove the features your change touches on staging with it merged, and they FAILED (evidence in ${path.relative(dir, regressDir(dir, r))}/; recipes in the verify skill's features/):\n${rows.map((x) => `- ${x.id}: ${x.note} (${x.evidence.join(", ")})`).join("\n")}\nYour change broke what another job built: fix it so both work.`,
+          `Round ${r}: before the merge, Kitchen drove the features your change touches on ${target} with it merged, and they FAILED (evidence in ${path.relative(dir, regressDir(dir, r))}/; recipes in the verify skill's features/):\n${rows.map((x) => `- ${x.id}: ${x.note} (${x.evidence.join(", ")})`).join("\n")}\nYour change broke what another job built: fix it so both work.`,
         );
     }
     const m = path.join(rd, "merge.txt");
-    if (fs.existsSync(m)) parts.push(`Round ${r}: the merge into staging failed: ${fs.readFileSync(m, "utf8").trim()}`);
+    if (fs.existsSync(m)) parts.push(`Round ${r}: the merge into ${target} failed: ${fs.readFileSync(m, "utf8").trim()}`);
   }
   const ck = path.join(roundDir(dir, job.round), "checks.json");
   if (fs.existsSync(ck)) {
@@ -199,10 +222,10 @@ function redriveNote(dir: string, job: Job): string {
 }
 
 /** The brief's note on the checks that run only on the trial merge (ADR 0021), or "". */
-function mergeOnly(cfg: Config): string {
+function mergeOnly(cfg: Config, job: Job): string {
   const m = cfg.checkList.filter((c) => c.when === "merge");
   if (!m.length) return "";
-  return `; on the trial merge into ${cfg.staging.branch} only: ${m.map((c) => `\`${c.run}\`${c.needsApp ? " (with the app running, its URL in $BASE_URL)" : ""}`).join(", ")}`;
+  return `; on the trial merge into ${targetOf(cfg, job)} only: ${m.map((c) => `\`${c.run}\`${c.needsApp ? " (with the app running, its URL in $BASE_URL)" : ""}`).join(", ")}`;
 }
 
 function brief(
@@ -247,9 +270,10 @@ function brief(
     lane === "intake"
       ? ""
       : lane === "regress" && job.drive
-        ? `- The merged result (drive it, change nothing): ${o.wt}: ${cfg.staging.branch} at ${job.drive.onto.slice(0, 12)} with ${job.branch} (${job.drive.head.slice(0, 12)}) merged as ${job.drive.sha.slice(0, 12)}`
+        ? `- The merged result (drive it, change nothing): ${o.wt}: ${targetOf(cfg, job)} at ${job.drive.onto.slice(0, 12)} with ${job.branch} (${job.drive.head.slice(0, 12)}) merged as ${job.drive.sha.slice(0, 12)}`
         : `- Worktree (work only here): ${o.wt} on branch ${job.branch}, from ${o.base.slice(0, 12)}`,
     `- Job folder: ${dir}`,
+    job.target ? `- Target: ${job.target} (the ticket named it): the work starts from it and merges into it, not ${cfg.staging.branch}` : "",
     lane === "review" && o.head ? `- Review this commit: ${o.head} (diff: \`git diff ${o.base}...${o.head}\`)` : "",
     lane === "qa" || lane === "review" ? `- QA folder: ${qd}/` : "",
     lane === "regress" ? `- Evidence folder: ${regressDir(dir, job.round)}/ (\`kitchen qa\` saves there while the job is in regress)` : "",
@@ -257,7 +281,7 @@ function brief(
       checksFor(cfg, "build")
         .map((c) => `\`${c.run}\``)
         .join(", ") || "none"
-    }${mergeOnly(cfg)}`,
+    }${mergeOnly(cfg, job)}`,
     `- The app: ${app}`,
     `- Your output: ${out[lane]}`,
     "",
@@ -272,9 +296,9 @@ function brief(
     crit.length && lane !== "intake" && lane !== "regress" ? `## Criteria (fixed)\n\n${crit.map((c) => `- ${c.id} (${c.check}): ${c.text}`).join("\n")}\n` : "",
     o.others ?? "",
     o.notes,
-    lane === "build" && o.caught ? stagingMoved(cfg, o.caught) : "",
+    lane === "build" && o.caught ? targetMoved(targetOf(cfg, job), o.caught) : "",
     lane === "build" || lane === "review" ? catchUpNote(cfg, dir, job, lane, o.head) : "",
-    lane === "build" || lane === "intake" ? earlier(dir, job) : "",
+    lane === "build" || lane === "intake" ? earlier(cfg, dir, job) : "",
     lane === "qa" || lane === "regress" ? refusedNote(dir) : "",
     lane === "qa" ? redriveNote(dir, job) : "",
     o.map ?? "",
@@ -286,9 +310,8 @@ function brief(
   return `${lines.filter((l) => l !== "").join("\n")}\n`;
 }
 
-/** The builder's note when Kitchen merged staging's tip into the job branch before this round. */
-function stagingMoved(cfg: Config, c: CatchUp): string {
-  const s = cfg.staging.branch;
+/** The builder's note when Kitchen merged the target's tip into the job branch before this round. */
+function targetMoved(s: string, c: CatchUp): string {
   if (c.merged === "clean")
     return `## ${s} moved\n\nKitchen merged ${s} (${c.tip.slice(0, 12)}) into your branch: other jobs' changes are in. Build on them; don't undo them.\n`;
   if (c.merged === "conflict")
@@ -302,7 +325,7 @@ function stagingMoved(cfg: Config, c: CatchUp): string {
  */
 function catchUpNote(cfg: Config, dir: string, job: Job, lane: Lane, head?: string): string {
   if (!job.catchUps) return "";
-  const s = cfg.staging.branch;
+  const s = targetOf(cfg, job);
   if (lane === "build")
     return `## A catch-up, not a new round\n\nRound ${job.round - 1} passed QA and review; only the merge into ${s} failed, because ${s} moved under it (catch-up ${job.catchUps} of ${CATCH_UP_LIMIT}: it costs no round). Make the merge work: resolve it so both this job's change and the other jobs' changes work, and fix only what the merged result breaks (why it failed is under "Earlier rounds"). Change nothing else: no new behaviour, no refactors, no clean-ups.\n`;
   const r = job.reviewed;
@@ -367,9 +390,9 @@ export async function start(
   let caught: CatchUp | null = null;
   if (lane === "build") {
     ({ wt, base } = await ensureWorktree(repo, cfg, job));
-    // A later round (QA or review sent it back, or the merge conflicted): rebuild on staging as it is now.
+    // A later round (QA or review sent it back, or the merge conflicted): rebuild on the target as it is now.
     if (job.base) {
-      caught = await catchUpWithStaging(repo, cfg, wt, job);
+      caught = await catchUpWithTarget(repo, cfg, wt, job);
       if (caught && caught.merged !== "already") base = caught.tip;
     }
   } else if (lane === "regress") {
@@ -380,7 +403,7 @@ export async function start(
       await dropTrial(repo, wt);
       await git(repo, ["worktree", "add", "-q", "--detach", wt, d.sha]);
     }
-  } else if (lane === "intake") ({ wt, base } = await intakeCheckout(repo, cfg, job.id));
+  } else if (lane === "intake") ({ wt, base } = await intakeCheckout(repo, cfg, job));
   else {
     wt = worktreeOf(repo, job.id);
     if (!fs.existsSync(path.join(wt, ".git"))) {
@@ -595,7 +618,7 @@ export async function finish(repo: string, id: string): Promise<Finished | { ref
       return refuseLane(
         repo,
         job,
-        `${job.branch} doesn't contain ${cfg.staging.branch}'s ${job.base.slice(0, 7)}: conclude the merge Kitchen started (resolve, git add, git commit)`,
+        `${job.branch} doesn't contain ${targetOf(cfg, job)}'s ${job.base.slice(0, 7)}: conclude the merge Kitchen started (resolve, git add, git commit)`,
       );
     const ahead = Number(await gitOut(repo, ["rev-list", "--count", `${job.base}..${job.branch}`]));
     if (!ahead) return refuseLane(repo, job, `${job.branch} has no commit since ${job.base.slice(0, 7)}: nothing was built`);
@@ -604,7 +627,7 @@ export async function finish(repo: string, id: string): Promise<Finished | { ref
       return refuseLane(
         repo,
         job,
-        `the build changed the verify skill (${edits.slice(0, 3).join(", ")}): builders never edit verify-*/, QA keeps the map. Put those files back as they were on ${cfg.staging.branch} and commit`,
+        `the build changed the verify skill (${edits.slice(0, 3).join(", ")}): builders never edit verify-*/, QA keeps the map. Put those files back as they were on ${targetOf(cfg, job)} and commit`,
       );
     const rd = roundDir(dir, job.round);
     // ADR 0021: `when: merge` checks (an e2e suite) wait for the trial merge.
@@ -702,7 +725,10 @@ async function dropDrive(repo: string, job: Job) {
   await git(repo, ["update-ref", "-d", driveRef(job.id)], { allowFail: true });
 }
 
-/** Review passed: merge into staging, or stop at Ready for a person (high risk, a large diff, auto-merge off). */
+/**
+ * Review passed: merge into the job's target, or stop at Ready for a person (high risk, a large diff, auto-merge
+ * off). ADR 0026 §4: with `staging.merge: pr` nothing is held: the PR itself waits for a person.
+ */
 async function mergeOrHold(repo: string, cfg: Config, job: Job, head: string): Promise<Finished | { refused: string }> {
   const size = await diffSize(repo, job.base, head);
   const hot = size.files.map((f) => f.p).filter((p) => cfg.high_paths.some((g) => matchPath(g, p)));
@@ -715,29 +741,41 @@ async function mergeOrHold(repo: string, cfg: Config, job: Job, head: string): P
         : size.lines > cfg.staging.max_lines
           ? `${size.lines} changed lines, over ${cfg.staging.max_lines}: a person reviews a change this big`
           : null;
-  if (hold) return moveOn(repo, job, "ready", `${job.id}  review PASS → ready (${hold})`, { patch: (j) => Object.assign(j, { held: hold }) });
+  if (hold && cfg.staging.merge === "kitchen")
+    return moveOn(repo, job, "ready", `${job.id}  review PASS → ready (${hold})`, { patch: (j) => Object.assign(j, { held: hold }) });
   return gateMerge(repo, cfg, job, head);
 }
 
 /**
  * `kitchen merge <id>`: a person merges a job held at Ready. The same gate as an auto-merge (the map backstop, the
- * trial merge on staging's tip, every check, the merge check lane when features are touched, compare-and-swap, the
+ * trial merge on the target's tip, every check, the merge check lane when features are touched, compare-and-swap, the
  * PR on GitHub, the issue comment), without the hold: the person said yes. A conflict or red checks go back to
- * Build as after a review; what only blocks the move (staging checked out, the branch moved) leaves it at Ready.
+ * Build as after a review; what only blocks the move (the target checked out, the branch moved) leaves it at Ready.
+ * A job whose PR is open (staging.merge: pr) is merged on GitHub, never here.
  */
 export async function mergeHeld(repo: string, id: string): Promise<Finished | { refused: string }> {
   const cfg = loadConfig(repo);
   const job = findJob(repo, id);
   if (job.archived) return { refused: `${job.id} was removed (kitchen restore shows it again)` };
   if (job.stage !== "ready") return { refused: `${job.id} is ${job.stage}: kitchen merge takes a job held at Ready (kitchen status shows it ready(held))` };
+  if (prOpen(job))
+    return { refused: `${job.id} waits on its PR #${job.pr?.number}${job.pr?.url ? ` (${job.pr.url})` : ""}: merge it on GitHub (staging.merge: pr)` };
   const head = job.reviewed?.head ?? (await revParse(repo, job.branch));
   if (!head) return { refused: `${job.id} has no branch ${job.branch} to merge` };
   return gateMerge(repo, cfg, job, head, "person");
 }
 
+/** The PR's body (ADR 0026 §4): the merge check's result, then the Report (screenshots named, not inlined). */
+function prBodyOf(repo: string, cfg: Config, job: Job, c: { onto: string; sha: string }, diff?: { p: string; a: number; d: number }[]): string {
+  const target = targetOf(cfg, job);
+  const check = `**Merge check:** merged onto \`${target}\` at ${c.onto.slice(0, 12)}, every check passed on the result (${c.sha.slice(0, 12)}). Kitchen re-runs it when \`${target}\` moves and never merges this PR itself.`;
+  return `${check}\n\n${prReport(repo, { ...job, stage: "ready", held: PR_OPEN_WORDS, pr: { number: 0, url: "", ...job.pr, state: "open" } }, diff)}`;
+}
+
 /** The merge gate after the hold: an auto-merge (the orchestrator) or a person's yes (`kitchen merge`). */
 async function gateMerge(repo: string, cfg: Config, job: Job, head: string, who: Who = "orchestrator"): Promise<Finished | { refused: string }> {
   const dir = jobDirOf(repo, job.id);
+  const target = targetOf(cfg, job);
   const by = who === "person" ? ({ by: "person" } as const) : {};
   // The backstop for ADR 0017 §4: whatever path a map change took into the branch, it may not weaken an earlier check.
   const changes = changesOf(dir);
@@ -752,18 +790,24 @@ async function gateMerge(repo: string, cfg: Config, job: Job, head: string, who:
         .join("; ")}): put those recipes back`,
     });
   const log = path.join(roundDir(dir, job.round), "merge.log");
-  const m = await mergeToStaging(repo, cfg, job, head, { log, gate: (t) => touchedBy(repo, t), onCheck: checking(repo, job.id, log) });
+  const diff = (await diffSize(repo, job.base, head).catch(() => null))?.files;
+  const m = await mergeToTarget(repo, cfg, job, head, {
+    log,
+    gate: (t) => touchedBy(repo, t),
+    onCheck: checking(repo, job.id, log),
+    prBody: (c) => prBodyOf(repo, cfg, job, c, diff),
+  });
   const said = who === "person" ? "you said merge" : "review PASS";
-  if (m.ok) return merged(repo, cfg, job, m, `${said} → `, who);
+  if (m.ok) return m.via === "pr" ? prOpened(repo, cfg, job, m, head, `${said} → `, who) : merged(repo, cfg, job, m, `${said} → `, who);
   if (m.drive) {
     await git(repo, ["update-ref", driveRef(job.id), m.drive.sha]);
     const drive = { ...m.drive, head, ...by };
-    return moveOn(repo, job, "regress", `${job.id}  ${said} → regress: drive ${m.drive.features.join(", ")} on ${cfg.staging.branch} with this job merged`, {
+    return moveOn(repo, job, "regress", `${job.id}  ${said} → regress: drive ${m.drive.features.join(", ")} on ${target} with this job merged`, {
       who,
       patch: (j) => Object.assign(j, { drive }),
     });
   }
-  // Nothing to build again (staging checked out, the branch moved): a held job stays held, and the person hears why.
+  // Nothing to build again (the target checked out, the branch moved): a held job stays held, and the person hears why.
   if (who === "person" && !m.back) return { refused: `${job.id} not merged: ${m.why}` };
   return mergeFailed(repo, job, { ...m, who }, head);
 }
@@ -776,19 +820,50 @@ async function merged(
   extra = "review PASS → ",
   who: Who = "orchestrator",
 ): Promise<Finished> {
-  const f = await moveOn(repo, job, "done", `${job.id}  ${extra}merged into ${cfg.staging.branch} (${m.sha.slice(0, 7)}${m.pr ? `, PR #${m.pr}` : ""})`, {
+  const target = targetOf(cfg, job);
+  const f = await moveOn(repo, job, "done", `${job.id}  ${extra}merged into ${target} (${m.sha.slice(0, 7)}${m.pr ? `, PR #${m.pr}` : ""})`, {
     who,
     patch: (j) => {
-      j.merged = { into: cfg.staging.branch, sha: m.sha, at: new Date().toISOString(), via: m.via };
+      j.merged = { into: target, sha: m.sha, at: new Date().toISOString(), via: m.via === "local" ? "local" : "github" };
       // A person's yes lands now, or after the merge check lane it needed (its trial merge carries the yes).
       if (who === "person" || j.drive?.by === "person") j.mergedBy = "person";
-      if (m.pr) j.pr = m.pr;
+      if (m.pr) j.pr = { number: m.pr, url: m.url ?? "", state: "merged" };
       delete j.drive;
     },
   });
   // ADR 0022 §5: a job from a GitHub issue says on the issue that it merged (best effort; never closes it).
   const said = await commentOnMerge(repo, findJob(repo, job.id)).catch(() => []);
   return said.length ? { ...f, line: `${f.line}; ${said.join("; ")}` } : f;
+}
+
+/**
+ * ADR 0026 §4: the merge check passed and the PR into the target is open (or updated): the job waits at Ready for a
+ * person to merge it on GitHub. A job already there (its target moved, `syncPrs` re-ran the check) stays.
+ */
+async function prOpened(
+  repo: string,
+  cfg: Config,
+  job: Job,
+  m: Extract<MergeOutcome, { ok: true }>,
+  head: string,
+  extra: string,
+  who: Who = "orchestrator",
+): Promise<Finished> {
+  const pr: JobPr = { number: m.pr ?? 0, url: m.url ?? "", state: "open", onto: m.onto ?? "", head };
+  const line = `${job.id}  ${extra}PR #${pr.number} into ${targetOf(cfg, job)}${pr.url ? ` (${pr.url})` : ""}, merge check green on ${(pr.onto ?? "").slice(0, 7)}: ${PR_OPEN_WORDS}`;
+  if (job.stage === "ready") {
+    const j = await updateJob(repo, job.id, (x) => ({ ...x, pr, held: PR_OPEN_WORDS, drive: undefined }));
+    writeReport(repo, j, { diff: (await diffSize(repo, j.base, j.branch).catch(() => null))?.files });
+    return { id: job.id, from: "ready" as Lane, to: null, line };
+  }
+  return moveOn(repo, job, "ready", line, {
+    who,
+    patch: (j) => {
+      j.pr = pr;
+      j.held = PR_OPEN_WORDS;
+      delete j.drive;
+    },
+  });
 }
 
 /** The round's checks were green on the job branch alone (Build's `job finish` ran them). */
@@ -801,7 +876,7 @@ function greenAlone(dir: string, round: number): boolean {
 }
 
 /**
- * Not merged: back to Build when the work needs it, else Ready for a person. ADR 0018: when only staging moving
+ * Not merged: back to Build when the work needs it, else Ready for a person. ADR 0018: when only the target moving
  * caused it (a conflict, or checks red on the merged result that were green on the branch), it is a catch-up that
  * costs no round; three in a row go to a person. Anything else back to Build is a round.
  */
@@ -814,33 +889,28 @@ async function mergeFailed(
   const who = m.who ?? "orchestrator";
   const dir = jobDirOf(repo, job.id);
   const cfg = loadConfig(repo);
+  const target = targetOf(cfg, job);
   // The red check's last lines go with it: the next builder reads them (an e2e suite's failure says what broke).
   writeAtomic(path.join(roundDir(dir, job.round), "merge.txt"), `${m.why}\n${m.tail ? `${fence(m.tail)}\n${m.tail}\n${fence(m.tail)}\n` : ""}`);
-  const stagingAhead = !!(m.onto && head) && (await git(repo, ["merge-base", "--is-ancestor", m.onto, head], { allowFail: true })).code !== 0;
-  if (m.back && isCatchUp({ cause: m.cause, greenAlone: greenAlone(dir, job.round), stagingAhead, mergeOnly: m.mergeOnly })) {
+  const targetAhead = !!(m.onto && head) && (await git(repo, ["merge-base", "--is-ancestor", m.onto, head], { allowFail: true })).code !== 0;
+  if (m.back && isCatchUp({ cause: m.cause, greenAlone: greenAlone(dir, job.round), stagingAhead: targetAhead, mergeOnly: m.mergeOnly })) {
     if (outOfCatchUps(job))
-      return moveOn(
-        repo,
-        job,
-        "needs-human",
-        `${job.id}  merge into ${cfg.staging.branch} failed: ${m.why}, ${CATCH_UP_LIMIT} catch-ups already → needs-human`,
-        {
-          who,
-          reason: `${cfg.staging.branch} keeps moving under it (${CATCH_UP_LIMIT} catch-ups)`,
-          patch: (j) => delete j.drive,
-        },
-      );
+      return moveOn(repo, job, "needs-human", `${job.id}  merge into ${target} failed: ${m.why}, ${CATCH_UP_LIMIT} catch-ups already → needs-human`, {
+        who,
+        reason: `${target} keeps moving under it (${CATCH_UP_LIMIT} catch-ups)`,
+        patch: (j) => delete j.drive,
+      });
     return moveOn(
       repo,
       job,
       "build",
-      `${job.id}  merge into ${cfg.staging.branch} failed: ${m.why} → build (catch-up ${(job.catchUps ?? 0) + 1} of ${CATCH_UP_LIMIT}, no round spent)`,
+      `${job.id}  merge into ${target} failed: ${m.why} → build (catch-up ${(job.catchUps ?? 0) + 1} of ${CATCH_UP_LIMIT}, no round spent)`,
       { who, catchUp: true, patch: (j) => delete j.drive },
     );
   }
   // From Ready (a person's merge) the round starts a fresh budget, as a follow-up does.
   if (m.back && (job.stage === "ready" || !outOfRounds(job)))
-    return moveOn(repo, job, "build", `${job.id}  merge into ${cfg.staging.branch} failed: ${m.why} → build (round ${job.round + 1})`, {
+    return moveOn(repo, job, "build", `${job.id}  merge into ${target} failed: ${m.why} → build (round ${job.round + 1})`, {
       who,
       patch: (j) => delete j.drive,
     });
@@ -854,8 +924,8 @@ async function mergeFailed(
 
 /**
  * ADR 0017 §3: the regress lane drove the touched features on the trial merge. Red goes back to Build with the
- * evidence; green lands that exact merge if staging hasn't moved, else Kitchen merges again and, when the new merge
- * touches features too, the lane drives them again.
+ * evidence; green lands that exact merge if the target hasn't moved, else Kitchen merges again and, when the new merge
+ * touches features too, the lane drives them again. With `staging.merge: pr`, green opens the PR instead.
  */
 async function finishRegress(repo: string, cfg: Config, job: Job): Promise<Finished> {
   const dir = jobDirOf(repo, job.id);
@@ -877,20 +947,23 @@ async function finishRegress(repo: string, cfg: Config, job: Job): Promise<Finis
     });
   }
   const log = path.join(roundDir(dir, job.round), "merge.log");
-  const m = await mergeToStaging(repo, cfg, job, d.head, {
+  const diff = (await diffSize(repo, job.base, d.head).catch(() => null))?.files;
+  const m = await mergeToTarget(repo, cfg, job, d.head, {
     log,
     gate: (t) => touchedBy(repo, t),
     drove: { onto: d.onto, sha: d.sha },
     onCheck: checking(repo, job.id, log),
+    prBody: (c) => prBodyOf(repo, cfg, job, c, diff),
   });
   if (m.ok) {
     await dropDrive(repo, job);
-    return merged(repo, cfg, job, m, `regress PASS (${d.features.join(", ")}) → `);
+    const said = `regress PASS (${d.features.join(", ")}) → `;
+    return m.via === "pr" ? prOpened(repo, cfg, job, m, d.head, said) : merged(repo, cfg, job, m, said);
   }
   if (m.drive) {
-    // Staging moved while the features were driven: this is the new merge, drive it again (no new round).
+    // The target moved while the features were driven: this is the new merge, drive it again (no new round).
     await git(repo, ["update-ref", driveRef(job.id), m.drive.sha]);
-    const line = `${job.id}  regress PASS, but ${cfg.staging.branch} moved meanwhile: drive ${m.drive.features.join(", ")} again on the new merge`;
+    const line = `${job.id}  regress PASS, but ${targetOf(cfg, job)} moved meanwhile: drive ${m.drive.features.join(", ")} again on the new merge`;
     await closeRun(repo, job, true, line);
     await updateJob(repo, job.id, (j) => ({
       ...j,
@@ -901,6 +974,89 @@ async function finishRegress(repo: string, cfg: Config, job: Job): Promise<Finis
   }
   await dropDrive(repo, job);
   return mergeFailed(repo, job, m, d.head);
+}
+
+/** How often `syncPrs` asks GitHub about open PRs, per repo (`kitchen job next` and the dashboard both call it). */
+export const PR_SYNC_SECS = 60;
+const prSyncFile = (repo: string) => path.join(kitchenDir(repo), "pr-sync.json");
+
+/**
+ * ADR 0026 §4: what became of the PRs Kitchen opened (`staging.merge: pr`). For each job waiting on an open PR:
+ * merged on GitHub → Done (merged, mergedBy github, the issue comment); closed → Rejected; still open and its target
+ * moved since the last merge check → the check re-runs on the new tip (green: the PR is updated; a conflict or a red
+ * the target caused: a catch-up; its own red: back to Build). At most once per PR_SYNC_SECS per repo unless `force`.
+ */
+export async function syncPrs(repo: string, o: { force?: boolean; now?: number } = {}): Promise<string[]> {
+  const now = o.now ?? Date.now();
+  let cfg: Config;
+  try {
+    cfg = loadConfig(repo);
+  } catch {
+    return [];
+  }
+  const waiting = listJobs(repo).filter((j) => !j.archived && prOpen(j));
+  if (!waiting.length) return [];
+  if (!o.force) {
+    try {
+      const last = (JSON.parse(fs.readFileSync(prSyncFile(repo), "utf8")) as { at: number }).at;
+      if (now - last < PR_SYNC_SECS * 1000) return [];
+    } catch {}
+  }
+  fs.mkdirSync(kitchenDir(repo), { recursive: true });
+  writeAtomic(prSyncFile(repo), JSON.stringify({ at: now }));
+  const lines: string[] = [];
+  for (const job of waiting) lines.push(...(await syncPr(repo, cfg, job).catch((e) => [`${job.id}  PR #${job.pr?.number}: ${(e as Error).message}`])));
+  return lines;
+}
+
+async function syncPr(repo: string, cfg: Config, job: Job): Promise<string[]> {
+  const pr = job.pr as JobPr;
+  const target = targetOf(cfg, job);
+  const v = await realGh(["pr", "view", String(pr.number), "--json", "state,mergedAt,mergeCommit"], repo);
+  if (v.code) return [`${job.id}  couldn't read PR #${pr.number}: ${v.stderr.trim().split("\n").pop()}`];
+  const s = JSON.parse(v.stdout) as { state?: string; mergedAt?: string | null; mergeCommit?: { oid?: string } | null };
+  if (s.state === "MERGED") {
+    const sha = s.mergeCommit?.oid ?? "";
+    const line = `${job.id}  PR #${pr.number} merged on GitHub into ${target} (${sha.slice(0, 7)})`;
+    const moved = await moveJob(repo, job.id, "done", {
+      who: "person",
+      check: (j) => (prOpen(j) ? null : `${j.id} is no longer waiting on its PR`),
+      patch: (j) => {
+        j.merged = { into: target, sha, at: s.mergedAt ?? new Date().toISOString(), via: "github" };
+        j.mergedBy = "github";
+        j.pr = { ...pr, state: "merged" };
+        delete j.held;
+      },
+    });
+    writeReport(repo, moved, { diff: (await diffSize(repo, moved.base, moved.branch).catch(() => null))?.files });
+    const said = await commentOnMerge(repo, findJob(repo, job.id)).catch(() => []);
+    return [said.length ? `${line}; ${said.join("; ")}` : line];
+  }
+  if (s.state === "CLOSED") {
+    const moved = await moveJob(repo, job.id, "rejected", {
+      who: "person",
+      reason: `PR #${pr.number} closed on GitHub without merging`,
+      check: (j) => (prOpen(j) ? null : `${j.id} is no longer waiting on its PR`),
+      patch: (j) => {
+        j.pr = { ...pr, state: "closed" };
+        delete j.held;
+      },
+    });
+    writeReport(repo, moved);
+    return [`${job.id}  PR #${pr.number} closed on GitHub without merging → rejected`];
+  }
+  // Still open: re-run the merge check when the target moved since the last one.
+  const tip = await targetTip(repo, cfg, target);
+  if (!tip || tip === pr.onto || !pr.head) return [];
+  const dir = jobDirOf(repo, job.id);
+  const log = path.join(roundDir(dir, job.round), "merge.log");
+  const diff = (await diffSize(repo, job.base, pr.head).catch(() => null))?.files;
+  const m = await mergeToTarget(repo, cfg, job, pr.head, { log, onCheck: checking(repo, job.id, log), prBody: (c) => prBodyOf(repo, cfg, job, c, diff) });
+  const why = `${target} moved (${(pr.onto ?? "").slice(0, 7)} → ${tip.slice(0, 7)}) while PR #${pr.number} was open`;
+  if (m.ok && m.via === "pr") return [(await prOpened(repo, cfg, job, m, pr.head, `${why}: merge check re-run → `)).line];
+  if (m.ok) return [];
+  if (!m.back) return [`${job.id}  ${why}: merge check not re-run: ${m.why}`];
+  return [(await mergeFailed(repo, job, m, pr.head)).line];
 }
 
 export function show(repo: string, id: string): Record<string, unknown> {

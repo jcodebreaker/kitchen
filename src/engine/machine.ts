@@ -44,6 +44,11 @@ export type JobFrom = {
   refs: { source: string; kind: string; ref: string; url?: string }[];
 };
 
+export type JobPr = { number: number; url: string; state?: "open" | "merged" | "closed"; onto?: string; head?: string };
+/** ADR 0026 §4: Ready because its PR waits for a person on GitHub (staging.merge: pr). */
+export const prOpen = (j: Pick<Job, "stage" | "pr">) => j.stage === "ready" && j.pr?.state === "open";
+export const PR_OPEN_WORDS = "PR open · waiting for review";
+
 /** One lane agent's run, as `kitchen job start` opened it and `kitchen job finish` closed it. */
 export type AgentRunRef = {
   key: string;
@@ -88,7 +93,14 @@ export type Job = {
   base: string;
   branch: string;
   worktree: string;
-  pr: number | null;
+  /** ADR 0026 §1: the branch it merges into, as its ticket named it (`kitchen ticket --into`); absent: staging.branch. */
+  target?: string;
+  /**
+   * Its pull request into the target, once Kitchen opened one. ADR 0026 §4 (`staging.merge: pr`): `state` open while
+   * it waits at Ready for a person to merge it on GitHub; `onto` and `head` are the target's tip the last merge check
+   * ran on and the head it pushed (a moved target re-runs the check).
+   */
+  pr: JobPr | null;
   /** Files intake expects the change to touch (a hint for the brief; jobs sharing files still run side by side). */
   files?: string[];
   /** Jobs this one waits for (intake's AFTER: line). */
@@ -113,8 +125,11 @@ export type Job = {
   mapCommits?: string[];
   /** Where it was merged: staging's new tip, how (local or the PR). */
   merged?: { into: string; sha: string; at: string; via: "local" | "github" };
-  /** A person merged it from Ready (`kitchen merge`, the dashboard's Merge into staging); absent: Kitchen auto-merged it. */
-  mergedBy?: "person";
+  /**
+   * A person merged it from Ready (`kitchen merge`, the dashboard's Merge into staging), or on GitHub (its PR, ADR
+   * 0026 §4); absent: Kitchen auto-merged it.
+   */
+  mergedBy?: "person" | "github";
   /**
    * ADR 0020: what a needs-info job waits for beyond an answer. `refine`: intake sent the ticket to be refined with
    * its author (`kitchen refine`); `confirm`: intake accepted it and `intake.confirm` holds it for `kitchen approve`.

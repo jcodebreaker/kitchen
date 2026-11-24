@@ -103,7 +103,9 @@ export const ACTIONS: Record<string, (repo: string, b: Body, out: Out) => Promis
   ticket: (repo, b, out) => {
     const t = textOf(b);
     if (!t.trim()) throw new BadRequest("text: what you want done");
-    return control.ticket(repo, t, out);
+    // ADR 0026: `into`, the branch it merges into (absent: staging).
+    if (b.into !== undefined && typeof b.into !== "string") throw new BadRequest("into: a branch name");
+    return control.ticket(repo, t, out, { into: b.into || undefined });
   },
   /** ADR 0022: Collect, `kitchen collect --detach`; the page follows it in /inbox.json. */
   collect: (repo, _b, out) => {

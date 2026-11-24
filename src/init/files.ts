@@ -78,6 +78,8 @@ agent: { tool: ${tool} }
 round_limit: 3   # Build → QA → Review rounds before a person is asked
 parallel: 4      # lane agents at once (intake lanes are never held for room)
 # Passing jobs merge into staging (never ${base}); high risk or over max_lines stops at Ready for you.
+# merge: kitchen (Kitchen merges) or pr (Kitchen opens a PR with the Report, a person merges it; needs forge github).
+# A ticket can name another target: kitchen ticket --into <branch>.
 staging: { branch: staging, base: ${JSON.stringify(base)}, max_lines: 400 }
 `;
 

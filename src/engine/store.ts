@@ -137,7 +137,8 @@ export const JobSchema = z.looseObject({
   base: z.string(),
   branch: z.string(),
   worktree: z.string(),
-  pr: z.number().int().nullable(),
+  target: z.string().min(1).optional(),
+  pr: z.looseObject({ number: z.number().int(), url: z.string(), state: z.enum(["open", "merged", "closed"]).optional() }).nullable(),
   files: z.array(z.string()).optional(),
   after: z.array(z.string()).optional(),
   running: z.looseObject({ lane: z.enum(["intake", "build", "qa", "review", "regress"]), at: z.string(), key: z.string() }).nullable(),
@@ -161,6 +162,8 @@ export function upgradeJob(raw: Record<string, unknown>): Record<string, unknown
   const j = { ...raw };
   for (const k of ["stage", "pausedFrom", "escalatedFrom"]) if (typeof j[k] === "string" && OLD_STAGE[j[k] as string]) j[k] = OLD_STAGE[j[k] as string];
   if (j.running && typeof j.running === "object" && !("lane" in (j.running as object))) j.running = null;
+  // ADR 0026: `pr` was the PR's number; it is { number, url } now.
+  if (typeof j.pr === "number") j.pr = { number: j.pr, url: "" };
   if (Array.isArray(j.agentRuns))
     j.agentRuns = (j.agentRuns as Record<string, unknown>[]).map((r) => ({
       ...r,
@@ -226,7 +229,7 @@ export function findJob(repo: string, ref: string): Job {
   return hit;
 }
 
-export type NewJob = { title: string; ticket: TicketRef; body: string; roundLimit: number; now?: Date; from?: JobFrom };
+export type NewJob = { title: string; ticket: TicketRef; body: string; roundLimit: number; now?: Date; from?: JobFrom; target?: string };
 
 /** Create a job folder. Numbers are taken under a lock, so two `kitchen ticket`s never share one. */
 export async function createJob(repo: string, o: NewJob): Promise<Job> {
@@ -251,6 +254,7 @@ export async function createJob(repo: string, o: NewJob): Promise<Job> {
       base: "",
       branch: `kitchen/${id}`,
       worktree: "",
+      ...(o.target ? { target: o.target } : {}),
       pr: null,
       running: null,
       agentRuns: [],

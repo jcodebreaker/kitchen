@@ -9,7 +9,7 @@ import path from "node:path";
 import { afterAll, test } from "vitest";
 import { parseConfig } from "../config.ts";
 import type { Job } from "./machine.ts";
-import { assertNotProtected, ensureStaging, type Gh, mergeToStaging } from "./staging.ts";
+import { assertNotProtected, ensureStaging, type Gh, mergeToTarget } from "./staging.ts";
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kitchen-staging-"));
 afterAll(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -62,14 +62,14 @@ test("GitHub: staging made on origin from the base; a passing job's PR merged pi
   g(wt, "commit", "-qm", "b");
   const head = g(r, "rev-parse", "kitchen/001-x");
   const job = { id: "001-x", title: "add b", branch: "kitchen/001-x", pr: null } as unknown as Job;
-  const m = await mergeToStaging(r, cfg, job, head, { log: path.join(root, "merge.log"), gh });
+  const m = await mergeToTarget(r, cfg, job, head, { log: path.join(root, "merge.log"), gh });
   assert.deepEqual(m.ok && [m.via, m.pr], ["github", 7], JSON.stringify(m));
   const merge = calls.find((c) => c[1] === "merge") as string[];
   assert.deepEqual(merge, ["pr", "merge", "7", "--merge", "--match-head-commit", head]);
   assert.equal(execFileSync("git", ["--git-dir", origin, "show", "staging:b.txt"], { encoding: "utf8" }), "b\n");
   assert.throws(() => execFileSync("git", ["--git-dir", origin, "show", "main:b.txt"], { stdio: "ignore" }), "main never gets it");
   // A head that moved after review is refused before anything is pushed.
-  const stale = await mergeToStaging(r, cfg, job, "0".repeat(40), { log: path.join(root, "merge.log"), gh });
+  const stale = await mergeToTarget(r, cfg, job, "0".repeat(40), { log: path.join(root, "merge.log"), gh });
   assert.match(!stale.ok ? stale.why : "", /moved since review/);
 });
 

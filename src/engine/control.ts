@@ -22,6 +22,7 @@ import { readIntake } from "./lanes.ts";
 import { BY_YOU, BY_YOU_STOPPED, isActive, type Job, type JobFrom, MoveRefused, move, pausedByYou, STAGES, type Stage } from "./machine.ts";
 import { addMessage, checkText, type Message, type MessageKind } from "./messages.ts";
 import { numOf } from "./refine.ts";
+import { refuseTarget } from "./staging.ts";
 import { createJob, findJob, intakeCheckoutOf, jobDirOf, shortTitle, updateJob, worktreeOf, writeAtomic } from "./store.ts";
 
 export type Out = (line: string) => void;
@@ -61,21 +62,37 @@ export async function moveJob(
   return j;
 }
 
-export async function ticket(repo: string, text: string, out: Out): Promise<number> {
-  const job = await fileTicket(repo, text);
-  out(`ticket ${job.id}  "${job.title}"  → intake`);
+export async function ticket(repo: string, text: string, out: Out, o: { into?: string } = {}): Promise<number> {
+  let job: Job;
+  try {
+    job = await fileTicket(repo, text, { target: o.into });
+  } catch (e) {
+    if (!(e instanceof TargetRefused)) throw e;
+    out(`kitchen ticket: ${e.message}. Nothing filed.`);
+    return 1;
+  }
+  out(`ticket ${job.id}  "${job.title}"${job.target ? `  into ${job.target}` : ""}  → intake`);
   return 0;
 }
 
+/** A ticket's target (`--into`) that doesn't exist or that Kitchen never merges into (ADR 0026 §3). */
+export class TargetRefused extends Error {}
+
 /**
  * A new job from a person's ticket text: what `kitchen ticket` does, Kitchen for an intake's later slices, and
- * `kitchen inbox run` for a proposal the person chose (ADR 0022: its title and where it came from).
+ * `kitchen inbox run` for a proposal the person chose (ADR 0022: its title and where it came from). `target`: the
+ * branch it merges into (ADR 0026), checked here; staging's own name is the default and isn't stored.
  */
-export async function fileTicket(repo: string, text: string, o: { title?: string; from?: JobFrom } = {}): Promise<Job> {
+export async function fileTicket(repo: string, text: string, o: { title?: string; from?: JobFrom; target?: string } = {}): Promise<Job> {
   const cfg = loadConfig(repo);
+  const target = o.target?.trim() && o.target.trim() !== cfg.staging.branch ? o.target.trim() : undefined;
+  if (target) {
+    const why = await refuseTarget(repo, cfg, target);
+    if (why) throw new TargetRefused(why);
+  }
   const t = PromptSource.ticket(text);
   const title = (o.title && shortTitle(o.title)) || t.title;
-  const job = await createJob(repo, { title, ticket: t.ref, body: t.body, roundLimit: cfg.round_limit, from: o.from });
+  const job = await createJob(repo, { title, ticket: t.ref, body: t.body, roundLimit: cfg.round_limit, from: o.from, target });
   appendLedger(repo, { job: job.id, stage: "intake", round: 1, event: "ticket", key: `${job.id}/ticket` });
   return job;
 }
@@ -91,7 +108,8 @@ export async function fileSlices(repo: string, job: Job, texts: string[]): Promi
   let done = before;
   for (const text of texts.slice(done.length)) {
     const after = done.at(-1)?.id ?? job.id;
-    const t = await fileTicket(repo, `${text.replace(/[\s.]+$/, "")}. Comes after job ${numOf(after)}.`);
+    // A slice goes where its job goes (ADR 0026).
+    const t = await fileTicket(repo, `${text.replace(/[\s.]+$/, "")}. Comes after job ${numOf(after)}.`, { target: job.target });
     const filed = { text, id: t.id };
     done = (await updateJob(repo, job.id, (j) => ({ ...j, slices: [...(j.slices ?? []), filed] }))).slices ?? [];
   }
@@ -334,7 +352,7 @@ export async function remove(repo: string, ref: string, out: Out): Promise<numbe
     if (job.drive) await git(repo, ["update-ref", "-d", `refs/kitchen/drive/${job.id}`], { allowFail: true });
   }
   out(
-    `${job.id}  removed${lane ? ` (the ${lane} agent was stopped)` : ""}${merged ? " from view (it stays merged into staging)" : job.stage === "rejected" ? "" : ", rejected"}${gone}; kitchen restore ${numOf(job.id)} shows it again`,
+    `${job.id}  removed${lane ? ` (the ${lane} agent was stopped)` : ""}${merged ? ` from view (it stays merged into ${job.merged?.into ?? "staging"})` : job.stage === "rejected" ? "" : ", rejected"}${gone}; kitchen restore ${numOf(job.id)} shows it again`,
   );
   return 0;
 }

@@ -6,7 +6,7 @@ test("defaults: staging from main, 400 lines, four lanes at once, no app", () =>
   const c = parseConfig("");
   assert.equal(c.round_limit, 3);
   assert.equal(c.parallel, 4);
-  assert.deepEqual(c.staging, { branch: "staging", base: "main", max_lines: 400, auto_merge: true });
+  assert.deepEqual(c.staging, { branch: "staging", base: "main", max_lines: 400, auto_merge: true, merge: "kitchen" });
   assert.equal(c.app.start, "");
   assert.equal(appUrl(c.app), null);
   assert.equal(modelFor(c, "builder"), "opus");
