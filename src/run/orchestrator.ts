@@ -112,6 +112,14 @@ export async function run(repo: string, o: { detach?: boolean; stop?: boolean; p
     out(argv.map((a) => (/^[\w./:,=-]+$/.test(a) ? a : `'${a.replace(/'/g, "'\\''")}'`)).join(" "));
     return 0;
   }
+  // Inside the session `kitchen run` started (it sets KITCHEN_ORCHESTRATOR), that session is the orchestrator:
+  // starting another would find itself "already running" and the agent would stop working the queue.
+  if (process.env.KITCHEN_ORCHESTRATOR) {
+    out(
+      "kitchen run: this session is the orchestrator already. Don't start another: work the queue with `kitchen job next --json --restart-stranded` (the /kitchen skill, Running the queue).",
+    );
+    return 2;
+  }
   const live = liveRun(repo);
   if (live) {
     out(`orchestrator: already running (pid ${live.pid}, log ${live.log})`);

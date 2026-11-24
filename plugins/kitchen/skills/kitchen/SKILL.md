@@ -25,7 +25,7 @@ Run every command below from the repo root. (This plugin's skill is `/kitchen:ki
 |---|---|
 | set up Kitchen, first use | `kitchen init` (seconds; see Setup) |
 | "do X", "fix Y", "add Z" (a request for work) | `kitchen ticket "<the request>"` (see Tickets), then offer to run the queue |
-| `run`, start, "go", work the queue | be the orchestrator: Running the queue, below |
+| `run`, start, "go", work the queue, or your prompt is `/kitchen run` | be the orchestrator yourself: Running the queue, below. Never call `kitchen run` for this: it starts another session, and inside one `kitchen run` started it refuses |
 | what's happening, status, progress | `kitchen status` |
 | tell a job something: "tell 005 to keep the diff small" | `kitchen steer <id> "<their words>"` |
 | "hold 005", "pause it after this step" | `kitchen pause <id>` |
