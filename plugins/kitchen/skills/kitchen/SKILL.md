@@ -35,7 +35,7 @@ Run every command below from the repo root. (This plugin's skill is `/kitchen:ki
 | "stop 005 now" | `kitchen stop <id>` |
 | continue a paused or stopped job | `kitchen resume <id>` |
 | "merge 002", "ship 002 to staging" (a job `kitchen status` shows `ready(held)`) | `kitchen merge 002`: the same checks as an auto-merge (a trial merge on its target's tip, every check, the merge check when it touches features), into its target (staging unless its ticket named one), never main; a conflict or red checks send it back to Build |
-| a job `kitchen status` shows `ready(PR open)` | its PR waits for review on GitHub (`staging.merge: pr`): the user merges or closes it there, never `kitchen merge`. Kitchen notices within a minute (merged → done, closed → rejected) |
+| a job `kitchen status` shows `ready(PR open)` | its PR waits for review on GitHub (`staging.merge: pr`): the user merges or closes it there, never `kitchen merge`. Kitchen notices within a minute (merged → done, closed → rejected). `kitchen reject` or `kitchen remove` on it closes the PR on GitHub |
 | answer a job's question, "try again with …", follow up on a ready or merged job | `kitchen feedback <id> "<their answer>"` |
 | drop a job | `kitchen reject <id>` |
 | "remove 005", "get rid of it", "I don't want it on the dashboard" (any stage, even while it builds) | `kitchen remove <id>`: stops a working lane, rejects an unfinished job, removes its worktree; a merged one is only hidden. `kitchen restore <id>` brings it back in view |

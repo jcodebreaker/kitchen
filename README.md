@@ -84,7 +84,7 @@ A job whose QA and review pass is merged into `staging`, after Kitchen runs your
 
 **Another target.** `kitchen ticket --into feature/checkout "…"` aims one job at an existing branch: its Build starts from that branch, its checks and merge check run on it, and it merges there. Staging is untouched.
 
-**Who merges.** `staging.merge: kitchen` (the default for a local repo): Kitchen merges a passing job. `staging.merge: pr` (what `kitchen init` sets when origin is on GitHub): after the merge check passes, Kitchen pushes the job branch and opens a PR into the target with the Report as its body; the job waits under Needs you as "PR open · waiting for review" and a person merges it on GitHub, under your review, CI and branch protection. Kitchen sees it merged (Done) or closed (Rejected) within a minute, and re-runs the merge check when the target moves under an open PR.
+**Who merges.** `staging.merge: kitchen` (the default for a local repo): Kitchen merges a passing job. `staging.merge: pr` (what `kitchen init` sets when origin is on GitHub): after the merge check passes, Kitchen pushes the job branch and opens a PR into the target with the Report as its body; the job waits under Needs you as "PR open · waiting for review" and a person merges it on GitHub, under your review, CI and branch protection. Kitchen sees it merged (Done) or closed (Rejected) within a minute, and re-runs the merge check when the target moves under an open PR. Rejecting or removing a job closes its open PR.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/report-dark.webp">

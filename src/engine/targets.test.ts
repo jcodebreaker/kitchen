@@ -313,3 +313,76 @@ test("(f) merges into one target wait for each other; merges into different targ
   assert.equal(g(r, "show", "feature/x:004-d.txt"), "004-d");
   assert.equal(g(r, "show", "staging:003-c.txt"), "003-c");
 });
+
+test("(g) rejecting or removing a job whose PR is open closes the PR once, with a comment; restore leaves it closed", async () => {
+  const { r } = await repo(PR_YAML, { origin: true });
+  const gh = standInGh(path.join(root, "gh-g"));
+  const a = (await ticket(r)).id;
+  await build(r, a);
+  await qaAndReview(r, a);
+  assert.equal(findJob(r, a).pr?.state, "open");
+  const said: string[] = [];
+  assert.equal(await control.reject(r, a, (l) => said.push(l)), 0);
+  assert.match(said.join("\n"), /rejected; PR #12 closed on GitHub/);
+  const close = gh.calls().filter((c) => c[1] === "close");
+  assert.equal(close.length, 1);
+  assert.deepEqual(close[0].slice(0, 3), ["pr", "close", "12"]);
+  assert.match(close[0][close[0].indexOf("--comment") + 1], new RegExp(`job ${a} was rejected by the person`));
+  assert.deepEqual([findJob(r, a).stage, findJob(r, a).pr?.state, findJob(r, a).pr?.closedBy], ["rejected", "closed", "kitchen"]);
+  // Removing it afterwards closes nothing again; restore says the PR stays closed.
+  said.length = 0;
+  await control.remove(r, a, (l) => said.push(l));
+  assert.equal(gh.calls().filter((c) => c[1] === "close").length, 1, "once");
+  await control.restore(r, a, (l) => said.push(l));
+  assert.match(said.at(-1) ?? "", /back in view \(rejected\); its PR #12 stays closed \(reopen it on GitHub/);
+  // A second job, removed while its PR is open.
+  const b = (await ticket(r)).id;
+  await build(r, b, "one\ntwo\nthree\nfive\n");
+  await qaAndReview(r, b);
+  said.length = 0;
+  await control.remove(r, b, (l) => said.push(l));
+  assert.match(said.join("\n"), /removed, rejected.*; PR #12 closed on GitHub; kitchen restore/);
+  const last = gh
+    .calls()
+    .filter((c) => c[1] === "close")
+    .at(-1) as string[];
+  assert.match(last[last.indexOf("--comment") + 1], new RegExp(`job ${b} was removed by the person`));
+});
+
+test("(h) a PR merged on GitHub during a catch-up round: done (github), the lane closed, its finish refused, its agent stopped", async () => {
+  const { r, origin } = await repo(PR_YAML, { origin: true });
+  const gh = standInGh(path.join(root, "gh-h"));
+  const { id } = await ticket(r);
+  await build(r, id);
+  await qaAndReview(r, id);
+  // A conflicting change lands on staging: the open PR's job goes back for a catch-up.
+  const other = path.join(root, "other-h");
+  execFileSync("git", ["clone", "-q", "-b", "staging", origin, other]);
+  fs.writeFileSync(path.join(other, "app.txt"), "one\ntwo\nTHREE\n");
+  g(other, "commit", "-qam", "shout three");
+  g(other, "push", "-q", "origin", "staging");
+  await syncPrs(r, { force: true });
+  assert.equal(findJob(r, id).stage, "build");
+  await open(r, id, "build");
+  assert.equal(findJob(r, id).running?.lane, "build");
+  // Meanwhile a person resolves and merges the PR on GitHub.
+  gh.view({ state: "MERGED", mergedAt: "2026-11-24T11:00:00Z", mergeCommit: { oid: "b".repeat(40) } });
+  const lines = await syncPrs(r, { force: true });
+  assert.match(lines.join("\n"), /PR #12 merged on GitHub into staging \(bbbbbbb\) while it was in build \(the build agent was stopped\)/);
+  const j = findJob(r, id);
+  assert.deepEqual([j.stage, j.mergedBy, j.merged?.via, j.pr?.state, j.running], ["done", "github", "github", "merged", null]);
+  assert.equal(j.agentRuns.at(-1)?.ok, false);
+  assert.match(j.agentRuns.at(-1)?.line ?? "", /merged on GitHub/);
+  const f = await finish(r, id);
+  assert.match("refused" in f ? f.refused : "", /was merged on GitHub: this lane's result is dropped/);
+  // The guard hook stops the lane's agent the way it stops a removed job's.
+  const hook = path.resolve(import.meta.dirname, "..", "..", "hooks", "guard-worktree.py");
+  fs.mkdirSync(path.join(r, ".kitchen", "agents"), { recursive: true });
+  fs.writeFileSync(path.join(r, ".kitchen", "agents", "agent-h"), id);
+  const out = execFileSync("python3", [hook], {
+    input: JSON.stringify({ tool_name: "Bash", tool_input: { command: "npm test" }, cwd: r, agent_id: "agent-h" }),
+    env: { ...process.env, CLAUDE_PROJECT_DIR: r },
+    encoding: "utf8",
+  });
+  assert.match(out, /ended while you worked \(merged\)/);
+});

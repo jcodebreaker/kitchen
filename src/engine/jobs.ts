@@ -550,6 +550,10 @@ export async function finish(repo: string, id: string): Promise<Finished | { ref
   const dir = jobDirOf(repo, job.id);
   if (job.archived) return { refused: `${job.id} was removed by the person: this lane's result is dropped` };
   if (!job.running) {
+    if (job.stage === "done" && job.mergedBy === "github")
+      return { refused: `${job.id}'s PR #${job.pr?.number} was merged on GitHub: this lane's result is dropped` };
+    if (job.stage === "rejected" && job.pr?.state === "closed")
+      return { refused: `${job.id}'s PR #${job.pr?.number} was closed: this lane's result is dropped` };
     if (job.stage === "paused")
       return { refused: `${job.id} was ${job.pausedReason === "by-you: stopped" ? "stopped" : "paused"} by the person: this lane's result is dropped` };
     return { refused: `${job.id} has no lane open (it is ${job.stage}): nothing to finish` };
@@ -981,10 +985,12 @@ export const PR_SYNC_SECS = 60;
 const prSyncFile = (repo: string) => path.join(kitchenDir(repo), "pr-sync.json");
 
 /**
- * ADR 0026 §4: what became of the PRs Kitchen opened (`staging.merge: pr`). For each job waiting on an open PR:
- * merged on GitHub → Done (merged, mergedBy github, the issue comment); closed → Rejected; still open and its target
- * moved since the last merge check → the check re-runs on the new tip (green: the PR is updated; a conflict or a red
- * the target caused: a catch-up; its own red: back to Build). At most once per PR_SYNC_SECS per repo unless `force`.
+ * ADR 0026 §4: what became of the PRs Kitchen opened (`staging.merge: pr`). For each job with an open PR, whatever
+ * its stage: merged on GitHub → Done (merged, mergedBy github, the issue comment); closed → Rejected. A lane working
+ * on it then (a catch-up round) is closed, and the guard hook stops its agent as it stops a removed job's. Waiting at
+ * Ready with its PR still open and its target moved since the last merge check → the check re-runs on the new tip
+ * (green: the PR is updated; a conflict or a red the target caused: a catch-up; its own red: back to Build). At most
+ * once per PR_SYNC_SECS per repo unless `force`.
  */
 export async function syncPrs(repo: string, o: { force?: boolean; now?: number } = {}): Promise<string[]> {
   const now = o.now ?? Date.now();
@@ -994,7 +1000,7 @@ export async function syncPrs(repo: string, o: { force?: boolean; now?: number }
   } catch {
     return [];
   }
-  const waiting = listJobs(repo).filter((j) => !j.archived && prOpen(j));
+  const waiting = listJobs(repo).filter((j) => !j.archived && j.pr?.state === "open" && j.stage !== "done" && j.stage !== "rejected");
   if (!waiting.length) return [];
   if (!o.force) {
     try {
@@ -1015,13 +1021,28 @@ async function syncPr(repo: string, cfg: Config, job: Job): Promise<string[]> {
   const v = await realGh(["pr", "view", String(pr.number), "--json", "state,mergedAt,mergeCommit"], repo);
   if (v.code) return [`${job.id}  couldn't read PR #${pr.number}: ${v.stderr.trim().split("\n").pop()}`];
   const s = JSON.parse(v.stdout) as { state?: string; mergedAt?: string | null; mergeCommit?: { oid?: string } | null };
+  const stillOpen = (j: Job) => (j.pr?.state === "open" && j.stage !== "done" && j.stage !== "rejected" ? null : `${j.id} is no longer waiting on its PR`);
+  /** A lane working on it now is over: its run closed, its app stopped; the guard hook stops its agent (the job is finished). */
+  const lane = job.running?.lane;
+  const key = job.running?.key;
+  const endLane = (j: Job, line: string) => {
+    // move() has already cleared `running`: the run is the one open when this sync read the job.
+    const r = key ? j.agentRuns.find((x) => x.key === key) : undefined;
+    if (r && !r.end) Object.assign(r, { end: new Date().toISOString(), ok: false, line });
+    j.running = null;
+    delete j.drive;
+  };
+  const stopped = lane ? ` (the ${lane} agent was stopped)` : "";
+  if ((s.state === "MERGED" || s.state === "CLOSED") && lane) await (await import("../qa/app.ts")).appDown(repo, job.id).catch(() => {});
   if (s.state === "MERGED") {
     const sha = s.mergeCommit?.oid ?? "";
-    const line = `${job.id}  PR #${pr.number} merged on GitHub into ${target} (${sha.slice(0, 7)})`;
+    const line = `${job.id}  PR #${pr.number} merged on GitHub into ${target} (${sha.slice(0, 7)})${job.stage === "ready" ? "" : ` while it was in ${job.stage}`}${stopped}`;
     const moved = await moveJob(repo, job.id, "done", {
       who: "person",
-      check: (j) => (prOpen(j) ? null : `${j.id} is no longer waiting on its PR`),
+      mergedOnGitHub: true,
+      check: stillOpen,
       patch: (j) => {
+        endLane(j, "its PR merged on GitHub");
         j.merged = { into: target, sha, at: s.mergedAt ?? new Date().toISOString(), via: "github" };
         j.mergedBy = "github";
         j.pr = { ...pr, state: "merged" };
@@ -1036,16 +1057,19 @@ async function syncPr(repo: string, cfg: Config, job: Job): Promise<string[]> {
     const moved = await moveJob(repo, job.id, "rejected", {
       who: "person",
       reason: `PR #${pr.number} closed on GitHub without merging`,
-      check: (j) => (prOpen(j) ? null : `${j.id} is no longer waiting on its PR`),
+      check: stillOpen,
       patch: (j) => {
+        endLane(j, "its PR closed on GitHub");
         j.pr = { ...pr, state: "closed" };
         delete j.held;
       },
     });
     writeReport(repo, moved);
-    return [`${job.id}  PR #${pr.number} closed on GitHub without merging → rejected`];
+    return [`${job.id}  PR #${pr.number} closed on GitHub without merging → rejected${stopped}`];
   }
-  // Still open: re-run the merge check when the target moved since the last one.
+  // Still open: re-run the merge check when the target moved since the last one (only while it waits at Ready: a
+  // job back in a lane gets the target's tip at its next Build).
+  if (!prOpen(job)) return [];
   const tip = await targetTip(repo, cfg, target);
   if (!tip || tip === pr.onto || !pr.head) return [];
   const dir = jobDirOf(repo, job.id);

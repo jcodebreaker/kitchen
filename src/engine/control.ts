@@ -22,7 +22,7 @@ import { readIntake } from "./lanes.ts";
 import { BY_YOU, BY_YOU_STOPPED, isActive, type Job, type JobFrom, MoveRefused, move, pausedByYou, STAGES, type Stage } from "./machine.ts";
 import { addMessage, checkText, type Message, type MessageKind } from "./messages.ts";
 import { numOf } from "./refine.ts";
-import { refuseTarget } from "./staging.ts";
+import { realGh, refuseTarget } from "./staging.ts";
 import { createJob, findJob, intakeCheckoutOf, jobDirOf, shortTitle, updateJob, worktreeOf, writeAtomic } from "./store.ts";
 
 export type Out = (line: string) => void;
@@ -35,7 +35,14 @@ export async function moveJob(
   repo: string,
   id: string,
   to: Stage,
-  o: { reason?: string; who: "orchestrator" | "person"; check?: (j: Job) => string | null; patch?: (j: Job) => void; catchUp?: boolean } = {
+  o: {
+    reason?: string;
+    who: "orchestrator" | "person";
+    check?: (j: Job) => string | null;
+    patch?: (j: Job) => void;
+    catchUp?: boolean;
+    mergedOnGitHub?: boolean;
+  } = {
     who: "orchestrator",
   },
 ): Promise<Job> {
@@ -46,7 +53,7 @@ export async function moveJob(
     if (why) throw new MoveRefused(why);
     from = disk.stage;
     round = disk.round;
-    const n = move(disk, to, { reason: o.reason, catchUp: o.catchUp });
+    const n = move(disk, to, { reason: o.reason, catchUp: o.catchUp, mergedOnGitHub: o.mergedOnGitHub });
     o.patch?.(n);
     return n;
   });
@@ -351,8 +358,9 @@ export async function remove(repo: string, ref: string, out: Out): Promise<numbe
     await git(repo, ["worktree", "prune"], { allowFail: true });
     if (job.drive) await git(repo, ["update-ref", "-d", `refs/kitchen/drive/${job.id}`], { allowFail: true });
   }
+  const closed = merged ? "" : await closePr(repo, job.id, "removed");
   out(
-    `${job.id}  removed${lane ? ` (the ${lane} agent was stopped)` : ""}${merged ? ` from view (it stays merged into ${job.merged?.into ?? "staging"})` : job.stage === "rejected" ? "" : ", rejected"}${gone}; kitchen restore ${numOf(job.id)} shows it again`,
+    `${job.id}  removed${lane ? ` (the ${lane} agent was stopped)` : ""}${merged ? ` from view (it stays merged into ${job.merged?.into ?? "staging"})` : job.stage === "rejected" ? "" : ", rejected"}${gone}${closed}; kitchen restore ${numOf(job.id)} shows it again`,
   );
   return 0;
 }
@@ -369,7 +377,8 @@ export async function restore(repo: string, ref: string, out: Out): Promise<numb
     return j;
   });
   appendLedger(repo, { job: job.id, stage: job.stage, round: job.round, event: "restore", key: `${job.id}/restore/${new Date().toISOString()}` });
-  out(`${job.id}  back in view (${job.stage})`);
+  const pr = job.pr?.closedBy === "kitchen" ? `; its PR #${job.pr.number} stays closed (reopen it on GitHub to take it up again)` : "";
+  out(`${job.id}  back in view (${job.stage})${pr}`);
   return 0;
 }
 
@@ -380,6 +389,26 @@ export async function reject(repo: string, ref: string, out: Out): Promise<numbe
     return 1;
   }
   await moveJob(repo, job.id, "rejected", { reason: "rejected by you", who: "person" });
-  out(`${job.id}  rejected`);
+  out(`${job.id}  rejected${await closePr(repo, job.id, "rejected")}`);
   return 0;
+}
+
+/**
+ * ADR 0026: a job whose PR is still open was rejected or removed by the person: Kitchen closes the PR on GitHub, with
+ * a comment saying why. Best effort, once (the job's `filed` keys). Returns the line's tail.
+ */
+async function closePr(repo: string, id: string, why: "rejected" | "removed"): Promise<string> {
+  const job = findJob(repo, id);
+  const pr = job.pr;
+  if (pr?.state !== "open") return "";
+  const key = `pr-close:${pr.number}`;
+  if (job.filed.includes(key)) return "";
+  const comment = `Kitchen: job ${job.id} was ${why} by the person, so this PR is closed without merging.`;
+  const r = await realGh(["pr", "close", String(pr.number), "--comment", comment], repo).catch((e) => ({ code: 1, stdout: "", stderr: (e as Error).message }));
+  await updateJob(repo, job.id, (j) => ({
+    ...j,
+    filed: [...j.filed, key],
+    ...(r.code ? {} : { pr: { ...pr, state: "closed" as const, closedBy: "kitchen" as const } }),
+  }));
+  return r.code ? `; couldn't close PR #${pr.number}: ${r.stderr.trim().split("\n").pop()}` : `; PR #${pr.number} closed on GitHub`;
 }

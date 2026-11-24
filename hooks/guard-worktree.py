@@ -5,7 +5,8 @@
    (staging's scratch merges) or <repo>/.claude/worktrees/ (Claude Code's own). Honours `cd X &&` and `git -C X`.
 2. A lane agent (a subagent bound to a Kitchen job, see kitchen_jobs.py) may write files only inside its job's
    worktree, its job folder and the temp folders. The intake lane has no worktree: only its job folder.
-3. A lane agent whose job the person removed (`kitchen remove`, job.json `archived`) is refused every call: it stops.
+3. A lane agent whose job the person removed (`kitchen remove`, job.json `archived`), or whose job ended while it
+   worked (done or rejected with no lane open: its PR merged or closed on GitHub), is refused every call: it stops.
 
 Its own errors never block a tool call: anything unexpected exits 0 with no output.
 
@@ -213,12 +214,18 @@ def write_check(payload):
 
 
 def removed_check(payload):
-    """The deny reason when this lane agent's job was removed by the person (`kitchen remove`), else None."""
+    """The deny reason when this lane agent's job was removed by the person (`kitchen remove`) or ended while its
+    lane ran (its PR merged or closed on GitHub, ADR 0026), else None."""
     repo = os.path.normpath(os.environ.get("CLAUDE_PROJECT_DIR") or payload.get("cwd") or os.getcwd())
     job_id, job = bound_job(payload, repo)
-    if job_id and job and job.get("archived"):
+    if not (job_id and job):
+        return None
+    if job.get("archived"):
         return ("Stopped by Kitchen: the person removed job %s. Stop now: make no more changes and reply with one line, "
                 "\"removed\"." % job_id)
+    if job.get("stage") in ("done", "rejected") and not job.get("running"):
+        return ("Stopped by Kitchen: job %s ended while you worked (%s). Stop now: make no more changes and reply with "
+                "one line, \"ended\"." % (job_id, "merged" if job.get("stage") == "done" else "rejected"))
     return None
 
 

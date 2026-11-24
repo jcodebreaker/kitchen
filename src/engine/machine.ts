@@ -44,7 +44,8 @@ export type JobFrom = {
   refs: { source: string; kind: string; ref: string; url?: string }[];
 };
 
-export type JobPr = { number: number; url: string; state?: "open" | "merged" | "closed"; onto?: string; head?: string };
+/** `closedBy: "kitchen"`: Kitchen closed it because the person rejected or removed the job. */
+export type JobPr = { number: number; url: string; state?: "open" | "merged" | "closed"; onto?: string; head?: string; closedBy?: "kitchen" };
 /** ADR 0026 §4: Ready because its PR waits for a person on GitHub (staging.merge: pr). */
 export const prOpen = (j: Pick<Job, "stage" | "pr">) => j.stage === "ready" && j.pr?.state === "open";
 export const PR_OPEN_WORDS = "PR open · waiting for review";
@@ -208,8 +209,10 @@ export function refuse(j: Pick<Job, "stage" | "pausedFrom">, to: Stage): string 
  * Pure: the job moved to `to`. Throws MoveRefused for a move the table doesn't list. Counters change only here:
  * the round (back to Build), catch-ups, moves, the pause bookkeeping, doneAt.
  */
-export function move(j: Job, to: Stage, o: { reason?: string; now?: Date; catchUp?: boolean } = {}): Job {
-  const why = refuse(j, to);
+export function move(j: Job, to: Stage, o: { reason?: string; now?: Date; catchUp?: boolean; mergedOnGitHub?: boolean } = {}): Job {
+  // ADR 0026 §4: a PR merged on GitHub ends the job wherever it is (a catch-up round, paused): the table's one
+  // exception, made only by syncPrs. A finished job stays finished.
+  const why = o.mergedOnGitHub && to === "done" && j.stage !== "done" && j.stage !== "rejected" ? null : refuse(j, to);
   if (why) throw new MoveRefused(why);
   const now = (o.now ?? new Date()).toISOString();
   const n: Job = { ...j, stage: to, moves: j.moves + 1, updatedAt: now, running: null };
