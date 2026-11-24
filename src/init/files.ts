@@ -19,6 +19,23 @@ export function installSkill(repo: string): string[] {
   return SKILL_FILES;
 }
 
+/** The installed copies that differ from this Kitchen's skill, brought up to date (`kitchen run` before a session). */
+export function refreshSkill(repo: string): string[] {
+  const want = fs.readFileSync(SKILL, "utf8");
+  const stale = SKILL_FILES.filter((f) => {
+    try {
+      return fs.readFileSync(path.join(repo, f), "utf8") !== want;
+    } catch {
+      return true;
+    }
+  });
+  for (const f of stale) {
+    fs.mkdirSync(path.dirname(path.join(repo, f)), { recursive: true });
+    fs.writeFileSync(path.join(repo, f), want);
+  }
+  return stale;
+}
+
 export const GITIGNORE = [
   ".kitchen/jobs/",
   ".kitchen/init/",

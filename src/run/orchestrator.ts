@@ -121,6 +121,8 @@ export async function run(repo: string, o: { detach?: boolean; stop?: boolean; p
     return 2;
   }
   const live = liveRun(repo);
+  // The session follows the repo's copy of the kitchen skill: one from an older Kitchen sends it astray.
+  if (!live) for (const f of (await import("../init/files.ts")).refreshSkill(repo)) out(`updated ${f} to this Kitchen's version`);
   if (live) {
     out(`orchestrator: already running (pid ${live.pid}, log ${live.log})`);
     return 0;
