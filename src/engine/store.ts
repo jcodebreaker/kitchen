@@ -13,6 +13,8 @@ export const kitchenDir = (repo: string) => path.join(repo, ".kitchen");
 export const jobsDir = (repo: string) => path.join(repo, ".kitchen", "jobs");
 export const jobDirOf = (repo: string, id: string) => path.join(jobsDir(repo), id);
 export const worktreeOf = (repo: string, id: string) => path.join(repo, ".worktrees", id);
+/** ADR 0025 §1: intake's read-only checkout of the job's base (detached), while its lane is open. */
+export const intakeCheckoutOf = (repo: string, id: string) => path.join(repo, ".kitchen", "intake", id);
 export const roundDir = (jobDir: string, round: number) => path.join(jobDir, "rounds", String(round));
 
 export const JOB_ID = /^(\d{3,})-[a-z0-9-]{1,48}$/;

@@ -17,7 +17,9 @@ Setup
   kitchen skills                         which role skills are found for the agent tool
 
 Work
-  kitchen ticket "<what you want>"       a ticket; intake writes its criteria
+  kitchen ticket "<what you want>" [--no-run]   a ticket; intake writes its criteria. Kitchen starts (kitchen run
+                                         --detach) when nothing works the queue, as after approve, feedback, resume
+                                         and inbox run; --no-run files it only
   kitchen run [--detach] [--max-usd n]   a headless orchestrator session works the queue (or /kitchen run in Claude Code)
   kitchen run --stop | --print           end it | print the exact command it runs
   kitchen status [--json] [--all]        one row per job (--all: the removed ones too)
@@ -49,7 +51,7 @@ The outer loop (ADR 0022): sources read by code, triaged into proposals you choo
   kitchen collect [--detach] [--no-triage]   read every source, then one triage session proposes tickets
   kitchen collect --install-schedule [--every 1h] | --remove-schedule   launchd (macOS) or a systemd timer (Linux)
   kitchen inbox list [--json]            proposals and untriaged items
-  kitchen inbox run <p…>                 the chosen proposals become jobs at intake, highest priority first
+  kitchen inbox run <p…> [--no-run]      the chosen proposals become jobs at intake, highest priority first
   kitchen inbox hold|bring-back|remove <p> · inbox edit <p> [--title t] [--text t]
   kitchen inbox add "<text>" [--source s] [--link url] [--by who] [--key k]
   kitchen inbox propose --item <i>… --title t --text t --kind bug|feature|chore --prio P1|P2|P3 --why w
@@ -80,7 +82,8 @@ The verify map (the verify skill's features/: how to check each feature; QA keep
 kitchen --version · kitchen <command> --help · docs: README.md in the package`;
 
 const COMMAND_HELP: Record<string, string> = {
-  ticket: 'kitchen ticket "<what you want>"\n\nFiles a ticket; the next orchestrator wave takes it to intake.',
+  ticket:
+    'kitchen ticket "<what you want>" [--no-run]\n\nFiles a ticket for intake. When no orchestrator works the queue, Kitchen starts one (kitchen run --detach) and says so: "→ intake · Kitchen started"; when one does, it picks the ticket up ("· Kitchen is already working the queue"). approve, feedback, resume and inbox run do the same.\n  --no-run   file it only; kitchen run works the queue later',
   run: "kitchen run [--detach] [--max-usd n] | run --stop | run --print\n\nStarts a headless Claude Code session that runs /kitchen run: it plans waves and spawns one agent per lane (intake, build, QA, review), moving jobs only through kitchen job verbs. One per repo.\n  --detach   in the background; the log is .kitchen/run.log\n  --max-usd  the session's spend cap (claude --max-budget-usd); default agent.max_usd in kitchen.yaml\n  --stop     end it (jobs keep their state)\n  --print    print the command and run nothing",
   status:
     "kitchen status [--json]\n\nThe orchestrator, then one row per job: id, title, stage (* while an agent works on it), round, when it last moved, the merge, the Report.",
@@ -171,6 +174,19 @@ async function main(argv: string[]): Promise<number> {
     return f.pos[i];
   };
   const json = f.flags.has("--json");
+  /** ADR 0025 §2: a verb that gives the queue work wakes Kitchen (run/wake.ts) unless --no-run; its line says so. */
+  const waking = async (verb: (o: (l: string) => void) => Promise<number> | number): Promise<number> => {
+    const lines: string[] = [];
+    try {
+      const code = await verb((l) => lines.push(l));
+      const said: string[] = json ? [] : lines;
+      if (code === 0) await (await import("./run/wake.ts")).wake(repo, said, { noRun: f.flags.has("--no-run"), cli: import.meta.filename });
+      if (json) for (const l of said) console.error(l);
+      return code;
+    } finally {
+      for (const l of lines) out(l);
+    }
+  };
   switch (name) {
     case "init": {
       if (f.flags.has("--skill")) {
@@ -218,7 +234,7 @@ async function main(argv: string[]): Promise<number> {
       return s ? await new Promise<number>(() => {}) : 0;
     }
     case "ticket":
-      return control.ticket(repo, f.pos.join(" ") || need(0, '"<text>"'), out);
+      return waking((o) => control.ticket(repo, f.pos.join(" ") || need(0, '"<text>"'), o));
     case "run": {
       // `kitchen run` starts a paid session: a flag it doesn't know (a typo, `--status`) stops it instead.
       const odd = [...[...f.flags].filter((x) => !["--detach", "--stop", "--print", "--json"].includes(x)), ...f.pos];
@@ -245,9 +261,9 @@ async function main(argv: string[]): Promise<number> {
     case "report":
       return cmd.report(repo, out, { json });
     case "resume":
-      return control.resume(repo, need(0, "<id>"), out);
+      return waking((o) => control.resume(repo, need(0, "<id>"), o));
     case "feedback":
-      return control.feedback(repo, need(0, "<id>"), f.pos.slice(1).join(" "), out, { to: v("to") });
+      return waking((o) => control.feedback(repo, need(0, "<id>"), f.pos.slice(1).join(" "), o, { to: v("to") }));
     case "reject":
       return control.reject(repo, need(0, "<id>"), out);
     case "remove":
@@ -255,7 +271,7 @@ async function main(argv: string[]): Promise<number> {
     case "restore":
       return control.restore(repo, need(0, "<id>"), out);
     case "approve":
-      return control.approve(repo, need(0, "<id>"), out);
+      return waking((o) => control.approve(repo, need(0, "<id>"), o));
     case "merge": {
       const r = await (await import("./engine/jobs.ts")).mergeHeld(repo, need(0, "<id>"));
       out("refused" in r ? r.refused : r.to === "regress" ? `${r.line}; the orchestrator drives them (kitchen run), then it lands` : r.line);
@@ -278,7 +294,9 @@ async function main(argv: string[]): Promise<number> {
     case "models":
       return modelsVerb(repo, f, json, out);
     case "inbox":
-      return (await import("./inbox/cli.ts")).inboxVerb(repo, f, json, out);
+      return f.pos[0] === "run"
+        ? waking(async (o) => (await import("./inbox/cli.ts")).inboxVerb(repo, f, json, o))
+        : (await import("./inbox/cli.ts")).inboxVerb(repo, f, json, out);
     case "collect":
       return (await import("./inbox/cli.ts")).collectVerb(repo, f, import.meta.filename, out);
     case "sources":

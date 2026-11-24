@@ -101,5 +101,5 @@ test("actions are the CLI's verbs: refused without the token; a steer lands on t
   const t = (await (await post("ticket", { text: "Another one" })).json()) as { ok: boolean; lines: string[] };
   assert.equal(t.ok, true);
   assert.deepEqual(started, ["x"], "no orchestrator was running, so one was started");
-  assert.match(t.lines.join("\n"), /orchestrator detached/);
+  assert.match(t.lines.join("\n"), /→ intake · Kitchen started$/m, "the ticket line says Kitchen started");
 });

@@ -8,7 +8,7 @@
 //   show <id> [--json]                   one job, as the orchestrator needs it
 import fs from "node:fs";
 import path from "node:path";
-import { prepareOf, runChecks } from "../checks/run-checks.ts";
+import { type OnCheck, prepareOf, runChecks } from "../checks/run-checks.ts";
 import { type Config, checksFor, type LaneRole, loadConfig, modelFor } from "../config.ts";
 import { commentOnMerge } from "../inbox/comment.ts";
 import { addFindings, qaFindings, reviewFindings } from "../inbox/findings.ts";
@@ -42,7 +42,7 @@ import { type Plan, planWave } from "./plan.ts";
 import { confirmQuestion, refineQuestion } from "./refine.ts";
 import { writeReport } from "./report.ts";
 import { type CatchUp, catchUpWithStaging, dropTrial, type MergeOutcome, mergeToStaging, stagingTip } from "./staging.ts";
-import { findJob, jobDirOf, kitchenDir, listJobs, roundDir, shortTitle, updateJob, worktreeOf, writeAtomic } from "./store.ts";
+import { findJob, intakeCheckoutOf, jobDirOf, kitchenDir, listJobs, roundDir, shortTitle, updateJob, worktreeOf, writeAtomic } from "./store.ts";
 
 export type Out = (line: string) => void;
 const ROLES = path.resolve(import.meta.dirname, "..", "..", "roles");
@@ -78,11 +78,32 @@ async function ensureWorktree(repo: string, cfg: Config, job: Job): Promise<{ wt
     await git(repo, ["worktree", "add", "-q", wt, job.branch]);
     return { wt, base: job.base || (await gitOut(repo, ["merge-base", job.branch, cfg.staging.branch]).catch(() => "")) };
   }
-  const base = (await stagingTip(repo, cfg)) ?? (await revParse(repo, cfg.staging.base)) ?? (await revParse(repo, "HEAD"));
-  if (!base) throw new Error("the repo has no commit to branch from");
+  const base = await baseCommit(repo, cfg);
   await git(repo, ["worktree", "add", "-q", "-b", job.branch, wt, base]);
   return { wt, base };
 }
+
+/** What a job's first Build starts from: staging's tip, else `staging.base`, else HEAD. */
+async function baseCommit(repo: string, cfg: Config): Promise<string> {
+  const base = (await stagingTip(repo, cfg)) ?? (await revParse(repo, cfg.staging.base)) ?? (await revParse(repo, "HEAD"));
+  if (!base) throw new Error("the repo has no commit to branch from");
+  return base;
+}
+
+/**
+ * ADR 0025 §1: intake reads the base Build would start from, never the person's checkout (it may be on another
+ * branch): a detached checkout of it under .kitchen/intake/<id>, made fresh for each intake lane.
+ */
+async function intakeCheckout(repo: string, cfg: Config, id: string): Promise<{ wt: string; base: string }> {
+  const wt = intakeCheckoutOf(repo, id);
+  const base = await baseCommit(repo, cfg);
+  await dropTrial(repo, wt);
+  await git(repo, ["worktree", "add", "-q", "--detach", wt, base]);
+  return { wt, base };
+}
+
+/** Intake's checkout gone (its lane finished or was refused; the job removed). */
+export const dropIntakeCheckout = (repo: string, id: string) => dropTrial(repo, intakeCheckoutOf(repo, id));
 
 const fence = (s: string) => {
   let f = "~~~~";
@@ -220,9 +241,11 @@ function brief(
     `# Kitchen ${lane} lane: job ${job.id}`,
     "",
     `- Job: ${job.id} "${job.title}" · kind ${job.kind ?? "?"} · risk ${job.risk ?? "?"} · round ${job.round} (${roundsUsed(job)} of ${job.roundLimit})`,
-    `- Repository (main checkout, read-only for you): ${repo}`,
     lane === "intake"
-      ? `- Read the code in the main checkout; change nothing.`
+      ? `- The code (read-only for you): ${o.wt}, a checkout of ${o.base.slice(0, 12)}, what Build would start from. Read the code there; change nothing. Never read ${repo} (the person's checkout): it may be on another branch.`
+      : `- Repository (main checkout, read-only for you): ${repo}`,
+    lane === "intake"
+      ? ""
       : lane === "regress" && job.drive
         ? `- The merged result (drive it, change nothing): ${o.wt}: ${cfg.staging.branch} at ${job.drive.onto.slice(0, 12)} with ${job.branch} (${job.drive.head.slice(0, 12)}) merged as ${job.drive.sha.slice(0, 12)}`
         : `- Worktree (work only here): ${o.wt} on branch ${job.branch}, from ${o.base.slice(0, 12)}`,
@@ -357,7 +380,8 @@ export async function start(
       await dropTrial(repo, wt);
       await git(repo, ["worktree", "add", "-q", "--detach", wt, d.sha]);
     }
-  } else if (lane !== "intake") {
+  } else if (lane === "intake") ({ wt, base } = await intakeCheckout(repo, cfg, job.id));
+  else {
     wt = worktreeOf(repo, job.id);
     if (!fs.existsSync(path.join(wt, ".git"))) {
       if (!(await branchExists(repo, job.branch))) return { refused: `${job.id} has no branch ${job.branch} to ${lane}` };
@@ -378,7 +402,7 @@ export async function start(
   if (lane === "regress") fs.mkdirSync(regressDir(dir, job.round), { recursive: true });
   const map =
     lane === "intake"
-      ? intakeMapSection(await mapAt(repo, (await stagingTip(repo, cfg)) ?? "HEAD"))
+      ? intakeMapSection(await mapAt(repo, base))
       : lane === "qa"
         ? qaMapSection(readMap(wt), await jobFiles(repo, job), qaDir(dir, job.round), changesOf(dir))
         : lane === "regress" && job.drive
@@ -414,7 +438,7 @@ export async function start(
     model,
     detail: { skills: sk.names },
   });
-  const cwd = lane === "intake" ? repo : wt;
+  const cwd = wt;
   const prompt = [
     `You are Kitchen's ${lane} agent for job ${job.id} ("${job.title}").`,
     `First run \`cd ${cwd}\`. Then read your brief, ${briefFile}, and follow it exactly.`,
@@ -509,6 +533,7 @@ export async function finish(repo: string, id: string): Promise<Finished | { ref
   }
   const lane = job.running.lane;
   if (lane === "intake") {
+    await dropIntakeCheckout(repo, job.id);
     const f = intakeFile(dir);
     if (!fs.existsSync(f)) return refuseLane(repo, job, `no ${path.relative(repo, f)}`);
     const i = parseIntake(fs.readFileSync(f, "utf8"));
@@ -583,7 +608,8 @@ export async function finish(repo: string, id: string): Promise<Finished | { ref
       );
     const rd = roundDir(dir, job.round);
     // ADR 0021: `when: merge` checks (an e2e suite) wait for the trial merge.
-    const r = await runChecks({ dir: wt, checks: checksFor(cfg, "build"), prepare: prepareOf(cfg), stateDir: dir, log: path.join(rd, "checks.log") });
+    const log = path.join(rd, "checks.log");
+    const r = await runChecks({ dir: wt, checks: checksFor(cfg, "build"), prepare: prepareOf(cfg), stateDir: dir, log, onCheck: checking(repo, job.id, log) });
     writeAtomic(path.join(rd, "checks.json"), `${JSON.stringify(r.results, null, 2)}\n`);
     appendLedger(repo, {
       job: job.id,
@@ -654,6 +680,17 @@ export async function finish(repo: string, id: string): Promise<Finished | { ref
   return mergeOrHold(repo, cfg, job, head as string);
 }
 
+/** ADR 0025 §4: the job says which check runs now (`checking`), for the dashboard; cleared when the checks end. */
+const checking =
+  (repo: string, id: string, log: string): OnCheck =>
+  async (cmd) => {
+    await updateJob(repo, id, (j) => {
+      if (cmd) j.checking = { cmd, at: new Date().toISOString(), log: path.relative(jobDirOf(repo, id), log) };
+      else delete j.checking;
+      return j;
+    });
+  };
+
 /** The features a trial merge touches: its changed files against the `Code:` lines of the map it carries. */
 async function touchedBy(repo: string, t: { onto: string; sha: string }): Promise<string[]> {
   const changed = (await git(repo, ["diff", "--name-only", t.onto, t.sha])).stdout.split("\n").filter(Boolean);
@@ -715,7 +752,7 @@ async function gateMerge(repo: string, cfg: Config, job: Job, head: string, who:
         .join("; ")}): put those recipes back`,
     });
   const log = path.join(roundDir(dir, job.round), "merge.log");
-  const m = await mergeToStaging(repo, cfg, job, head, { log, gate: (t) => touchedBy(repo, t) });
+  const m = await mergeToStaging(repo, cfg, job, head, { log, gate: (t) => touchedBy(repo, t), onCheck: checking(repo, job.id, log) });
   const said = who === "person" ? "you said merge" : "review PASS";
   if (m.ok) return merged(repo, cfg, job, m, `${said} → `, who);
   if (m.drive) {
@@ -840,7 +877,12 @@ async function finishRegress(repo: string, cfg: Config, job: Job): Promise<Finis
     });
   }
   const log = path.join(roundDir(dir, job.round), "merge.log");
-  const m = await mergeToStaging(repo, cfg, job, d.head, { log, gate: (t) => touchedBy(repo, t), drove: { onto: d.onto, sha: d.sha } });
+  const m = await mergeToStaging(repo, cfg, job, d.head, {
+    log,
+    gate: (t) => touchedBy(repo, t),
+    drove: { onto: d.onto, sha: d.sha },
+    onCheck: checking(repo, job.id, log),
+  });
   if (m.ok) {
     await dropDrive(repo, job);
     return merged(repo, cfg, job, m, `regress PASS (${d.features.join(", ")}) → `);
