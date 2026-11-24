@@ -208,7 +208,7 @@ export type JobCard = {
   files: FileStat[];
   doneAt: string | null;
   lane: Lane;
-  proof: "pass" | "fail" | "not proven" | null;
+  proof: "pass" | "fail" | null;
   held: string | null;
   merged: { into: string; sha: string } | null;
   waits: Waits | null;
@@ -318,7 +318,7 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
       files: await changesOf(j, now),
       doneAt: j.doneAt ?? null,
       lane: laneOf(j),
-      proof: j.stage === "rejected" ? null : "criteria" in qaNow ? (qaNow.verdict === "PASS" ? "pass" : "fail") : "not proven",
+      proof: j.stage === "rejected" ? null : "criteria" in qaNow ? (qaNow.verdict === "PASS" ? "pass" : "fail") : null, // no QA verdict yet: no pill (the Toolkit's "proven" is gone)
       held: j.held ?? null,
       merged: j.merged ? { into: j.merged.into, sha: j.merged.sha } : null,
       waits: waitsOf(j, dir),

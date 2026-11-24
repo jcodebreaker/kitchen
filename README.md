@@ -16,6 +16,8 @@
 
 One Claude Code session runs your queue: an agent per lane writes the criteria, builds, checks the running app in a real browser and reviews. Kitchen moves every job, re-runs your checks, drives the features a change touches on the merged result, and merges what passes into `staging`. You merge `staging` onward.
 
+<p align="center"><a href="docs/video/kitchen.mp4"><img src="docs/img/video-poster.webp" width="640" alt="Watch: Kitchen in under two minutes, from a plain-words ticket to a reviewed change on staging"></a><br><sub><a href="docs/video/kitchen.mp4">▶ Watch Kitchen in under two minutes</a> (1:48, with voiceover)</sub></p>
+
 > **Why I built it.** New branch. New Claude session. Same speech: here's how you run the server, here's the seed data, no, the other port. I gave that speech enough times that I automated it. Kitchen learns your app once and every agent after that just gets to work. Yes, I named it after food. I was hungry.
 
 ## Four steps
