@@ -8,11 +8,12 @@
 //                                  id (not the token): a tab from an earlier launch sees it changed and reloads once
 //   GET  /jobs/<id>/detail.json    one job: stage history with its agents' activity, thread, criteria
 //   GET  /jobs/<id>/report.html    a job's rendered Report
+//   GET  /jobs/<id>/qa/<n>/<f>     ADR 0028: a check's screenshot from its round n QA folder (png or jpeg only)
 //   GET  /branches.json          ADR 0026: the New ticket sheet's target choices (branches.ts; asked when the sheet opens)
 //   GET  /models.json              ADR 0023: each lane's model and the tool's choices (kitchen models; cached ten minutes)
 //   GET  /inbox.json               the outer loop (ADR 0022): sources, the collect running now, items, proposals
 //   GET  /inbox/<item>/evidence/<f> a screenshot or transcript triage kept
-//   POST /api/<action>             steer, answer, approve, follow-up, merge, pause, stop, resume, reject, ticket, start-runner,
+//   POST /api/<action>             steer, answer, approve, promote, follow-up, merge, pause, stop, resume, reject, ticket, start-runner,
 //                                  collect, inbox-run, inbox-hold, inbox-unhold, inbox-remove, inbox-edit, inbox-verdict
 //                                  (actions.ts; one that gives the queue work starts an orchestrator when none runs)
 //
@@ -30,7 +31,7 @@ import { type Listing, listModels } from "../models/models.ts";
 import { act, BadRequest } from "./actions.ts";
 import { branchesOf } from "./branches.ts";
 import { snapshot } from "./data.ts";
-import { detail } from "./detail.ts";
+import { detail, qaShot } from "./detail.ts";
 import { evidenceFile, inboxSnapshot } from "./inbox.ts";
 import { addRepo, type RepoEntry, type RepoList, readRepos, shownPath } from "./repos.ts";
 
@@ -157,6 +158,20 @@ export function dashboardServer(one: string | null, o: { token?: string; list?: 
         if (!f) return send(404, "text/plain", "no such evidence\n");
         const type = /\.png$/i.test(f) ? "image/png" : /\.jpe?g$/i.test(f) ? "image/jpeg" : "text/plain; charset=utf-8";
         return send(200, type, fs.readFileSync(f), { "content-security-policy": REPORT_CSP });
+      }
+      const q = /^\/jobs\/([^/]+)\/qa\/(\d{1,3})\/(.+)$/.exec(route);
+      if (q) {
+        let id: string;
+        let rel: string;
+        try {
+          id = decodeURIComponent(q[1]);
+          rel = decodeURIComponent(q[3]);
+        } catch {
+          return send(400, "text/plain", "bad path\n");
+        }
+        const f = JOB_ID.test(id) && scanJobs(repo).some((e) => e.id === id && e.job) ? qaShot(repo, id, Number(q[2]), rel) : null;
+        if (!f) return send(404, "text/plain", "no such screenshot\n");
+        return send(200, /\.png$/i.test(f) ? "image/png" : "image/jpeg", fs.readFileSync(f), { "content-security-policy": REPORT_CSP });
       }
       const m = /^\/jobs\/([^/]+)\/(report\.html|detail\.json)$/.exec(route);
       if (m) {

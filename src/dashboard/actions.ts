@@ -7,6 +7,7 @@ import { mergeHeld } from "../engine/jobs.ts";
 import { MAX_MESSAGE } from "../engine/messages.ts";
 import { findJob } from "../engine/store.ts";
 import { detachCollect, liveCollect } from "../inbox/collect.ts";
+import { parseEvery, scheduleCheck } from "../inbox/schedule.ts";
 import * as inbox from "../inbox/store.ts";
 import { LANE_NAMES, roleOf, setModel, TOOL_NAMES } from "../models/models.ts";
 import { run } from "../run/orchestrator.ts";
@@ -107,7 +108,19 @@ export const ACTIONS: Record<string, (repo: string, b: Body, out: Out) => Promis
     if (!t.trim()) throw new BadRequest("text: what you want done");
     // ADR 0026: `into`, the branch it merges into (absent: staging).
     if (b.into !== undefined && typeof b.into !== "string") throw new BadRequest("into: a branch name");
-    return control.ticket(repo, t, out, { into: b.into || undefined });
+    // ADR 0028 §5: `check` forces the kind (kitchen ticket --check); `every` also files it on a timer (--every).
+    if (b.check !== undefined && typeof b.check !== "boolean") throw new BadRequest("check: true or false");
+    if (b.every !== undefined && (typeof b.every !== "string" || !b.check)) throw new BadRequest('every: "day", "hour"… with check: true');
+    const into = b.into || undefined;
+    if (b.every) {
+      try {
+        parseEvery(b.every as string);
+      } catch (e) {
+        throw new BadRequest((e as Error).message);
+      }
+      for (const l of scheduleCheck(repo, CLI, t, b.every as string, {}, into)) out(l);
+    }
+    return control.ticket(repo, t, out, { into, check: b.check === true });
   },
   /** ADR 0022: Collect, `kitchen collect --detach`; the page follows it in /inbox.json. */
   collect: (repo, _b, out) => {

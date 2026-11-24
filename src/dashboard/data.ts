@@ -10,6 +10,7 @@ import { heartbeatFile, syncPrs } from "../engine/jobs.ts";
 import { criteriaOf, leftOutOf, readIntake, readQa, readReview } from "../engine/lanes.ts";
 import { BY_YOU_STOPPED, isActive, isCheck, type Job, PR_OPEN_WORDS, pausedByYou, prOpen, promotable, type Stage } from "../engine/machine.ts";
 import { JOB_ID, jobDirOf, scanJobs } from "../engine/store.ts";
+import { type Kept, listKept } from "../inbox/schedule.ts";
 import { type LedgerLine, readLedger } from "../ledger/append.ts";
 import { liveRun } from "../run/orchestrator.ts";
 import { activityOf, type Ev } from "./activity.ts";
@@ -256,9 +257,10 @@ export type JobCard = {
   /**
    * ADR 0028: a check ticket (`kind: "check"`): tested on its target's tip, never built. `result`: the words once done
    * ("Checked on staging · 4 of 4 pass", "Found 2 problems"); `findings`: the problems found, and the inbox proposals
-   * they became; `explore`: minutes when it explores. Null for any other job.
+   * they became; `explore`: minutes when it explores; `every`: how often a schedule files this same check ("day",
+   * "hour"; ADR 0028 §5, matched on the ticket's text), or null. Null for any other job.
    */
-  check: { result: string | null; findings: number; proposals: string[]; explore: number | null; forced: boolean } | null;
+  check: { result: string | null; findings: number; proposals: string[]; explore: number | null; forced: boolean; every: string | null } | null;
   /** ADR 0028 amendment: false for intake's `KEEP: no` (built to verify, not merged unless promoted); absent otherwise. */
   keep?: false;
   /** Verified and not merged: the words ("Verified · not merged"), or null. */
@@ -266,6 +268,27 @@ export type JobCard = {
   /** It can be promoted now (`kitchen promote`, the `promote` action): done, KEEP: no, not merged. */
   promotable: boolean;
 };
+
+/** ADR 0028: a check's track is Intake → QA; a KEEP: no job's ends at QA (until it is promoted). */
+function phasesOf(j: Job, chk: boolean): { k: Phase; nm: string }[] {
+  const ks: Phase[] | null = chk ? ["intake", "qa"] : j.keep === false ? ["intake", "build", "qa"] : null;
+  return PHASES.filter((p) => !ks || ks.includes(p.k)).map((p) => ({ k: p.k, nm: p.nm }));
+}
+
+/** ADR 0028 §5: how often a schedule of this repo files this check (its ticket text and target), or null. */
+function everyOf(kept: Kept[], dir: string, j: Job): string | null {
+  const ks = kept.filter((k) => k.task.name === "check");
+  if (!ks.length) return null;
+  const norm = (s: string) => s.replace(/\s+/g, " ").trim();
+  let text: string;
+  try {
+    text = norm(fs.readFileSync(path.join(dir, "ticket.md"), "utf8").replace(/^# [^\n]*\n+/, ""));
+  } catch {
+    return null;
+  }
+  const k = ks.find((x) => x.task.name === "check" && norm(x.task.text) === text && (x.task.into ?? null) === (j.target ?? null));
+  return k?.every ?? null;
+}
 
 export type Snapshot = {
   repo: string;
@@ -324,6 +347,7 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
   const jobs: JobCard[] = [];
   const corrupt: string[] = [];
   const removed: { id: string; at: string }[] = [];
+  const kept = listKept(repo);
   for (const e of scanJobs(repo)) {
     if (!e.job || !JOB_ID.test(e.job.id)) {
       corrupt.push(e.id);
@@ -382,7 +406,7 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
       branch: j.branch,
       state: stateOf(j),
       phase: phaseOf(stage),
-      phases: PHASES.map((p) => ({ k: p.k, nm: p.nm })),
+      phases: phasesOf(j, chk),
       checks: { ok: crit.filter((x) => x.st === "ok").length, total: crit.length },
       agent: agentOf(stage),
       q: questionOf(j, dir),
@@ -412,6 +436,7 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
             proposals: j.check?.proposals ?? [],
             explore: j.check?.explore ?? null,
             forced: !!j.check?.forced,
+            every: everyOf(kept, dir, j),
           }
         : null,
       ...(j.keep === false ? { keep: false as const } : {}),
