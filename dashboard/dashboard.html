@@ -45,35 +45,57 @@ textarea,input{font:inherit;color:inherit}
 .mono{font-family:var(--mono);font-size:12px;font-feature-settings:"zero" 0}
 .num{font-variant-numeric:tabular-nums}
 svg{flex:none;display:block}
-kbd{font:500 11px var(--sans);color:var(--mute);border:1px solid var(--line2);border-radius:4px;padding:0 4px;min-width:18px;text-align:center;display:inline-block;line-height:16px}
 
 .app{display:flex;height:100vh;height:100dvh}
 
 /* ── sidebar ── */
 .side{width:216px;flex:none;padding:12px 10px;display:flex;flex-direction:column;gap:1px}
-.ws{display:flex;align-items:center;gap:9px;padding:6px 8px 16px;font-weight:600;letter-spacing:-.01em}
+.ws{display:flex;align-items:center;gap:9px;padding:6px 8px 12px;font-weight:600;letter-spacing:-.01em;min-width:0}
+.ws .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .logo{width:22px;height:22px;flex:none;background:var(--logo) center/contain no-repeat}
 .nav{display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:6px;color:var(--mute);width:100%;text-align:left;transition:background .12s}
 .nav:hover{background:var(--hover);color:var(--fg)}
 .nav.on{background:var(--press);color:var(--fg);font-weight:500}
-.nav.subn{padding-left:16px}
-.nav .c{margin-left:auto;font-size:12px;color:var(--faint)}
-.nav .c.act{color:var(--act-fg);font-weight:600}
-.side .lbl{font-size:12px;color:var(--faint);padding:18px 8px 6px}
-.side .foot{margin-top:auto;padding:8px;color:var(--faint);font-size:12px;display:flex;flex-direction:column;gap:8px}
-.side .keys{display:grid;grid-template-columns:auto 1fr;gap:5px 8px;align-items:center}
+/* counts are macOS-style badges, shown only when non-zero; Needs you's is the one in the attention color */
+.nav .bdg{margin-left:auto;min-width:20px;height:18px;padding:0 6px;border-radius:9px;font:600 11px/18px var(--sans);text-align:center;font-variant-numeric:tabular-nums;background:color-mix(in srgb,var(--fg) 7%,transparent);color:var(--mute)}
+.nav .bdg:empty{display:none}
+.nav .bdg.act{background:var(--act);color:var(--on-act)}
+.nav.on .bdg:not(.act){background:color-mix(in srgb,var(--fg) 10%,transparent);color:var(--fg2)}
+/* sidebar icons are one color; only Needs you turns orange, and only when something needs you */
+.nav .si{color:var(--mute);display:grid}
+.nav:hover .si,.nav.on .si{color:var(--fg)}
+.nav.repo .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nav.addr,.nav.addr .si{color:var(--faint)}
+.side .lbl{font-size:12px;color:var(--faint);padding:16px 8px 6px}
+.side .lbl.first{padding-top:4px}
+.side .foot{margin-top:auto;padding:8px 0 0;display:flex;align-items:center}
+/* Add a repo: the hint, in a popover under its row */
+.rpop{position:absolute;left:10px;width:290px;z-index:40;background:var(--raise);border:1px solid var(--line2);border-radius:10px;box-shadow:var(--shadow);padding:10px 12px;font-size:12.5px;line-height:1.5;color:var(--fg2);animation:drop .16s var(--ease)}
+.rpop b{display:block;font-weight:600;color:var(--fg);margin-bottom:4px}
+.rpop p{margin:0 0 8px}.rpop p:last-child{margin:0}
+.rpop code{font:11.5px var(--mono);color:var(--fg);background:var(--hover);border:1px solid var(--line);padding:0 5px;border-radius:4px;white-space:nowrap}
+/* show/hide: wide, the sidebar slides away (the choice is kept); narrow, it opens over the content */
+.side{position:relative;transition:margin-left .24s var(--ease)}
+.app.nosb .side{margin-left:-216px}
+.app.nosb .main{border-left-color:transparent}
+.sbt{position:relative;margin-left:-8px}
+.sbt.dot::after{content:"";position:absolute;top:4px;right:3px;width:7px;height:7px;border-radius:4px;background:var(--act);box-shadow:0 0 0 2px var(--bg);display:none}
+.app.nosb .sbt.dot::after{display:block}
 
 /* ── main ── */
 .main{flex:1;min-width:0;background:var(--bg);border-left:1px solid var(--line);display:flex;flex-direction:column;container:main/inline-size}
-.top{display:flex;align-items:center;gap:10px;height:48px;flex:none;padding:0 16px 0 20px;border-bottom:1px solid var(--line)}
-.top h2{font-size:14px;font-weight:600;margin:0;letter-spacing:-.01em}
-.top .mlogo{display:none}
-.sumline{color:var(--mute);display:flex;gap:6px;align-items:center;white-space:nowrap;min-width:0;overflow:hidden}
-.sumline b{font-weight:500;color:var(--fg)}
-.sumline .a{color:var(--act-fg);font-weight:600}
-.sumline i{font-style:normal;color:var(--faint)}
+.top{display:flex;align-items:center;height:48px;flex:none;padding:0 16px 0 20px;border-bottom:1px solid var(--line)}
+.top h2{font-size:14px;font-weight:600;margin:0;letter-spacing:-.01em;line-height:17px}
+/* the title, and under it only when something needs you, a short attention line */
+.ttlg{display:flex;flex-direction:column;justify-content:center;min-width:0;margin-left:6px}
+.tsub{font-size:11.5px;line-height:15px;color:var(--act-fg);font-weight:500;text-align:left;white-space:nowrap}
+.tsub:hover{text-decoration:underline;text-underline-offset:2px}
+.tsub[hidden]{display:none}
 .top .sp{flex:1}
-.top .cost{color:var(--mute)}
+/* trailing groups: [cost] [List | Board] [search, New ticket] */
+.top .tg{display:flex;align-items:center;gap:8px}
+.top .tg+.tg{margin-left:16px}
+.top .cost{font-size:12px;color:var(--faint);cursor:default}
 .btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line2);border-radius:7px;padding:0 10px;height:28px;font-size:13px;font-weight:500;background:var(--raise);white-space:nowrap;transition:background .12s,transform .08s}
 .btn:hover{background:var(--hover)}
 .btn:active{transform:scale(.97)}
@@ -151,8 +173,8 @@ kbd{font:500 11px var(--sans);color:var(--mute);border:1px solid var(--line2);bo
 @keyframes flash{0%{background:var(--press)}}
 
 /* view switch */
-.segc{display:flex;background:var(--band);border:1px solid var(--line);border-radius:8px;padding:2px;gap:2px;flex:none}
-.segc button{display:flex;align-items:center;gap:6px;height:22px;padding:0 8px;border-radius:6px;font-size:12.5px;font-weight:500;color:var(--mute);transition:background .12s,color .12s}
+.segc{display:grid;grid-template-columns:1fr 1fr;background:var(--band);border:1px solid var(--line);border-radius:8px;padding:2px;gap:2px;flex:none}
+.segc button{display:flex;align-items:center;justify-content:center;min-width:58px;height:22px;padding:0 10px;border-radius:6px;font-size:12.5px;font-weight:500;color:var(--mute);transition:background .12s,color .12s}
 .segc button:hover{color:var(--fg)}
 .segc button.on{background:var(--raise);color:var(--fg);box-shadow:0 0 0 1px var(--line2)}
 
@@ -257,6 +279,11 @@ a.btn{text-decoration:none}
 .ph{display:flex;align-items:center;gap:8px;height:48px;flex:none;padding:0 10px 0 20px;border-bottom:1px solid var(--line);color:var(--mute)}
 .ph .sp{flex:1}
 .ph .back{display:none}
+/* Pause, then Stop apart and destructive, then a divider, then Close at the edge */
+.ph .ctl{display:flex;align-items:center;gap:12px}
+.btn.stop{color:var(--fail)}
+.btn.stop:hover{background:color-mix(in srgb,var(--fail) 10%,transparent);color:var(--fail)}
+.ph .div{width:1px;height:16px;background:var(--line2);margin:0 2px 0 4px}
 .pscroll{flex:1;overflow-y:auto;overscroll-behavior:contain;padding:20px 20px 16px}
 .pscroll h1{font-size:20px;font-weight:600;letter-spacing:-.02em;margin:0 0 10px;line-height:1.25;text-wrap:balance}
 .meta{display:flex;gap:6px 14px;flex-wrap:wrap;align-items:center;color:var(--mute);font-size:13px}
@@ -302,6 +329,7 @@ a.btn{text-decoration:none}
 .ev.agent,.ev.ask{padding:2px 0}
 .ev .whoo{display:block;font-size:12px;color:var(--faint);margin-bottom:2px}
 .ev.agent p,.ev.ask p{margin:0;color:var(--fg);line-height:1.5}
+.ev.ask p{white-space:pre-line}
 .ev.ask{border:1px solid var(--act-line);background:var(--act-bg);border-radius:10px;padding:10px 12px;margin:2px 0}
 .ev.ask .whoo{color:var(--act-fg);font-weight:500}
 .ev.you{align-self:flex-end;max-width:88%;display:flex;flex-direction:column;align-items:flex-end;gap:3px;margin:4px 0}
@@ -352,15 +380,9 @@ a.btn{text-decoration:none}
   .col.nil:not(.ny) .chead .who{display:block}
   .evl{height:auto;min-height:16px}
 }
-@container main (max-width:780px){ .top .cost,.top .kb{display:none} }
-/* the header keeps its counts on one line, by the main column's width (not the window's: the panel takes room):
-   the view labels go first, then "ready", the title and New ticket's label, the queue count, then the words */
-@container main (max-width:620px){ .segc span{display:none} }
-@container main (max-width:520px){ #sum .rdy{display:none} }
-@container main (max-width:480px){ .top{padding:0 12px 0 16px;gap:8px} .top h2,.top .pri .lg{display:none} }
-@container main (max-width:420px){ #sum .qn{display:none} }
-#sum .zero{display:none}
-@container main (max-width:380px){ #sum .none{display:none} #sum .zero{display:inline} }
+/* the toolbar by the main column's width (not the window's: the panel takes room): cost goes first, then New ticket's label */
+@container main (max-width:620px){ .top .cost{display:none} }
+@container main (max-width:480px){ .top{padding:0 12px 0 16px} .top .tg+.tg{margin-left:10px} .segc button{min-width:0;padding:0 8px} .top .pri .lg{display:none} }
 @container main (max-width:680px){
   .row{grid-template-columns:18px minmax(0,1fr) auto;row-gap:8px;padding:12px 12px 12px 16px;align-items:start}
   .row .id{display:none} .ttl .idn{display:inline}
@@ -374,7 +396,11 @@ a.btn{text-decoration:none}
   .ghead{padding:0 16px}.ghead .hint{display:none}
   .empty{padding-left:46px}
 }
-@media (max-width:1080px){ .side{display:none} .top .mlogo{display:grid} }
+@media (max-width:1080px){
+  .side{display:none}
+  .app:not(.sbopen) .sbt.dot::after{display:block}
+  .app.sbopen .side{display:flex;position:fixed;left:0;top:0;bottom:0;z-index:15;background:var(--side);box-shadow:var(--shadow);margin-left:0}
+}
 @media (max-width:860px){
   .panel{position:fixed;inset:0;width:100%;transform:translateX(100%);transition:transform .28s var(--ease);z-index:10}
   .panel.on{width:100%;transform:none;border:0}
@@ -386,6 +412,7 @@ a.btn{text-decoration:none}
 }
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation:none!important;transition:none!important}
+  .side{transition:none}
   .shim{color:var(--fg);background:none}
   .seg.run{background:var(--fg)}
   .pulse{opacity:1}
@@ -411,6 +438,20 @@ a.btn{text-decoration:none}
 /* A Needs-you row that waits on you: its one action sits under the reason, so the title and reason keep the row's width. */
 .row .mn .tka{display:flex;margin-top:8px}
 #sTk{text-align:right;line-height:1.3}
+/* ADR 0020: a Needs-you job that waits to be refined with you, or for your approval of intake's criteria */
+.wt{margin-top:4px;font-size:12.5px;line-height:1.45;color:var(--fg2);min-width:0}
+.wt .wh{color:var(--act-fg);font-weight:600}
+.wt .wh i{font-style:normal;font-weight:400;color:var(--mute)}
+.wt ul{margin:3px 0 0;padding:0;list-style:none}
+.wt li{position:relative;padding-left:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wt li::before{content:"";position:absolute;left:3px;top:.68em;width:4px;height:4px;border-radius:50%;background:var(--faint)}
+.wt .lo{color:var(--mute);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wt .cmd{display:flex;align-items:center;gap:6px;margin-top:7px;flex-wrap:wrap}
+.wt .cmd code{font:12px var(--mono);color:var(--fg);background:var(--raise);border:1px solid var(--line2);border-radius:6px;padding:1px 4px 1px 8px;display:inline-flex;align-items:center;gap:2px}
+.wt .cmd .ib{width:22px;height:22px;border-radius:5px;color:var(--mute)}
+.wt .cmd span{font-size:12px;color:var(--faint)}
+.card .wt li{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.card .wt .lo{white-space:normal}
 .sub.q code,.ev.ask p code,.card .cq code,.card .evl code{font:11.5px var(--mono);background:var(--raise);border:1px solid var(--line2);border-radius:4px;padding:0 4px}
 @container main (max-width:680px){ .rbar{padding:9px 12px 9px 16px} }
 /* logo:start (scripts/brand/gen-icons.mjs writes this block: logo B, the cook, 16px cut) */
@@ -419,54 +460,33 @@ a.btn{text-decoration:none}
 :root[data-theme="dark"]{--logo:url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByb2xlPSJpbWciIGFyaWEtbGFiZWw9IktpdGNoZW46IHRoZSBjb29rLCBzbWFsbCBzaXplcyI+PHN0eWxlPi5pbmt7ZmlsbDojZWRlZGYwfS5pbmtze2ZpbGw6bm9uZTtzdHJva2U6I2VkZWRmMDtzdHJva2UtbGluZWNhcDpyb3VuZDtzdHJva2UtbGluZWpvaW46cm91bmR9LmFjY3N7ZmlsbDpub25lO3N0cm9rZTojZmY4YTNkO3N0cm9rZS1saW5lY2FwOnJvdW5kO3N0cm9rZS1saW5lam9pbjpyb3VuZH08L3N0eWxlPjxjaXJjbGUgY2xhc3M9ImluayIgY3g9IjMyIiBjeT0iOC41MDAiIHI9IjQiLz48cGF0aCBjbGFzcz0iaW5rcyIgc3Ryb2tlLXdpZHRoPSI3IiBkPSJNOSwxOC41MDBINTVNNC41MDAsMzVIN001NywzNUg1OS41MDAiLz48cGF0aCBjbGFzcz0iaW5rIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiIGQ9Ik0xNCwyNkg1MEEzLDMgMCAwIDEgNTMsMjlWNDRBMTUsMTUgMCAwIDEgMzgsNTlIMjZBMTUsMTUgMCAwIDEgMTEsNDRWMjlBMywzIDAgMCAxIDE0LDI2Wk0yMy41MDAsMzUuNTAwYTUsNSAwIDEgMCAwLjAxMCwwWk00MC41MDAsMzUuNTAwYTUsNSAwIDEgMCAwLjAxMCwwWiIvPjwvc3ZnPg==")}
 /* logo:end */
 
-/* ── repo switcher (ADR 0019) ── */
-.wsb{display:flex;align-items:center;gap:9px;width:100%;padding:6px 8px;margin:0 0 10px;border-radius:6px;font-weight:600;letter-spacing:-.01em;text-align:left;transition:background .12s}
-.wsb:hover,.wsb[aria-expanded="true"]{background:var(--hover)}
-.wsb .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.wsb .chev{margin-left:auto;color:var(--faint);font-size:10px}
-.wsb .ob{min-width:16px;height:16px;padding:0 5px;border-radius:8px;background:var(--act-fg);color:var(--bg);font:600 10.5px/16px var(--sans);text-align:center}
-.side{position:relative}
-.rmenu{position:absolute;left:8px;top:48px;width:300px;z-index:40;background:var(--bg);border:1px solid var(--line2);border-radius:10px;box-shadow:0 12px 32px rgba(0,0,0,.18);padding:6px}
-.rmenu .h{font-size:12px;color:var(--faint);padding:6px 8px 4px}
-.ritem{display:grid;grid-template-columns:1fr auto;gap:0 10px;align-items:center;width:100%;padding:7px 8px;border-radius:6px;text-align:left}
-.ritem:hover,.ritem:focus-visible{background:var(--hover)}
-.ritem.on{background:var(--press)}
-.ritem .n{font-weight:500;display:flex;gap:6px;align-items:center;min-width:0}
-.ritem .n .ck{color:var(--fg);width:12px;font-size:11px}
-.ritem .p{grid-column:1;font:11.5px var(--mono);color:var(--faint);padding-left:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.ritem .s{grid-row:1/3;grid-column:2;display:flex;flex-direction:column;align-items:flex-end;gap:2px;font-size:11.5px;color:var(--mute);white-space:nowrap}
-.ritem .s .you{color:var(--act-fg);font-weight:600}
-.ritem kbd{margin-left:6px}
-.rmenu .add{border-top:1px solid var(--line);margin-top:6px;padding:9px 8px 5px;font-size:12px;color:var(--mute);line-height:1.5}
-.rmenu .add code{font:11.5px var(--mono);color:var(--fg);background:var(--hover);padding:1px 5px;border-radius:4px}
-.wsb.one{cursor:default}.wsb.one:hover{background:none}.wsb.one .chev{display:none}
 </style>
 </head>
 <body>
 <div class="app">
-  <nav class="side" aria-label="Project">
-    <button class="wsb" id="wsb" aria-haspopup="menu" aria-expanded="false" onclick="repoMenu()"><span class="logo" role="img" aria-label="Kitchen"></span><span class="nm" id="wsName">kitchen</span><span class="ob" id="wsOther" hidden></span><span class="chev">▾</span></button><div class="rmenu" id="rmenu" role="menu" hidden></div>
-    <button class="nav on" onclick="jump('g-you')"><span id="nJobI"></span>Jobs</button>
-    <button class="nav subn" onclick="jump('g-you')"><span id="nYouI"></span>Needs you <span class="c act num" id="sYou"></span></button>
-    <button class="nav subn" onclick="jump('g-run')"><span id="nRunI"></span><span id="sRunN">Running</span> <span class="c num" id="sRun"></span></button>
-    <button class="nav subn" onclick="jump('g-done')"><span id="nDoneI"></span>Done <span class="c num" id="sDone"></span></button>
-    <div class="lbl">Project</div>
-    <button class="nav" onclick="palette()"><span id="nCoI"></span>Cost <span class="c mono num" id="sCost"></span></button>
-    <div class="foot">
-      <div class="keys"><kbd>J</kbd><span>/ <kbd>K</kbd> move</span><kbd>R</kbd><span>message the agent</span><kbd>⌘K</kbd><span>commands</span></div>
-      <button class="nav" style="margin:4px -8px -4px;width:auto" onclick="toggleTheme()"><span id="nThI"></span>Theme</button>
+  <nav class="side" id="side" aria-label="Project">
+    <div class="ws"><span class="logo" role="img" aria-label="Kitchen"></span><span class="nm" id="wsName">kitchen</span></div>
+    <div class="lbl first">Jobs</div>
+    <button class="nav" data-sec="g-you" onclick="jump('g-you')"><span class="si" id="nYouI"></span>Needs you<span class="bdg act" id="sYou"></span></button>
+    <button class="nav" data-sec="g-run" onclick="jump('g-run')"><span class="si" id="nRunI"></span><span id="sRunN">Running</span><span class="bdg" id="sRun"></span></button>
+    <button class="nav" data-sec="g-done" onclick="jump('g-done')"><span class="si" id="nDoneI"></span>Done<span class="bdg" id="sDone"></span></button>
+    <div id="repoG" hidden>
+      <div class="lbl">Repos</div>
+      <div id="repoL"></div>
+      <button class="nav addr" id="addR" onclick="addRepo()" aria-haspopup="dialog" aria-expanded="false"><span class="si" id="nAddI"></span>Add a repo…</button>
+      <div class="rpop" id="rpop" role="dialog" aria-label="Add a repo" hidden><b>Add a repo</b><p>In the repo, run <code>kitchen dashboard</code>. It joins this page instead of opening a new port.</p><p>Remove one: <code>kitchen dashboard --forget</code></p></div>
     </div>
+    <div class="foot"><button class="ib" id="thB" onclick="toggleTheme()" aria-label="Appearance" title="Appearance"></button></div>
   </nav>
   <main class="main">
     <div class="top">
-      <span class="logo mlogo" role="img" aria-label="Kitchen"></span>
-      <h2>Jobs</h2>
-      <div class="sumline" id="sum"></div>
+      <button class="ib sbt" id="sbB" onclick="toggleSidebar()" aria-label="Hide sidebar" title="Hide sidebar (⌃⌘S)" aria-controls="side"></button>
+      <div class="ttlg"><h2>Jobs</h2><button class="tsub" id="sum" onclick="jump('g-you')" hidden></button></div>
       <span class="sp"></span>
-      <span class="cost mono num" id="tCost"></span>
-      <div class="segc" role="group" aria-label="View"><button id="vList" onclick="setView('list')" aria-label="List view"></button><button id="vBoard" onclick="setView('board')" aria-label="Board view"></button></div>
-      <button class="btn ghost kb" onclick="palette()" aria-label="Commands"><span id="kI"></span><kbd>⌘K</kbd></button>
-      <button class="btn pri" onclick="newTicket()">New<span class="lg">ticket</span></button>
+      <div class="tg"><span class="cost mono num" id="tCost"></span></div>
+      <div class="tg"><div class="segc" role="radiogroup" aria-label="View"><button id="vList" role="radio" onclick="setView('list')">List</button><button id="vBoard" role="radio" onclick="setView('board')">Board</button></div></div>
+      <div class="tg"><button class="ib" onclick="palette()" aria-label="Search and commands" title="Search and commands (⌘K)"><span id="kI"></span></button>
+      <button class="btn pri" onclick="newTicket()">New<span class="lg">ticket</span></button></div>
     </div>
     <div class="scroll" id="scroll">
       <div id="list"></div>
@@ -514,13 +534,10 @@ const I={
   msg:sv('<path d="M2.5 4.5a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H8l-3.2 2.4V11.5h-.3a2 2 0 0 1-2-2z"/>'),
   up:sv('<path d="M8 12.5v-9M4 7l4-4 4 4"/>',14), pause:sv('<path d="M5.5 3.5v9M10.5 3.5v9"/>',14), play:sv('<path d="M5 3.2l7.5 4.8L5 12.8z"/>',14),
   stop:sv('<rect x="4" y="4" width="8" height="8" rx="1.5"/>',14), x:sv('<path d="M4 4l8 8M12 4l-8 8"/>'), back:sv('<path d="M10 3L5 8l5 5"/>'),
-  search:sv('<circle cx="7" cy="7" r="4.2"/><path d="M10.2 10.2L13.5 13.5"/>',14), gear:sv('<circle cx="8" cy="8" r="2"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M12.4 3.6L11 5M5 11l-1.4 1.4"/>'),
-  box:sv('<path d="M2.5 5L8 2.5 13.5 5v6L8 13.5 2.5 11zM2.5 5L8 7.5 13.5 5M8 7.5v6"/>'), coin:sv('<circle cx="8" cy="8" r="5.5"/><path d="M9.8 6.2c-.3-.6-1-.9-1.8-.9-1 0-1.9.5-1.9 1.4 0 2 3.8.8 3.8 2.7 0 .9-.9 1.4-1.9 1.4-.9 0-1.6-.4-1.9-1M8 4.2v1M8 10.8v1"/>'),
-  sun:sv('<circle cx="8" cy="8" r="2.8"/><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1 1M11.6 11.6l1 1M12.6 3.4l-1 1M4.4 11.6l-1 1"/>'),
-  list:sv('<path d="M2.5 4h11M2.5 8h11M2.5 12h7"/>'),
+  search:sv('<circle cx="7" cy="7" r="4.2"/><path d="M10.2 10.2L13.5 13.5"/>'), gear:sv('<circle cx="8" cy="8" r="2"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M12.4 3.6L11 5M5 11l-1.4 1.4"/>'),
+  box:sv('<path d="M2.5 5L8 2.5 13.5 5v6L8 13.5 2.5 11zM2.5 5L8 7.5 13.5 5M8 7.5v6"/>'),
   copy:sv('<rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 3.5v-.5a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 3v5A1.5 1.5 0 0 0 4 9.5h.5"/>',14),
   doc:sv('<path d="M4 1.8h5.2L12.5 5v8.2a1 1 0 0 1-1 1h-7.5a1 1 0 0 1-1-1V2.8a1 1 0 0 1 1-1z"/><path d="M9 1.8V5h3.5M5.5 8h5M5.5 10.5h5"/>',14),
-  board:sv('<rect x="2.5" y="2.5" width="4" height="11" rx="1"/><rect x="9.5" y="2.5" width="4" height="7" rx="1"/>',14),
   chk:`<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 6.3l2.3 2.3 4.7-5"/></svg>`,
   xx:`<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 3l6 6M9 3l-6 6"/></svg>`,
 };
@@ -536,6 +553,15 @@ const S={
   back:`<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="7" fill="var(--line)"/><path d="M11.2 8a3.2 3.2 0 1 1-1-2.33" stroke="var(--mute)" stroke-width="1.5" stroke-linecap="round"/><path d="M10.6 3.9v2.1h-2.1" stroke="var(--mute)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
 };
 S.rejected=S.skip; S.done=S.ok;
+/* The sidebar's own glyphs: one color (currentColor). Needs you uses S.you (orange) when something needs you, else S.wait. */
+const SB={
+  run:`<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="6" opacity=".35"/><path d="M8 2a6 6 0 0 1 6 6"/></svg>`,
+  done:`<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M5.4 8.2l1.8 1.8 3.4-3.7"/></svg>`,
+  repo:`<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M2 4.6A1.6 1.6 0 0 1 3.6 3h2.6l1.5 1.6h4.7A1.6 1.6 0 0 1 14 6.2v5.2a1.6 1.6 0 0 1-1.6 1.6H3.6A1.6 1.6 0 0 1 2 11.4z"/></svg>`,
+  add:sv('<path d="M8 3.5v9M3.5 8h9"/>'),
+  side:`<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2.25"/><path d="M6.25 2.75v10.5"/></svg>`,
+  look:`<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="5.75"/><path d="M8 2.25a5.75 5.75 0 0 0 0 11.5z" fill="currentColor" stroke="none"/></svg>`,
+};
 
 /* ───────── model ───────── */
 let snap=null, jobs=[], details={}, tick0=performance.now();
@@ -610,7 +636,7 @@ async function pollDetail(){
   }
   setTimeout(pollDetail,1500);
 }
-function sigOf(j){return [j.state,j.phase,j.stage,j.lane,j.round,j.q,j.pausedBy,j.title,j.report,j.files.length,j.runnerOn,j.movedAt,j.failed,j.risk,j.proof,fresh.has(j.id),expanded===j.id].join("|")}
+function sigOf(j){return [JSON.stringify(j.waits),j.state,j.phase,j.stage,j.lane,j.round,j.q,j.pausedBy,j.title,j.report,j.files.length,j.runnerOn,j.movedAt,j.failed,j.risk,j.proof,fresh.has(j.id),expanded===j.id].join("|")}
 function paint(before){
   const order0=[...before.keys()].join(),order1=jobs.map(j=>j.id).join();
   const groups=j=>j?(view==="board"?j.lane:group(j)):"";
@@ -674,10 +700,19 @@ function finLabel(j){if(stopped(j))return "Stopped by you";return j.state==="don
 /* Kitchen's own messages name commands in backticks: shown as code. */
 const md=t=>esc(t).replace(/`([^`]+)`/g,"<code>$1</code>");
 function icon(j){return S[j.state==="done"?"ok":j.state==="rejected"?"skip":j.state==="run"&&!j.runnerOn?"paused":j.state]}
+/* ADR 0020: what a refine or confirm job waits for, under its title: intake's readings and the command for Claude Code
+   or Codex, or intake's criteria and what it left out. Its buttons sit under it (.tka). */
+function waitHTML(j){const w=j.waits;if(!w)return "";
+  const li=xs=>`<ul>${xs.map(x=>`<li title="${esc(x)}">${esc(x)}</li>`).join("")}</ul>`;
+  if(w.for==="refine"){const c="/kitchen refine "+j.num;
+    return `<div class="wt"><div class="wh">Refine with you <i>· ${esc(w.reason.replace("-"," "))}</i></div>${w.items.length?li(w.items.slice(0,4)):""}<div class="cmd"><code>${esc(c)}<button type="button" class="ib" data-act="copy-cmd" data-cmd="${esc(c)}" title="Copy ${esc(c)}" aria-label="Copy ${esc(c)}">${I.copy}</button></code><span>Run in Claude Code or Codex</span></div></div>`}
+  return `<div class="wt"><div class="wh">Approve the criteria</div>${li(w.items)}<div class="lo" title="${esc(w.leftOut||"nothing")}">Left out: ${esc(w.leftOut||"nothing")}</div></div>`}
+const approveBtns=(j,ex)=>`<span class="tka"><button type="button" class="btn act sm" data-act="approve" data-id="${esc(j.id)}" title="Build it on these criteria (kitchen approve ${esc(j.num)})">Approve</button><button type="button" class="btn sm" data-act="message" data-id="${esc(j.id)}">${ex?"Close":"Ask for changes"}</button></span>`;
 function rowHTML(j){
   const g=group(j),ex=expanded===j.id;
   let sub="",mid="",tm="",acts="";
-  if(g==="you"){sub=`<div class="sub q">${md(j.q)}</div>`;mid=`<button class="btn act sm rep" data-act="message" data-id="${esc(j.id)}">${ex?"Close":"Reply"}</button>`;tm=`<span class="tm mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`}
+  if(g==="you"&&j.waits){sub=waitHTML(j)+(j.waits.for==="confirm"?approveBtns(j,ex):"");mid=j.waits.for==="confirm"?"":`<button class="btn sm rep" data-act="message" data-id="${esc(j.id)}">${ex?"Close":"Reply"}</button>`;tm=`<span class="tm mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`}
+  else if(g==="you"){sub=`<div class="sub q">${md(j.q)}</div>`;mid=`<button class="btn act sm rep" data-act="message" data-id="${esc(j.id)}">${ex?"Close":"Reply"}</button>`;tm=`<span class="tm mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`}
   else if(g==="run"){sub=`<div class="sub" id="lv-${esc(j.id)}">${liveHTML(j)}</div>`;mid=chgHTML(j)+trackHTML(j);tm=`<span class="tm mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`;
     acts=`<span class="acts"><button class="ib" title="Message ${esc(agent(j))} (R)" aria-label="Message agent" data-act="message" data-id="${esc(j.id)}">${I.msg}</button></span>`}
   else{mid=`<span class="fin ${fresh.has(j.id)?"new":""}">${fresh.has(j.id)?"Just finished · ":""}${finLabel(j)}</span>`;tm=`<span class="tm mono num">${costTxt(j)}</span>`;
@@ -723,7 +758,8 @@ function cardHTML(j){
   const l=j.lane,end=ended(j)||l==="done",idt="#"+j.num;
   const cls=`${l==="you"?"ny":""} ${end?"end":""} ${j.state==="done"?"rdy":""} ${j.state==="rejected"||j.pausedBy==="stop"?"gone":""} ${open===j.id?"open":""} ${sel===j.id?"sel":""} ${just.has(j.id)?"flash":""}`;
   const bot=l==="you"
-    ?`<div class="cq">${md(j.q)}</div><button class="btn act sm" data-act="message" data-id="${esc(j.id)}">Reply</button>`
+    ?j.waits?waitHTML(j)+(j.waits.for==="confirm"?approveBtns(j,false):`<span class="tka"><button class="btn sm" data-act="message" data-id="${esc(j.id)}">Reply</button></span>`)
+    :`<div class="cq">${md(j.q)}</div><button class="btn act sm" data-act="message" data-id="${esc(j.id)}">Reply</button>`
     :`<div class="cbot"><div class="evl" id="lv-${esc(j.id)}">${evLine(j)}</div>${j.state==="rejected"?"":`<button class="ib" title="${j.state==="done"?"Follow up":"Message "+esc(agent(j))} (R)" aria-label="${j.state==="done"?"Follow up":"Message agent"}" data-act="message" data-id="${esc(j.id)}">${I.msg}</button>`}</div>`;
   return `<div class="rw card ${cls}" id="rw-${esc(j.id)}" style="view-transition-name:r-${esc(j.id)}" tabindex="0" role="button" data-row="${esc(j.id)}">
     <div class="ctop"><span class="id">${esc(idt)}</span>${j.round>1?`<span class="rnd">round ${j.round}</span>`:""}<span class="sp"></span>${j.state==="run"&&j.runnerOn?'<i class="pulse" title="Working now"></i>':""}${end?"":`<span class="mt num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`}</div>
@@ -742,12 +778,10 @@ function order(){if(view==="board")return lanes().flatMap(l=>inLane(l.k));
   return [...jobs.filter(j=>group(j)==="you"),...jobs.filter(j=>group(j)==="run"),...jobs.filter(j=>group(j)==="done").sort((a,b)=>doneT(b)-doneT(a))]}
 /* queue-words:start (src/dashboard/server.test.ts runs this block) */
 /* Jobs in a lane move only while an orchestrator works the queue (kitchen run, or /kitchen run in Claude Code); with
-   none they are queued. The header, the sidebar and the list (or Board) all take their words from here. */
+   none they are queued. The sidebar and the list (or Board) take their words from here. */
 function queueWords(runnerRunning,run){
-  /* A paused job sits in this group but isn't running: the header counts it apart, like the repo switcher does. */
-  const going=run.filter(j=>j.state==="run").length,held=run.length-going;
-  if(runnerRunning)return {count:`<b>${going}</b> running${held?` · <b>${held}</b> paused`:""}`,group:"Running",hint:"Your message reaches the job's next agent",empty:"Nothing running. Start one with New ticket.",busy:run.length>0};
-  return {count:`<b>${run.length}</b> waiting`,group:"Queued",hint:"Waiting for the orchestrator: start it and they move",empty:"Nothing queued. Start one with New ticket.",busy:false};
+  if(runnerRunning)return {group:"Running",hint:"Your message reaches the job's next agent",empty:"Nothing running. Start one with New ticket.",busy:run.length>0};
+  return {group:"Queued",hint:"Waiting for the orchestrator: start it and they move",empty:"Nothing queued. Start one with New ticket.",busy:false};
 }
 /* queue-words:end */
 function renderList(){
@@ -759,7 +793,7 @@ function renderList(){
      (view==="board"?boardHTML():`<section id="g-you"><div class="ghead ${you.length?"act":""}">${you.length?S.you:S.wait} Needs you <span class="n num">${you.length}</span></div>${you.map(rowHTML).join("")||'<div class="empty">Nothing needs you.</div>'}</section>
       ${(()=>{const q=queueWords(!!(snap&&snap.runner.running),run);return `<section id="g-run"><div class="ghead">${q.busy?S.run:S.wait} ${q.group} <span class="n num">${run.length}</span><span class="hint">${q.hint}</span></div>${run.map(rowHTML).join("")||`<div class="empty">${q.empty}</div>`}</section>`})()}
       <section id="g-done"><div class="ghead">${S.ok} Done <span class="n num">${done.length}</span></div>${done.map(rowHTML).join("")||'<div class="empty">Nothing done yet.</div>'}</section>`);
-    $("#vList").classList.toggle("on",view==="list");$("#vBoard").classList.toggle("on",view==="board");
+    for(const [b,v] of [["#vList","list"],["#vBoard","board"]]){$(b).classList.toggle("on",view===v);$(b).setAttribute("aria-checked",String(view===v))}
     renderCounts(); just.clear(); grow();
     for(const j of jobs)sigs[j.id]=sigOf(j);
   });
@@ -768,10 +802,10 @@ function renderCounts(){
   if(!snap)return;
   const you=jobs.filter(j=>group(j)==="you"),run=jobs.filter(j=>group(j)==="run"),done=jobs.filter(j=>group(j)==="done");
   const nyou=`${you.length} need${you.length===1?"s":""} you`;
-  $("#sum").innerHTML=(you.length?(view==="board"?`<button class="a" onclick="jump('g-you')">${nyou}</button>`:`<span class="a">${nyou}</span>`):`<span class="none">Nothing needs you</span><span class="zero">0 need you</span>`)+`<i class="qn">·</i><span class="qn">${queueWords(!!snap.runner.running,run).count}</span><i class="rdy">·</i><span class="rdy"><b>${done.filter(j=>j.state==="done").length}</b> done</span>`;
-  $("#sYou").textContent=you.length||"";$("#sRun").textContent=run.length;$("#sRunN").textContent=queueWords(!!snap.runner.running,run).group;$("#sDone").textContent=done.length;
+  $("#sum").hidden=!you.length;$("#sum").textContent=nyou;
+  $("#sYou").textContent=you.length||"";$("#nYouI").innerHTML=you.length?S.you:S.wait; /* orange only when something needs you */$("#sRun").textContent=run.length||"";{const q=queueWords(!!snap.runner.running,run);$("#sRunN").textContent=q.group;$("#nRunI").innerHTML=q.busy?SB.run:S.wait}$("#sDone").textContent=done.length||"";
   $("#wsName").textContent=snap.repo;const allYou=you.length+otherYou();document.title=(allYou?`(${allYou}) `:"")+"Kitchen · "+snap.repo;
-  $("#tCost").textContent="$"+snap.usdToday.toFixed(2)+" today";$("#tCost").title="Spent today by kitchen run's orchestrator sessions (an in-session /kitchen run is billed to that session)";$("#sCost").textContent="$"+snap.usdTotal.toFixed(2);$("#sCost").parentElement.title="Spent in all by kitchen run's orchestrator sessions";
+  $("#tCost").textContent="$"+snap.usdToday.toFixed(2)+" today";$("#tCost").title="$"+snap.usdToday.toFixed(2)+" today, $"+snap.usdTotal.toFixed(2)+" in all, by kitchen run's orchestrator sessions (an in-session /kitchen run is billed to that session)";
   $("#foot").innerHTML=`Orchestrator: ${esc(snap.runner.text)}${snap.runner.running?"":`. Jobs move only while <span class="mono">kitchen run</span> (or <span class="mono">/kitchen run</span> in Claude Code) works the queue.`}${snap.corrupt.length?` · Unreadable job folders: ${esc(snap.corrupt.join(", "))}`:""}`;
 }
 function replaceRow(j){if(!j)return;const n=$("#rw-"+CSS.escape(j.id));if(n)keepFocus(()=>{n.outerHTML=view==="board"?cardHTML(j):rowHTML(j);just.delete(j.id);sigs[j.id]=sigOf(j);grow()})}
@@ -787,11 +821,12 @@ function structural(fn){ if(document.startViewTransition&&!RM&&!document.hidden)
 function composerHTML(j,where="row"){
   const g=wgroup(j),a=agent(j),eng=!j.agent;
   if(j.state==="rejected")return "";
-  const ph=g==="you"?`Reply to ${a}…`:j.state==="paused"?`Leave a note for ${a}…`:g==="run"?`Message ${a}: redirect it, add context, ask…`:`What should change in ${j.num}?`;
-  const hint=g==="you"?`${Agent(j)} is waiting for you`:g==="done"?"This starts round "+(j.round+1):j.state==="paused"?"Paused. It reads this when you resume":g==="run"?"The job's next agent reads this when its lane starts":"Starts round "+(j.round+1);
+  const cf=j.waits&&j.waits.for==="confirm",rf=j.waits&&j.waits.for==="refine";
+  const ph=cf?"What should change in the criteria?":rf?`Answer here, or refine it in Claude Code…`:g==="you"?`Reply to ${a}…`:j.state==="paused"?`Leave a note for ${a}…`:g==="run"?`Message ${a}: redirect it, add context, ask…`:`What should change in ${j.num}?`;
+  const hint=cf?"Approve builds it on these criteria; a change goes back to intake":rf?"Your answer goes back to intake as your own words":g==="you"?`${Agent(j)} is waiting for you`:g==="done"?"This starts round "+(j.round+1):j.state==="paused"?"Paused. It reads this when you resume":g==="run"?"The job's next agent reads this when its lane starts":"Starts round "+(j.round+1);
   const chips=g==="run"&&j.state!=="paused"?["What are you doing right now?","Add a test for this","Keep the diff minimal"]:[];
   const ctl=g==="run"&&where==="panel"?"":g==="run"?`<button type="button" class="btn ghost sm" data-act="${j.state==="paused"?"resume":"pause"}" data-id="${esc(j.id)}">${j.state==="paused"?I.play+"Resume":I.pause+"Pause"}</button>${j.state==="paused"?"":`<button type="button" class="btn ghost sm" data-act="stop" data-id="${esc(j.id)}">${I.stop}Stop</button>`}`
-    :g==="you"?`<button type="button" class="btn ghost sm" data-act="reject" data-id="${esc(j.id)}">Reject</button>`
+    :g==="you"?`<button type="button" class="btn ghost sm" data-act="reject" data-id="${esc(j.id)}">Reject</button>${cf?`<button type="button" class="btn act sm" data-act="approve" data-id="${esc(j.id)}" title="Build it on these criteria (kitchen approve ${esc(j.num)})">Approve</button>`:""}`
     :g==="done"?`<button type="button" class="btn ghost sm" data-act="ask-cancel" data-id="${esc(j.id)}">Cancel</button>`:"";
   /* A done job takes no stray message: its report, its branch, and Ask for changes, which says it starts another round. */
   if(j.state==="done"&&!asking.has(j.id))return doneBar(j);
@@ -807,6 +842,8 @@ function doneBar(j){
 function askChanges(id,on){const j=J(id);if(!j)return;on?asking.add(id):asking.delete(id);
   if(open===id)renderPanel();else{expanded=id;renderList()}
   if(on){const t=$(`textarea[data-draft="${id}"][data-where="${open===id?"panel":"row"}"]`);if(t)t.focus()}}
+async function copyCmd(c){try{await navigator.clipboard.writeText(c);toast("Copied: "+c+". Run it in Claude Code or Codex")}catch(e){toast("Run in Claude Code or Codex: "+c)}}
+async function approve(id){const j=J(id);if(!j)return;if(expanded===id)expanded=null;await simple("approve",id,`${j.num} approved: it goes to Build`)}
 async function copyBranch(id){const b=(J(id)||{}).branch||"";try{await navigator.clipboard.writeText(b);toast("Copied: "+b)}catch(e){toast("The branch: "+b)}}
 async function startRunner(){const r=await post("start-runner",{});toast(r.ok?(said(r.lines)||"Kitchen started").replace(/^orchestrator detached: /,"Kitchen started: "):said(r.lines)||"Not started");refreshSoon()}
 function grow(){$$(".box textarea").forEach(t=>{t.style.height="auto";t.style.height=Math.min(160,t.scrollHeight)+"px"})}
@@ -833,11 +870,15 @@ async function post(verb,body){
 const said=lines=>(lines.at(-1)||"").replace(/^\S+\s\s/,"");
 function refreshSoon(){clearTimeout(refreshSoon.t);refreshSoon.t=setTimeout(async()=>{const g=gen;try{const d=await getJSON(BASE+"/data.json");if(g!==gen)return;snap=d;const before=new Map(jobs.map(j=>[j.id,j]));jobs=d.jobs.map(fromSnap);paint(before);if(open&&J(open)){const dd=await getJSON(`${BASE}/jobs/${encodeURIComponent(open)}/detail.json`);if(g!==gen)return;const old=details[open];details[open]=dd;panelUpdate(old,dd)}}catch(e){}},120)}
 function clearDraft(id){drafts[id]="";$$(`textarea[data-draft="${id}"]`).forEach(o=>o.value="");grow()}
+const sureRefine=new Set();
 async function send(id){
   const j=J(id); if(!j)return; const text=(drafts[id]||"").trim(), g=wgroup(j);
   if(!text&&!(g==="you"&&j.stage==="needs-human")){nope(id);return}
   const verb=g==="you"?"answer":g==="done"?"follow-up":"steer";
   if(verb==="follow-up"&&!asking.has(id)){nope(id);return}
+  /* ADR 0020: an answer here is read as the refined ticket. Say so once, and send only on a second press. */
+  if(j.waits&&j.waits.for==="refine"&&!sureRefine.has(id)){sureRefine.add(id);toast(`This goes to intake as ${j.num}'s refined ticket. To refine it with Claude, run /kitchen refine ${j.num} in Claude Code.`,"Send anyway",()=>send(id));return}
+  sureRefine.delete(id);
   clearDraft(id);
   const d=details[id];
   if(d&&open===id){const last=d.tl.at(-1);if(last){last.evs.push({c:"you",t:text,at:new Date().toISOString(),kind:verb,status:"Sending…"});if(tab==="activity")renderPanel()}}
@@ -901,7 +942,7 @@ function renderPanel(scrollEnd){
   const p=$("#panel"); const j=open&&J(open); if(!j){if(open&&!J(open))open=null;p.classList.remove("on");return}
   const g=wgroup(j),sc0=$("#pscroll"),keep=sc0&&!scrollEnd?sc0.scrollTop:null,atEnd=sc0?sc0.scrollHeight-sc0.scrollTop-sc0.clientHeight<90:true;
   const ss=steps(j),i=sidx(j);
-  const ctl=g==="run"?`<button type="button" class="btn ghost sm" data-act="${j.state==="paused"?"resume":"pause"}" data-id="${esc(j.id)}">${j.state==="paused"?I.play+"Resume":I.pause+"Pause"}</button>${j.state==="paused"?"":`<button type="button" class="btn ghost sm" data-act="stop" data-id="${esc(j.id)}">${I.stop}Stop</button>`}`:"";
+  const ctl=g==="run"?`<span class="ctl"><button type="button" class="btn sm" data-act="${j.state==="paused"?"resume":"pause"}" data-id="${esc(j.id)}">${j.state==="paused"?I.play+"Resume":I.pause+"Pause"}</button>${j.state==="paused"?"":`<button type="button" class="btn ghost sm stop" data-act="stop" data-id="${esc(j.id)}" title="Stop this job (you can resume it later)">${I.stop}Stop</button>`}</span><span class="div" aria-hidden="true"></span>`:"";
   const sub=[j.kind,j.risk?j.risk+" risk":""].filter(Boolean).join(" · ");
   keepFocus(()=>{$("#pin").innerHTML=`
     <div class="ph"><button class="ib back" onclick="closePanel()" aria-label="Back">${I.back}</button><span class="mono">${esc(j.num)}</span><span>·</span><span>${esc(sub)}</span><span class="sp"></span>${ctl}<button class="ib" onclick="closePanel()" aria-label="Close" title="Close (Esc)">${I.x}</button></div>
@@ -931,7 +972,25 @@ setInterval(()=>{
 let toastT;function toast(msg,label,fn){const t=$("#toast");t.innerHTML=`<span>${esc(msg)}</span>${label?`<button>${esc(label)}</button>`:""}`;if(label)t.querySelector("button").onclick=()=>{fn();t.classList.remove("on")};t.classList.add("on");clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove("on"),5000)}
 function newTicket(){palette(true,"ticket")}
 async function copyRun(){try{await navigator.clipboard.writeText("kitchen run --detach");toast("Copied: kitchen run --detach. Run it in the repo")}catch(e){toast("Run this in the repo: kitchen run --detach")}}
-function jump(id){const n=$("#"+id);if(n)n.scrollIntoView({behavior:RM?"auto":"smooth",block:"start"})}
+function jump(id){const n=$("#"+id);if(n)n.scrollIntoView({behavior:RM?"auto":"smooth",block:"start"});if($(".app").classList.contains("sbopen")){$(".app").classList.remove("sbopen");sbLabel()}}
+/* No sidebar item is selected on its own (nothing reads as "needs you" when nothing does): a click highlights the
+   item it jumped to, and the highlight clears once the person scrolls away themselves. */
+function pick(id){$$(".nav[data-sec]").forEach(b=>{const on=b.dataset.sec===id;b.classList.toggle("on",on);b.toggleAttribute("aria-current",on)})}
+$$(".nav[data-sec]").forEach(b=>b.addEventListener("click",()=>pick(b.dataset.sec)));
+for(const ev of ["wheel","touchmove"])$("#scroll").addEventListener(ev,()=>pick(null),{passive:true});
+$("#scroll").addEventListener("keydown",e=>{if(/^(Arrow|Page|Home|End| )/.test(e.key))pick(null)});
+/* Show/hide the sidebar (shown by default). Wide: it slides away and the choice is kept. Narrow: it opens over the content. */
+const narrow=()=>matchMedia("(max-width:1080px)").matches;
+function sbLabel(){const a=$(".app"),shown=narrow()?a.classList.contains("sbopen"):!a.classList.contains("nosb");$("#sbB").setAttribute("aria-label",(shown?"Hide":"Show")+" sidebar");$("#sbB").title=(shown?"Hide":"Show")+" sidebar (⌃⌘S)"}
+function toggleSidebar(){const a=$(".app");
+  if(narrow())a.classList.toggle("sbopen");else{a.classList.toggle("nosb");try{localStorage.setItem("kitchen.sidebar",a.classList.contains("nosb")?"hidden":"shown")}catch(e){}}
+  sbLabel()}
+try{if(localStorage.getItem("kitchen.sidebar")==="hidden")$(".app").classList.add("nosb")}catch(e){}
+document.addEventListener("keydown",e=>{if(e.ctrlKey&&e.metaKey&&e.key.toLowerCase()==="s"){e.preventDefault();toggleSidebar()}
+  else if(e.key==="Escape"&&!$("#rpop").hidden){e.stopImmediatePropagation();addRepo(false);$("#addR").focus()}
+  else if(e.key==="Escape"&&$(".app").classList.contains("sbopen")){e.stopImmediatePropagation();$(".app").classList.remove("sbopen");sbLabel();$("#sbB").focus()}},true);
+document.addEventListener("click",e=>{if(!e.target.closest("#rpop,#addR"))addRepo(false);
+  const a=$(".app");if(a.classList.contains("sbopen")&&!e.target.closest("#side,#sbB")){a.classList.remove("sbopen");sbLabel()}});
 function toggleTheme(){const r=document.documentElement,dark=r.dataset.theme?r.dataset.theme==="dark":matchMedia("(prefers-color-scheme: dark)").matches;r.dataset.theme=dark?"light":"dark";try{localStorage.setItem("kitchen.theme",r.dataset.theme)}catch(e){}}
 let palI=0,palItems=[],palMode="cmd";
 function palette(on=true,mode="cmd"){const p=$("#pal");p.classList.toggle("on",on);if(on){palMode=mode;$("#palin").value="";$("#palin").placeholder=mode==="ticket"?"What do you want done? Kitchen files it as a ticket…":"Message an agent, open a job, run a command…";palI=0;paintPal();$("#palin").focus()}}
@@ -972,7 +1031,7 @@ document.addEventListener("keydown",e=>{
 document.addEventListener("click",e=>{
   const b=e.target.closest("[data-act]");
   if(b){const id=b.dataset.id,a=b.dataset.act;e.stopPropagation();
-    if(a==="message")message(id);else if(a==="pause")pause(id);else if(a==="resume")resume(id);else if(a==="stop")stopJob(id);else if(a==="reject")reject(id);else if(a==="chip")useChip(id,b);else if(a==="copy")copyRun();else if(a==="start-runner")startRunner();else if(a==="ask")askChanges(id,true);else if(a==="ask-cancel")askChanges(id,false);else if(a==="copy-branch")copyBranch(id);
+    if(a==="message")message(id);else if(a==="pause")pause(id);else if(a==="resume")resume(id);else if(a==="stop")stopJob(id);else if(a==="reject")reject(id);else if(a==="chip")useChip(id,b);else if(a==="copy")copyRun();else if(a==="start-runner")startRunner();else if(a==="ask")askChanges(id,true);else if(a==="ask-cancel")askChanges(id,false);else if(a==="copy-branch")copyBranch(id);else if(a==="copy-cmd")copyCmd(b.dataset.cmd);else if(a==="approve")approve(id);
     return}
   const r=e.target.closest("[data-row]");if(r)openJob(r.dataset.row);
 });
@@ -987,32 +1046,29 @@ async function loadRepos(force){
   if(!CUR||!repos.some(r=>r.key===CUR)){const h=decodeURIComponent(location.hash.slice(1));const r=repos.find(x=>x.key===h)||repos.find(x=>x.key===reposLast)||repos[0];
     if(!CUR&&!r){if(!loadRepos.said){loadRepos.said=true;toast("No repos on this dashboard yet: run kitchen dashboard in one")}}
     if(r&&r.key!==CUR)switchRepo(r.key)}
-  otherBadge();if(!$("#rmenu").hidden)paintMenu();
+  otherBadge();paintRepos();
 }
 const otherYou=()=>repos.filter(r=>r.key!==CUR).reduce((a,r)=>a+r.you,0);
-function otherBadge(){const n=otherYou(),e=$("#wsOther");e.hidden=!n;e.textContent=n;e.title=n+" job"+(n===1?"":"s")+" in other repos need"+(n===1?"s":"")+" you"}
-function paintMenu(){
-  $("#rmenu").innerHTML='<div class="h">Repos on this dashboard</div>'+repos.map((r,i)=>`<button class="ritem${r.key===CUR?" on":""}" role="menuitem" data-repo="${esc(r.key)}"><span class="n"><span class="ck">${r.key===CUR?"✓":""}</span>${esc(r.name)}</span><span class="p" title="${esc(r.path)}">${esc(r.path)}</span><span class="s">${r.you?`<span class="you">${r.you} needs you</span>`:""}<span>${r.running?r.running+" running · ":""}${r.jobs} job${r.jobs===1?"":"s"}${i<9?`<kbd>⌘${i+1}</kbd>`:""}</span></span></button>`).join("")+
-    '<div class="add">Add a repo: run <code>kitchen dashboard</code> in it. It joins this page instead of opening a new port.<br>Remove one: <code>kitchen dashboard --forget</code></div>';
-}
-function repoMenu(force){if(MODE!=="repos")return;const m=$("#rmenu"),show=force!==undefined?force:m.hidden;m.hidden=!show;$("#wsb").setAttribute("aria-expanded",String(show));if(!show)return;
-  paintMenu();m.querySelector(".ritem.on")?.focus();loadRepos(true)}
+/* The sidebar toggle carries a dot when the sidebar is out of sight and another repo needs you. */
+function otherBadge(){const n=otherYou();$("#sbB").classList.toggle("dot",!!n)}
+/* Repos group: every repo on this dashboard, Mail-mailbox style. Badge: its Needs-you count (orange), else its running count. */
+function paintRepos(){const g=$("#repoG");g.hidden=MODE!=="repos"||!repos.length;if(g.hidden)return;
+  $("#repoL").innerHTML=repos.map((r,i)=>{const b=r.you?`<span class="bdg act" title="${r.you} need${r.you===1?"s":""} you">${r.you}</span>`:r.running?`<span class="bdg" title="${r.running} running">${r.running}</span>`:"";
+    return `<button class="nav repo${r.key===CUR?" on":""}" data-repo="${esc(r.key)}" ${r.key===CUR?'aria-current="page"':""} title="${esc(r.path)}${i<9?" · ⌘"+(i+1):""}"><span class="si">${SB.repo}</span><span class="nm">${esc(r.name)}</span>${b}</button>`}).join("")}
+function addRepo(force){const p=$("#rpop"),show=force!==undefined?force:p.hidden;p.hidden=!show;$("#addR").setAttribute("aria-expanded",String(show))}
 /* Points the page at a repo: its routes, its address; nothing of the last repo's list stays. */
 function setRepo(k){CUR=k;BASE="/r/"+encodeURIComponent(k);gen++;if(location.hash.slice(1)!==k)history.replaceState(null,"","#"+k)}
-function switchRepo(k){repoMenu(false);if(k===CUR||!repos.some(r=>r.key===k))return;
+function switchRepo(k){if(k===CUR||!repos.some(r=>r.key===k))return;
   setRepo(k);open=null;expanded=null;drafts={};sel=null;snap=null;jobs=[];details={};sigs={};pending={};fresh.clear();just.clear();typing.clear();
   paint.runner=undefined; // the next snapshot redraws the whole board, even when the new repo has no jobs
-  renderList();renderPanel();otherBadge();poll(gen)}
-if(MODE!=="repos")$("#wsb").classList.add("one");
-$("#rmenu").addEventListener("click",e=>{const b=e.target.closest("[data-repo]");if(b)switchRepo(b.dataset.repo)});
+  renderList();renderPanel();otherBadge();paintRepos();poll(gen)}
+$("#repoL").addEventListener("click",e=>{const b=e.target.closest("[data-repo]");if(b){switchRepo(b.dataset.repo);$(".app").classList.remove("sbopen")}});
 document.addEventListener("keydown",e=>{if(MODE!=="repos")return;
-  if((e.metaKey||e.ctrlKey)&&!e.altKey&&!e.shiftKey&&/^[1-9]$/.test(e.key)){const r=repos[+e.key-1];if(r){e.preventDefault();switchRepo(r.key)}}
-  else if(e.key==="Escape"&&!$("#rmenu").hidden){e.stopImmediatePropagation();repoMenu(false);$("#wsb").focus()}},true);
-document.addEventListener("click",e=>{if(!e.target.closest("#rmenu,#wsb"))repoMenu(false)});
+  if((e.metaKey||e.ctrlKey)&&!e.altKey&&!e.shiftKey&&/^[1-9]$/.test(e.key)){const r=repos[+e.key-1];if(r){e.preventDefault();switchRepo(r.key)}}},true);
 addEventListener("hashchange",()=>{const k=decodeURIComponent(location.hash.slice(1));if(k&&k!==CUR)switchRepo(k)});
 
 /* ───────── boot ───────── */
-$("#nJobI").innerHTML=I.list;$("#vList").innerHTML=sv('<path d="M2.5 4h11M2.5 8h11M2.5 12h11"/>',14)+"<span>List</span>";$("#vBoard").innerHTML=I.board+"<span>Board</span>";$("#nYouI").innerHTML=S.you;$("#nRunI").innerHTML=S.run.replace('class="spin"','');$("#nDoneI").innerHTML=S.ok;$("#nCoI").innerHTML=I.coin;$("#nThI").innerHTML=I.sun;$("#kI").innerHTML=I.search;
+$("#nYouI").innerHTML=S.wait;$("#nRunI").innerHTML=SB.run;$("#nDoneI").innerHTML=SB.done;$("#nAddI").innerHTML=SB.add;$("#thB").innerHTML=SB.look;$("#sbB").innerHTML=SB.side;$("#kI").innerHTML=I.search;sbLabel();
 renderList();poll(gen);pollDetail();
 </script>
 </body>

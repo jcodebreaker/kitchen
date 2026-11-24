@@ -8,7 +8,7 @@
 //                                  id (not the token): a tab from an earlier launch sees it changed and reloads once
 //   GET  /jobs/<id>/detail.json    one job: stage history with its agents' activity, thread, criteria
 //   GET  /jobs/<id>/report.html    a job's rendered Report
-//   POST /api/<action>             steer, answer, follow-up, pause, stop, resume, reject, ticket, start-runner
+//   POST /api/<action>             steer, answer, approve, follow-up, pause, stop, resume, reject, ticket, start-runner
 //                                  (actions.ts; one that gives the queue work starts an orchestrator when none runs)
 //
 // The page can change state (ADR 0009), so a POST must come from the page this server served:

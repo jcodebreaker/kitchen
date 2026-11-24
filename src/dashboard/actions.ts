@@ -56,6 +56,8 @@ export const ACTIONS: Record<string, (repo: string, b: Body, out: Out) => Promis
     if (!text.trim()) throw new BadRequest("text: say what to change");
     return control.feedback(repo, id, text, out);
   },
+  /** ADR 0020 §3: a job held after intake (intake.confirm) goes to Build on intake's criteria. */
+  approve: (repo, b, out) => control.approve(repo, idOf(b), out),
   reject: (repo, b, out) => control.reject(repo, idOf(b), out),
   pause: (repo, b, out) => control.pause(repo, idOf(b), out),
   stop: (repo, b, out) => control.stop(repo, idOf(b), out),
@@ -70,7 +72,7 @@ export const ACTIONS: Record<string, (repo: string, b: Body, out: Out) => Promis
 };
 
 /** Actions after which the queue has work: when one succeeds and no orchestrator works the queue, one is started. */
-export const WAKES = new Set(["answer", "follow-up", "resume", "ticket"]);
+export const WAKES = new Set(["answer", "approve", "follow-up", "resume", "ticket"]);
 
 export async function act(repo: string, name: string, body: Body): Promise<ActionResult> {
   const lines: string[] = [];

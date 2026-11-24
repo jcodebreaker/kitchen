@@ -7,7 +7,7 @@ import path from "node:path";
 import { type Config, loadConfig, modelFor } from "../config.ts";
 import { diffSize } from "../engine/git.ts";
 import { heartbeatFile } from "../engine/jobs.ts";
-import { criteriaOf, readQa, readReview } from "../engine/lanes.ts";
+import { criteriaOf, leftOutOf, readIntake, readQa, readReview } from "../engine/lanes.ts";
 import { BY_YOU_STOPPED, isActive, type Job, pausedByYou, type Stage } from "../engine/machine.ts";
 import { JOB_ID, jobDirOf, scanJobs } from "../engine/store.ts";
 import { type LedgerLine, readLedger } from "../ledger/append.ts";
@@ -120,6 +120,18 @@ export function liveStreams(dir: string, moves: number): { role: string; file: s
     .sort((a, b) => a.t0 - b.t0);
 }
 
+/**
+ * ADR 0020: what a Needs-you job waits for beyond an answer. refine: intake's reason and its readings (or slices,
+ * or gaps); confirm: intake's criteria and what it left out.
+ */
+export type Waits = { for: "refine"; reason: string; items: string[] } | { for: "confirm"; items: string[]; leftOut: string };
+export function waitsOf(j: Job, dir: string): Waits | null {
+  if (j.stage !== "needs-info" || !j.waits) return null;
+  if (j.waits.for === "confirm") return { for: "confirm", items: criteriaOf(dir).map((c) => `${c.id} (${c.check}): ${c.text}`), leftOut: leftOutOf(dir) };
+  const i = readIntake(dir);
+  return { for: "refine", reason: j.waits.reason, items: i?.decision === "REFINE" ? i.items : [] };
+}
+
 export type Crit = { id: string; text: string; st: "ok" | "bad" | "wait"; e: string };
 /** The job's criteria (intake's) with QA's latest results. */
 export function critOf(dir: string, round: number): Crit[] {
@@ -199,6 +211,7 @@ export type JobCard = {
   proof: "pass" | "fail" | null;
   held: string | null;
   merged: { into: string; sha: string } | null;
+  waits: Waits | null;
 };
 
 export type Snapshot = {
@@ -308,6 +321,7 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
       proof: j.stage === "rejected" ? null : "criteria" in qaNow ? (qaNow.verdict === "PASS" ? "pass" : "fail") : null, // no QA verdict yet: no pill (the Toolkit's "proven" is gone)
       held: j.held ?? null,
       merged: j.merged ? { into: j.merged.into, sha: j.merged.sha } : null,
+      waits: waitsOf(j, dir),
     });
   }
   let cfg: Config | null = null;

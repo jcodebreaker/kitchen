@@ -1,6 +1,6 @@
 ---
 name: kitchen
-description: "Drive Kitchen, the software factory in this repo: set it up (init), file tickets, run the queue as its orchestrator (/kitchen run: waves of intake, build, QA and review agents, merging passing jobs into staging), check status, answer jobs, steer, pause or stop a job, sweep or maintain its verify map. Use when the user mentions Kitchen or /kitchen, asks to turn a request into a reviewed change, to queue or run work, or to see job status."
+description: "Drive Kitchen, the software factory in this repo: set it up (init), file tickets, run the queue as its orchestrator (/kitchen run: waves of intake, build, QA and review agents, merging passing jobs into staging), check status, answer jobs, refine an unclear ticket with the user (/kitchen refine), approve intake's criteria, steer, pause or stop a job, sweep or maintain its verify map. Use when the user mentions Kitchen or /kitchen, asks to turn a request into a reviewed change, to queue or run work, or to see job status."
 ---
 
 # /kitchen
@@ -19,7 +19,9 @@ Run commands from the repo root. If `kitchen` is not on PATH, use
 | set up Kitchen, first use | `kitchen init` (seconds; see Setup) |
 | "do X", "fix Y", "add Z" (a request for work) | `kitchen ticket "<the request>"` (see Tickets), then offer to run the queue |
 | `run`, start, "go", work the queue, or your prompt is `/kitchen run` | be the orchestrator yourself: Running the queue, below. Never call `kitchen run` for this: it starts another session, and inside one `kitchen run` started it refuses |
-| what's happening, status, progress | `kitchen status` |
+| what's happening, status, progress | `kitchen status`; when a job shows `needs-info(refine: …)`, offer to refine it with them (see Refining a ticket) |
+| "refine 004", "let's clarify 004", or your prompt is `/kitchen refine 004` | Refining a ticket, below |
+| "approve 004", "the criteria are fine" | `kitchen approve <id>` (only a job shown `needs-info(confirm: …)`) |
 | tell a job something: "tell 005 to keep the diff small" | `kitchen steer <id> "<their words>"` |
 | "hold 005", "pause it after this step" | `kitchen pause <id>` |
 | "stop 005 now" | `kitchen stop <id>` |
@@ -113,6 +115,26 @@ each one agent you start like a lane agent:
    and (maintain) what merged into staging and which tickets it filed. Offer to run the queue for new tickets.
 
 Suggest `kitchen verify maintain` when the user asks about a stale map, or after many merges since the last one.
+
+## Refining a ticket
+
+Intake sends a ticket to be refined with the user when a short answer won't do: it can be read more than one way,
+it is too big for one job, a bug has no way to see it, or its words mean something else in the code. `kitchen
+status` shows the job as `needs-info(refine: <reason>)`. Lane agents never ask; you do it here, with the user.
+
+1. `kitchen refine <id>`. It writes a brief (the ticket, intake's readings, earlier answers, the verify map's
+   features, the repo's glossary and ADRs) and prints its path. Read it all.
+2. Follow its steps: `grill-with-docs` when you have it (else `grilling` with `domain-modeling`, else by hand),
+   **one question per turn**, each with your recommended answer. Look in the code before asking.
+3. Never invent an answer or answer for the user: what they haven't said stays open.
+4. End with the refined ticket in the brief's shape. Show it and ask whether to send it. Only after a yes:
+   `kitchen feedback <id> "<the refined ticket>"`. For a ticket too big, the brief says how the later slices
+   become their own tickets.
+5. Offer to run the queue.
+
+A job shown `needs-info(confirm: …)` waits for the user to approve intake's criteria (`intake.confirm` in
+`kitchen.yaml`): show the user its `criteria` and `leftOut` from `kitchen job show <id> --json`, then on their
+word `kitchen approve <id>`, or `kitchen feedback <id> "<what to change>"`.
 
 ## Talking to a job
 

@@ -43,6 +43,10 @@ export function renderReport(repo: string, job: Job, o: { diff?: { p: string; a:
   if (job.held) check.push(esc(job.held));
   if ("findings" in review)
     for (const f of review.findings.filter((x) => !x.blocks)) check.push(`Review note ${esc(f.id)}${f.at ? ` (${esc(f.at)})` : ""}: ${esc(f.why)}`);
+  // ADR 0020: the reading was settled with you, not picked by intake.
+  for (const r of job.refined ?? [])
+    check.push(`Refined with you on ${esc(r.at.slice(0, 10))} (${esc(r.reason)}): the criteria come from your refined ticket. Check they say what you agreed.`);
+  if (job.approved) check.push(`Criteria approved by you on ${esc(job.approved.slice(0, 10))}, before the build.`);
   const leftOut = leftOutOf(dir);
   if (leftOut) check.push(`Left out by intake (not in your ticket; file it separately if you want it): ${esc(leftOut)}`);
   // ADR 0017 §4: every earlier check this job changed on purpose (its CHANGES: line), as it was and as it is now.

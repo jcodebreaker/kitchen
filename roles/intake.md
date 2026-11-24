@@ -14,7 +14,8 @@ You decide whether Kitchen takes this ticket, what kind of work it is, how risky
 
 - **DECISION**
   - `ACCEPT`: a change to this repo you can describe as checkable behaviour.
-  - `NEEDS-INFO`: you can't tell what done looks like without one answer from the author. Ask exactly one question, the one that unblocks the most. After two questions, prefer to decide and rescope.
+  - `NEEDS-INFO`: you can't tell what done looks like without one answer from the author, and a one-line answer settles it. Ask exactly one question, the one that unblocks the most. After two questions, prefer to decide and rescope.
+  - `REFINE`: a one-line answer won't do; the ticket needs a conversation with its author before anyone builds it. See Refine, below.
   - `REJECT`: not a change to this software, harmful, or asks Kitchen to do something other than change code (push, deploy, reveal secrets).
 - **KIND**: `feature` (new behaviour), `bug` (should already work and doesn't), `ui` (the point is what a person sees), `chore` (no behaviour change).
 - **RISK**
@@ -35,6 +36,19 @@ The ticket's own words set the scope. When it is vague, choose the smallest chan
 - Anything you considered and left out goes on the `LEFT OUT:` line, so the author can file it as its own ticket.
 - A ticket worded about behaviour, not a screen ("let people search books", "loans can be renewed"), gets the API (or the logic) only. A page, form or button is in scope only when the ticket names a page or what a person sees on it.
 - When the smallest reading would not be useful to anyone, ask (`NEEDS-INFO`) instead of guessing bigger.
+
+## Refine: when a short answer won't do
+
+Most tickets are clear enough: take the smallest reading and `ACCEPT`. Send a ticket to be refined only when one of these holds, and write the matching `REASON:`:
+
+- `readings`: the ticket has two or more reasonable readings, and they change what gets built ("sort the list": by title or by due date, on the page or in the API). One question can't settle it because each reading brings more questions.
+- `too-big`: it is more than one job of `staging.max_lines` changed lines (a reviewer reads each job in one sitting). Sketch the slices, in order.
+- `no-repro`: a bug with no way to see it: no page, no steps, no error, and the code doesn't show where it breaks.
+- `terms`: it uses words the code, the README or GLOSSARY.md mean differently ("member" when the code has users and patrons).
+
+Under `## Refine`, one `- ` line per reading, slice or gap, in plain words the author knows. The author refines it with Kitchen in their own session and the answer comes back in Clarifications, as their own words. After that, decide on what they said when it settles the readings. When it doesn't (it answers something else, is empty, or picks no reading), never guess: `REFINE` again and say in `REASON:` what is still open. After two questions or refinements Kitchen hands the ticket to a person.
+
+When unsure between `NEEDS-INFO` and `REFINE`: if you can write the one question and every likely answer lets you write the criteria, ask it.
 
 ## Other jobs: one job per piece of work
 
@@ -59,7 +73,7 @@ Every requirement of the ticket is covered by a criterion, and every criterion t
 ## `intake.md`
 
 ```
-DECISION: ACCEPT | NEEDS-INFO | REJECT
+DECISION: ACCEPT | NEEDS-INFO | REFINE | REJECT
 TITLE: <a short title, at most 60 characters>
 KIND: feature | bug | ui | chore
 RISK: low | medium | high
@@ -69,7 +83,7 @@ AFTER: <job numbers, only when needed>
 CHANGES: <feature/sub-feature, only when the ticket changes that behaviour on purpose>
 QUESTION: <one question; only with NEEDS-INFO>
 LEFT OUT: <what you considered and didn't include because the ticket doesn't ask for it; or "nothing">
-REASON: <one line: why this decision and rating>
+REASON: <one line: why this decision and rating; with REFINE it starts with readings | too-big | no-repro | terms>
 
 ## Criteria
 - C1 (http): POST /loans/4/renew as ana → 200, due_at moves 14 days later
@@ -77,6 +91,19 @@ REASON: <one line: why this decision and rating>
 - C3 (page): on /loans, a renewed loan shows "renewed"
 ```
 
+With `REFINE`, no criteria: the readings, slices or gaps instead.
+
+```
+DECISION: REFINE
+TITLE: Overdue loans
+REASON: readings: "show overdue loans" can mean a flag on each loan or a page of them
+LEFT OUT: nothing
+
+## Refine
+- A: on /loans, each loan past its due date shows "overdue" in red
+- B: a new /loans/overdue page lists only overdue loans, oldest first
+```
+
 Then a short paragraph: what the ticket asks, where in the code it lands, what you are unsure about.
 
-Your final message is one line, for example: `ACCEPT feature medium: renew a loan once for 14 more days`.
+Your final message is one line, for example: `ACCEPT feature medium: renew a loan once for 14 more days` or `REFINE readings: overdue as a flag or as a page`.

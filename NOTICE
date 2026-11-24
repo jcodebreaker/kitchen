@@ -45,6 +45,14 @@ SOFTWARE.
 The idea of putting code locations in the feature map comes from public
 write-ups of Dune's feature map (credit only).
 
+super-board (credit only, no code)
+----------------------------------
+Sending an unclear ticket to be refined with a person before it is built
+(ADR 0020: intake's REFINE and its reasons, readings, too big, no repro and
+terms, each routed to a skill run in the person's own session, and workers
+that never grill) follows super-board's `lint` routing (v3.3.0, MIT). Ideas
+only: no code or text from it is in Kitchen.
+
 zazencodes' software factory (credit only, no code)
 ---------------------------------------------------
 Some ideas (a factory of agent stages with a ledger) come from zazencodes'

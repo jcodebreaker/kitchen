@@ -25,6 +25,9 @@ Work
                                          steering; run it in another repo to add that one (--forget removes it)
   kitchen dashboard --private [--port n] this repo alone, on its own server, not added to the list
   kitchen feedback <id> ["<text>"] [--to <stage>]   answer a job that needs you, or send a ready/done one back
+  kitchen refine <id>                    a job intake sent to be refined with you: the brief for Claude Code or Codex
+                                         (/kitchen refine <id>), which grills the ticket with you, then sends it back
+  kitchen approve <id>                   a job held for your approval after intake (intake.confirm) → build
   kitchen steer <id> "<text>"            a message the job's next agent reads
   kitchen pause <id> · stop <id> · resume <id> · reject <id>
   kitchen report [--json]                what the queue did
@@ -63,6 +66,10 @@ const COMMAND_HELP: Record<string, string> = {
   feedback:
     'kitchen feedback <id> ["<text>"] [--to <stage>]\n\nAnswers a job that needs you, or sends a ready or done job back to Build with your text.\n  --to <stage>   for a needs-human job: intake, build, qa or review',
   reject: "kitchen reject <id>\n\nCloses a job without merging it.",
+  refine:
+    "kitchen refine <id>\n\nFor a job intake sent to be refined with you (needs-info, refine): writes .kitchen/jobs/<id>/refine/brief.md (the ticket, intake's reason and readings, your earlier answers, the verify map's features, the repo's glossary and ADRs) and prints its path. A Claude Code or Codex session follows it with you (/kitchen refine <id>): one question at a time, then kitchen feedback <id> \"<the refined ticket>\" sends it back to intake.",
+  approve:
+    'kitchen approve <id>\n\nFor a job held after intake for your approval (intake: { confirm: true } in kitchen.yaml): sends it to Build on intake\'s criteria. To change them instead: kitchen feedback <id> "<what to change>".',
   report: "kitchen report [--json]\n\nWhat the queue did: merged, ready, sent back, rounds, time.",
   dashboard:
     "kitchen dashboard | dashboard --forget | dashboard --private [--port n]\n\nThe jobs in a browser, on 127.0.0.1 only: a list or a board by lane, each job's live activity, criteria and changes. From it you answer, steer, pause, resume, stop, reject, follow up and start the orchestrator.\nOne page, http://127.0.0.1:7357/, for every repo on ~/.kitchen/repos.json (kitchen init and kitchen dashboard add the repo they run in; the repo name top-left switches). When the dashboard already runs, it adds this repo and prints its address.\n  --forget   take this repo off the list\n  --private  this repo alone, on its own server, not added to the list (--port implies it; default port 7357)",
@@ -203,6 +210,10 @@ async function main(argv: string[]): Promise<number> {
       return control.feedback(repo, need(0, "<id>"), f.pos.slice(1).join(" "), out, { to: v("to") });
     case "reject":
       return control.reject(repo, need(0, "<id>"), out);
+    case "approve":
+      return control.approve(repo, need(0, "<id>"), out);
+    case "refine":
+      return (await import("./engine/refine.ts")).refine(repo, need(0, "<id>"), out);
     case "steer":
       return (await control.steer(repo, need(0, "<id>"), f.pos.slice(1).join(" "), out)).code;
     case "pause":
