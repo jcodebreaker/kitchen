@@ -68,11 +68,11 @@ Plain words are enough. The intake lane rates it (kind, risk), lists the files i
 
 ## 4. Run the queue
 
-In Claude Code: `/kitchen run` (or `/kitchen:kitchen run` from the plugin). In a terminal: `kitchen run` (add `--detach` to put it in the background; `kitchen run --print` shows the exact command).
+In Claude Code: `/kitchen run` (or `/kitchen:kitchen run` from the plugin). In a terminal: `kitchen run` (add `--detach` to put it in the background; `kitchen run --print` shows the exact command). Before it starts a session it brings the repo's copy of the kitchen skill and Kitchen's `.gitignore` entries up to date, so a repo set up by an older Kitchen runs the current loop. It refuses a flag it doesn't know (nothing starts), and inside the session it started it refuses to start another. The session's raw output is `.kitchen/run.jsonl` (this session and the one before, as `run.prev.jsonl`); `.kitchen/run.log` is the readable log.
 
 The session is the orchestrator. It loops:
 
-1. `kitchen job next`: the next wave. Intake first (never held for room, even past `parallel`), then downstream first (review, QA, build) in the room `parallel` leaves. Jobs that touch the same files build side by side: git merges each into `staging`, and one that conflicts goes back to Build. Only a job that names an unfinished one on its `AFTER:` line waits for it.
+1. `kitchen job next`: the next wave. Intake first (never held for room, even past `parallel`), then downstream first (review, QA, build) in the room `parallel` leaves. Jobs that touch the same files build side by side: git merges each into `staging`, and one that conflicts catches up (below). Only a job that names an unfinished one on its `AFTER:` line waits for it.
 2. For each lane, `kitchen job start <id> <lane>` makes the job's worktree (`.worktrees/<id>`, branch `kitchen/<id>` from staging), writes the lane's brief and hands over your unread messages; the session starts one agent with the prompt and model it returns.
 3. When the agent returns, `kitchen job finish <id>`: Kitchen reads what the lane left and moves the job, or refuses and says why.
 
@@ -84,9 +84,9 @@ The session is the orchestrator. It loops:
 | review | reads the diff (map updates included) and QA's evidence, writes `review.json` | refuses a review whose branch moved; a blocking finding: Build again; else the merge |
 | regress | drives the touched features' recipes on the trial merge (`staging` with the job merged), `verdict.json` with one row per feature | refuses a missing row or evidence; FAIL: Build again with the evidence; PASS: that exact merge lands (if `staging` moved meanwhile, Kitchen merges again and the lane drives the new one) |
 
-A lane refused three times, or a job out of rounds (`round_limit`), goes to you (`needs-human`).
+A lane refused three times, or a job out of rounds (`round_limit`), goes to you (`needs-human`). A catch-up (below) is not a round.
 
-**The merge.** Review passed: under a lock, Kitchen merges the reviewed head onto `staging` as it is now in a scratch worktree, runs your checks there, and moves `staging` only if they pass (on GitHub: it pushes the job branch, opens its PR into `staging` and merges it with `--match-head-commit`). A conflict or red checks: Build again, and that round starts by merging `staging` as it is now into the job branch (a clean merge is committed by Kitchen; a conflicting one is left for the builder to resolve and commit, and Kitchen refuses a build whose branch doesn't contain `staging`'s tip). High risk, a change to a `high_paths` file, more than `staging.max_lines` changed lines, or `staging` checked out somewhere: the job stops at **Ready** for you, with the reason.
+**The merge.** Review passed: under a lock, Kitchen merges the reviewed head onto `staging` as it is now in a scratch worktree, runs your checks there, and moves `staging` only if they pass (on GitHub: it pushes the job branch, opens its PR into `staging` and merges it with `--match-head-commit`). A conflict, or checks red only because `staging` moved: a **catch-up**, not a round (ADR 0018). The job goes back to Build, which starts by merging `staging` as it is now into the job branch (a clean merge is committed by Kitchen; a conflicting one is left for the builder to resolve and commit, and Kitchen refuses a build whose branch doesn't contain `staging`'s tip). The builder only makes the merge work; QA re-drives what passed; review reads what changed since the last passing review (the resolution); the merge check runs as usual. Three catch-ups in a row go to you ("staging keeps moving under it"). Red checks that `staging` didn't cause are a round. High risk, a change to a `high_paths` file, more than `staging.max_lines` changed lines, or `staging` checked out somewhere: the job stops at **Ready** for you, with the reason.
 
 ## The verify map
 
@@ -129,7 +129,7 @@ Merge `staging` into your base when you are happy with it. Kitchen never does.
 kitchen init [--tool claude|codex] [--yes] | init --skill
 kitchen ticket "<text>"
 kitchen run [--detach] [--max-usd n] | run --stop | run --print
-kitchen status [--json] · kitchen report [--json] · kitchen dashboard [--port 7357] · kitchen skills
+kitchen status [--json] · kitchen report [--json] · kitchen dashboard [--forget] [--private] [--port n] · kitchen skills
 kitchen feedback <id> ["<text>"] [--to intake|build|qa|review|regress]
 kitchen steer <id> "<text>" · pause <id> · stop <id> · resume <id> · reject <id>
 kitchen job next|start|finish|show …     the orchestrator's verbs
@@ -144,7 +144,7 @@ kitchen verify sweep|maintain [--json] · verify finish <run>   the verify map's
 
 ## Dashboard
 
-`kitchen dashboard` serves the jobs on 127.0.0.1: a List and a Board with lanes Needs you, Intake, Build, QA, Review (a job in regress shows there, as "Merge check"), Ready and Merged. A job's panel shows each stage with the lane agent's live activity (written by the activity hook), the criteria with QA's results, and the changed files. From it you answer, steer, pause, resume, stop, reject and follow up, through the same functions as the CLI. When no orchestrator is working the queue, **Start Kitchen** runs `kitchen run --detach`; an action that gives the queue work starts one too.
+`kitchen dashboard` serves http://127.0.0.1:7357/, one page for every repo on `~/.kitchen/repos.json` (`kitchen init` and `kitchen dashboard` add the repo they run in; `--forget` removes it; a repo whose folder is gone drops off). The repo name at the top left opens a switcher (⌘1–⌘9) with each repo's "needs you" and running counts; the badge beside it counts jobs in other repos that need you, and the address carries the repo (`#<repo>`). Running `kitchen dashboard` in another repo while the page is open adds the repo and prints `already open: http://127.0.0.1:7357/#<repo>`; it never takes another port. `--private` (or `--port n`) serves one repo on its own, off the list. For each repo it shows the jobs: a List and a Board with lanes Needs you, Intake, Build, QA, Review (a job in regress shows there, as "Merge check"), Ready and Merged. A job's panel shows each stage with the lane agent's live activity (written by the activity hook), the criteria with QA's results, and the changed files. From it you answer, steer, pause, resume, stop, reject and follow up, through the same functions as the CLI. When no orchestrator is working the queue, **Start Kitchen** runs `kitchen run --detach`; an action that gives the queue work starts one too.
 
 ## A worked example
 
@@ -176,7 +176,7 @@ Wave 7: 002 build
 Queue drained.
 ```
 
-`git log staging` has both merges; `main` is untouched; each job has its Report. (That run predates side-by-side builds: today 001 and 002 build in the same wave, and if 002 then conflicts with 001 in `staging` it goes back to Build on top of `staging`.)
+`git log staging` has both merges; `main` is untouched; each job has its Report. (That run predates side-by-side builds: today 001 and 002 build in the same wave, and if 002 then conflicts with 001 in `staging` it catches up on top of `staging`, without spending a round.)
 
 ## Developing Kitchen
 
