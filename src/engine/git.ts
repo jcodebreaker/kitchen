@@ -2,11 +2,20 @@
 // merges into staging through the PR). Nothing here ever pushes to or updates the base branch or main.
 import { execFile } from "node:child_process";
 
+/** The git command an argv runs, past its global options (`-c k=v`, `-C dir`). */
+const subcommand = (args: string[]) => {
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "-c" || args[i] === "-C") i++;
+    else if (!args[i].startsWith("-")) return args[i];
+  }
+  return args[0] ?? "";
+};
+
 export class GitError extends Error {
   readonly exitCode: number;
   readonly stderr: string;
   constructor(args: string[], exitCode: number, stderr: string) {
-    super(`git ${args[0]} failed (exit ${exitCode}): ${stderr.trim().split("\n").pop() ?? ""}`);
+    super(`git ${subcommand(args)} failed (exit ${exitCode}): ${stderr.trim().split("\n").pop() ?? ""}`);
     this.exitCode = exitCode;
     this.stderr = stderr;
   }

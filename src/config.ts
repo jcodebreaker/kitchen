@@ -133,6 +133,22 @@ export const ConfigSchema = z
       })
       .strict()
       .prefault({}),
+    /**
+     * ADR 0027: the verify skill. `skill`: its folder name (`verify-<app>`), chosen once by `kitchen init`; every lane,
+     * sweep and upkeep uses it. `map`: where its map lives. `repo`: in the repo, committed with the change that taught
+     * it. `local`: in .kitchen/verify/skill/<skill>/ on this machine (a repo that ignores .claude/), copied into each
+     * checkout Kitchen makes and never committed.
+     */
+    verify: z
+      .object({
+        skill: z
+          .string()
+          .regex(/^verify-[\w.-]+$/, "a verify skill's name is verify-<letters, digits, . _ ->")
+          .optional(),
+        map: z.enum(["repo", "local"]).default("repo"),
+      })
+      .strict()
+      .prefault({}),
     /** `github`: jobs merge into staging through a pull request (gh); `local`: a local merge. Default: what init found. */
     forge: z
       .object({

@@ -217,25 +217,30 @@ function put(file: string, text: string): SkillWrite["did"] {
   return "refreshed";
 }
 
-/**
- * The verify skill for both tools. An existing `verify-*` skill keeps its name. The Claude copy is written first;
- * the Codex copy mirrors it (it is only written where it is missing or still Kitchen's own).
- */
-export function writeVerifySkill(repo: string, cfg: Config): { name: string; files: SkillWrite[] } {
-  const facts = skillFacts(repo, cfg);
-  const name = skillName(repo) ?? facts.name;
-  const f = { ...facts, name };
-  const files: SkillWrite[] = [];
-  const gen: [string, string][] = [
+/** The skill's two files in one skill folder (`<dir>/SKILL.md`, `<dir>/features/README.md`), each written or refreshed by `put`. */
+export function writeSkillDir(dir: string, f: SkillFacts): { rel: string; did: SkillWrite["did"] }[] {
+  return [
     ["SKILL.md", stamp(skillMd(f))],
     ["features/README.md", stamp(readmeMd(f))],
-  ];
+  ].map(([rel, text]) => ({ rel, did: put(path.join(dir, rel), text) }));
+}
+
+/**
+ * The verify skill for both tools, in the checkout `into` (default: the repo), facts from the repo's main checkout.
+ * `name`: the skill's name (ADR 0027: kitchen.yaml's verify.skill); else an existing `verify-*` skill keeps its name.
+ * The Claude copy is written first; the Codex copy mirrors it (it is only written where it is missing or still
+ * Kitchen's own).
+ */
+export function writeVerifySkill(repo: string, cfg: Config, o: { into?: string; name?: string } = {}): { name: string; files: SkillWrite[] } {
+  const into = o.into ?? repo;
+  const facts = skillFacts(repo, cfg);
+  const name = o.name ?? skillName(into) ?? facts.name;
   const [main, mirror] = SKILL_ROOTS;
-  for (const [rel, text] of gen) {
-    const p = path.join(repo, main, name, rel);
-    files.push({ path: path.relative(repo, p), did: put(p, text) });
-    const m = path.join(repo, mirror, name, rel);
-    files.push({ path: path.relative(repo, m), did: put(m, fs.readFileSync(p, "utf8")) });
+  const files: SkillWrite[] = [];
+  for (const w of writeSkillDir(path.join(into, main, name), { ...facts, name })) {
+    files.push({ path: `${main}/${name}/${w.rel}`, did: w.did });
+    const m = path.join(into, mirror, name, w.rel);
+    files.push({ path: `${mirror}/${name}/${w.rel}`, did: put(m, fs.readFileSync(path.join(into, main, name, w.rel), "utf8")) });
   }
   return { name, files };
 }

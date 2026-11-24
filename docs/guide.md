@@ -93,7 +93,7 @@ A lane refused three times, or a job out of rounds (`round_limit`), goes to you 
 
 ## The verify map
 
-Kitchen keeps how to check your app in the repo, as a skill every agent can read: `.claude/skills/verify-<app>/` (and the same under `.agents/skills/` for Codex). `SKILL.md` says how to launch, doctor, drive and clean up the app with `kitchen qa`; `features/` is the **feature map**: `README.md` (the index, baseline preconditions, driving conventions, the sweep order) and one file per user-facing feature:
+Kitchen keeps how to check your app in the repo, as a skill every agent can read: `.claude/skills/verify-<app>/` (and the same under `.agents/skills/` for Codex). A repo that ignores `.claude/` keeps it on your machine instead (`.kitchen/verify/skill/`, kitchen.yaml `verify.map: local`): Kitchen copies it into every checkout it makes and saves QA's updates there, never in a commit. `SKILL.md` says how to launch, doctor, drive and clean up the app with `kitchen qa`; `features/` is the **feature map**: `README.md` (the index, baseline preconditions, driving conventions, the sweep order) and one file per user-facing feature:
 
 ```markdown
 # Search books

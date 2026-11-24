@@ -61,6 +61,8 @@ export function renderReport(repo: string, job: Job, o: { diff?: { p: string; a:
   // ADR 0017 §4: every earlier check this job changed on purpose (its CHANGES: line), as it was and as it is now.
   for (const c of readMapChanges(dir))
     check.push(`Changed earlier check (${esc(c.by)}): ${esc(c.item)}: was “${esc(c.was)}”, now ${c.now === "(removed)" ? "removed" : `“${esc(c.now)}”`}`);
+  // ADR 0027 §3: the change moved on; the map didn't learn what QA wrote.
+  if (job.mapSkipped) check.push(`map update skipped: ${esc(job.mapSkipped)}. QA's map files are still in <code>rounds/*/qa/map/</code> of this job's folder.`);
   if (job.risk === "high") check.push("High risk: read the diff yourself before you merge it anywhere else.");
   const rows = crit
     .map((c) => {

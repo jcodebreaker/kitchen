@@ -159,6 +159,8 @@ export async function run(repo: string, o: { detach?: boolean; stop?: boolean; p
     for (const f of files.refreshSkill(repo)) out(`updated ${f} to this Kitchen's version`);
     const ignored = files.addGitignore(repo);
     if (ignored.length) out(`added to .gitignore: ${ignored.join(", ")}`);
+    // ADR 0027: kitchen.yaml gets verify.skill and verify.map when it lacks them; an ignored map moves to this machine.
+    for (const l of await (await import("../verify/where.ts")).settleMap(repo)) out(l);
   }
   if (live) {
     out(`orchestrator: already running (pid ${live.pid}, log ${live.log})`);

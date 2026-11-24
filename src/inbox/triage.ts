@@ -16,8 +16,9 @@ import { appDown } from "../qa/app.ts";
 import { scrubbedEnv, sessionCost } from "../run/orchestrator.ts";
 import { describe as describeSource, listSources } from "../sources/config.ts";
 import { allFeaturesSection } from "../verify/brief.ts";
-import { readMap, sweepOrder } from "../verify/map.ts";
+import { sweepOrder } from "../verify/map.ts";
 import { runDir, runEvidence, runWorktree } from "../verify/paths.ts";
+import { mapIn, seedCheckout } from "../verify/where.ts";
 import type { Out } from "./collect.ts";
 import { type Item, listItems, listProposals } from "./store.ts";
 
@@ -81,7 +82,7 @@ function brief(repo: string, cfg: Config, o: { id: string | null; wt: string | n
   const jobs = listJobs(repo);
   const all = listItems(repo);
   const role = fs.readFileSync(path.join(ROLES, "triage.md"), "utf8");
-  const map = o.wt ? readMap(o.wt) : { name: null, readme: null, features: [] };
+  const map = o.wt ? mapIn(repo, cfg, o.wt) : { name: null, readme: null, features: [] };
   const sources = listSources(repo).sources.map((s) => `${s.name} (${describeSource(s).label})`);
   return [
     `# Kitchen triage${o.id ? `: run ${o.id}` : ""}`,
@@ -126,6 +127,7 @@ async function checkout(repo: string, cfg: Config, now: Date): Promise<{ id: str
   fs.mkdirSync(runEvidence(repo, id), { recursive: true });
   const wt = runWorktree(repo, id);
   await git(repo, ["worktree", "add", "-q", "--detach", wt, onto]);
+  await seedCheckout(repo, cfg, wt);
   writeAtomic(path.join(runDir(repo, id), "run.json"), `${JSON.stringify({ kind: "triage", id, at: now.toISOString(), onto, features: [] }, null, 2)}\n`);
   return { id, wt, onto };
 }

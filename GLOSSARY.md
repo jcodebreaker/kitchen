@@ -87,12 +87,16 @@ _Avoid_: Summary, PR description
 ### The verify map
 
 **Verify skill**:
-The skill in the person's repo that says how to check their app: `.claude/skills/verify-<app>/` (and the same for Codex under `.agents/skills/`), with a `SKILL.md` (Launch, Doctor, Drive, Evidence, Cleanup) and the Feature map. `kitchen init` writes its skeleton; QA keeps its map.
+The skill in the person's repo that says how to check their app: `.claude/skills/verify-<app>/` (and the same for Codex under `.agents/skills/`), with a `SKILL.md` (Launch, Doctor, Drive, Evidence, Cleanup) and the Feature map. `kitchen init` writes its skeleton and names it once (kitchen.yaml `verify.skill`); QA keeps its map. In a repo that ignores `.claude/` it is a Local map.
 _Avoid_: Toolkit (the removed up-front build), test suite
 
 **Feature map**:
 The Verify skill's `features/` folder: a README index (baseline preconditions, driving conventions, the sweep order) and one Feature file per user-facing feature. It grows with features, not tickets.
 _Avoid_: Test plan, spec
+
+**Local map**:
+The Verify skill kept on the person's machine (`.kitchen/verify/skill/<name>/`, kitchen.yaml `verify.map: local`) because the repo ignores `.claude/` or hasn't committed the skill. Kitchen copies it into each checkout it makes and saves QA's map updates back to it; it is never committed. Its opposite is `verify.map: repo`, a map committed with the change that taught it.
+_Avoid_: private map, uncommitted skill
 
 **Feature file**:
 One user-facing feature in the Feature map: a title and paragraph, then `Sub-features`, `How to get to it (user POV)`, `Driving it with kitchen qa` (the Recipe) and `Gotchas`, ending with a `Code:` line naming the files behind it.

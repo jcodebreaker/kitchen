@@ -6,8 +6,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { loadConfig } from "../config.ts";
-import { mapAt } from "../verify/admit.ts";
 import { intakeMapSection } from "../verify/brief.ts";
+import { mapOf } from "../verify/where.ts";
 import { clarificationsSection, readRounds } from "./clarify.ts";
 import { type Criterion, intakeFile, readIntake } from "./lanes.ts";
 import type { Job, RefineReason } from "./machine.ts";
@@ -91,7 +91,7 @@ export async function refineBrief(repo: string, job: Job, file: string): Promise
   const answered = clarificationsSection(readRounds(dir).filter((r) => r.answers.length));
   const t = answered ? `${ticket}\n\n${answered}` : ticket;
   const map = intakeMapSection(
-    await mapAt(repo, (await stagingTip(repo, cfg)) ?? "HEAD"),
+    await mapOf(repo, cfg, (await stagingTip(repo, cfg)) ?? "HEAD"),
     "Use these ids when a criterion is about a feature that already exists.",
   );
   const docs = [

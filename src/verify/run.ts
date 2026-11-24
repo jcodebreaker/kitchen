@@ -18,10 +18,10 @@ import { mergeToTarget, stagingTip } from "../engine/staging.ts";
 import { writeAtomic } from "../engine/store.ts";
 import { addFindings, runFindings } from "../inbox/findings.ts";
 import { appDown, appUp } from "../qa/app.ts";
-import { KITCHEN_IDENTITY, mapAt } from "./admit.ts";
 import { allFeaturesSection } from "./brief.ts";
-import { type Feature, isVerifyPath, readMap, removals, SKILL_ROOTS, sweepOrder } from "./map.ts";
+import { type Feature, isVerifyPath, readMapDir, removals, SKILL_ROOTS, sweepOrder } from "./map.ts";
 import { isRunId, runDir, runEvidence, runWorktree } from "./paths.ts";
+import { KITCHEN_IDENTITY, localSkillDir, mapIn, mapMode, mapOf, type NamedMap, seedCheckout, skillIn, skillNameOf } from "./where.ts";
 
 export type Out = (l: string) => void;
 const ROLES = path.resolve(import.meta.dirname, "..", "..", "roles");
@@ -70,7 +70,11 @@ export async function prepare(repo: string, kind: Kind, out: Out, now = new Date
   const wt = runWorktree(repo, id);
   const branch = kind === "maintain" ? `kitchen/verify-${id}` : undefined;
   await git(repo, ["worktree", "add", "-q", ...(branch ? ["-b", branch] : ["--detach"]), wt, onto]);
-  const map = readMap(wt);
+  await seedCheckout(repo, cfg, wt);
+  const map = mapIn(repo, cfg, wt);
+  // A local map git doesn't ignore in the checkout wasn't copied there: maintain edits a copy in the run's folder.
+  if (kind === "maintain" && map.name && mapMode(cfg) === "local" && !inCheckout(wt, map.name))
+    fs.cpSync(localSkillDir(repo, map.name), runCopy(repo, id, map.name), { recursive: true });
   const ordered = sweepOrder(map.readme, map.features);
   const brief = path.join(dir, "brief.md");
   const url = o.url?.replace(/\/$/, "");
@@ -105,16 +109,7 @@ export async function prepare(repo: string, kind: Kind, out: Out, now = new Date
   return { id, kind, brief, cwd: wt, model: modelFor(cfg, "qa"), prompt, app };
 }
 
-function briefText(
-  repo: string,
-  cfg: Config,
-  r: RunInfo,
-  wt: string,
-  map: ReturnType<typeof readMap>,
-  ordered: ReturnType<typeof sweepOrder>,
-  app: string,
-  up: boolean,
-): string {
+function briefText(repo: string, cfg: Config, r: RunInfo, wt: string, map: NamedMap, ordered: ReturnType<typeof sweepOrder>, app: string, up: boolean): string {
   const role = fs.readFileSync(path.join(ROLES, `${r.kind}.md`), "utf8");
   const ev = runEvidence(repo, r.id);
   return [
@@ -126,7 +121,7 @@ function briefText(
     r.url
       ? `- The app: the deployed environment at ${r.url}. Kitchen started nothing: \`kitchen qa page|http ${r.id} <path>\` drive ${r.url}; \`kitchen qa up|reset\` refuse. The checkout is only where the map is read: what is deployed may differ from it.`
       : `- The app: ${up ? `${app.replace(/^app: /, "")}. Kitchen started it; \`kitchen qa … ${r.id}\` drives it.` : `${app.replace(/^app: /, "")}. Start it with \`kitchen qa up ${r.id}\` when a feature needs it.`}`,
-    `- The verify skill: ${map.name ? `${wt}/.claude/skills/${map.name}/SKILL.md` : "none on staging yet"}`,
+    `- The verify skill: ${skillLine(repo, cfg, wt, map, r)}`,
     `- Your output: ${r.kind === "sweep" ? `verdict.json in ${ev}/` : `report.json in ${ev}/, and your map fixes committed on ${r.branch}`}`,
     "",
     r.url
@@ -137,6 +132,21 @@ function briefText(
     allFeaturesSection(map, ordered),
     role,
   ].join("\n");
+}
+
+const inCheckout = (wt: string, name: string) => fs.existsSync(path.join(wt, SKILL_ROOTS[0], name, "SKILL.md"));
+const runCopy = (repo: string, id: string, name: string) => path.join(runDir(repo, id), "skill", name);
+/** Local map: the copy a maintain run edits: the one Kitchen put in the checkout, else the run folder's. */
+const editCopy = (repo: string, r: Pick<RunInfo, "id">, wt: string, name: string) =>
+  inCheckout(wt, name) ? path.join(wt, SKILL_ROOTS[0], name) : runCopy(repo, r.id, name);
+
+/** Where the run reads (and maintain edits) the skill. A map kept on this machine (ADR 0027) is never committed. */
+function skillLine(repo: string, cfg: Config, wt: string, map: NamedMap, r: Pick<RunInfo, "id" | "kind">): string {
+  if (!map.name) return mapMode(cfg) === "local" ? "none on this machine yet" : "none on staging yet";
+  if (mapMode(cfg) !== "local") return `${wt}/${SKILL_ROOTS[0]}/${map.name}/SKILL.md`;
+  const at = r.kind === "maintain" ? editCopy(repo, r, wt, map.name) : skillIn(repo, cfg, wt, map.name).skill;
+  const where = path.isAbsolute(at) ? at : `${wt}/${at}`;
+  return `${where}/SKILL.md. This repo doesn't commit the verify skill: Kitchen keeps it on this machine.${r.kind === "maintain" ? " Edit it there and commit nothing: `kitchen verify finish` copies your edits back." : ""}`;
 }
 
 /** A `--url` sweep's rules: drive the deployed URL, and which features to report as not run. */
@@ -222,6 +232,20 @@ type MaintainReport = {
   tickets?: string[];
 };
 
+/** Local map: the skill files a maintain run changed in its copy against this machine's (paths as in the checkout). */
+function editedLocal(repo: string, r: Pick<RunInfo, "id">, wt: string, name: string): string[] {
+  const a = editCopy(repo, r, wt, name);
+  const b = localSkillDir(repo, name);
+  if (!fs.existsSync(path.join(a, "SKILL.md"))) return [];
+  const list = (d: string) =>
+    fs.existsSync(d) ? (fs.readdirSync(d, { recursive: true }) as string[]).filter((f) => fs.statSync(path.join(d, f)).isFile()) : [];
+  const read = (d: string, f: string) => (fs.existsSync(path.join(d, f)) ? fs.readFileSync(path.join(d, f), "utf8") : null);
+  return [...new Set([...list(a), ...list(b)])]
+    .filter((f) => read(a, f) !== read(b, f))
+    .sort()
+    .map((f) => `${SKILL_ROOTS[0]}/${name}/${f}`);
+}
+
 async function finishMaintain(repo: string, r: RunInfo, out: Out): Promise<number> {
   const cfg = loadConfig(repo);
   const ev = runEvidence(repo, r.id);
@@ -248,13 +272,20 @@ async function finishMaintain(repo: string, r: RunInfo, out: Out): Promise<numbe
     return 1;
   }
   const head = (await revParse(repo, branch)) as string;
-  const changed = (await git(repo, ["diff", "--name-only", r.onto, head])).stdout.split("\n").filter(Boolean);
+  const local = mapMode(cfg) === "local";
+  const name = skillNameOf(repo, cfg);
+  // ADR 0027: a map kept on this machine was edited in the checkout's ignored copy; git sees none of it.
+  const edited = local ? editedLocal(repo, r, wt, name) : [];
+  const committed = (await git(repo, ["diff", "--name-only", r.onto, head])).stdout.split("\n").filter(Boolean);
+  const changed = [...committed, ...edited];
   const outside = changed.filter((p) => !isVerifyPath(p));
   if (outside.length) {
     out(`refused: the upkeep changed files outside the verify skill (${outside.slice(0, 3).join(", ")}): it never edits product code`);
     return 1;
   }
-  const rs = removals((await mapAt(repo, r.onto)).features, (await mapAt(repo, head)).features);
+  const rs = local
+    ? removals((await mapOf(repo, cfg, r.onto)).features, readMapDir(path.join(editCopy(repo, r, wt, name), "features")).features)
+    : removals((await mapOf(repo, cfg, r.onto)).features, (await mapOf(repo, cfg, head)).features);
   const said = (rep.removals ?? []).filter((x) => x.why?.trim()).map((x) => x.item.toLowerCase());
   // A reason names the item, one of its sub-features (`feature/sub`), or the whole feature (a pruned file).
   const unexplained = rs.filter((x) => ![x.item, x.feature, ...x.subs.map((s) => `${x.feature}/${s}`)].some((k) => said.includes(k.toLowerCase())));
@@ -268,10 +299,15 @@ async function finishMaintain(repo: string, r: RunInfo, out: Out): Promise<numbe
     return 1;
   }
   let landed = "";
-  if (changed.length) {
+  if (edited.length) {
+    const dst = localSkillDir(repo, name);
+    fs.rmSync(dst, { recursive: true, force: true });
+    fs.cpSync(editCopy(repo, r, wt, name), dst, { recursive: true });
+    landed = "saved to the map on this machine (.kitchen/verify/skill)";
+  }
+  if (committed.length) {
     // Both tools read the same skill: the Codex copy mirrors the Claude one, as a Kitchen commit.
-    const name = readMap(wt).name;
-    if (name) {
+    if (!local && fs.existsSync(path.join(wt, SKILL_ROOTS[0], name, "SKILL.md"))) {
       const [main, mirror] = SKILL_ROOTS;
       fs.rmSync(path.join(wt, mirror, name), { recursive: true, force: true });
       fs.cpSync(path.join(wt, main, name), path.join(wt, mirror, name), { recursive: true });
@@ -299,7 +335,7 @@ async function finishMaintain(repo: string, r: RunInfo, out: Out): Promise<numbe
   const file = path.join(runDir(repo, r.id), "report.html");
   writeAtomic(file, reportHtml(`Map upkeep ${r.id}: ${rep.outcome}`, `The verify map against staging at ${r.onto.slice(0, 12)}.`, rows, extra));
   await dropCheckout(repo, r.id);
-  if (!changed.length) await git(repo, ["branch", "-D", branch], { allowFail: true });
+  if (!committed.length) await git(repo, ["branch", "-D", branch], { allowFail: true });
   out(
     `maintain ${r.id}: ${rep.outcome}${changed.length ? ` · ${changed.length} file${changed.length === 1 ? "" : "s"} ${landed}` : ""}${rep.tickets?.length ? ` · tickets ${rep.tickets.join(", ")}` : ""} · report ${path.relative(repo, file)}`,
   );

@@ -124,6 +124,8 @@ export type Job = {
   drive?: { onto: string; sha: string; head: string; wt: string; features: string[]; by?: "person" };
   /** Kitchen's own commits on the job branch (QA's map updates): a builder's edit to verify-*\/ is anything else. */
   mapCommits?: string[];
+  /** ADR 0027 §3: why QA's last map update couldn't be written or committed; the change moved on without it. */
+  mapSkipped?: string;
   /** Where it was merged: staging's new tip, how (local or the PR). */
   merged?: { into: string; sha: string; at: string; via: "local" | "github" };
   /**

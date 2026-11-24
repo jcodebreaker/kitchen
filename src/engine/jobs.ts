@@ -15,9 +15,10 @@ import { addFindings, qaFindings, reviewFindings } from "../inbox/findings.ts";
 import { appendLedger } from "../ledger/append.ts";
 import { skillsForLane } from "../skills/forjob.ts";
 import { PromptSource } from "../sources/prompt.ts";
-import { admitMap, builderMapEdits, mapAt, writeMapChanges } from "../verify/admit.ts";
+import { type Admitted, admitMap, builderMapEdits, writeMapChanges } from "../verify/admit.ts";
 import { intakeMapSection, qaMapSection, regressSection } from "../verify/brief.ts";
-import { namedBy, readMap, removals, touchedFeatures } from "../verify/map.ts";
+import { namedBy, removals, touchedFeatures } from "../verify/map.ts";
+import { mapIn, mapOf, seedCheckout, skillIn, skillNameOf, skippedLine } from "../verify/where.ts";
 import { CONFIRM_KEY, clarificationsSection, questionsAsked, readRounds, recordQuestion } from "./clarify.ts";
 import { clearControl, fileSlices, moveJob, readControl } from "./control.ts";
 import { branchExists, diffSize, git, gitOut, revParse } from "./git.ts";
@@ -411,6 +412,8 @@ export async function start(
       await git(repo, ["worktree", "add", "-q", wt, job.branch]);
     }
   }
+  // ADR 0027: a map kept on this machine is copied into the checkout the lane works in.
+  await seedCheckout(repo, cfg, wt);
   const head = lane === "review" ? ((await revParse(repo, job.branch)) ?? undefined) : undefined;
   const unread = unreadMessages(dir);
   const t0 = Date.now();
@@ -425,11 +428,11 @@ export async function start(
   if (lane === "regress") fs.mkdirSync(regressDir(dir, job.round), { recursive: true });
   const map =
     lane === "intake"
-      ? intakeMapSection(await mapAt(repo, base))
+      ? intakeMapSection(await mapOf(repo, cfg, base))
       : lane === "qa"
-        ? qaMapSection(readMap(wt), await jobFiles(repo, job), qaDir(dir, job.round), changesOf(dir))
+        ? qaMapSection(mapIn(repo, cfg, wt), await jobFiles(repo, job), qaDir(dir, job.round), changesOf(dir), skillIn(repo, cfg, wt, skillNameOf(repo, cfg)))
         : lane === "regress" && job.drive
-          ? regressSection(readMap(wt), job.drive.features)
+          ? regressSection(mapIn(repo, cfg, wt), job.drive.features)
           : "";
   const others = lane === "intake" ? queueSection(repo, job, listJobs(repo)) : lane === "build" ? afterSection(repo, job, listJobs(repo)) : "";
   const text = brief(repo, cfg, { ...job, base }, lane, { wt, base, head, notes: operatorNotes(unread), skills: sk.text, caught, others, map });
@@ -663,18 +666,25 @@ export async function finish(repo: string, id: string): Promise<Finished | { ref
     // ADR 0022: what QA saw beyond the criteria goes to the outer loop's inbox (Kitchen findings).
     await addFindings(repo, qaFindings(job.id, job.round, qaDir(dir, job.round)));
     if (qa.verdict === "PASS") {
+      // ADR 0027 §3: a map update never blocks a tested change: whatever fails writing it is said, and the job moves on.
       const ad = await admitMap(repo, wt, qaDir(dir, job.round), {
         base: job.base,
         changes: changesOf(dir),
         message: `Map updates from QA (job ${job.id}, round ${job.round})`,
         cfg,
-      });
+      }).catch((e: Error) => ({ files: [], sha: null, changes: [], skipped: e.message.split("\n")[0] }) as Admitted);
       if ("refused" in ad) return refuseLane(repo, job, `QA's map update: ${ad.refused}`);
-      if (ad.files.length) writeMapChanges(dir, ad.changes);
-      const kept = ad.sha ? ` · map ${ad.files.join(", ")} committed (${ad.sha.slice(0, 7)})` : ad.note ? ` · ${ad.note}` : "";
-      return moveOn(repo, job, "review", `${job.id}  QA PASS (${qa.criteria.length} criteria)${kept} → review`, {
+      if (ad.files.length && !ad.skipped) writeMapChanges(dir, ad.changes);
+      const kept = [
+        ad.sha ? `map ${ad.files.join(", ")} committed (${ad.sha.slice(0, 7)})` : "",
+        ad.note ?? "",
+        ad.skipped ? skippedLine(ad.skipped) : "",
+      ].filter(Boolean);
+      return moveOn(repo, job, "review", `${job.id}  QA PASS (${qa.criteria.length} criteria)${kept.map((k) => ` · ${k}`).join("")} → review`, {
         patch: (j) => {
           if (ad.sha) j.mapCommits = [...(j.mapCommits ?? []), ad.sha];
+          if (ad.skipped) j.mapSkipped = ad.skipped;
+          else if (ad.files.length) delete j.mapSkipped;
         },
       });
     }
@@ -719,9 +729,9 @@ const checking =
   };
 
 /** The features a trial merge touches: its changed files against the `Code:` lines of the map it carries. */
-async function touchedBy(repo: string, t: { onto: string; sha: string }): Promise<string[]> {
+async function touchedBy(repo: string, cfg: Config, t: { onto: string; sha: string }): Promise<string[]> {
   const changed = (await git(repo, ["diff", "--name-only", t.onto, t.sha])).stdout.split("\n").filter(Boolean);
-  return touchedFeatures((await mapAt(repo, t.sha)).features, changed).map((f) => f.id);
+  return touchedFeatures((await mapOf(repo, cfg, t.sha)).features, changed).map((f) => f.id);
 }
 
 async function dropDrive(repo: string, job: Job) {
@@ -783,7 +793,7 @@ async function gateMerge(repo: string, cfg: Config, job: Job, head: string, who:
   const by = who === "person" ? ({ by: "person" } as const) : {};
   // The backstop for ADR 0017 §4: whatever path a map change took into the branch, it may not weaken an earlier check.
   const changes = changesOf(dir);
-  const weak = removals((await mapAt(repo, job.base)).features, (await mapAt(repo, head)).features).filter((r) => !namedBy(r, changes));
+  const weak = removals((await mapOf(repo, cfg, job.base)).features, (await mapOf(repo, cfg, head)).features).filter((r) => !namedBy(r, changes));
   if (weak.length)
     return mergeFailed(repo, job, {
       who,
@@ -797,7 +807,7 @@ async function gateMerge(repo: string, cfg: Config, job: Job, head: string, who:
   const diff = (await diffSize(repo, job.base, head).catch(() => null))?.files;
   const m = await mergeToTarget(repo, cfg, job, head, {
     log,
-    gate: (t) => touchedBy(repo, t),
+    gate: (t) => touchedBy(repo, cfg, t),
     onCheck: checking(repo, job.id, log),
     prBody: (c) => prBodyOf(repo, cfg, job, c, diff),
   });
@@ -954,7 +964,7 @@ async function finishRegress(repo: string, cfg: Config, job: Job): Promise<Finis
   const diff = (await diffSize(repo, job.base, d.head).catch(() => null))?.files;
   const m = await mergeToTarget(repo, cfg, job, d.head, {
     log,
-    gate: (t) => touchedBy(repo, t),
+    gate: (t) => touchedBy(repo, cfg, t),
     drove: { onto: d.onto, sha: d.sha },
     onCheck: checking(repo, job.id, log),
     prBody: (c) => prBodyOf(repo, cfg, job, c, diff),

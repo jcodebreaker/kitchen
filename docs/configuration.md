@@ -53,7 +53,15 @@ forge: { kind: github, repo: you/your-repo }   # merge into staging through a PR
 
 **A deployed environment**: `kitchen verify sweep --url https://staging.example.com` drives every feature of the map against that URL instead of starting the app; there is no key for it, and the URL is kept only in that sweep's run folder, never in a job (jobs always test their own code). Recipes that need a reset or seed are reported "not run: needs a fresh seed".
 
-The verify skill (`.claude/skills/verify-<app>/`, ADR 0017) has no keys here: it is files in your repo. `kitchen init` writes it from `app:` (start, reset, health), the handles it finds in your page code and your end-to-end suite (its **Your tests** section: where the specs are, their page objects, fixtures and login or seed helpers, how to run one spec); edit it freely. Which features a merge drives comes from each feature file's `Code:` line, and `staging.auto_merge: false` also leaves `kitchen verify maintain`'s branch for you to merge.
+The verify skill (`.claude/skills/verify-<app>/`, ADR 0017) is files in your repo, with two keys here (ADR 0027):
+
+```yaml
+verify:
+  skill: verify-shop   # its folder name, chosen once by kitchen init (package name, else the main checkout's folder)
+  map: repo            # repo: committed with each change; local: .kitchen/verify/skill/<skill>/ on this machine
+```
+
+`kitchen init` sets both from git: `local` when the repo ignores `.claude/` (it says so once), or when a `verify-*` skill is there but not committed (it warns you to commit it, and switches back to `repo` on the next `kitchen run` once a commit has it). A kitchen.yaml without them gets them on the next `kitchen run`. In `local` mode Kitchen copies the skill into each job's worktree, trial merge and verify run, and writes QA's map updates back to `.kitchen/verify/skill/`; nothing under `.claude/` is committed. A map update that can't be written or committed never holds a change back: the job moves on and its line and Report say `map update skipped: <reason>`. `kitchen init` writes it from `app:` (start, reset, health), the handles it finds in your page code and your end-to-end suite (its **Your tests** section: where the specs are, their page objects, fixtures and login or seed helpers, how to run one spec); edit it freely. Which features a merge drives comes from each feature file's `Code:` line, and `staging.auto_merge: false` also leaves `kitchen verify maintain`'s branch for you to merge.
 
 Environment: `KITCHEN_CLAUDE_BIN` (the `claude` binary `kitchen run` starts), `KITCHEN_GH_BIN` (the `gh` Kitchen's
 merge uses), `KITCHEN_PROTECTED_BRANCHES` (more branches the push guard protects), `KITCHEN_ALLOW_PROTECTED_PUSH=1`

@@ -113,8 +113,11 @@ If the user asks you to stop the run, finish the agents in flight (`kitchen job 
 
 ## The verify map
 
-Kitchen keeps a verify skill in the repo (`.claude/skills/verify-<app>/`): how to start and drive the app, and a
-feature map (`features/`), one file per user-facing feature with its recipe and the files behind it. QA follows
+Kitchen keeps a verify skill in the repo (`.claude/skills/verify-<app>/`, named by kitchen.yaml's `verify.skill`):
+how to start and drive the app, and a feature map (`features/`), one file per user-facing feature with its recipe and
+the files behind it. A repo that ignores `.claude/` keeps it on this machine instead (`verify.map: local`, in
+`.kitchen/verify/skill/<name>/`): Kitchen copies it into each checkout it makes and saves QA's updates there, never
+in a commit. Don't edit, commit or force-add it yourself. QA follows
 and updates it in every job; Kitchen drives the touched features before each merge. Two runs use it outside jobs,
 each one agent you start like a lane agent:
 

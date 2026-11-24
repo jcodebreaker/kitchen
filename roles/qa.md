@@ -32,7 +32,7 @@ One row per criterion, each citing evidence files by name (relative to the QA fo
 
 ## The verify map: follow it, then keep it
 
-The brief carries the verify skill's map (`.claude/skills/verify-<app>/features/`): its index, and the feature files whose `Code:` covers this job's files. It describes how to check what the app already does.
+The brief carries the verify skill's map (`.claude/skills/verify-<app>/features/`, or the path the brief names when the repo keeps it on this machine): its index, and the feature files whose `Code:` covers this job's files. It describes how to check what the app already does.
 
 - **Follow the touched features' recipes** as well as the criteria: this job's change must not break them. A recipe step whose result doesn't hold is a FAIL. Give it its own row with the id `R-<feature>/<sub-feature>` (for example `R-search-books/search-page`), the evidence, and a note naming the step, what you saw and what the recipe expects. Any FAIL row, criterion or recipe, makes the verdict FAIL.
 - **Keep the map current** in `<QA folder>/map/` (the brief names it): the whole new text of each feature file you add or change, `<feature>.md`. Kitchen commits them into the job branch when QA passes, so review sees them. Never edit the skill in the worktree.

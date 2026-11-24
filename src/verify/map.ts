@@ -228,9 +228,9 @@ export const featuresRel = (name: string, root: (typeof SKILL_ROOTS)[number] = "
 /** Is this path inside a verify skill (either tool's copy)? */
 export const isVerifyPath = (p: string) => /^\.(claude|agents)\/skills\/verify-[^/]+(\/|$)/.test(p);
 
-/** The map in a checkout on disk, or an empty map when there is no skill. */
-export function readMap(root: string): FeatureMap & { name: string | null } {
-  const name = skillName(root);
+/** The map in a checkout on disk, or an empty map when there is no skill. `want`: the skill's name, when it is there. */
+export function readMap(root: string, want?: string): FeatureMap & { name: string | null } {
+  const name = want && SKILL_ROOTS.some((r) => fs.existsSync(path.join(root, r, want, "SKILL.md"))) ? want : skillName(root);
   if (!name) return { name: null, readme: null, features: [] };
   const dir = path.join(root, featuresRel(name));
   const alt = path.join(root, featuresRel(name, ".agents/skills"));
