@@ -53,6 +53,14 @@ export type Job = {
   /** The round the current budget started at: `kitchen feedback` resets the budget, never `round`. */
   roundStart: number;
   roundLimit: number;
+  /**
+   * ADR 0018: catch-ups in a row (the merge into staging failed only because staging moved). A catch-up moves
+   * `round` and `roundStart` together, so it costs no round. Set while the current round is one; cleared by a real
+   * round, by landing, and when a person takes the job back from needs-human.
+   */
+  catchUps?: number;
+  /** The head the last passing review read, and its round: a catch-up's review reads only what changed since. */
+  reviewed?: { head: string; round: number };
   risk: Risk | null;
   surfaces: ("ui" | "security")[];
   kind: Kind | null;
@@ -108,6 +116,19 @@ export const MOVES: Record<Stage, readonly Stage[]> = {
 /** Moves that start another round (the work goes back to Build). */
 const BACK_TO_BUILD: readonly Stage[] = ["qa", "review", "regress", "ready", "done"];
 
+/** Catch-ups in a row before the job goes to a person (ADR 0018 §1). */
+export const CATCH_UP_LIMIT = 3;
+export const outOfCatchUps = (j: Pick<Job, "catchUps">) => (j.catchUps ?? 0) >= CATCH_UP_LIMIT;
+
+/**
+ * Pure, ADR 0018 §3: a failed merge into staging is a catch-up (not a round) when it conflicted, or when the checks
+ * went red on the merged result while the same checks were green on the job branch alone and staging has commits
+ * the branch doesn't. Anything else (a weakened map, red checks staging didn't cause) is a round.
+ */
+export function isCatchUp(f: { cause?: "conflict" | "checks"; greenAlone: boolean; stagingAhead: boolean }): boolean {
+  return f.cause === "conflict" || (f.cause === "checks" && f.greenAlone && f.stagingAhead);
+}
+
 /** Rounds used in the current budget. */
 export const roundsUsed = (j: Pick<Job, "round" | "roundStart">) => j.round - j.roundStart + 1;
 /** Pure: the budget is spent, so a failed QA or review goes to a person instead of another round. */
@@ -125,9 +146,9 @@ export function refuse(j: Pick<Job, "stage" | "pausedFrom">, to: Stage): string 
 
 /**
  * Pure: the job moved to `to`. Throws MoveRefused for a move the table doesn't list. Counters change only here:
- * the round (back to Build), moves, the pause bookkeeping, doneAt.
+ * the round (back to Build), catch-ups, moves, the pause bookkeeping, doneAt.
  */
-export function move(j: Job, to: Stage, o: { reason?: string; now?: Date } = {}): Job {
+export function move(j: Job, to: Stage, o: { reason?: string; now?: Date; catchUp?: boolean } = {}): Job {
   const why = refuse(j, to);
   if (why) throw new MoveRefused(why);
   const now = (o.now ?? new Date()).toISOString();
@@ -136,6 +157,11 @@ export function move(j: Job, to: Stage, o: { reason?: string; now?: Date } = {})
   delete n.tries;
   if (to === "build" && BACK_TO_BUILD.includes(j.stage)) {
     n.round = j.round + 1;
+    // A catch-up (ADR 0018): a new round folder, the same budget. Anything else back to Build is a real round.
+    if (o.catchUp) {
+      n.roundStart = j.roundStart + 1;
+      n.catchUps = (j.catchUps ?? 0) + 1;
+    } else delete n.catchUps;
     // A follow-up on a finished job is new work: a fresh budget.
     if (j.stage === "done" || j.stage === "ready") n.roundStart = n.round;
     delete n.held;
@@ -144,6 +170,7 @@ export function move(j: Job, to: Stage, o: { reason?: string; now?: Date } = {})
   }
   if (j.stage === "needs-human") {
     delete n.escalatedFrom;
+    delete n.catchUps;
     n.roundStart = n.round;
   }
   if (to === "paused") {
@@ -155,6 +182,7 @@ export function move(j: Job, to: Stage, o: { reason?: string; now?: Date } = {})
     if (to !== "needs-info" && isLane(j.stage)) n.escalatedFrom = j.stage;
   }
   if (to === "done" || to === "rejected") n.doneAt = now;
+  if (to === "done") delete n.catchUps;
   return n;
 }
 

@@ -128,6 +128,7 @@ export const JobSchema = z.looseObject({
   round: z.number().int().min(1),
   roundStart: z.number().int().min(1),
   roundLimit: z.number().int().min(1),
+  catchUps: Count.optional(),
   risk: Risk.nullable(),
   surfaces: z.array(z.enum(["ui", "security"])),
   kind: z.enum(["feature", "bug", "ui", "chore"]).nullable(),

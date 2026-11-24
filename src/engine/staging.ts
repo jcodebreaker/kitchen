@@ -21,8 +21,11 @@ export type Drive = { onto: string; sha: string; wt: string; features: string[] 
 
 export type MergeOutcome =
   | { ok: true; sha: string; via: "local" | "github"; pr?: number }
-  /** `back`: the work needs another Build round (a conflict, checks red on staging); else it stops at Ready. */
-  | { ok: false; why: string; back: boolean; log?: string; drive?: undefined }
+  /**
+   * `back`: the work goes back to Build (a conflict, checks red on staging); else it stops at Ready. `cause` and
+   * `onto` (staging's tip it merged onto) let Kitchen tell a catch-up from a round (ADR 0018 §3).
+   */
+  | { ok: false; why: string; back: boolean; log?: string; drive?: undefined; cause?: "conflict" | "checks"; onto?: string }
   /** Not merged yet: these features must be driven on the trial merge first (its worktree is kept). */
   | { ok: false; why: string; back: false; drive: Drive };
 
@@ -122,7 +125,7 @@ async function trialMerge(
   onto: string,
   head: string,
   log: string,
-): Promise<{ ok: true; sha: string; wt: string } | { ok: false; why: string; back: boolean; wt: string }> {
+): Promise<{ ok: true; sha: string; wt: string } | { ok: false; why: string; back: boolean; wt: string; cause: "conflict" | "checks" }> {
   const wt = trialWorktree(repo, job.id);
   await dropTrial(repo, wt);
   await git(repo, ["worktree", "add", "-q", "--detach", wt, onto]);
@@ -130,7 +133,13 @@ async function trialMerge(
   if (m.code) {
     const conflicts = (await git(wt, ["diff", "--name-only", "--diff-filter=U"], { allowFail: true })).stdout.split("\n").filter(Boolean);
     await git(wt, ["merge", "--abort"], { allowFail: true });
-    return { ok: false, why: `it conflicts with ${cfg.staging.branch}${conflicts.length ? ` in ${conflicts.join(", ")}` : ""}`, back: true, wt };
+    return {
+      ok: false,
+      why: `it conflicts with ${cfg.staging.branch}${conflicts.length ? ` in ${conflicts.join(", ")}` : ""}`,
+      back: true,
+      wt,
+      cause: "conflict",
+    };
   }
   const checks = await runChecks({ dir: wt, checks: cfg.checkList, prepare: prepareOf(cfg), log });
   if (!checks.ok) {
@@ -140,6 +149,7 @@ async function trialMerge(
       why: `the checks fail on ${cfg.staging.branch} with this change merged (${bad?.name}: exit ${bad?.exit ?? "timeout"})`,
       back: true,
       wt,
+      cause: "checks",
     };
   }
   return { ok: true, sha: await gitOut(wt, ["rev-parse", "HEAD"]), wt };
@@ -182,7 +192,7 @@ export async function mergeToStaging(
         if (o.drove && o.drove.onto === onto) sha = o.drove.sha;
         else {
           t = await trialMerge(repo, cfg, job, onto, reviewedHead, o.log);
-          if (!t.ok) return { ok: false, why: t.why, back: t.back, log: o.log };
+          if (!t.ok) return { ok: false, why: t.why, back: t.back, log: o.log, cause: t.cause, onto };
           sha = t.sha;
           const features = o.gate ? await o.gate({ onto, sha, wt: t.wt }) : [];
           if (features.length) {

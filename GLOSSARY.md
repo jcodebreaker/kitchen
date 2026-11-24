@@ -34,6 +34,10 @@ _Avoid_: Chat, prompt, interrupt
 One pass of Build, QA and Review; a Job has a limited number before a person is asked.
 _Avoid_: Iteration, attempt
 
+**Catch-up**:
+A pass back through Build, QA, Review and the Merge check only because staging moved under the Job (its merge conflicted, or the checks went red on the merged result alone). It costs no Round; three in a row go to a person (ADR 0018).
+_Avoid_: Rebase round, conflict round
+
 ### Running the queue
 
 **Orchestrator**:

@@ -20,7 +20,7 @@ import { clarificationsSection, readRounds, recordQuestion } from "./clarify.ts"
 import { clearControl, moveJob, readControl } from "./control.ts";
 import { branchExists, diffSize, git, gitOut, revParse } from "./git.ts";
 import { changesOf, criteriaOf, intakeFile, matchPath, parseIntake, qaDir, readFeatureVerdict, readQa, readReview, regressDir, reviewFile } from "./lanes.ts";
-import { BY_YOU, isLane, type Job, type Lane, outOfRounds, roundsUsed, type Stage } from "./machine.ts";
+import { BY_YOU, CATCH_UP_LIMIT, isCatchUp, isLane, type Job, type Lane, outOfCatchUps, outOfRounds, roundsUsed, type Stage } from "./machine.ts";
 import { markRead, operatorNotes, unreadMessages } from "./messages.ts";
 import { afterSection, queueSection } from "./others.ts";
 import { type Plan, planWave } from "./plan.ts";
@@ -222,6 +222,7 @@ function brief(
     o.others ?? "",
     o.notes,
     lane === "build" && o.caught ? stagingMoved(cfg, o.caught) : "",
+    lane === "build" || lane === "review" ? catchUpNote(cfg, dir, job, lane, o.head) : "",
     lane === "build" || lane === "intake" ? earlier(dir, job) : "",
     lane === "qa" || lane === "regress" ? refusedNote(dir) : "",
     lane === "qa" ? redriveNote(dir, job) : "",
@@ -242,6 +243,36 @@ function stagingMoved(cfg: Config, c: CatchUp): string {
   if (c.merged === "conflict")
     return `## ${s} moved: resolve the merge first\n\nKitchen started merging ${s} (${c.tip.slice(0, 12)}) into your branch and it conflicts in ${c.conflicts.join(", ") || "some files"}. Before anything else, resolve every conflict so both changes work (other jobs' changes stay), then \`git add\` the files and \`git commit --no-edit\` to conclude the merge. Never abort it: Kitchen refuses a branch without ${s}'s tip.\n`;
   return "";
+}
+
+/**
+ * ADR 0018 §2: a catch-up round is light. The builder only makes the merge work; the reviewer reads what changed
+ * since the last passing review (the resolution), with the whole diff and that review's findings for context.
+ */
+function catchUpNote(cfg: Config, dir: string, job: Job, lane: Lane, head?: string): string {
+  if (!job.catchUps) return "";
+  const s = cfg.staging.branch;
+  if (lane === "build")
+    return `## A catch-up, not a new round\n\nRound ${job.round - 1} passed QA and review; only the merge into ${s} failed, because ${s} moved under it (catch-up ${job.catchUps} of ${CATCH_UP_LIMIT}: it costs no round). Make the merge work: resolve it so both this job's change and the other jobs' changes work, and fix only what the merged result breaks (why it failed is under "Earlier rounds"). Change nothing else: no new behaviour, no refactors, no clean-ups.\n`;
+  const r = job.reviewed;
+  if (!r || !head) return "";
+  const rv = readReview(dir, r.round);
+  const findings =
+    "findings" in rv && rv.findings.length
+      ? rv.findings.map((f) => `- ${f.id}${f.blocks ? " (blocking)" : " (note)"}${f.at ? ` ${f.at}` : ""}: ${f.why}`).join("\n")
+      : "- none";
+  return [
+    "## A catch-up: review what changed since the last review",
+    "",
+    `Round ${r.round}'s review passed ${r.head.slice(0, 12)}. Then ${s} moved, the merge into it failed, and this round's Build only made the merge work. Review that, not the whole job again:`,
+    `- What changed since that review: \`git diff ${r.head} ${head}\` (it carries ${s}'s new commits too: other jobs' work, reviewed in their own jobs).`,
+    `- The resolution alone: \`git show --remerge-diff <merge>\` for each merge in \`git log --merges --format=%h ${r.head}..${head}\`.`,
+    `- For context: the whole job is \`git diff ${job.base}...${head}\`; round ${r.round}'s review is ${reviewFile(dir, r.round)}, its findings:`,
+    findings,
+    "",
+    "Block only on what the resolution breaks: this job's behaviour, or the other jobs' work it merged.",
+    "",
+  ].join("\n");
 }
 
 function qaSummary(dir: string, job: Job): string {
@@ -413,10 +444,16 @@ async function closeRun(repo: string, job: Job, ok: boolean, line: string) {
 }
 
 /** After a lane: move the job on, then park it if the person asked for a pause meanwhile. */
-async function moveOn(repo: string, job: Job, to: Stage, line: string, o: { reason?: string; patch?: (j: Job) => void } = {}): Promise<Finished> {
+async function moveOn(
+  repo: string,
+  job: Job,
+  to: Stage,
+  line: string,
+  o: { reason?: string; patch?: (j: Job) => void; catchUp?: boolean } = {},
+): Promise<Finished> {
   const from = job.running?.lane ?? (job.stage as Lane);
   await closeRun(repo, job, true, line);
-  let moved = await moveJob(repo, job.id, to, { reason: o.reason, who: "orchestrator", patch: o.patch });
+  let moved = await moveJob(repo, job.id, to, { reason: o.reason, who: "orchestrator", patch: o.patch, catchUp: o.catchUp });
   if (isLane(to) && readControl(jobDirOf(repo, job.id)).pause) {
     await clearControl(repo, job.id);
     moved = await moveJob(repo, job.id, "paused", { reason: BY_YOU, who: "person" });
@@ -549,6 +586,8 @@ export async function finish(repo: string, id: string): Promise<Finished | { ref
       });
     return moveOn(repo, job, "build", `${job.id}  review BLOCKING ${ids.join(", ")} → build (round ${job.round + 1})`);
   }
+  // ADR 0018: a catch-up's review reads only what changed since this head.
+  await updateJob(repo, job.id, (j) => ({ ...j, reviewed: { head: head as string, round: j.round } }));
   return mergeOrHold(repo, cfg, job, head as string);
 }
 
@@ -605,7 +644,7 @@ async function mergeOrHold(repo: string, cfg: Config, job: Job, head: string): P
       },
     );
   }
-  return mergeFailed(repo, job, m);
+  return mergeFailed(repo, job, m, head);
 }
 
 function merged(repo: string, cfg: Config, job: Job, m: Extract<MergeOutcome, { ok: true }>, extra = "review PASS → "): Promise<Finished> {
@@ -618,11 +657,50 @@ function merged(repo: string, cfg: Config, job: Job, m: Extract<MergeOutcome, { 
   });
 }
 
-/** Not merged: back to Build when the work needs another round (a conflict, red checks), else Ready for a person. */
-function mergeFailed(repo: string, job: Job, m: { why: string; back: boolean }): Promise<Finished> {
+/** The round's checks were green on the job branch alone (Build's `job finish` ran them). */
+function greenAlone(dir: string, round: number): boolean {
+  try {
+    return (JSON.parse(fs.readFileSync(path.join(roundDir(dir, round), "checks.json"), "utf8")) as { ok: boolean }[]).every((c) => c.ok);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Not merged: back to Build when the work needs it, else Ready for a person. ADR 0018: when only staging moving
+ * caused it (a conflict, or checks red on the merged result that were green on the branch), it is a catch-up that
+ * costs no round; three in a row go to a person. Anything else back to Build is a round.
+ */
+async function mergeFailed(
+  repo: string,
+  job: Job,
+  m: { why: string; back: boolean; cause?: "conflict" | "checks"; onto?: string },
+  head?: string,
+): Promise<Finished> {
   const dir = jobDirOf(repo, job.id);
   const cfg = loadConfig(repo);
   writeAtomic(path.join(roundDir(dir, job.round), "merge.txt"), `${m.why}\n`);
+  const stagingAhead = !!(m.onto && head) && (await git(repo, ["merge-base", "--is-ancestor", m.onto, head], { allowFail: true })).code !== 0;
+  if (m.back && isCatchUp({ cause: m.cause, greenAlone: greenAlone(dir, job.round), stagingAhead })) {
+    if (outOfCatchUps(job))
+      return moveOn(
+        repo,
+        job,
+        "needs-human",
+        `${job.id}  merge into ${cfg.staging.branch} failed: ${m.why}, ${CATCH_UP_LIMIT} catch-ups already → needs-human`,
+        {
+          reason: `${cfg.staging.branch} keeps moving under it (${CATCH_UP_LIMIT} catch-ups)`,
+          patch: (j) => delete j.drive,
+        },
+      );
+    return moveOn(
+      repo,
+      job,
+      "build",
+      `${job.id}  merge into ${cfg.staging.branch} failed: ${m.why} → build (catch-up ${(job.catchUps ?? 0) + 1} of ${CATCH_UP_LIMIT}, no round spent)`,
+      { catchUp: true, patch: (j) => delete j.drive },
+    );
+  }
   if (m.back && !outOfRounds(job))
     return moveOn(repo, job, "build", `${job.id}  merge into ${cfg.staging.branch} failed: ${m.why} → build (round ${job.round + 1})`, {
       patch: (j) => delete j.drive,
@@ -674,7 +752,7 @@ async function finishRegress(repo: string, cfg: Config, job: Job): Promise<Finis
     return { id: job.id, from: "regress", to: null, line };
   }
   await dropDrive(repo, job);
-  return mergeFailed(repo, job, m);
+  return mergeFailed(repo, job, m, d.head);
 }
 
 export function show(repo: string, id: string): Record<string, unknown> {

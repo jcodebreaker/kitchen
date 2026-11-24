@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, test } from "vitest";
+import { report } from "../cli/commands.ts";
 import { loadConfig } from "../config.ts";
 import { readLedger } from "../ledger/append.ts";
 import * as control from "./control.ts";
@@ -172,7 +173,7 @@ test("a review whose branch moved is refused; a conflict with staging sends the 
   g(wt, "commit", "-qam", "other");
   g(r, "worktree", "remove", "--force", wt);
   const f = await review(r, a);
-  assert.match(f.line, /conflicts with staging in app\.txt → build \(round 2\)/);
+  assert.match(f.line, /conflicts with staging in app\.txt → build \(catch-up 1 of 3, no round spent\)/);
   assert.match(fs.readFileSync((await open(r, a, "build")).brief, "utf8"), /the merge into staging failed: it conflicts/);
 });
 
@@ -193,10 +194,15 @@ test("two jobs on one file run at once; the one that conflicts is rebuilt on sta
   await qa(r, a, "PASS");
   await qa(r, b, "PASS");
   assert.match((await review(r, a)).line, /merged into staging/);
-  assert.match((await review(r, b)).line, /conflicts with staging in app\.txt → build \(round 2\)/);
+  assert.match((await review(r, b)).line, /conflicts with staging in app\.txt → build \(catch-up 1 of 3, no round spent\)/);
+  const reviewed = findJob(r, b).reviewed?.head as string;
+  assert.deepEqual([findJob(r, b).round, findJob(r, b).roundStart, findJob(r, b).catchUps], [2, 2, 1], "a catch-up spends no round");
   const tip = g(r, "rev-parse", "staging");
   const s = await open(r, b, "build");
-  assert.match(fs.readFileSync(s.brief, "utf8"), /resolve the merge first[\s\S]*conflicts in app\.txt/);
+  assert.match(
+    fs.readFileSync(s.brief, "utf8"),
+    /resolve the merge first[\s\S]*conflicts in app\.txt[\s\S]*A catch-up, not a new round[\s\S]*Change nothing else/,
+  );
   assert.equal(findJob(r, b).base, tip, "the round starts from staging's tip");
   assert.match(fs.readFileSync(path.join(s.cwd, "app.txt"), "utf8"), /<<<<<<<[\s\S]*four[\s\S]*>>>>>>>/);
   // A builder that aborts Kitchen's merge is refused: the branch must contain staging.
@@ -208,9 +214,24 @@ test("two jobs on one file run at once; the one that conflicts is rebuilt on sta
   g(s.cwd, "add", "app.txt");
   g(s.cwd, "commit", "-q", "--no-edit");
   assert.match((await fin(r, b)).line, /checks pass → qa/);
-  await qa(r, b, "PASS");
-  assert.match((await review(r, b)).line, /merged into staging/);
+  assert.match(fs.readFileSync((await open(r, b, "qa")).brief, "utf8"), /Re-drive, don't re-explore/);
+  const qd = qaDir(dirOf(r, b), 2);
+  fs.writeFileSync(path.join(qd, "c1.txt"), "four\n");
+  fs.writeFileSync(
+    path.join(qd, "verdict.json"),
+    JSON.stringify({ verdict: "PASS", criteria: [{ id: "C1", result: "PASS", evidence: ["c1.txt"], note: "x" }] }),
+  );
+  await fin(r, b);
+  const rb = fs.readFileSync((await open(r, b, "review")).brief, "utf8");
+  assert.match(rb, new RegExp(`A catch-up: review what changed since the last review[\\s\\S]*git diff ${reviewed} `));
+  fs.writeFileSync(reviewFile(dirOf(r, b), 2), JSON.stringify({ summary: "ok", findings: [] }));
+  assert.match((await fin(r, b)).line, /merged into staging/);
   assert.equal(g(r, "show", "staging:app.txt"), "one\ntwo\nTHREE\nfour");
+  assert.equal(findJob(r, b).catchUps, undefined, "landing clears the catch-ups");
+  const lines: string[] = [];
+  report(r, (l) => lines.push(l), { json: true });
+  const rep = JSON.parse(lines.join("\n"));
+  assert.deepEqual([rep.firstPass, rep.caughtUp, rep.reviewBlocks], [2, 1, 0], "both landed on their first real round; one catch-up");
 });
 
 test("a later round with staging moved but no conflict: Kitchen merges staging in and the builder builds on it", async () => {

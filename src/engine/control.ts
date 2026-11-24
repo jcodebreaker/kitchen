@@ -28,7 +28,9 @@ export async function moveJob(
   repo: string,
   id: string,
   to: Stage,
-  o: { reason?: string; who: "orchestrator" | "person"; check?: (j: Job) => string | null; patch?: (j: Job) => void } = { who: "orchestrator" },
+  o: { reason?: string; who: "orchestrator" | "person"; check?: (j: Job) => string | null; patch?: (j: Job) => void; catchUp?: boolean } = {
+    who: "orchestrator",
+  },
 ): Promise<Job> {
   let from: Stage = "intake";
   let round = 1;
@@ -37,7 +39,7 @@ export async function moveJob(
     if (why) throw new MoveRefused(why);
     from = disk.stage;
     round = disk.round;
-    const n = move(disk, to, { reason: o.reason });
+    const n = move(disk, to, { reason: o.reason, catchUp: o.catchUp });
     o.patch?.(n);
     return n;
   });
@@ -48,7 +50,7 @@ export async function moveJob(
     event: "move",
     key: `${id}/m${j.moves}`,
     result: to,
-    detail: { who: o.who, ...(o.reason ? { reason: o.reason } : {}) },
+    detail: { who: o.who, ...(o.reason ? { reason: o.reason } : {}), ...(o.catchUp ? { catchUp: true } : {}) },
   });
   return j;
 }
