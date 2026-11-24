@@ -11,7 +11,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/dashboard-board-dark.webp">
-  <img alt="The Kitchen dashboard: jobs in lanes by stage, one waiting for an answer, others merged into staging" src="docs/img/dashboard-board-light.webp">
+  <img alt="The Kitchen dashboard's Board: one job waiting for your answer, one paused in QA, one in its merge check under Review, three merged into staging; the repo name at the top left, with a badge for another repo that needs you" src="docs/img/dashboard-board-light.webp">
 </picture>
 
 One Claude Code session runs your queue: an agent per lane writes the criteria, builds, checks the running app in a real browser and reviews. Kitchen moves every job, re-runs your checks, drives the features a change touches on the merged result, and merges what passes into `staging`. You merge `staging` onward.
@@ -34,7 +34,7 @@ It checks what it needs, finds your checks and how to start your app, installs g
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/term-init-dark.webp">
-  <img alt="kitchen init: a check mark for node, git, claude and gh, then kitchen.yaml written, the skill installed and the tests passed" src="docs/img/term-init-light.webp">
+  <img alt="kitchen init: a check mark for node, git, python3, claude and gh, then kitchen.yaml written, the skill and the verify skill installed, the guard hooks added, the staging branch created and the tests passed" src="docs/img/term-init-light.webp">
 </picture>
 
 ### 2. Give it a ticket
@@ -63,8 +63,13 @@ The session plans waves and starts one agent per lane. Tickets run side by side,
 **One dashboard for every repo.** `kitchen dashboard` serves http://127.0.0.1:7357/ with a switcher for every repo you ran Kitchen in. Run it in another repo and it joins the open page (`already open: …/#<repo>`) instead of taking a new port; a badge counts jobs in other repos that need you.
 
 <picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/dashboard-switcher-dark.webp">
+  <img alt="The repo switcher open at the top left of the dashboard: three repos, each with its path, how many jobs need you, how many are running and how many jobs it has, and a shortcut from ⌘1 to ⌘3" src="docs/img/dashboard-switcher-light.webp">
+</picture>
+
+<picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/dashboard-panel-dark.webp">
-  <img alt="The dashboard with one job open: each stage, who ran it, how long it took and what its agent did" src="docs/img/dashboard-panel-light.webp">
+  <img alt="The dashboard with one job open: each stage, who ran it, how long it took and what its agent did, from intake through a catch-up after a conflict in staging to the merge check that merged it" src="docs/img/dashboard-panel-light.webp">
 </picture>
 
 ### 4. Read the Report, merge staging
@@ -77,14 +82,14 @@ A job whose QA and review pass is merged into `staging`, after Kitchen runs your
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/report-dark.webp">
-  <img alt="A job's Report: verdict PASS, what changed with links to the evidence, and what a person must check" src="docs/img/report-light.webp">
+  <img alt="A job's Report: what you must check, each criterion with QA's result and its evidence, and the features driven before the merge with their screenshots" src="docs/img/report-light.webp">
 </picture>
 
 ## How it works
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/how-it-works-dark.svg">
-  <img alt="You tell Claude Code what you want and it files a ticket. The orchestrator session plans waves and moves each job only through kitchen job verbs. One fresh agent per lane: intake, build, QA, review. QA starts your app and checks it with Playwright. Passing work merges into staging; you merge staging onward." src="docs/img/how-it-works-light.svg">
+  <img alt="You tell Claude Code what you want and it files a ticket. The orchestrator session plans waves and moves each job only through kitchen job verbs. One fresh agent per lane: intake, build, QA, review. QA starts your app and checks it with Playwright, following and keeping the verify map: one file per feature. After review, a merge check drives the features the merge touches on the merged result; green lands in staging with its Report, and you merge staging onward." src="docs/img/how-it-works-light.svg">
 </picture>
 
 QA follows and keeps a **verify skill** in your repo (`.claude/skills/verify-<app>/`): one file per feature saying how to check it and which files are behind it. Before a job merges, a **merge check** drives every feature whose files the merge changes, on the merged result, so one job breaking another's feature goes back to Build instead of landing. More: [the verify map](docs/guide.md#the-verify-map).
