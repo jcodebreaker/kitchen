@@ -45,6 +45,7 @@ export const GITIGNORE = [
   ".kitchen/ledger.jsonl",
   ".kitchen/run.json",
   ".kitchen/run.log",
+  ".kitchen/run*.jsonl",
   ".kitchen/orchestrator.json",
   ".kitchen/*.lock",
   ".worktrees/",

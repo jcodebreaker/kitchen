@@ -122,7 +122,12 @@ export async function run(repo: string, o: { detach?: boolean; stop?: boolean; p
   }
   const live = liveRun(repo);
   // The session follows the repo's copy of the kitchen skill: one from an older Kitchen sends it astray.
-  if (!live) for (const f of (await import("../init/files.ts")).refreshSkill(repo)) out(`updated ${f} to this Kitchen's version`);
+  if (!live) {
+    const files = await import("../init/files.ts");
+    for (const f of files.refreshSkill(repo)) out(`updated ${f} to this Kitchen's version`);
+    const ignored = files.addGitignore(repo);
+    if (ignored.length) out(`added to .gitignore: ${ignored.join(", ")}`);
+  }
   if (live) {
     out(`orchestrator: already running (pid ${live.pid}, log ${live.log})`);
     return 0;
@@ -156,7 +161,11 @@ export async function run(repo: string, o: { detach?: boolean; stop?: boolean; p
   const info: RunInfo = { pid: child.pid as number, start: processStart(child.pid as number), at: new Date().toISOString(), log, command: argv };
   writeAtomic(runFile(repo), JSON.stringify(info));
   out(`orchestrator: ${argv.slice(0, 3).join(" ")} … (pid ${child.pid}); the dashboard shows the jobs: kitchen dashboard`);
-  const stream = fs.createWriteStream(path.join(kitchenDir(repo), "run.jsonl"), { flags: "a" });
+  // The raw stream, for debugging one session: this session's, and the one before it (run.prev.jsonl). Nothing reads
+  // it, so it never grows past two sessions.
+  const raw = path.join(kitchenDir(repo), "run.jsonl");
+  if (fs.existsSync(raw)) fs.renameSync(raw, path.join(kitchenDir(repo), "run.prev.jsonl"));
+  const stream = fs.createWriteStream(raw);
   let buf = "";
   child.stdout.on("data", (d: Buffer) => {
     stream.write(d);
