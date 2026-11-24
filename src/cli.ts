@@ -172,7 +172,15 @@ async function main(argv: string[]): Promise<number> {
     }
     case "ticket":
       return control.ticket(repo, f.pos.join(" ") || need(0, '"<text>"'), out);
-    case "run":
+    case "run": {
+      // `kitchen run` starts a paid session: a flag it doesn't know (a typo, `--status`) stops it instead.
+      const odd = [...[...f.flags].filter((x) => !["--detach", "--stop", "--print", "--json"].includes(x)), ...f.pos];
+      if (odd.length) {
+        console.error(
+          `kitchen run: unknown ${odd.join(", ")} (it takes --detach, --stop, --print, --max-usd <n>). Nothing started.${odd.includes("--status") ? " For the queue's state: kitchen status" : ""}`,
+        );
+        return 2;
+      }
       return (await import("./run/orchestrator.ts")).run(
         repo,
         {
@@ -184,6 +192,7 @@ async function main(argv: string[]): Promise<number> {
         },
         out,
       );
+    }
     case "status":
       return cmd.status(repo, out, { json });
     case "report":
