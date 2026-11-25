@@ -587,44 +587,68 @@ test("ADR 0029 §1: a criterion intake wrote with two kinds refuses the intake, 
   assert.match(fs.readFileSync((await open(r, id, "intake")).brief, "utf8"), /split it into C2 \(page\) and C3 \(http\)/);
 });
 
-test("ADR 0029 §2: a job's QA BLOCKED resets the app and runs QA again without a Build round; the second goes to you, and Resume runs QA", async () => {
+test("ADR 0029 §2: a round with C2 NOT_RUN resets the app and QA drives only C2, C1's pass standing, no Build round; still not run it goes to you, and Resume runs QA", async () => {
   const marker = path.join(root, `reset-${n + 1}.txt`);
   const start = `node -e "require('http').createServer((q,s)=>s.end('ok')).listen(+process.env.PORT)"`;
   const r = await repo(`round_limit: 2\napp: { start: ${JSON.stringify(start)}, health: "/", reset: "echo reset >> ${marker}" }\n`);
-  const id = await toBuild(r);
-  await build(r, id);
-  const blocked = async (opened = false) => {
-    if (!opened) await open(r, id, "qa");
+  const TWO = INTAKE().replace("- C1 (cmd): app.txt has a fourth line", "- C1 (cmd): app.txt has a fourth line\n- C2 (http): GET /members/4 → 200");
+  const qaRound = async (rows: Record<string, unknown>[], files: Record<string, string>) => {
+    const s = await open(r, id, "qa");
     const d = qaDir(dirOf(r, id), findJob(r, id).round);
-    fs.writeFileSync(path.join(d, "app.log"), "seed: 0 members\n");
-    fs.writeFileSync(path.join(d, "verdict.json"), JSON.stringify({ verdict: "BLOCKED", blocked: "the seed has no members", evidence: ["app.log"] }));
-    return fin(r, id);
+    for (const [f, t] of Object.entries(files)) fs.writeFileSync(path.join(d, f), t);
+    fs.writeFileSync(path.join(d, "verdict.json"), JSON.stringify({ verdict: "FAIL", criteria: rows }));
+    return { brief: fs.readFileSync(s.brief, "utf8"), f: await fin(r, id) };
   };
+  const C1 = { id: "C1", result: "PASS", evidence: ["c1.txt"], note: "four lines" };
+  const C2 = { id: "C2", result: "NOT_RUN", why: "the seed has no member 4", evidence: ["c2.txt"] };
+  const id = await toBuild(r, "add a fourth line", TWO);
+  await build(r, id);
   try {
-    const f = await blocked();
-    assert.match(f.line, /QA couldn't test it \(the seed has no members\) → app reset, qa again \(round 2, no Build round\) · app: reset \(echo reset/);
+    // The mixed round: C1 passes, C2 can't be tested.
+    const { f } = await qaRound([C1, C2], { "c1.txt": "four\n", "c2.txt": "404 no member 4\n" });
+    assert.match(f.line, /QA couldn't test C2 \(the seed has no member 4\) → app reset, qa again on C2 \(round 2, no Build round\) · app: reset \(echo reset/);
     assert.ok(fs.existsSync(marker), "Kitchen ran the reset");
     const j = findJob(r, id);
-    assert.deepEqual([j.stage, j.round, j.roundStart, j.qaBlocked], ["qa", 2, 2, "the seed has no members"]);
-    assert.equal((await snapshot(r)).jobs[0].round, 1, "the card counts no round for it");
-    assert.equal((await snapshot(r)).jobs[0].proof, null, "a BLOCKED is never a fail");
+    assert.deepEqual([j.stage, j.round, j.roundStart, j.qaRetry], ["qa", 2, 2, { from: 1, ids: ["C2"] }]);
+    const card = (await snapshot(r)).jobs[0];
+    assert.deepEqual([card.round, card.proof], [1, null], "no round counted, never a fail");
     await appDown(r, id);
-    const s = await open(r, id, "qa");
-    assert.match(fs.readFileSync(s.brief, "utf8"), /## The last QA couldn't test it\n\nRound 1's QA was BLOCKED: the seed has no members/);
-    const f2 = await blocked(true);
-    assert.match(f2.line, /QA couldn't test it again \(the seed has no members\) → needs-human/);
-    const k = findJob(r, id);
-    assert.deepEqual([k.stage, k.escalatedFrom, k.pausedReason], ["needs-human", "qa", "QA couldn't test it: the seed has no members"]);
-    const html = fs.readFileSync(path.join(dirOf(r, id), "report.html"), "utf8");
-    assert.match(html, /<h2>QA couldn't test it<\/h2><p>the seed has no members<\/p>/);
-    assert.match(html, /class="st">not tested</);
-    assert.doesNotMatch(html, /class="bad">not checked/);
-    const lines: string[] = [];
-    assert.equal(await control.resume(r, id, (l) => lines.push(l)), 0);
-    assert.match(lines.join("\n"), /resumed → qa/);
-    assert.equal(findJob(r, id).stage, "qa");
+    // The retry drives C2 only; C1's pass stands.
+    const ok = await qaRound([{ id: "C2", result: "PASS", evidence: ["c2.txt"], note: "200" }], { "c2.txt": "200\n" });
+    assert.match(ok.brief, /## QA again on C2 only\n\nRound 1's QA couldn't test C2: C2: the seed has no member 4\./);
+    assert.match(ok.brief, /Drive only C2, and write rows only for it\. C1 passed in round 1 and stands/);
+    assert.doesNotMatch(ok.brief, /## Re-drive, don't re-explore/);
+    assert.match(ok.f.line, /QA PASS \(2 criteria\) → review/);
+    assert.ok(fs.existsSync(path.join(qaDir(dirOf(r, id), 2), "from-round-1", "c1.txt")), "C1's evidence carried");
   } finally {
     await appDown(r, id).catch(() => {});
+  }
+  // Another job: C2 still not run after the retry goes to you, naming C2.
+  const id2 = await toBuild(r, "add a fourth line again", TWO);
+  await build(r, id2, "one\ntwo\nthree\nfour\nfive\n");
+  const again = async () => {
+    await open(r, id2, "qa");
+    const d = qaDir(dirOf(r, id2), findJob(r, id2).round);
+    fs.writeFileSync(path.join(d, "c1.txt"), "four\n");
+    fs.writeFileSync(path.join(d, "c2.txt"), "404\n");
+    fs.writeFileSync(path.join(d, "verdict.json"), JSON.stringify({ verdict: "FAIL", criteria: [C1, C2] }));
+    return fin(r, id2);
+  };
+  try {
+    await again();
+    assert.match((await again()).line, /QA still couldn't test C2 \(the seed has no member 4\) → needs-human/);
+    const k = findJob(r, id2);
+    assert.deepEqual([k.stage, k.escalatedFrom, k.pausedReason], ["needs-human", "qa", "QA couldn't test C2: the seed has no member 4"]);
+    assert.ok(!fs.existsSync(path.join(dirOf(r, id2), "app.json")), "needs-human stopped the app");
+    const html = fs.readFileSync(path.join(dirOf(r, id2), "report.html"), "utf8");
+    assert.match(html, /class="st">not tested<\/td><td>the seed has no member 4/);
+    assert.match(html, /<td class="ok">PASS<\/td>/, "C1's pass carried into the Report");
+    assert.doesNotMatch(html, /class="bad">(FAIL|not checked)/, "never a fail");
+    const lines: string[] = [];
+    assert.equal(await control.resume(r, id2, (l) => lines.push(l)), 0);
+    assert.match(lines.join("\n"), /resumed → qa/);
+  } finally {
+    await appDown(r, id2).catch(() => {});
   }
 });
 

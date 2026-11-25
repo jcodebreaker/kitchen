@@ -196,19 +196,20 @@ export function criteriaOf(jobDir: string): Criterion[] {
 
 export const qaDir = (jobDir: string, round: number) => path.join(roundDir(jobDir, round), "qa");
 export const qaVerdictFile = (jobDir: string, round: number) => path.join(qaDir(jobDir, round), "verdict.json");
-export type QaRow = { id: string; result: "PASS" | "FAIL"; evidence: string[]; note: string };
+/** ADR 0029 §2: NOT_RUN: QA couldn't test this row (the seed, a service down, the app won't start); `why` says so. */
+export type QaRow = { id: string; result: "PASS" | "FAIL" | "NOT_RUN"; evidence: string[]; note: string; why?: string };
 /** ADR 0028: a problem a check found: a proposed bug (what was seen, how to see it again, the evidence). */
 export type QaFinding = { title: string; seen: string; repro: string[]; evidence: string[]; criterion?: string };
 export type QaVerdict = {
   /**
-   * BLOCKED: QA couldn't test at all: the app won't start, the seed data is wrong or missing, a service it needs is
-   * down (a check's, ADR 0028; a job's too, ADR 0029 §2). Never a fail.
+   * ADR 0029 §2: INCOMPLETE: a row is NOT_RUN and none FAILED. It never passes and is never a fail: Kitchen runs QA
+   * again on the rows not run. A FAIL anywhere is FAIL.
    */
-  verdict: "PASS" | "FAIL" | "BLOCKED";
+  verdict: "PASS" | "FAIL" | "INCOMPLETE";
   criteria: QaRow[];
   /** A check's problems, one per failure or finding (ADR 0028 §3); [] for a job's QA. */
   findings: QaFinding[];
-  /** BLOCKED: why QA couldn't run, and the files it cites (in the QA folder). */
+  /** BLOCKED (every row NOT_RUN: QA couldn't run at all): why, and the files it cites (in the QA folder). */
   blocked?: string;
   evidence?: string[];
 };
@@ -224,8 +225,9 @@ const goodEvidence = (dir: string, f: string) => {
  * every row cites evidence files that exist in the QA folder and aren't empty; a page criterion cites a screenshot.
  * The verdict is PASS only when every row is (the agent's own verdict line is checked against its rows).
  *
- * The verdict may be BLOCKED (`blocked`: why QA couldn't test, `evidence`: its files): a check's (ADR 0028) or a
- * job's (ADR 0029 §2).
+ * ADR 0029 §2: a row may be NOT_RUN (`why`, evidence): QA couldn't test it. A verdict BLOCKED (`blocked`, `evidence`)
+ * is every row NOT_RUN. Rows a retry carries from an earlier round (`carried.json`, written by Kitchen) stand
+ * unless QA wrote the row again.
  *
  * ADR 0028, `check`: `findings` lists each problem
  * as a proposed bug: `{ title, seen, repro: [steps], evidence: [files], criterion? }`. Every FAIL row has one (its
@@ -241,13 +243,15 @@ export function readQa(jobDir: string, round: number, criteria: Criterion[], o: 
   }
   const v = raw as { verdict?: unknown; criteria?: unknown; findings?: unknown; blocked?: unknown; evidence?: unknown };
   const said = String(v.verdict ?? "").toUpperCase();
+  const carried = carriedRows(dir);
   if (said === "BLOCKED") {
     const blocked = String(v.blocked ?? "").trim();
     if (!blocked) return { refused: "a BLOCKED verdict says why in blocked (the app won't start, the seed data is wrong, a service is down)" };
     const ev = Array.isArray(v.evidence) ? v.evidence.map(String) : [];
     const bad = ev.find((f) => !goodEvidence(dir, f));
     if (bad) return { refused: `BLOCKED: evidence ${bad} is missing, empty or outside the QA folder` };
-    return { verdict: "BLOCKED", criteria: [], findings: [], blocked, evidence: ev };
+    const rows = criteria.map((c): QaRow => carried.find((r) => r.id === c.id) ?? { id: c.id, result: "NOT_RUN", evidence: ev, note: "", why: blocked });
+    return { verdict: "INCOMPLETE", criteria: rows, findings: [], blocked, evidence: ev };
   }
   if (!Array.isArray(v.criteria)) return { refused: "verdict.json needs a criteria array" };
   const rows: QaRow[] = [];
@@ -257,10 +261,14 @@ export function readQa(jobDir: string, round: number, criteria: Criterion[], o: 
     // C<n>: a criterion. R-<feature>[/<sub-feature>]: a map recipe this job broke (a regression the criteria don't cover).
     if (!/^C\d+$/.test(id) && !/^R-[A-Z0-9][A-Z0-9-]*(\/[A-Z0-9][A-Z0-9-]*)?$/.test(id))
       return { refused: `a row's id is C<n>, or R-<feature>[/<sub-feature>] for a broken recipe (got ${JSON.stringify(r?.id)})` };
-    if (result !== "PASS" && result !== "FAIL") return { refused: `${id}: result is PASS or FAIL` };
+    const res = result.replace(/[ -]/g, "_");
+    if (res !== "PASS" && res !== "FAIL" && res !== "NOT_RUN") return { refused: `${id}: result is PASS, FAIL or NOT_RUN` };
     const evidence = Array.isArray(r.evidence) ? r.evidence.map(String) : [];
-    rows.push({ id, result, evidence, note: String(r.note ?? "") });
+    const why = String(r.why ?? "").trim();
+    if (res === "NOT_RUN" && !why) return { refused: `${id} is NOT_RUN: say why in why (the seed, a service down, the app won't start)` };
+    rows.push({ id, result: res as QaRow["result"], evidence, note: String(r.note ?? ""), ...(res === "NOT_RUN" ? { why } : {}) });
   }
+  for (const c of carried) if (!rows.some((r) => r.id === c.id)) rows.push(c);
   for (const c of criteria) {
     const row = rows.find((r) => r.id === c.id);
     if (!row) return { refused: `no row for ${c.id}` };
@@ -293,19 +301,32 @@ export function readQa(jobDir: string, round: number, criteria: Criterion[], o: 
       const criterion = x.criterion ? String(x.criterion).toUpperCase() : undefined;
       findings.push({ title: title.slice(0, 120), seen, repro, evidence, ...(criterion ? { criterion } : {}) });
     }
+    // ADR 0029 §2: what QA couldn't test is never a problem found.
+    const notRunFinding = findings.find((f) => rows.some((r) => r.id === f.criterion && r.result === "NOT_RUN"));
+    if (notRunFinding)
+      return { refused: `finding "${notRunFinding.title}" names ${notRunFinding.criterion}, which was NOT_RUN: a criterion not tested is no problem found` };
     const unexplained = rows.filter((r) => r.result === "FAIL" && !findings.some((f) => f.criterion === r.id)).map((r) => r.id);
     if (unexplained.length)
       return {
         refused: `${unexplained.join(", ")} FAILED with no finding: give each failure a finding (title, seen, repro, evidence, criterion: "${unexplained[0]}")`,
       };
   }
-  const allPass =
-    criteria.every((c) => rows.find((r) => r.id === c.id)?.result === "PASS") &&
-    rows.every((r) => !r.id.startsWith("R-") || r.result === "PASS") &&
-    (!o.check || rows.every((r) => r.result === "PASS"));
-  if (said === "PASS" && !allPass) return { refused: "verdict PASS, but a criterion's row is FAIL" };
+  const counted = rows.filter((r) => criteria.some((c) => c.id === r.id) || r.id.startsWith("R-") || o.check);
+  const failed = counted.some((r) => r.result === "FAIL") || findings.length > 0;
+  const notRun = counted.some((r) => r.result === "NOT_RUN");
   if (said === "PASS" && findings.length) return { refused: "verdict PASS, but it lists findings: a check with problems is FAIL" };
-  return { verdict: allPass && !findings.length ? "PASS" : "FAIL", criteria: rows, findings };
+  if (said === "PASS" && (failed || notRun)) return { refused: `verdict PASS, but a criterion's row is ${failed ? "FAIL" : "NOT_RUN"}` };
+  return { verdict: failed ? "FAIL" : notRun ? "INCOMPLETE" : "PASS", criteria: rows, findings };
+}
+
+/** ADR 0029 §2: the rows a retry carries from the round before (Kitchen's `carried.json` in the QA folder), or []. */
+export const carriedFile = (dir: string) => path.join(dir, "carried.json");
+function carriedRows(dir: string): QaRow[] {
+  try {
+    return JSON.parse(fs.readFileSync(carriedFile(dir), "utf8")) as QaRow[];
+  } catch {
+    return [];
+  }
 }
 
 export const regressDir = (jobDir: string, round: number) => path.join(roundDir(jobDir, round), "regress");

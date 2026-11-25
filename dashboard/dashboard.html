@@ -1004,7 +1004,8 @@ const nProb=n=>n+" problem"+(n===1?"":"s");
 /* A finished check's problems, each proposed in the Inbox (0 when it found none or isn't done). */
 const found=j=>isCk(j)&&j.state==="done"&&j.check?j.check.findings||0:0;
 const ckWords=j=>j.check&&j.check.result||(found(j)?"Found "+nProb(found(j)):"Checked on "+tgt(j));
-const ckDoneHTML=j=>found(j)?`Found <button type="button" class="fl" data-act="found" data-id="${esc(j.id)}" title="Show them in the Inbox">${nProb(found(j))}</button>`:esc(ckWords(j));
+/* ADR 0029 §6: proposals that failed to save say so; Kitchen retries them on the next wave. */
+const ckDoneHTML=j=>(found(j)?`Found <button type="button" class="fl" data-act="found" data-id="${esc(j.id)}" title="Show them in the Inbox">${nProb(found(j))}</button>`:esc(ckWords(j)))+(j.check&&j.check.proposalsFailed?` · <span class="bad" title="Kitchen proposes them again on the next wave">proposals failed: ${esc(j.check.proposalsFailed)}</span>`:"");
 /* ADR 0026: each job has a target (default staging.branch, snap.target). A card carries it only when it isn't the default. */
 const DEF=()=>snap&&snap.target||"staging";
 const tgt=j=>j&&j.target||DEF();
@@ -1161,9 +1162,9 @@ function composerHTML(j,where="row"){
   if(held(j)&&!asking.has(j.id))return where==="panel"?readyBar(j):"";
   if(held(j))return `<form class="cmp" data-cmp="${esc(j.id)}"><div class="box"><textarea rows="1" data-draft="${esc(j.id)}" data-where="${where}" placeholder="What should change in ${esc(j.num)}?" aria-label="What should change in ${esc(j.num)}?" maxlength="4000">${esc(drafts[j.id]||"")}</textarea>
     <div class="cbar"><span class="hint">This starts round ${j.round+1} instead of merging</span><span class="sp"></span>${where==="panel"?`<button type="button" class="btn ghost sm" data-act="ask-cancel" data-id="${esc(j.id)}">Cancel</button>`:""}<button class="send" type="submit" aria-label="Send" title="Send">${I.up}</button></div></div></form>`;
-  const ph=cf?"What should change in the criteria?":rf?`Answer here, or refine it in Claude Code…`:g==="you"?`Reply to ${a}…`:j.state==="paused"?`Leave a note for ${a}…`:g==="run"?`Message ${a}: redirect it, add context, ask…`:`What should change in ${j.num}?`;
-  const hint=cf?"Approve builds it on these criteria; a change goes back to intake":rf?"Your answer goes back to intake as your own words":g==="you"?`${Agent(j)} is waiting for you`:g==="done"?"This starts round "+(j.round+1):j.state==="paused"?"Paused. It reads this when you resume":g==="run"?"The job's next agent reads this when its lane starts":"Starts round "+(j.round+1);
-  const chips=g==="run"&&j.state!=="paused"?(j.kind==="check"?["What are you doing right now?","Also check it on a phone width","Try an edge case too"]:["What are you doing right now?","Add a test for this","Keep the diff minimal"]):[];
+  const ph=cf?"What should change in the criteria?":rf?`Answer here, or refine it in Claude Code…`:g==="you"?`Reply to ${a}…`:j.state==="paused"?`Leave a note for ${a}…`:g==="run"?`A note for its next lane: redirect it, add context…`:`What should change in ${j.num}?`;
+  const hint=cf?"Approve builds it on these criteria; a change goes back to intake":rf?"Your answer goes back to intake as your own words":g==="you"?`${Agent(j)} is waiting for you`:g==="done"?"This starts round "+(j.round+1):j.state==="paused"?"Paused. It reads this when you resume":g==="run"?"Goes to its next lane":"Starts round "+(j.round+1);
+  const chips=g==="run"&&j.state!=="paused"?(j.kind==="check"?["Also check it on a phone width","Try an edge case too"]:["Add a test for this","Keep the diff minimal"]):[];
   const ctl=g==="run"&&where==="panel"?"":g==="run"?`<button type="button" class="btn ghost sm" data-act="${j.state==="paused"?"resume":"pause"}" data-id="${esc(j.id)}">${j.state==="paused"?I.play+"Resume":I.pause+"Pause"}</button>${j.state==="paused"?"":`<button type="button" class="btn ghost sm" data-act="stop" data-id="${esc(j.id)}">${I.stop}Stop</button>`}`
     :g==="you"?`<button type="button" class="btn ghost sm" data-act="reject" data-id="${esc(j.id)}">Reject</button>${cf?`<button type="button" class="btn act sm" data-act="approve" data-id="${esc(j.id)}" title="Build it on these criteria (kitchen approve ${esc(j.num)})">Approve</button>`:""}`
     :g==="done"?`<button type="button" class="btn ghost sm" data-act="ask-cancel" data-id="${esc(j.id)}">Cancel</button>`:"";

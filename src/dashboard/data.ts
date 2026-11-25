@@ -139,11 +139,12 @@ export function waitsOf(j: Job, dir: string): Waits | null {
   return { for: "refine", reason: j.waits.reason, items: i?.decision === "REFINE" ? i.items : [] };
 }
 
-export type Crit = { id: string; text: string; st: "ok" | "bad" | "wait"; e: string };
+/** `skip`: ADR 0029 §2, QA couldn't test it ("not tested", with why): muted, never a fail. */
+export type Crit = { id: string; text: string; st: "ok" | "bad" | "wait" | "skip"; e: string };
 /** The job's criteria (intake's) with QA's latest results. */
 export function critOf(dir: string, round: number, o: { check?: boolean } = {}): Crit[] {
   const crit = criteriaOf(dir);
-  let rows: { id: string; result: string; note: string; evidence: string[] }[] = [];
+  let rows: { id: string; result: string; note: string; evidence: string[]; why?: string }[] = [];
   for (let r = round; r >= 1 && !rows.length; r--) {
     const qa = readQa(dir, r, crit, o);
     if ("criteria" in qa) rows = qa.criteria;
@@ -153,8 +154,12 @@ export function critOf(dir: string, round: number, o: { check?: boolean } = {}):
     return {
       id: c.id,
       text: `${c.text} (${c.check})`,
-      st: !r ? "wait" : r.result === "PASS" ? "ok" : "bad",
-      e: r ? `${r.result}${r.note ? ` · ${r.note}` : ""}${r.evidence.length ? ` · ${r.evidence.join(", ")}` : ""}` : "",
+      st: !r ? "wait" : r.result === "PASS" ? "ok" : r.result === "NOT_RUN" ? "skip" : "bad",
+      e: !r
+        ? ""
+        : r.result === "NOT_RUN"
+          ? `not tested · ${r.why ?? ""}${r.evidence.length ? ` · ${r.evidence.join(", ")}` : ""}`
+          : `${r.result}${r.note ? ` · ${r.note}` : ""}${r.evidence.length ? ` · ${r.evidence.join(", ")}` : ""}`,
     };
   });
 }
@@ -288,7 +293,16 @@ export type JobCard = {
    * they became; `explore`: minutes when it explores; `every`: how often a schedule files this same check ("day",
    * "hour"; ADR 0028 §5, matched on the ticket's text), or null. Null for any other job.
    */
-  check: { result: string | null; findings: number; proposals: string[]; explore: number | null; forced: boolean; every: string | null } | null;
+  check: {
+    result: string | null;
+    findings: number;
+    proposals: string[];
+    explore: number | null;
+    forced: boolean;
+    every: string | null;
+    /** ADR 0029 §6: why proposing its findings failed (retried on the next wave), or null. */
+    proposalsFailed: string | null;
+  } | null;
   /** ADR 0028 amendment: false for intake's `KEEP: no` (built to verify, not merged unless promoted); absent otherwise. */
   keep?: false;
   /** Verified and not merged: the words ("Verified · not merged"), or null. */
@@ -368,7 +382,7 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
   const moves = new Map<string, LedgerLine[]>();
   /** ADR 0018: catch-ups per job; a card counts only real rounds. */
   const catchUps = new Map<string, number>();
-  /** ADR 0029 §2: a job's QA again after a BLOCKED is no round either (a check's is: ADR 0028). */
+  /** ADR 0029 §2: a job's QA again on what it couldn't test is no round either (a check's is: ADR 0028). */
   const qaAgain = new Map<string, number>();
   for (const l of lines) {
     lastLine.set(l.job, l);
@@ -424,7 +438,7 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
       roundLimit: j.roundLimit,
       kind: chk ? "check" : j.kind,
       verdict: "criteria" in qaNow ? qaNow.verdict : null,
-      criteria: crit.filter((c) => c.st !== "wait").map((c) => ({ id: c.id, result: c.st === "ok" ? "PASS" : "FAIL" })),
+      criteria: crit.filter((c) => c.st !== "wait").map((c) => ({ id: c.id, result: c.st === "ok" ? "PASS" : c.st === "skip" ? "NOT_RUN" : "FAIL" })),
       review,
       usd: 0,
       secs: Math.max(0, Math.round((end - Date.parse(j.startedAt)) / 1000)),
@@ -456,7 +470,7 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
       doneAt: j.doneAt ?? null,
       lane: laneOf(j),
       proof:
-        j.stage === "rejected" || ("criteria" in qaNow && qaNow.verdict === "BLOCKED")
+        j.stage === "rejected" || ("criteria" in qaNow && qaNow.verdict === "INCOMPLETE")
           ? null
           : "criteria" in qaNow
             ? qaNow.verdict === "PASS"
@@ -476,6 +490,7 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
             explore: j.check?.explore ?? null,
             forced: !!j.check?.forced,
             every: j.check?.every ?? everyOf(kept, dir, j),
+            proposalsFailed: j.check?.proposalsFailed?.error ?? null,
           }
         : null,
       ...(j.keep === false ? { keep: false as const } : {}),

@@ -24,12 +24,15 @@ import { CONFIRM_KEY, clarificationsSection, questionsAsked, readRounds, recordQ
 import { clearControl, fileSlices, moveJob, readControl } from "./control.ts";
 import { branchExists, diffSize, git, gitOut, revParse } from "./git.ts";
 import {
+  carriedFile,
   changesOf,
   criteriaOf,
   intakeFile,
   leftOutOf,
   matchPath,
   parseIntake,
+  type QaRow,
+  type QaVerdict,
   qaDir,
   readFeatureVerdict,
   readQa,
@@ -82,6 +85,8 @@ export async function next(repo: string, o: { restartStranded?: boolean } = {}):
   // ADR 0026 §4: what became of the PRs waiting on a person (at most once a minute).
   const prs = await syncPrs(repo);
   // A job the person removed is never picked (kitchen remove).
+  // ADR 0029 §6: a check's findings that failed to be proposed, proposed again.
+  await retryProposals(repo).catch(() => []);
   const jobs = listJobs(repo).filter((j) => !j.archived);
   const paused = new Set(jobs.filter((j) => !j.running && readControl(jobDirOf(repo, j.id)).pause).map((j) => j.id));
   const plan = { ...planWave(jobs, { parallel: cfg.parallel, restartStranded: o.restartStranded, paused, target: (j) => targetOf(cfg, j) }), prs };
@@ -236,7 +241,7 @@ function redriveNote(dir: string, job: Job): string {
     if (!fs.existsSync(path.join(qaDir(dir, r), "verdict.json"))) continue;
     const qa = readQa(dir, r, criteriaOf(dir));
     // ADR 0029 §2: a round QA couldn't test says nothing about the code: look further back.
-    if ("criteria" in qa && qa.verdict === "BLOCKED") continue;
+    if ("criteria" in qa && qa.verdict === "INCOMPLETE") continue;
     if (!("criteria" in qa) || qa.verdict !== "PASS") return "";
     try {
       if (fs.readFileSync(criteriaSnapshot(dir, r), "utf8") !== JSON.stringify(criteriaOf(dir))) return "";
@@ -343,10 +348,8 @@ function brief(
     lane === "build" || lane === "review" ? catchUpNote(cfg, dir, job, lane, o.head) : "",
     lane === "build" || lane === "intake" ? earlier(cfg, dir, job) : "",
     lane === "qa" || lane === "regress" ? refusedNote(dir) : "",
-    lane === "qa" && !isCheck(job) ? redriveNote(dir, job) : "",
-    lane === "qa" && job.qaBlocked
-      ? `## The last QA couldn't test it\n\nRound ${job.round - 1}'s QA was BLOCKED: ${job.qaBlocked}. Kitchen reset the app (fresh seed data) and runs QA again: this is not a new Build round. Test as usual; if it still can't be tested for a reason outside this job's change, write BLOCKED again and Kitchen asks the person to fix the environment.\n`
-      : "",
+    lane === "qa" && !isCheck(job) && !job.qaRetry ? redriveNote(dir, job) : "",
+    lane === "qa" && job.qaRetry ? retryNote(dir, job.qaRetry) : "",
     lane === "qa" && isCheck(job) ? checkNote(cfg, job, qd) : "",
     o.map ?? "",
     lane === "review" ? qaSummary(dir, job) : "",
@@ -355,6 +358,25 @@ function brief(
     ...lenses,
   ];
   return `${lines.filter((l) => l !== "").join("\n")}\n`;
+}
+
+/** ADR 0029 §2: the QA brief when it runs again on what it couldn't test: those criteria only; the passes stand. */
+function retryNote(dir: string, r: { from: number; ids: string[] }): string {
+  const was = readQa(dir, r.from, criteriaOf(dir));
+  const rows = "criteria" in was ? was.criteria : [];
+  const passed = rows.filter((x) => x.result === "PASS").map((x) => x.id);
+  const which = r.ids.join(", ");
+  return [
+    `## QA again on ${which} only`,
+    "",
+    `Round ${r.from}'s QA couldn't test ${which}: ${rows
+      .filter((x) => r.ids.includes(x.id))
+      .map((x) => `${x.id}: ${x.why ?? ""}`)
+      .join("; ")}. Kitchen reset the app (fresh seed data); this is not a new Build round.`,
+    `Drive only ${which}, and write rows only for ${r.ids.length === 1 ? "it" : "them"}.${passed.length ? ` ${passed.join(", ")} passed in round ${r.from} and stand${passed.length === 1 ? "s" : ""}: Kitchen carried ${passed.length === 1 ? "its row" : "their rows"} and evidence into your QA folder (carried.json, from-round-${r.from}/).` : ""}`,
+    `If one still can't be tested for a reason outside this job's change, mark it NOT_RUN again with why: Kitchen then asks the person to fix the environment.`,
+    "",
+  ].join("\n");
 }
 
 /** The builder's note when Kitchen merged the target's tip into the job branch before this round. */
@@ -406,7 +428,7 @@ function checkNote(cfg: Config, job: Job, qd: string): string {
       ? `This check explores: drive the app freely for at most ${explore} minutes (start a timer; stop when it rings), the way the ticket says, and report what is broken. Check the criteria below too, when the brief lists any.`
       : "Check each criterion against the app started from the checkout above, as your role says.",
     "",
-    `Every failure and every problem you see becomes a finding in \`${qd}/verdict.json\` (your role's "A check ticket" section): each is proposed to the person as a bug. If the app won't start or the page can't be reached, write the verdict BLOCKED with why: that is not a problem found, Kitchen runs the check again.`,
+    `Every failure and every problem you see becomes a finding in \`${qd}/verdict.json\` (your role's "A check ticket" section): each is proposed to the person as a bug. A criterion you couldn't test (the seed, a service down) is NOT_RUN with why, and an app that won't start is the verdict BLOCKED: neither is a problem found, and Kitchen runs the check again on them.`,
     "",
   ].join("\n");
 }
@@ -622,6 +644,7 @@ async function moveOn(
 
 export async function finish(repo: string, id: string): Promise<Finished | { refused: string }> {
   const cfg = loadConfig(repo);
+  await retryProposals(repo).catch(() => []);
   const job = findJob(repo, id);
   const dir = jobDirOf(repo, job.id);
   if (job.archived) return { refused: `${job.id} was removed by the person: this lane's result is dropped` };
@@ -749,7 +772,7 @@ export async function finish(repo: string, id: string): Promise<Finished | { ref
     await (await import("../qa/app.ts")).appDown(repo, job.id).catch(() => {});
     const qa = readQa(dir, job.round, criteriaOf(dir));
     if ("refused" in qa) return refuseLane(repo, job, `QA: ${qa.refused}`);
-    if (qa.verdict === "BLOCKED") return qaBlocked(repo, cfg, job, qa.blocked ?? "");
+    if (qa.verdict === "INCOMPLETE") return qaIncomplete(repo, cfg, job, qa);
     // ADR 0022: what QA saw beyond the criteria goes to the outer loop's inbox (Kitchen findings).
     await addFindings(repo, qaFindings(job.id, job.round, qaDir(dir, job.round)));
     if (qa.verdict === "PASS") {
@@ -821,20 +844,45 @@ export async function finish(repo: string, id: string): Promise<Finished | { ref
   return mergeOrHold(repo, cfg, job, head as string);
 }
 
+/** ADR 0029 §2: the criteria QA couldn't test, and why for each ("C2: the seed has no members; C4: …"). */
+function notRunOf(qa: QaVerdict): { ids: string[]; why: string } {
+  const rows = qa.criteria.filter((r) => r.result === "NOT_RUN");
+  const whys = [...new Set(rows.map((r) => r.why ?? ""))];
+  return { ids: rows.map((r) => r.id), why: qa.blocked ?? (whys.length === 1 ? whys[0] : rows.map((r) => `${r.id}: ${r.why}`).join("; ")) };
+}
+
 /**
- * ADR 0029 §2: a job's QA couldn't test it (the app won't start, the seed is wrong, a service is down: not the
- * change). The first time, QA runs again after `kitchen qa reset` (fresh seed), with no Build round counted; the
- * second, a person fixes the environment and resumes QA.
+ * ADR 0029 §2: QA's round is INCOMPLETE: rows NOT_RUN (the seed, a service down, the app won't start: not the
+ * change), none FAILED. The first time, `kitchen qa reset` (fresh seed) and QA again on those rows only, the passes
+ * carried into the new round (`carried.json`, their evidence copied), with no Build round counted; still not run
+ * then, a person fixes the environment and resumes QA. A check (ADR 0028) runs again the same way, on its own
+ * checkout, and its round limit applies.
  */
-async function qaBlocked(repo: string, cfg: Config, job: Job, why: string): Promise<Finished> {
-  if (job.qaBlocked)
-    return moveOn(repo, job, "needs-human", `${job.id}  QA couldn't test it again (${why}) → needs-human`, { reason: `${QA_BLOCKED_WORDS}: ${why}` });
-  const moved = await moveOn(repo, job, "qa", `${job.id}  QA couldn't test it (${why}) → app reset, qa again (round ${job.round + 1}, no Build round)`, {
-    patch: (j) => {
-      j.qaBlocked = why;
+async function qaIncomplete(repo: string, cfg: Config, job: Job, qa: QaVerdict): Promise<Finished> {
+  const check = isCheck(job);
+  const { ids, why } = notRunOf(qa);
+  const which = ids.join(", ");
+  if (check) await dropCheckCheckout(repo, job.id);
+  if (job.qaRetry || (check && outOfRounds(job)))
+    return moveOn(repo, job, "needs-human", `${job.id}  QA still couldn't test ${which} (${why}) → needs-human`, {
+      reason: `${QA_BLOCKED_WORDS} ${which}: ${why}`,
+    });
+  const from = job.round;
+  const moved = await moveOn(
+    repo,
+    job,
+    "qa",
+    `${job.id}  QA couldn't test ${which} (${why}) → ${check ? "" : "app reset, "}qa again on ${which} (round ${from + 1}${check ? "" : ", no Build round"})`,
+    {
+      patch: (j) => {
+        j.qaRetry = { from, ids };
+      },
     },
-  });
+  );
   if (moved.to !== "qa") return moved;
+  const dir = jobDirOf(repo, job.id);
+  carryPasses(qaDir(dir, from), qaDir(dir, from + 1), from, qa.criteria);
+  if (check) return moved;
   const said: string[] = [];
   const { appReset } = await import("../qa/app.ts");
   const code = await appReset(repo, job.id, (l) => said.push(l), cfg).catch((e: Error) => {
@@ -842,6 +890,24 @@ async function qaBlocked(repo: string, cfg: Config, job: Job, why: string): Prom
     return 1;
   });
   return { ...moved, line: `${moved.line} · ${code ? "the reset failed: " : ""}${said.at(-1) ?? ""}` };
+}
+
+/** ADR 0029 §2: a round's PASS rows into the next round's QA folder (`carried.json`), their evidence under `from-round-<n>/`. */
+function carryPasses(was: string, now: string, from: number, rows: QaRow[]): void {
+  const sub = `from-round-${from}`;
+  fs.mkdirSync(path.join(now, sub), { recursive: true });
+  const carried = rows
+    .filter((r) => r.result === "PASS")
+    .map((r) => ({
+      ...r,
+      evidence: r.evidence.map((f) => {
+        const to = path.join(sub, f);
+        fs.mkdirSync(path.dirname(path.join(now, to)), { recursive: true });
+        fs.copyFileSync(path.join(was, f), path.join(now, to));
+        return to;
+      }),
+    }));
+  writeAtomic(carriedFile(now), `${JSON.stringify(carried, null, 2)}\n`);
 }
 
 /** Pure: a check's result words (ADR 0028 §4), as its card and Report say them. */
@@ -852,8 +918,8 @@ export function checkWords(o: { pass: number; total: number; findings: number; e
 }
 
 /**
- * ADR 0028 §3-§6: a check's QA finished. BLOCKED (QA couldn't run: the app won't start) runs QA again in a new
- * round, and out of rounds goes to a person. Otherwise it is done: all pass, or each finding proposed in the Inbox
+ * ADR 0028 §3-§6: a check's QA finished. INCOMPLETE (ADR 0029 §2: rows QA couldn't test) runs QA again on them in a
+ * new round, then goes to a person. Otherwise it is done: all pass, or each finding proposed in the Inbox
  * (Kitchen findings, linked to this job); recipes QA kept go to the verify map, and a map that can't be written never
  * fails the check. Never Build, Review or a merge.
  */
@@ -866,30 +932,77 @@ async function finishCheck(repo: string, cfg: Config, job: Job): Promise<Finishe
   if ("refused" in qa) return refuseLane(repo, job, `QA: ${qa.refused}`);
   const onto = job.check?.onto ?? "";
   const target = targetOf(cfg, job);
-  if (qa.verdict === "BLOCKED") {
-    await dropCheckCheckout(repo, job.id);
-    if (outOfRounds(job))
-      return moveOn(repo, job, "needs-human", `${job.id}  check couldn't run (${qa.blocked}), out of rounds → needs-human`, {
-        reason: `the check couldn't run after ${job.roundLimit} rounds: ${qa.blocked}`,
-      });
-    return moveOn(repo, job, "qa", `${job.id}  check couldn't run (${qa.blocked}) → qa again (round ${job.round + 1})`);
-  }
+  if (qa.verdict === "INCOMPLETE") return qaIncomplete(repo, cfg, job, qa);
   await addFindings(repo, qaFindings(job.id, job.round, qd));
-  const proposals = await proposeCheckFindings(repo, { job: job.id, round: job.round, onto, target, qaFolder: qd, findings: qa.findings }).catch(
-    () => [] as string[],
-  );
+  // ADR 0029 §6: a proposal that fails to save is recorded and retried, never dropped.
+  let failed: string | null = null;
+  const proposals = await proposeCheckFindings(repo, { job: job.id, round: job.round, onto, target, qaFolder: qd, findings: qa.findings }).catch((e: Error) => {
+    failed = e.message.split("\n")[0];
+    return [] as string[];
+  });
   const map = await keepRecipes(repo, cfg, job, qd).catch((e: Error) => skippedLine(e.message.split("\n")[0]));
   await dropCheckCheckout(repo, job.id);
   const ids = new Set(criteria.map((c) => c.id));
   const pass = qa.criteria.filter((r) => ids.has(r.id) && r.result === "PASS").length;
   const result = checkWords({ pass, total: criteria.length, findings: qa.findings.length, explore: job.check?.explore });
-  const outcome: JobCheck = { result, pass, total: criteria.length, findings: qa.findings.length, proposals, ...(map ? { map } : {}) };
-  const tail = [proposals.length ? `proposed ${proposals.join(", ")} in the inbox` : "", map].filter(Boolean);
+  const outcome: JobCheck = {
+    result,
+    pass,
+    total: criteria.length,
+    findings: qa.findings.length,
+    proposals,
+    ...(map ? { map } : {}),
+    ...(failed ? { proposalsFailed: { error: failed, round: job.round } } : {}),
+  };
+  const tail = [
+    proposals.length ? `proposed ${proposals.join(", ")} in the inbox` : "",
+    failed ? `proposals failed: ${failed} (retried on the next wave)` : "",
+    map,
+  ].filter(Boolean);
   return moveOn(repo, job, "done", `${job.id}  check on ${target} ${onto.slice(0, 7)}: ${result}${tail.map((t) => ` · ${t}`).join("")} → done`, {
     patch: (j) => {
       j.check = { ...j.check, ...outcome };
+      if (!failed) delete j.check.proposalsFailed;
     },
   });
+}
+
+/**
+ * ADR 0029 §6: propose again the findings of each done check whose proposing failed. Idempotent per finding: each is
+ * an inbox item keyed on job, round and its index, and a finding whose item already has a proposal gets that one back.
+ * The lines to say.
+ */
+export async function retryProposals(repo: string): Promise<string[]> {
+  const said: string[] = [];
+  for (const j of listJobs(repo).filter((x) => x.check?.proposalsFailed && !x.archived)) {
+    const pf = j.check?.proposalsFailed as { error: string; round: number };
+    const dir = jobDirOf(repo, j.id);
+    const qa = readQa(dir, pf.round, criteriaOf(dir), { check: true });
+    if (!("criteria" in qa)) continue;
+    const cfg = loadConfig(repo);
+    const r = await proposeCheckFindings(repo, {
+      job: j.id,
+      round: pf.round,
+      onto: j.check?.onto ?? "",
+      target: targetOf(cfg, j),
+      qaFolder: qaDir(dir, pf.round),
+      findings: qa.findings,
+    }).then(
+      (ids) => ({ ids }),
+      (e: Error) => ({ error: e.message.split("\n")[0] }),
+    );
+    const moved = await updateJob(repo, j.id, (x) => {
+      if (!x.check) return x;
+      if ("ids" in r) {
+        x.check.proposals = r.ids;
+        delete x.check.proposalsFailed;
+      } else x.check.proposalsFailed = { error: r.error, round: pf.round };
+      return x;
+    });
+    if ("ids" in r) writeReport(repo, moved);
+    said.push("ids" in r ? `${j.id}  proposed ${r.ids.join(", ")} in the inbox (retried)` : `${j.id}  proposals failed again: ${r.error}`);
+  }
+  return said;
 }
 
 /**

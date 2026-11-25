@@ -17,11 +17,11 @@
    - `C2 is listed twice`
 
    Kinds are matched case-insensitively. Nothing is guessed or merged, so a criterion is never changed silently.
-2. **QA on a job may say BLOCKED.** A job's QA may now return `{ verdict: "BLOCKED", blocked: "<why>", evidence: [...] }`, the same shape as a check's. The QA brief says when: the app won't start, the seed data is wrong or missing, or a service the app needs is down. Anything the job's change caused is a FAIL.
-   - **First BLOCKED in a round:** Kitchen runs `kitchen qa reset` (fresh seed) and QA again. No Build round is counted.
-   - **Second BLOCKED:** the job goes to **Needs you** with "QA couldn't test it: <why>", the evidence, and Resume (QA again) once you've fixed the environment.
-
-   The Report never counts a BLOCKED as a fail.
+2. **A criterion QA couldn't test is NOT_RUN, never a fail.** (Changed 2026-11-24 by the user, on a call: mark single tests, not the whole round.)
+   - **A row may say `NOT_RUN`.** It carries `why` and evidence, for example the seed has no such record, the page needs a service that is down, or the app won't start. The QA brief says when: anything the job's change caused is a FAIL. `BLOCKED` stays as shorthand for "every row NOT_RUN" (the app won't start at all), for jobs and checks alike.
+   - **A round with a NOT_RUN and no FAIL is INCOMPLETE.** It never passes, and it never counts as a fail. Kitchen runs `kitchen qa reset` (fresh seed) and QA again on the not-run criteria only. The rows that passed in that round stand. No Build round is counted. Any FAIL still goes back to Build as today, and the next QA drives every criterion.
+   - **Still NOT_RUN after the retry:** the job goes to **Needs you** with "QA couldn't test C2, C4: <why for each>", the evidence, and Resume (QA again) once the environment is fixed. There is no separate rerun button: Kitchen retries on its own, and then explains.
+   - **A NOT_RUN never becomes a finding or an Inbox proposal** on a check. The Report lists NOT_RUN rows as "not tested", with their why, and never in the fail count.
 3. **Waiting says why.** The dashboard runs the same `planWave` it already reads the jobs for, and shows the held reason:
    - `Waiting for a free lane · 009 and 010 are using both (parallel: 2)`. With more than three running, it gives the count instead: `· 4 jobs are using all 4`.
    - `Waiting for 007 to merge first (named on its AFTER: line)`
@@ -36,9 +36,12 @@
    - **The job's app stops on every way out of a lane.** That means done (merged, verified, checked), rejected, needs-human, and paused or stopped. Today only a lane that finishes normally and `kitchen remove` stop it. The other verbs leave the app, its dev server or its compose stack running.
    - **The orchestrator sweeps on drain.** When a wave plan says `drained`, and when `kitchen run` starts, Kitchen stops every app whose job is not in a running lane, using each job's `app.json`.
    - **The session exits, and takes its children with it.** This covers every agent session Kitchen starts: the `kitchen run` orchestrator, collect's triage, and `kitchen models check` (sweeps and verify runs are driven by the orchestrator's session, so its group covers them). Each runs in its own process group (one shared helper, `src/agents/session.ts`). Once its stream sends the final line (Claude's `result`; `codex exec`'s last turn event, else the process closing), Kitchen waits 10 s, then ends the group: SIGTERM, then SIGKILL 3 s later. On close, whatever is left of the group ends too, and so it does when Kitchen itself is stopped (SIGTERM, SIGINT). That also covers a stopped run and a crashed one. Anything a lane agent started by hand (`npm run dev &`, a browser) goes with the group. Apps that `kitchen qa up` started have their own groups and are stopped through `app.json`, as above. A Codex `/kitchen run` inside the person's own Codex session is theirs: Kitchen doesn't kill it, and the skill tells it to stop when the queue is drained.
+6. **A proposal that fails to save is never lost.** Finishing a check caught every error from proposing its findings and returned an empty list (`.catch(() => [])` in `finishCheck`), so the findings vanished without a trace. Now the error is recorded on the job and shown as "proposals failed: <error>". The findings stay in the QA folder, and `kitchen job finish` (and the next wave) retries proposing them. That retry is idempotent per finding: a finding already proposed is never proposed twice.
+7. **The message box doesn't pretend to be live chat.** A message reaches the job's next lane, never the agent working now. The chip "What are you doing right now?" goes, and the box's hint says "Goes to its next lane".
 
 ## Not chosen
 
 - **Splitting `(page + http)` into two criteria automatically:** Kitchen would be making up wording for a criterion. Intake rewriting it keeps the person's criteria in intake's words.
-- **Letting QA mark a single row BLOCKED:** half-tested rounds then pass on the rows that ran. A round is tested or it isn't.
+- **A whole-round BLOCKED only** (this ADR's first draft): one bad fixture threw away every criterion that did run. Per-criterion NOT_RUN keeps them, and an INCOMPLETE round still can't pass.
+- **A Rerun button:** the user's call. Kitchen already retries once on fresh data and then says exactly why; a button would only repeat that.
 - **Retrying BLOCKED forever:** a wrong seed doesn't fix itself, so the second one asks a person.

@@ -66,10 +66,12 @@ export type JobCheck = {
   total?: number;
   findings?: number;
   proposals?: string[];
+  /** ADR 0029 §6: proposing its findings failed (the error, the round they are in): retried on each finish and wave. */
+  proposalsFailed?: { error: string; round: number };
   map?: string;
 };
-/** ADR 0029 §2: a job's needs-human reason after its second BLOCKED QA (`<words>: <why>`); Resume runs QA again. */
-export const QA_BLOCKED_WORDS = "QA couldn't test it";
+/** ADR 0029 §2: a job's needs-human reason when QA still couldn't test criteria (`<words> C2, C4: …`); Resume runs QA again. */
+export const QA_BLOCKED_WORDS = "QA couldn't test";
 export const isCheck = (j: Pick<Job, "kind" | "check">) => j.kind === "check" || !!j.check?.forced;
 /** ADR 0028 amendment: the words of a job verified and not merged (`KEEP: no`). */
 export const VERIFIED_WORDS = "Verified · not merged";
@@ -146,10 +148,10 @@ export type Job = {
   /** Every move so far. Activity streams and the ledger are keyed by it. */
   moves: number;
   /**
-   * ADR 0029 §2: why the last QA couldn't test this job (its first BLOCKED): Kitchen reset the app and runs QA again;
-   * a second BLOCKED goes to a person. Cleared by any other move.
+   * ADR 0029 §2: QA's last round was INCOMPLETE (rows NOT_RUN, none FAILED): Kitchen reset the app and QA runs again on
+   * `ids` only, round `from`'s passes standing. Still not run then goes to a person. Cleared by any other move.
    */
-  qaBlocked?: string;
+  qaRetry?: { from: number; ids: string[] };
   /**
    * ADR 0025 §4: the check command running now (Build's checks, the trial merge's) and its log; absent between them.
    * ADR 0029 §4: `setup`: the step `kitchen qa up` is on instead ("Resetting data"), `of`: the health wait's limit (s).
@@ -275,7 +277,7 @@ export function move(j: Job, to: Stage, o: { reason?: string; now?: Date; catchU
   delete n.pausedReason;
   delete n.tries;
   delete n.waits;
-  delete n.qaBlocked;
+  delete n.qaRetry;
   // ADR 0028: a check's QA again (it couldn't run, or the person runs a done check again): a new round folder. Again
   // after done is new work, a fresh budget; after a QA that couldn't run, the same budget.
   if (to === "qa" && (j.stage === "qa" || j.stage === "done")) {
@@ -284,7 +286,7 @@ export function move(j: Job, to: Stage, o: { reason?: string; now?: Date; catchU
       n.roundStart = n.round;
       delete n.doneAt;
     }
-    // ADR 0029 §2: a job's QA again after a BLOCKED (the environment, not the change): no Build round counted.
+    // ADR 0029 §2: a job's QA again on what it couldn't test (the environment, not the change): no Build round counted.
     else if (!isCheck(j)) n.roundStart = j.roundStart + 1;
   }
   if (to === "review" && j.stage === "done") {
