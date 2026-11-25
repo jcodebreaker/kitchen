@@ -162,10 +162,11 @@ async function work(
       out(`kitchen run: ${req}. Nothing started.`);
       return 2;
     }
-    const app = await import("../qa/app.ts");
-    const browser = await app.ensureBrowser(out, { needed: app.browserNeeded(repo, cfg) });
-    if (browser) {
-      out(`kitchen run: ${browser}. Nothing started.`);
+    // ADR 0034: the installed browser (or the pinned one); Kitchen never downloads one.
+    const { browserNeeded } = await import("../qa/app.ts");
+    const { refusal } = (await import("../qa/browser.ts")).ensureBrowser(out, cfg, { needed: browserNeeded(repo, cfg) });
+    if (refusal) {
+      out(`kitchen run: ${refusal}. Nothing started.`);
       return 2;
     }
   }

@@ -15,8 +15,9 @@ import { qaDir } from "../engine/lanes.ts";
 import { findJob, jobDirOf } from "../engine/store.ts";
 import { processStart } from "../lock.ts";
 import { appDown, appUp, doctorAppFile } from "../qa/app.ts";
+import type { Probe } from "../qa/browser.ts";
 import { jsonOut, scenario, whoami } from "../qa/scenario.ts";
-import { appRows, doctorLines, doctorReport, requiresRefusal } from "./doctor.ts";
+import { appRows, browserRow, doctorLines, doctorReport, requiresRefusal } from "./doctor.ts";
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kitchen-doctor-"));
 const lines: string[] = [];
@@ -84,6 +85,28 @@ const sentinel = path.join(path.dirname(root), `${path.basename(root)}-local-db.
 const withReset = (cfg: ReturnType<typeof loadConfig>) => ({ ...cfg, app: { ...cfg.app, reset: `echo wiped > ${sentinel}` } });
 afterAll(() => fs.rmSync(sentinel, { force: true }));
 const states = (r: { rows: { what: string; state: string }[] }) => Object.fromEntries(r.rows.map((x) => [x.what, x.state]));
+
+test("ADR 0034 §2: the browser row names the browser QA will use, or how to get one; a pin is said", () => {
+  const chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+  const p = (files: string[]): Probe => ({
+    platform: "darwin",
+    home: "/h",
+    env: {},
+    exists: (f) => files.includes(f),
+    which: () => null,
+    chromium: () => null,
+  });
+  assert.deepEqual(browserRow({}, p([chrome])), { what: "browser", state: "ok", detail: `Chrome, for QA's pages: ${chrome}` });
+  const none = browserRow({}, p([]));
+  assert.equal(none.state, "missing");
+  assert.match(none.detail, /^no Chrome, Edge or Playwright's Chromium found/);
+  assert.match(String(none.fix), /^install Google Chrome, or run `\(cd \/.+ && npx playwright install chromium\)`$/);
+  const edge = browserRow({ browser: "msedge" }, p([chrome]));
+  assert.deepEqual(
+    [edge.state, edge.detail.split(":")[0], edge.fix],
+    ["missing", "Edge isn't installed (browser", "install Microsoft Edge, or take browser: out"],
+  );
+});
 
 test("doctor: by default nothing of the app runs; --app tries prepare/start/health/stop; only --reset runs the reset", async () => {
   fs.writeFileSync(sentinel, "my local data\n");

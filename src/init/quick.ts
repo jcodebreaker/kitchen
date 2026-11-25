@@ -48,9 +48,6 @@ export async function init(o: InitOpts, out: (l: string) => void): Promise<numbe
     for (const l of preflightLines(p, "kitchen init")) out(l);
     if (!p.ok) return 2;
     if (gh && !p.checks.find((c) => c.name === "gh")?.ok) out(`  (origin is GitHub, ${gh}, but gh isn't signed in: jobs merge into a local staging branch)`);
-    // ADR 0029 §4: the browser QA uses, installed once; `kitchen run` refuses without it, init only says so.
-    const browser = await (await import("../qa/app.ts")).ensureBrowser(out);
-    if (browser) out(`  (${browser}: kitchen run asks for it)`);
     out("");
   }
   out(`Setting up Kitchen in ${path.basename(repo)}…`);

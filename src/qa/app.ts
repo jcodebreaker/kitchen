@@ -4,14 +4,13 @@
 //   for the health check). A repo that still has an older Kitchen Toolkit (.kitchen/toolkit/bin/dev) and no
 //   `app.start` keeps working: its `bin/dev prepare` and `up` start the app instead.
 // - reset: down, then up again (which runs `app.reset` first): fresh seed data between criteria that need it.
-// - page: a real browser (Playwright's Chromium, pinned in Kitchen's package.json) opens a page, optionally runs a
-//   small script, and saves a screenshot plus a text file (final URL, title, visible text, console errors).
+// - page: a real browser (the installed Chrome or Edge, else Playwright's Chromium: ADR 0034) opens a page, runs a
+//   small script if given, and saves a screenshot plus a text file (final URL, title, visible text, console errors).
 // - http: one request, saved as a plain transcript.
 // Every file lands in the job's QA folder for this round, where the verdict cites it. ADR 0031 §2: each page and http
-// capture gets a `<file>.meta.json` stamp (job, round, commit, URL, app instance) that readQa checks.
+// capture gets a `<file>.meta.json` stamp (job, round, commit, URL, app instance; a page its browser) that readQa checks.
 import { spawn } from "node:child_process";
 import fs from "node:fs";
-import { createRequire } from "node:module";
 import net from "node:net";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -23,6 +22,7 @@ import type { Job } from "../engine/machine.ts";
 import { findJob, jobDirOf, kitchenDir, listJobs, updateJob, worktreeOf, writeAtomic } from "../engine/store.ts";
 import { ownerAlive } from "../lock.ts";
 import { isRunId, runDir, runEvidence, runWorktree } from "../verify/paths.ts";
+import { type BrowserChoice, browserWords, failedLines, launchBrowser } from "./browser.ts";
 
 type AppState = Partial<Started> & { url: string; at: string; legacy?: { id: string; dev: string; wt: string } };
 const stateFile = (repo: string, id: string) => path.join(isRunId(id) ? runDir(repo, id) : jobDirOf(repo, id), "app.json");
@@ -104,10 +104,18 @@ export function jobPaths(repo: string, ref: string): { id: string; wt: string; o
 
 /**
  * ADR 0031 §2: stamp each capture `kitchen qa page|http` saved with where it came from: the job and round (or the
- * verify run), the lane, the checkout's commit and whether it was dirty, the URL, the app instance, when. Never throws:
- * a capture without a stamp is still evidence.
+ * verify run), the lane, the checkout's commit and whether it was dirty, the URL, the app instance, when, and (ADR
+ * 0034 §3) the browser a page was taken in, which the QA lane's `tested` names too. Never throws: a capture without a
+ * stamp is still evidence.
  */
-export async function stampCaptures(repo: string, ref: string, wt: string, url: string, files: string[]): Promise<void> {
+export async function stampCaptures(
+  repo: string,
+  ref: string,
+  wt: string,
+  url: string,
+  files: string[],
+  browser?: { name: string; version: string },
+): Promise<void> {
   try {
     const sha = (await git(wt, ["rev-parse", "--verify", "-q", "HEAD"], { allowFail: true })).stdout.trim();
     const dirty = !!(await git(wt, ["status", "--porcelain", "--untracked-files=no"], { allowFail: true })).stdout.trim();
@@ -119,9 +127,16 @@ export async function stampCaptures(repo: string, ref: string, wt: string, url: 
       dirty,
       url,
       app: st ? { ...(st.pid ? { pid: st.pid } : {}), at: st.at } : null,
+      ...(browser ? { browser } : {}),
       at: new Date().toISOString(),
     };
     for (const f of files) if (fs.existsSync(f)) writeAtomic(metaFile(f), `${JSON.stringify(meta, null, 2)}\n`);
+    const words = browser && browserWords(browser);
+    if (job?.stage === "qa" && words && job.tested?.browser !== words)
+      await updateJob(repo, job.id, (j) => {
+        if (j.stage === "qa" && j.tested) j.tested.browser = words;
+        return j;
+      });
   } catch {}
 }
 
@@ -490,35 +505,6 @@ export function reachable(url: string, remote: string | null): boolean {
   }
 }
 
-/** Playwright, from Kitchen's own dependencies. */
-function playwright(): { chromium: { launch(o: object): Promise<Browser>; executablePath(): string } } {
-  const req = createRequire(import.meta.url);
-  try {
-    return req("playwright") as ReturnType<typeof playwright>;
-  } catch {
-    throw new Error("Playwright is missing from Kitchen's install: npm install in Kitchen's folder (it is a pinned dependency)");
-  }
-}
-/** Kitchen's own folder: its package.json pins Playwright, and the browser is installed from there. */
-const KITCHEN_DIR = path.resolve(import.meta.dirname, "..", "..");
-/** ADR 0029 §4: the install command (KITCHEN_BROWSER_INSTALL: tests and hooks put a stand-in there, never a download). */
-const INSTALL = "npx playwright install chromium";
-const installCmd = () => process.env.KITCHEN_BROWSER_INSTALL || INSTALL;
-/** The one line for a missing browser: `kitchen run` refuses with it, `kitchen qa page` says it. */
-export const browserMissing = () => `the browser QA uses (Playwright's Chromium) isn't installed: run ${INSTALL} in ${KITCHEN_DIR}`;
-
-/** ADR 0029 §4: Playwright's Chromium is on this machine: the full browser, or the headless shell a headless launch uses. */
-export function browserReady(): boolean {
-  try {
-    const exe = playwright().chromium.executablePath();
-    if (fs.existsSync(exe)) return true;
-    const m = /^(.*[\\/])chromium-(\d+)[\\/]/.exec(exe);
-    return !!m && fs.existsSync(`${m[1]}chromium_headless_shell-${m[2]}`);
-  } catch {
-    return false;
-  }
-}
-
 /** ADR 0029 §4: QA here needs the browser: there is an app to drive, or an open job has a page criterion. */
 export function browserNeeded(repo: string, cfg: Config): boolean {
   if (cfg.app.start) return true;
@@ -526,41 +512,6 @@ export function browserNeeded(repo: string, cfg: Config): boolean {
     (j) => !j.archived && j.stage !== "done" && j.stage !== "rejected" && criteriaOf(jobDirOf(repo, j.id)).some((c) => c.check === "page"),
   );
 }
-
-/**
- * ADR 0029 §4: before QA needs it (`kitchen init`, `kitchen run`), Chromium is installed once when it is missing, its
- * output through `out`. Null when it is there (or isn't needed yet: then only a note), else the line to refuse with.
- * `ready` and `install` are seams for tests.
- */
-export async function ensureBrowser(
-  out: (l: string) => void,
-  o: { needed?: boolean; ready?: () => boolean; install?: (out: (l: string) => void) => Promise<boolean> } = {},
-): Promise<string | null> {
-  const ready = o.ready ?? browserReady;
-  if (ready()) return null;
-  if (o.needed === false) {
-    out(`note: ${browserMissing()} (nothing queued needs it yet)`);
-    return null;
-  }
-  out("Installing the browser QA uses, once (~150 MB)…");
-  const ok = await (o.install ?? installBrowser)(out);
-  return ok && ready() ? null : browserMissing();
-}
-
-const installBrowser = (out: (l: string) => void) =>
-  new Promise<boolean>((resolve) => {
-    const c = spawn("/bin/sh", ["-c", installCmd()], { cwd: KITCHEN_DIR, stdio: ["ignore", "pipe", "pipe"] });
-    const say = (d: Buffer) => {
-      for (const l of d.toString("utf8").split("\n")) {
-        const t = l.split("\r").at(-1)?.trim();
-        if (t) out(`  ${t}`);
-      }
-    };
-    c.stdout.on("data", say);
-    c.stderr.on("data", say);
-    c.on("error", () => resolve(false));
-    c.on("close", (code) => resolve(code === 0));
-  });
 
 type Page = {
   goto(u: string, o: object): Promise<unknown>;
@@ -573,7 +524,14 @@ type Page = {
 };
 type Browser = { newContext(o: object): Promise<{ newPage(): Promise<Page> }>; close(): Promise<void>; version(): string };
 
-export async function page(repo: string, ref: string, target: string, o: { name: string; script?: string }, out: (l: string) => void): Promise<number> {
+/** `launch`: a seam for tests (how a browser QA found is started). */
+export async function page(
+  repo: string,
+  ref: string,
+  target: string,
+  o: { name: string; script?: string; launch?: (b: BrowserChoice) => Promise<Browser> },
+  out: (l: string) => void,
+): Promise<number> {
   if (!NAME.test(o.name)) throw new Error("--name: letters, digits, . _ - (a file name without a folder)");
   const { id: jid, wt, out: dir } = jobPaths(repo, ref);
   const base = baseUrl(repo, jid);
@@ -583,17 +541,18 @@ export async function page(repo: string, ref: string, target: string, o: { name:
   }
   const url = join(base ?? "", target);
   if (!reachable(url, runUrl(repo, jid))) throw new Error(`page: ${url} is not this machine (127.0.0.1 or localhost only)`);
-  let browser: Browser;
-  try {
-    browser = await playwright().chromium.launch({ headless: true });
-  } catch (e) {
-    // ADR 0029 §4: Playwright's own missing-browser error, as one line.
-    if (!browserReady()) {
-      out(`page: ${browserMissing()}`);
-      return 1;
-    }
-    throw e;
+  // ADR 0034: the installed browser (or the pinned one), the next in order when one doesn't start; nothing downloaded.
+  const got = await launchBrowser<Browser>(loadConfig(repo), { launch: o.launch });
+  if ("refusal" in got) {
+    out(`page: ${got.refusal}`);
+    return 1;
   }
+  const { browser, choice } = got;
+  if (got.failed.length) {
+    for (const l of failedLines(got.failed)) out(`page: ${l.trim() === l ? l : l.slice(2)}`);
+    out(`page: used ${choice.name} (${choice.executable}) instead`);
+  }
+  const used = { name: choice.name, version: browser.version() };
   const errors: string[] = [];
   let ok = true;
   let why = "";
@@ -621,7 +580,7 @@ export async function page(repo: string, ref: string, target: string, o: { name:
         `status: ${res?.status() ?? "?"}`,
         `final url: ${p.url()}`,
         `title: ${await p.title()}`,
-        `browser: chromium ${browser.version()} (Playwright), 1280x800`,
+        `browser: ${used.name} ${used.version}, 1280x800`,
         `console errors: ${errors.length ? `\n${errors.map((e) => `  ${e}`).join("\n")}` : "none"}`,
         "",
         "visible text:",
@@ -636,7 +595,7 @@ export async function page(repo: string, ref: string, target: string, o: { name:
   } finally {
     await browser.close();
   }
-  await stampCaptures(repo, jid, wt, url, [path.join(dir, `${o.name}.png`), path.join(dir, `${o.name}.txt`)]);
+  await stampCaptures(repo, jid, wt, url, [path.join(dir, `${o.name}.png`), path.join(dir, `${o.name}.txt`)], used);
   out(
     ok
       ? `page: ${o.name}.png and ${o.name}.txt in ${path.relative(repo, dir)}${errors.length ? ` (${errors.length} console errors)` : ""}`

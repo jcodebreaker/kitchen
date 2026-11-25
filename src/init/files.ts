@@ -83,6 +83,8 @@ parallel: 4      # lane agents at once (intake lanes are never held for room)
 # merge: kitchen (Kitchen merges) or pr (Kitchen opens a PR with the Report, a person merges it; needs forge github).
 # A ticket can name another target: kitchen ticket --into <branch>.
 staging: { branch: staging, base: ${JSON.stringify(base)}, max_lines: 400 }
+# QA's browser: the installed Chrome, then Edge, then Playwright's Chromium. Pin one (the others are never tried):
+# browser: chrome   # chrome | msedge | chromium
 `;
 
 /** A YAML scalar on one line, whatever its length (JSON is YAML; `stringify` folds long strings, review R1). */

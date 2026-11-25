@@ -8,23 +8,11 @@ import path from "node:path";
 import { afterAll, beforeAll, test } from "vitest";
 import { loadConfig } from "../config.ts";
 import * as control from "../engine/control.ts";
+import { start } from "../engine/jobs.ts";
 import { qaDir, readMeta } from "../engine/lanes.ts";
 import { findJob, jobDirOf } from "../engine/store.ts";
-import {
-  appDown,
-  appEnv,
-  appReset,
-  appUp,
-  browserNeeded,
-  composeProject,
-  ensureBrowser,
-  http,
-  page,
-  reachable,
-  stopApp,
-  stopCommand,
-  sweepApps,
-} from "./app.ts";
+import { appDown, appEnv, appReset, appUp, browserNeeded, composeProject, http, page, reachable, stopApp, stopCommand, sweepApps } from "./app.ts";
+import { type BrowserChoice, browserWords, launchOptions, playwright, resolveBrowser, resolveBrowsers } from "./browser.ts";
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kitchen-qa-"));
 const lines: string[] = [];
@@ -48,14 +36,22 @@ http.createServer((req, res) => {
   await control.ticket(root, "check the shelf", () => {});
   id = findJob(root, "1").id;
   const f = path.join(jobDirOf(root, id), "job.json");
-  fs.writeFileSync(f, JSON.stringify({ ...JSON.parse(fs.readFileSync(f, "utf8")), stage: "qa", worktree: root }));
+  fs.writeFileSync(
+    f,
+    JSON.stringify({
+      ...JSON.parse(fs.readFileSync(f, "utf8")),
+      stage: "qa",
+      worktree: root,
+      tested: { at: new Date().toISOString(), head: "", target: "staging", onto: "", dirty: 0, kitchen: "0" },
+    }),
+  );
 });
 afterAll(async () => {
   await appDown(root, id);
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-test("up on a free port after the reset, an HTTP transcript, a Playwright screenshot after a script, down", async () => {
+test("up on a free port after the reset, an HTTP transcript, stamped", async () => {
   assert.equal(await appUp(root, id, out), 0, lines.join("\n"));
   assert.match(lines.at(-1) ?? "", /app: up at http:\/\/127\.0\.0\.1:\d+/);
   assert.ok(fs.existsSync(path.join(root, "reset.txt")), "app.reset ran first");
@@ -70,6 +66,19 @@ test("up on a free port after the reset, an HTTP transcript, a Playwright screen
   const t = fs.readFileSync(path.join(dir, "c1-n.http.txt"), "utf8");
   assert.match(t, /# request\nGET http:\/\/127\.0\.0\.1:\d+\/api\/n\nX-Member: ana/);
   assert.match(t, /# response\nHTTP 200 OK[\s\S]*\{"n":1,"who":"ana"\}/);
+  // ADR 0031 §2: each capture is stamped with where it came from.
+  const app = JSON.parse(fs.readFileSync(path.join(jobDirOf(root, id), "app.json"), "utf8"));
+  const meta = readMeta(dir, "c1-n.http.txt");
+  assert.ok(meta, "the http transcript has a stamp");
+  assert.deepEqual([meta.job, meta.round, meta.lane, meta.dirty, meta.app?.pid, meta.app?.at], [id, 1, "qa", false, app.pid, app.at]);
+  assert.match(meta.url, /^http:\/\/127\.0\.0\.1:\d+\/api\/n$/);
+  assert.equal(meta.sha, execFileSync("git", ["-C", root, "rev-parse", "HEAD"], { encoding: "utf8" }).trim());
+  assert.equal(meta.browser, undefined, "an http transcript has no browser");
+});
+
+// ADR 0034: a machine with no browser at all skips the page part (kitchen qa page refuses there instead).
+test.skipIf(!resolveBrowser({}))("a screenshot after a script, in the installed browser, stamped with it", async () => {
+  const dir = qaDir(jobDirOf(root, id), 1);
   const script = path.join(root, "click.mjs");
   fs.writeFileSync(script, 'export default async (page) => { await page.click("text=Borrow"); };\n');
   assert.equal(await page(root, id, "/", { name: "c2-shelf", script }, out), 0, lines.join("\n"));
@@ -78,14 +87,48 @@ test("up on a free port after the reset, an HTTP transcript, a Playwright screen
   assert.match(txt, /title: Shelf/);
   assert.match(txt, /Books on the shelf[\s\S]*borrowed!/, "the script ran before the screenshot");
   assert.match(txt, /console errors: none/);
-  // ADR 0031 §2: each capture is stamped with where it came from.
-  const app = JSON.parse(fs.readFileSync(path.join(jobDirOf(root, id), "app.json"), "utf8"));
-  const meta = readMeta(dir, "c1-n.http.txt");
-  assert.ok(meta, "the http transcript has a stamp");
-  assert.deepEqual([meta.job, meta.round, meta.lane, meta.dirty, meta.app?.pid, meta.app?.at], [id, 1, "qa", false, app.pid, app.at]);
-  assert.match(meta.url, /^http:\/\/127\.0\.0\.1:\d+\/api\/n$/);
-  assert.equal(meta.sha, execFileSync("git", ["-C", root, "rev-parse", "HEAD"], { encoding: "utf8" }).trim());
   for (const f of ["c2-shelf.png", "c2-shelf.txt"]) assert.equal(readMeta(dir, f)?.url.endsWith("/"), true, `${f} is stamped`);
+  // ADR 0034 §3: a page capture names the browser it was taken in, and so does the QA lane's `tested`.
+  const used = readMeta(dir, "c2-shelf.png")?.browser;
+  assert.ok(used && ["Chrome", "Edge", "Chromium"].includes(used.name) && /^\d+\./.test(used.version), JSON.stringify(used));
+  assert.deepEqual(readMeta(dir, "c2-shelf.txt")?.browser, used);
+  assert.match(txt, new RegExp(`browser: ${used.name} ${used.version.replace(/\./g, "\\.")}, 1280x800`));
+  assert.equal(findJob(root, id).tested?.browser, browserWords(used));
+  // QA again on the same head and round (a retry) records `tested` anew and keeps the browser until a capture names one.
+  const at = findJob(root, id).tested?.at;
+  const jobFile = path.join(jobDirOf(root, id), "job.json");
+  const before = fs.readFileSync(jobFile, "utf8");
+  execFileSync("git", ["-C", root, "branch", findJob(root, id).branch]);
+  // The last QA lane tested this head in this round: starting QA again on it is a true retry.
+  const head = execFileSync("git", ["-C", root, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  const cur = JSON.parse(fs.readFileSync(jobFile, "utf8"));
+  fs.writeFileSync(jobFile, JSON.stringify({ ...cur, tested: { ...cur.tested, head, round: 1 } }));
+  const again = await start(root, id, "qa", { restart: true });
+  assert.ok("cwd" in again, JSON.stringify(again));
+  const t2 = findJob(root, id).tested;
+  assert.notEqual(t2?.at, at, "recorded anew");
+  assert.equal(t2?.browser, browserWords(used));
+  fs.writeFileSync(jobFile, before); // the rest drives the app from the checkout as before
+  // ADR 0034: a browser that doesn't start is said, with its lines, and the next in order is used.
+  const all = resolveBrowsers({});
+  if (all.length > 1) {
+    const said: string[] = [];
+    const launch = async (b: BrowserChoice) => {
+      if (b.name === all[0].name) throw new Error("spawn failed\nline 2\nline 3\nline 4\nline 5\nline 6");
+      return playwright<never>().chromium.launch(launchOptions(b));
+    };
+    assert.equal(await page(root, id, "/", { name: "c3-next", launch }, (l) => said.push(l)), 0, said.join("\n"));
+    assert.equal(said[0], `page: ${all[0].name} (${all[0].executable}) didn't start:`);
+    assert.deepEqual(
+      said.slice(1, 6),
+      ["spawn failed", "line 2", "line 3", "line 4", "line 5"].map((l) => `page:   ${l}`),
+    );
+    assert.equal(said[6], `page: used ${all[1].name} (${all[1].executable}) instead`);
+    assert.equal(readMeta(dir, "c3-next.png")?.browser?.name, all[1].name);
+  }
+});
+
+test("qa page and http refuse what isn't this machine or a bad name; down", async () => {
   await assert.rejects(page(root, id, "https://example.com/", { name: "x" }, out), /not this machine/);
   await assert.rejects(http(root, id, "GET", "/", { name: "../escape", headers: [] }, out), /--name/);
   assert.equal(await appDown(root, id, out), 0);
@@ -155,37 +198,8 @@ test("ADR 0029 §4: qa up records each setup step in the job's checking, and cle
   assert.equal(findJob(root, id).checking, undefined);
 });
 
-test("ADR 0029 §4: the browser is installed once when it is missing; a failed install is the one line to refuse with", async () => {
-  const said: string[] = [];
-  let installs = 0;
-  assert.equal(await ensureBrowser((l) => said.push(l), { ready: () => true, install: async () => !!++installs }), null);
-  assert.equal(installs, 0, "there already: nothing installed");
-  let there = false;
-  const install = async () => {
-    installs++;
-    there = true;
-    return true;
-  };
-  assert.equal(await ensureBrowser((l) => said.push(l), { ready: () => there, install }), null);
-  assert.deepEqual([installs, said], [1, ["Installing the browser QA uses, once (~150 MB)…"]]);
-  const no = await ensureBrowser(() => {}, { ready: () => false, install: async () => false });
-  assert.match(String(no), /^the browser QA uses \(Playwright's Chromium\) isn't installed: run npx playwright install chromium in \//);
-  // Not needed yet (no app, no page criterion): a note, no install, no refusal.
-  const notes: string[] = [];
-  assert.equal(await ensureBrowser((l) => notes.push(l), { needed: false, ready: () => false, install: async () => !!++installs }), null);
-  assert.equal(installs, 1, "nothing installed");
-  assert.match(notes.join(""), /^note: the browser QA uses .* \(nothing queued needs it yet\)$/);
-  // The installer's own output goes through out (the run's log when detached), never straight to the terminal.
-  const lines: string[] = [];
-  const prev = process.env.KITCHEN_BROWSER_INSTALL;
-  process.env.KITCHEN_BROWSER_INSTALL = "printf 'Downloading 10%%\\rDownloading 100%%\\n'; exit 1";
-  try {
-    assert.ok(await ensureBrowser((l) => lines.push(l), { ready: () => false }));
-  } finally {
-    process.env.KITCHEN_BROWSER_INSTALL = prev;
-  }
-  assert.deepEqual(lines, ["Installing the browser QA uses, once (~150 MB)…", "  Downloading 100%"]);
-  assert.ok(browserNeeded(root, loadConfig(root)), "an app to drive needs it");
+test("ADR 0029 §4: QA here needs a browser when there is an app to drive", () => {
+  assert.ok(browserNeeded(root, loadConfig(root)));
 });
 
 test("ADR 0029 §5: stopping or rejecting a job stops its app; a sweep stops any app no lane works on", async () => {

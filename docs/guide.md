@@ -17,7 +17,8 @@ worked example. Settings are in [configuration.md](configuration.md); what Kitch
 
 ```sh
 npm install -g devkitchen        # puts `kitchen` on your PATH, with Playwright pinned
-npx playwright install chromium  # once per machine, if Playwright's Chromium isn't there yet
+# QA uses the Chrome or Edge you have; with neither, Playwright's Chromium once per machine:
+# (cd "$(npm root -g)/devkitchen" && npx playwright install chromium)   # Kitchen's pinned Playwright; kitchen doctor prints the exact command
 ```
 
 ## 2. Set up Kitchen in your repo

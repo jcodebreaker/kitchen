@@ -208,8 +208,10 @@ export type Job = {
    * ADR 0032 §2: what the last QA lane tested, recorded when it started: the branch head (a check: the tip it drives),
    * the target and its tip, how many uncommitted paths the person's checkout had (never tested: lanes work on commits),
    * Kitchen's version, and the tool with its version when `kitchen run`'s preflight saw it. Absent on older jobs.
+   * ADR 0034 §3: `browser`, set by the lane's first page capture: the browser QA drove pages in ("Chrome 158"); a QA
+   * retry on the same head and round keeps it until a new capture sets it (`retested`). `round`: the round it tested.
    */
-  tested?: { at: string; head: string; target: string; onto: string; dirty: number; kitchen: string; tool?: string };
+  tested?: { at: string; head: string; round?: number; target: string; onto: string; dirty: number; kitchen: string; tool?: string; browser?: string };
   /** Why a job that passed stopped at Ready (high risk, a large diff, auto-merge off). */
   held?: string;
   /** ADR 0033: held because the merge check's app found its fixed port in use; `job next` tries again once it is free. */
