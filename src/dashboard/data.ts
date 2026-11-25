@@ -100,7 +100,7 @@ export function laneWho(cfg: Config | null): Record<Lane, string> {
     build: m("builder", "build agent"),
     qa: m("qa", "QA agent"),
     review: m("reviewer", "review agent"),
-    done: "merged or rejected",
+    done: "every finished job",
   };
 }
 /** What a job that needs you asks: intake's question (question.md), why it stopped, or why Kitchen held it at Ready. */

@@ -24,7 +24,7 @@ npm run typecheck && npm run lint && npm test
 npm run plugin:sync                    # the plugin files match package.json's version: must print "every file is current"
 claude plugin validate .               # the marketplace and the plugin manifest (Claude Code's own check; installs nothing)
 claude plugin validate plugins/kitchen
-npm pack --dry-run                     # read the file list one last time: dist/*.js, roles/, skills/, hooks/*.py, dashboard/dashboard.html, README.md, LICENSE, NOTICE
+npm pack --dry-run                     # read the file list one last time: dist/*.js, roles/, skills/, hooks/*.py, dashboard/dashboard.html, slack-app-manifest.json, README.md, LICENSE, NOTICE
 ```
 
 ## The first release (0.1.0)
@@ -59,7 +59,7 @@ cd "$(mktemp -d)" && npx devkitchen@0.1.0 --version     # 0.1.0 (the version you
 
 ## What the package contains (and doesn't)
 
-`package.json` `files` is an allowlist: the compiled `dist/**/*.js` (no source maps, no tests), the role prompts (`roles/`), the `/kitchen` skill (`skills/`), the guard hooks (`hooks/*.py`), the dashboard page, `README.md`, `LICENSE` and `NOTICE` (third-party notices: super-board's MIT notice for the hooks; Anthropic's for the vendored security review). Playwright is a pinned dependency (`playwright` 1.65.0); QA drives the installed Chrome or Edge with it, else its Chromium when already on disk (ADR 0034: Kitchen never downloads a browser; `(cd <Kitchen's folder> && npx playwright install chromium)` by hand, so npx runs the pinned Playwright). Fixtures, the benchmark data (`bench/`), `src/` and docs are not shipped. The tarball check that lived in spikes/w5 went with the spikes: read the `npm pack --dry-run` list by hand.
+`package.json` `files` is an allowlist: the compiled `dist/**/*.js` (no source maps, no tests), the role prompts (`roles/`), the `/kitchen` skill (`skills/`), the guard hooks (`hooks/*.py`), the dashboard page, the Slack app manifest, `README.md`, `LICENSE` and `NOTICE` (third-party notices: super-board's MIT notice for the hooks; Anthropic's for the vendored security review). Playwright is a pinned dependency (`playwright` 1.65.0); QA drives the installed Chrome or Edge with it, else its Chromium when already on disk (ADR 0034: Kitchen never downloads a browser; `(cd <Kitchen's folder> && npx playwright install chromium)` by hand, so npx runs the pinned Playwright). Fixtures, the benchmark data (`bench/`), `src/` and docs are not shipped. The tarball check that lived in spikes/w5 went with the spikes: read the `npm pack --dry-run` list by hand.
 
 ## If something is wrong after publishing
 
@@ -82,3 +82,20 @@ codex plugin install kitchen@kitchen
 ```
 
 Check it from a scratch folder after the release, in a throwaway session: `/plugin marketplace add jcodebreaker/kitchen`, `/plugin install kitchen@kitchen`, restart, then `/kitchen:kitchen set up Kitchen` in a test repo: it must run `npm view devkitchen@<version> dist.integrity …` first, see the pinned hash, and then use `npx -y devkitchen@<version>`. To tag a plugin release the way Claude Code's tooling expects: `claude plugin tag plugins/kitchen` (it checks that plugin.json and the marketplace entry agree), then push the tag. Listing it in Anthropic's or OpenAI's curated directories is a separate submission, not needed for the commands above.
+
+## Release notes
+
+### Since ADR 0024 (ADRs 0025–0034, not published yet)
+
+What changed for a person using Kitchen. Each ADR in `docs/adr/` has the details.
+
+- **Verbs wake Kitchen** (0025). `kitchen ticket`, `approve`, `feedback`, `resume` and `inbox run` start `kitchen run --detach` when nothing works the queue; `--no-run` only files. `kitchen run` refuses a Claude Code older than the version Kitchen is tested with. Intake reads a read-only checkout of the job's base. Checks stream progress to the dashboard ("Checks · `npm test` · 3m 12s").
+- **A target per ticket, and PR mode** (0026). `kitchen ticket --into <branch>` builds from and merges into an existing branch. `staging.merge: kitchen|pr`: in PR mode (init's default on GitHub) Kitchen opens a PR with the Report and never merges; it follows the PR to Done or Rejected.
+- **A map the repo may not commit** (0027). `verify: { skill, map: repo|local }`; a repo that ignores `.claude/` keeps the verify map on the machine. A map update that fails never holds a change back.
+- **Check tickets** (0028). `kitchen ticket --check` tests staging as it is and proposes each problem in the inbox; `--every day|hour|…` files it on a timer (`kitchen schedules` lists them). `KEEP: no` code is verified, not merged, until `kitchen promote <id>`.
+- **Trust what a run reports** (0029). A malformed criterion refuses the intake. A criterion QA couldn't test is NOT_RUN: the round is incomplete, QA retries just those on fresh seed data, then asks a person. The dashboard says why a job waits and shows setup progress. Every agent session runs in its own process group, and a ticket that ends leaves nothing running.
+- **Kitchen schedules lanes** (0030). `kitchen run` is a Node scheduler with one `claude -p` or `codex exec` session per lane, no orchestrator model session. `--max-usd` is the run's budget; `.kitchen/run.lock` allows one run per repo; `kitchen stop` and `remove` end the lane's agent at once. Codex lanes run in its `workspace-write` sandbox; Codex running the queue headless is not yet tested on a real Codex run. `/kitchen run` in a Claude Code session still works.
+- **Honest findings** (0031). A finding carries what was seen, what was expected and a suspected or confirmed cause. Captures are stamped (job, round, commit, app, browser) and a verdict citing another round's is refused. Criteria may name a precondition (`· given: …`). A check's high-severity finding gets a second look before it is proposed.
+- **Versions and diagnostics** (0032). The dashboard says when the Kitchen build under it changed; `kitchen dashboard --restart` restarts it in place. A failed step shows what failed, its useful line and what to do next. The Report gains "What was checked" (commit, versions, browser, models, each check, uncovered languages and files). `enabled: false` turns a check off.
+- **Project setup contract** (0033). `kitchen doctor` is read-only; `--app` and `--reset` try the app on a throwaway checkout, with warnings. `requires:` names what the machine needs. `app.scenarios` with `kitchen qa scenario`, and `app.whoami` with `kitchen qa whoami`. A check blocked by missing tooling proposes a chore and is filed again once it merges. A port in use is never mistaken for your app. `kitchen init` runs no app steps.
+- **Use the installed browser** (0034). QA drives the installed Chrome, then Edge, then a Playwright Chromium already on disk, and never downloads one; `browser:` in kitchen.yaml pins one. Each capture and the Report name the browser.
