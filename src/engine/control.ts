@@ -298,8 +298,13 @@ export async function feedback(repo: string, ref: string, text: string, out: Out
   }
   if (job.stage === "needs-human") {
     const to = (o.to ?? job.escalatedFrom ?? "build") as Stage;
-    if (!STAGE_LIST.includes(to) || !["intake", "build", "qa", "review", "regress"].includes(to)) {
-      out(`${job.id}  --to takes intake, build, qa, review or regress`);
+    if (!STAGE_LIST.includes(to) || !["intake", "build", "qa", "review", "regress", "second-look"].includes(to)) {
+      out(`${job.id}  --to takes intake, build, qa, review, regress or second-look`);
+      return 1;
+    }
+    // ADR 0031 §5: the second look closes a check that was in it; anything else would end "done" with nothing done.
+    if (to === "second-look" && (!isCheck(job) || job.escalatedFrom !== "second-look")) {
+      out(`${job.id}  --to second-look is only for a check that was in its second look: use --to ${isCheck(job) ? "qa" : (job.escalatedFrom ?? "build")}`);
       return 1;
     }
     await say("answer");
@@ -456,6 +461,8 @@ export async function reject(repo: string, ref: string, out: Out): Promise<numbe
     return 1;
   }
   await moveJob(repo, job.id, "rejected", { reason: "rejected by you", who: "person" });
+  // A check's checkout (its QA and second look read it) goes with it.
+  if (isCheck(job)) await (await import("./jobs.ts")).dropCheckCheckout(repo, job.id).catch(() => {});
   out(`${job.id}  rejected${await closePr(repo, job.id, "rejected")}`);
   return 0;
 }

@@ -7,7 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import { withFileLock } from "../lock.ts";
-import { type Job, type JobFrom, STAGES, type TicketRef } from "./machine.ts";
+import { type Job, type JobFrom, LANES, STAGES, type TicketRef } from "./machine.ts";
 
 export const kitchenDir = (repo: string) => path.join(repo, ".kitchen");
 export const jobsDir = (repo: string) => path.join(repo, ".kitchen", "jobs");
@@ -152,7 +152,7 @@ export const JobSchema = z.looseObject({
   pr: z.looseObject({ number: z.number().int(), url: z.string(), state: z.enum(["open", "merged", "closed"]).optional() }).nullable(),
   files: z.array(z.string()).optional(),
   after: z.array(z.string()).optional(),
-  running: z.looseObject({ lane: z.enum(["intake", "build", "qa", "review", "regress"]), at: z.string(), key: z.string() }).nullable(),
+  running: z.looseObject({ lane: z.enum(LANES), at: z.string(), key: z.string() }).nullable(),
   agentRuns: z.array(z.looseObject({ key: z.string(), role: z.string(), stage: Stage, round: z.number(), at: z.string() })),
   moves: Count,
   held: z.string().optional(),

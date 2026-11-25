@@ -15,7 +15,7 @@ One run of Kitchen on one Ticket, from intake to a change merged into Staging or
 _Avoid_: Run, build, pipeline run
 
 **Stage**:
-Where a Job is: intake, build, QA, review, regress (the Lanes), ready (held for a person), done (merged into Staging), or waiting: needs-info, needs-human, paused, rejected.
+Where a Job is: intake, build, QA, review, regress, second-look (the Lanes), ready (held for a person), done (merged into Staging), or waiting: needs-info, needs-human, paused, rejected.
 _Avoid_: Phase, step
 
 **Risk**:
@@ -57,7 +57,7 @@ The lanes the Orchestrator starts at once, from `kitchen job next`: downstream f
 _Avoid_: Batch, tick
 
 **Lane**:
-A Stage an agent works in: intake, build, QA, review, regress. One fresh agent per Lane per Job, briefed by `kitchen job start`, its result read by `kitchen job finish`.
+A Stage an agent works in: intake, build, QA, review, regress, second-look (ADR 0031: a check's consequential findings, read again before they are proposed). One fresh agent per Lane per Job, briefed by `kitchen job start`, its result read by `kitchen job finish`.
 _Avoid_: Worker, step
 
 **Role skill**:

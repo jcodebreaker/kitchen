@@ -103,6 +103,10 @@ Write one to five criteria, each a behaviour QA can check against the running ap
 - `test`: a test in the repo's own test suite proves it (pure logic with no page or route).
 - `cmd`: a command's output proves it (a CLI).
 
+**One observable claim per criterion.** A criterion says one thing QA can see pass or fail. A chain of steps is one criterion per step: "a todo shared with ben is stored, delivered to him and shown on his list" is three criteria (the share is stored, ben is notified, ben's list shows it), so a FAIL says which link broke and a PASS doesn't stand for links nobody checked. Kitchen can't judge this for you.
+
+**Preconditions.** When a claim only means something in a certain state ("a member with an overdue loan", "a list with no todos"), name it after the claim: `- C2 (http): renewing is refused with 409 · given: ana has an overdue loan`. QA reads that state back through the app before checking the claim, and a precondition that doesn't hold is "not run", never a fail. Write `given:` only for state a page or a request can show (on a `page` or `http` criterion); a state only a command or a test can see belongs in a `cmd` or `test` criterion instead. The separator is exactly ` · given: ` (a middle dot with a space on each side). Leave `given:` out when the seed data plainly has what the claim needs.
+
 Each criterion has exactly one kind in its brackets: a behaviour that needs a page and a request is two criteria (`- C3 (page): …` and `- C4 (http): …`). Ids are unique. Kitchen refuses an `intake.md` with a criterion line it can't read (two kinds, no kind, an unknown kind, a repeated id) and you write it again.
 
 Every requirement of the ticket is covered by a criterion, and every criterion traces back to words in the ticket or an answer in the Clarifications. A criterion you can't trace is extra scope: drop it and list it under `LEFT OUT:`. Keep what the ticket says must **not** happen as its own criterion ("as ben → 403"). Regression checks (existing routes still answer, the tests still pass) are fine: they guard the change rather than add to it. Criteria are fixed once you write them: the builder may not change them.
@@ -128,6 +132,7 @@ REASON: <one line: why this decision and rating; with REFINE it starts with read
 - C1 (http): POST /loans/4/renew as ana → 200, due_at moves 14 days later
 - C2 (http): renewing a loan twice → 409
 - C3 (page): on /loans, a renewed loan shows "renewed"
+- C4 (http): renewing an overdue loan → 409 · given: ana has an overdue loan
 ```
 
 With `REFINE`, no criteria: the readings, slices or gaps instead.

@@ -8,7 +8,7 @@ import path from "node:path";
 import { afterAll, beforeAll, test } from "vitest";
 import { loadConfig, parseConfig } from "../config.ts";
 import * as control from "../engine/control.ts";
-import { qaDir } from "../engine/lanes.ts";
+import { qaDir, readMeta } from "../engine/lanes.ts";
 import { findJob, jobDirOf } from "../engine/store.ts";
 import { orchestratorCommand, scrubbedEnv, streamLine } from "../run/orchestrator.ts";
 import {
@@ -33,6 +33,7 @@ const out = (l: string) => lines.push(l);
 let id = "";
 beforeAll(async () => {
   execFileSync("git", ["init", "-q", "-b", "main", root]);
+  execFileSync("git", ["-C", root, "-c", "user.name=t", "-c", "user.email=t@x", "-c", "commit.gpgSign=false", "commit", "-q", "--allow-empty", "-m", "base"]);
   fs.writeFileSync(
     path.join(root, "srv.mjs"),
     `import http from "node:http";
@@ -71,6 +72,14 @@ test("up on a free port after the reset, an HTTP transcript, a Playwright screen
   assert.match(txt, /title: Shelf/);
   assert.match(txt, /Books on the shelf[\s\S]*borrowed!/, "the script ran before the screenshot");
   assert.match(txt, /console errors: none/);
+  // ADR 0031 §2: each capture is stamped with where it came from.
+  const app = JSON.parse(fs.readFileSync(path.join(jobDirOf(root, id), "app.json"), "utf8"));
+  const meta = readMeta(dir, "c1-n.http.txt");
+  assert.ok(meta, "the http transcript has a stamp");
+  assert.deepEqual([meta.job, meta.round, meta.lane, meta.dirty, meta.app?.pid, meta.app?.at], [id, 1, "qa", false, app.pid, app.at]);
+  assert.match(meta.url, /^http:\/\/127\.0\.0\.1:\d+\/api\/n$/);
+  assert.equal(meta.sha, execFileSync("git", ["-C", root, "rev-parse", "HEAD"], { encoding: "utf8" }).trim());
+  for (const f of ["c2-shelf.png", "c2-shelf.txt"]) assert.equal(readMeta(dir, f)?.url.endsWith("/"), true, `${f} is stamped`);
   await assert.rejects(page(root, id, "https://example.com/", { name: "x" }, out), /not this machine/);
   await assert.rejects(http(root, id, "GET", "/", { name: "../escape", headers: [] }, out), /--name/);
   assert.equal(await appDown(root, id, out), 0);

@@ -6,10 +6,11 @@ import path from "node:path";
 import { type Config, loadConfig, targetOf } from "../config.ts";
 import { testedLine, versionsLine } from "../engine/checked.ts";
 import { type Failure, failureOf } from "../engine/diagnose.ts";
-import { criteriaOf, qaDir, readQa } from "../engine/lanes.ts";
+import { checkFindingKey, criteriaOf, qaDir, readQa } from "../engine/lanes.ts";
 import { CATCH_UP_LIMIT, isActive, isCheck, type Job, prOpen, STAGES, type Stage } from "../engine/machine.ts";
 import { type Message, readMessages } from "../engine/messages.ts";
 import { findJob, jobDirOf } from "../engine/store.ts";
+import { listItems, listProposals } from "../inbox/store.ts";
 import { type LedgerLine, readLedger } from "../ledger/append.ts";
 import { activityOf, type Ev } from "./activity.ts";
 import { agentOf, type Crit, critOf, liveStreams, questionOf, STAGE_NAMES, stateOf } from "./data.ts";
@@ -49,11 +50,11 @@ export type Detail = {
  * ADR 0028: a check's Checks tab: each criterion with the first screenshot QA cited for it, and each finding with the
  * inbox proposal it became (the engine proposes them in order, so the i-th finding is the i-th proposal).
  */
-function checkTab(dir: string, j: Job): Pick<Detail, "crit" | "found"> {
-  const crit = critOf(dir, j.round, { check: true });
+function checkTab(repo: string, dir: string, j: Job): Pick<Detail, "crit" | "found"> {
+  const crit = critOf(dir, j.round, { check: true, job: j });
   const criteria = criteriaOf(dir);
   for (let r = j.round; r >= 1; r--) {
-    const qa = readQa(dir, r, criteria, { check: true });
+    const qa = readQa(dir, r, criteria, { check: true, job: j });
     if (!("criteria" in qa) || (!qa.criteria.length && !qa.findings.length)) continue;
     const at = (f: string) => `jobs/${encodeURIComponent(j.id)}/qa/${r}/${f.split("/").map(encodeURIComponent).join("/")}`;
     const ps = j.check?.proposals ?? [];
@@ -67,10 +68,22 @@ function checkTab(dir: string, j: Job): Pick<Detail, "crit" | "found"> {
         const e = row.result === "NOT_RUN" ? c.e : [row.note, ...row.evidence.filter((f) => f !== shot)].filter(Boolean).join(" · ");
         return { ...c, e, ...(shot ? { shot: at(shot) } : {}) };
       }),
-      found: qa.findings.flatMap((f, i) => (ps[i] ? [{ pid: ps[i], title: f.title, seen: f.seen }] : [])),
+      // ADR 0031 §5: by the finding's inbox item (its key keeps QA's numbering), never by position: a finding the
+      // second look didn't confirm has no proposal, and the ones after it keep theirs.
+      found: qa.findings.flatMap((f, i) => {
+        const pid = proposalOf(repo, ps, checkFindingKey(j.id, r, i + 1));
+        return pid ? [{ pid, title: f.title, seen: f.seen }] : [];
+      }),
     };
   }
   return { crit, found: [] };
+}
+
+/** The proposal (one of the job's `ps`) that took the inbox item keyed `key`, or null. */
+function proposalOf(repo: string, ps: string[], key: string): string | null {
+  const item = listItems(repo).find((x) => x.key === key);
+  if (!item) return null;
+  return listProposals(repo).find((p) => ps.includes(p.id) && p.items.includes(item.id))?.id ?? null;
 }
 
 /** ADR 0028: a check's screenshot, inside its round's QA folder only; null for anything else. */
@@ -231,7 +244,7 @@ export async function detail(repo: string, ref: string): Promise<Detail> {
   return {
     id: j.id,
     tl,
-    ...(isCheck(j) ? checkTab(dir, j) : { crit: critOf(dir, j.round) }),
+    ...(isCheck(j) ? checkTab(repo, dir, j) : { crit: critOf(dir, j.round, { job: j }) }),
     ticket: ticketText(dir),
     // The lanes' models are on the Activity segments; the foot says Kitchen's and the tool's versions only.
     tested: tested ? { line: tested, versions: versionsLine(j, { models: false }) } : null,

@@ -10,12 +10,13 @@ import path from "node:path";
 import { afterAll, test } from "vitest";
 import { loadConfig } from "../config.ts";
 import { snapshot } from "../dashboard/data.ts";
+import { detail } from "../dashboard/detail.ts";
 import { argvOf, listKept, parseEvery, scheduleCheck, scheduleId, schedulesLines } from "../inbox/schedule.ts";
 import { getProposal, listItems, listProposals, run as runProposals } from "../inbox/store.ts";
 import { runDir, runWorktree } from "../verify/paths.ts";
 import * as control from "./control.ts";
 import { checkWords, finish, next, start } from "./jobs.ts";
-import { intakeFile, parseIntake, qaDir, reviewFile } from "./lanes.ts";
+import { intakeFile, parseIntake, qaDir, reviewFile, secondLookFile } from "./lanes.ts";
 import { planWave } from "./plan.ts";
 import { ensureStaging } from "./staging.ts";
 import { findJob, jobDirOf } from "./store.ts";
@@ -215,6 +216,227 @@ test("(b) a check with 2 failures: done 'Found 2 problems', 2 proposals linked t
   await open(r, bug.id, "intake");
   fs.writeFileSync(intakeFile(jobDirOf(r, bug.id)), "DECISION: ACCEPT\nKIND: bug\nRISK: low\n\n- C1 (cmd): renew works\n");
   assert.match((await fin(r, bug.id)).line, /intake ACCEPT bug low: 1 criteria → build/, "the fix is a normal job");
+});
+
+test("ADR 0031: a stamped capture from another commit is refused; a high-severity finding gets a second look, and one not confirmed isn't proposed", async () => {
+  const r = await repo();
+  const { id } = await intake(r, "check renewing and the list", CHECK(["renew works", "list loads"]));
+  const findings = [
+    {
+      title: "Renew returns 500",
+      seen: "POST /loans/4/renew → 500",
+      expected: "200, due 14 days later",
+      cause: { text: "the handler reads an empty due date", confidence: "suspected" },
+      severity: "high",
+      repro: ["reset", "renew loan 4"],
+      evidence: ["c1.txt"],
+      criterion: "C1",
+    },
+    {
+      title: "Slow list",
+      seen: "the list took 4 s",
+      expected: "under 1 s",
+      cause: { text: "no index on due_at", confidence: "suspected", evidence: ["c2-query.txt"] },
+      repro: ["open /loans"],
+      evidence: ["c2.txt"],
+      severity: "low",
+    },
+  ];
+  const verdict = {
+    verdict: "FAIL",
+    criteria: [
+      { id: "C1", result: "FAIL", evidence: ["c1.txt"], note: "500" },
+      { id: "C2", result: "PASS", evidence: ["c2.txt"], note: "loads, slowly" },
+    ],
+    findings,
+  };
+  const files = { "c1.txt": "500\n", "c2.txt": "4.1s\n", "c2-query.txt": "seq scan on loans\n" };
+  // §2: c1.txt says it was captured on another commit than the tip QA drove.
+  const stale = JSON.stringify({ job: id, round: 1, sha: "0".repeat(40), dirty: false, url: "http://127.0.0.1:1/", app: null, at: "" });
+  const { f: refused } = await checkQa(r, id, verdict, { ...files, "c1.txt.meta.json": stale });
+  assert.match(refused.line, /QA: C1 cites a capture from another commit: c1.txt was taken on 0000000, QA's checkout is at [0-9a-f]{7}/);
+  fs.rmSync(path.join(qaDir(jobDirOf(r, id), 1), "c1.txt.meta.json"));
+  // §5: finding 1 is severity high, so the check goes to a second look before anything is proposed.
+  const { f } = await checkQa(r, id, verdict, files);
+  assert.match(f.line, /check found 2 problems; finding 1 gets a second look → second-look/);
+  assert.equal(findJob(r, id).stage, "second-look");
+  assert.deepEqual(listProposals(r), [], "nothing proposed yet");
+  assert.deepEqual((await next(r)).start, [{ id, lane: "second-look" }]);
+  const s = await open(r, id, "second-look");
+  assert.equal(s.cwd, runWorktree(r, `check-${id}`), "it reads the checkout QA drove");
+  const brief = fs.readFileSync(s.brief, "utf8");
+  assert.match(
+    brief,
+    /### Finding 1: Renew returns 500 \(C1\)\n\n- Seen: POST \/loans\/4\/renew → 500\n- Expected: 200, due 14 days later\n- Suspected cause: the handler/,
+  );
+  assert.doesNotMatch(brief, /Finding 2/, "a low finding needs no second look");
+  assert.match(brief, /# Role: second look/);
+  fs.writeFileSync(secondLookFile(jobDirOf(r, id), 1), JSON.stringify({ findings: [{ finding: 1, confirmed: "maybe" }] }));
+  assert.match((await fin(r, id)).line, /second-look again \(try 2 of 3\): second look: finding 1: confirmed is true or false/);
+  // The checkout gone meanwhile: made again at the tip QA checked. The stale answers go when the lane starts.
+  const wt = runWorktree(r, `check-${id}`);
+  fs.rmSync(wt, { recursive: true, force: true });
+  const again = await open(r, id, "second-look");
+  assert.match(fs.readFileSync(again.brief, "utf8"), /## Kitchen refused the last try\n\nsecond look: finding 1: confirmed is true or false/);
+  assert.equal(g(wt, "rev-parse", "HEAD"), findJob(r, id).check?.onto, "the checkout QA drove, again");
+  assert.equal(fs.existsSync(secondLookFile(jobDirOf(r, id), 1)), false, "no stale second-look.json");
+  fs.writeFileSync(
+    secondLookFile(jobDirOf(r, id), 1),
+    JSON.stringify({ findings: [{ finding: 1, confirmed: false, note: "c1.txt is the reset's output, not the renew response" }] }),
+  );
+  const done = await fin(r, id);
+  assert.match(done.line, /Found 1 problem · 1 not confirmed · proposed p1 in the inbox → done/);
+  const j = findJob(r, id);
+  assert.deepEqual([j.stage, j.check?.findings, j.check?.unconfirmed, j.check?.proposals], ["done", 1, 1, ["p1"]]);
+  const p1 = getProposal(r, "p1");
+  assert.equal(p1.title, "Slow list");
+  assert.match(p1.text, /^Seen: the list took 4 s\nExpected: under 1 s\nSuspected cause: no index on due_at\n\nFound by check/);
+  assert.deepEqual(
+    p1.ev?.files?.map((f) => path.basename(f)),
+    ["p1-1-c2.txt", "p1-2-c2-query.txt"],
+    "the cause's evidence goes with the proposal",
+  );
+  assert.deepEqual(
+    listItems(r).map((i) => i.key),
+    [`kitchen:${id}:check:1.2`],
+    "the key keeps QA's numbering",
+  );
+  // The panel links each finding to its own proposal: finding 1 (not confirmed) has none, finding 2 keeps p1.
+  assert.deepEqual((await detail(r, id)).found, [{ pid: "p1", title: "Slow list", seen: "the list took 4 s" }]);
+  const report = fs.readFileSync(path.join(jobDirOf(r, id), "report.html"), "utf8");
+  assert.match(report, /Not confirmed on a second look, so not proposed: <b>Renew returns 500<\/b>/);
+  assert.match(report, /Not confirmed on a second look \(not proposed\)<\/b>: c1.txt is the reset/);
+  assert.match(
+    report,
+    /<b>Seen<\/b>: POST \/loans\/4\/renew → 500<\/p><p><b>Expected<\/b>: 200, due 14 days later<\/p><p><b>Suspected cause<\/b>: the handler/,
+  );
+  assert.match(report, /Found 1 problem, proposed in the Inbox as p1: <b>Slow list<\/b>/);
+  assert.equal(fs.existsSync(runWorktree(r, `check-${id}`)), false, "the checkout goes once the check is done");
+});
+
+test("ADR 0031 §5: only a check that was in its second look goes back to it; a verdict that can't be read goes to a person", async () => {
+  const r = await repo();
+  // A feature job with a person: --to second-look is refused (it would end done, merged, with nothing merged).
+  await control.ticket(r, "add a line", quiet);
+  const fid = lastId(r);
+  await open(r, fid, "intake");
+  fs.writeFileSync(intakeFile(jobDirOf(r, fid)), "DECISION: ACCEPT\nKIND: feature\nRISK: low\n\n- C1 (cmd): a line\n");
+  await fin(r, fid);
+  const lines: string[] = [];
+  const said = (l: string) => lines.push(l);
+  const { moveJob } = await import("./control.ts");
+  await moveJob(r, fid, "needs-human", { reason: "stuck", who: "orchestrator" });
+  assert.equal(await control.feedback(r, fid, "", said, { to: "second-look" }), 1);
+  assert.match(lines.join("\n"), /--to second-look is only for a check that was in its second look: use --to build/);
+  assert.notEqual(findJob(r, fid).stage, "second-look");
+  // The table refuses it too: needs-human → second-look only when the job came from there.
+  const { move, MoveRefused } = await import("./machine.ts");
+  assert.throws(() => move({ ...findJob(r, fid), stage: "needs-human", escalatedFrom: "build" }, "second-look"), MoveRefused);
+  // A check in its second look whose QA verdict can't be read: the agent can't fix that, a person sends it to QA.
+  const { id } = await intake(r, "check the list", CHECK(["list loads"]));
+  const verdict = {
+    verdict: "FAIL",
+    criteria: [{ id: "C1", result: "FAIL", evidence: ["c1.txt"], note: "500" }],
+    findings: [{ title: "List 500", seen: "500", expected: "200", severity: "high", repro: ["open /"], evidence: ["c1.txt"], criterion: "C1" }],
+  };
+  await checkQa(r, id, verdict, { "c1.txt": "500\n" });
+  assert.equal(findJob(r, id).stage, "second-look");
+  await open(r, id, "second-look");
+  // The second look can write in the job folder: a verdict changed after Kitchen accepted it goes to a person.
+  const vf = path.join(qaDir(jobDirOf(r, id), 1), "verdict.json");
+  fs.writeFileSync(vf, JSON.stringify({ ...verdict, findings: [{ ...verdict.findings[0], severity: "low" }] }));
+  assert.match(
+    (await fin(r, id)).line,
+    /second look: QA's verdict for round 1 changed after Kitchen accepted it \(kitchen feedback .* --to qa runs QA again\) → needs-human/,
+  );
+  const j = findJob(r, id);
+  // Escalated as from QA: Answer (feedback, no --to) runs QA again, never the refusing second look; --to second-look
+  // is refused.
+  assert.deepEqual([j.stage, j.escalatedFrom], ["needs-human", "qa"]);
+  lines.length = 0;
+  assert.equal(await control.feedback(r, id, "", said, { to: "second-look" }), 1);
+  assert.equal(await control.feedback(r, id, "the verdict is fixed", said), 0, lines.join("\n"));
+  assert.equal(findJob(r, id).stage, "qa");
+  // An unreadable verdict when the lane starts: the same, from QA.
+  await checkQa(r, id, verdict, { "c1.txt": "500\n" });
+  assert.equal(findJob(r, id).stage, "second-look");
+  fs.writeFileSync(path.join(qaDir(jobDirOf(r, id), findJob(r, id).round), "verdict.json"), "{ not json");
+  assert.match(String(((await start(r, id, "second-look")) as { refused: string }).refused), /→ needs-human: QA's verdict for round \d changed after/);
+  assert.deepEqual([findJob(r, id).stage, findJob(r, id).escalatedFrom], ["needs-human", "qa"]);
+  // Rejecting a check drops its checkout.
+  assert.equal(await control.reject(r, id, quiet), 0);
+  assert.equal(fs.existsSync(runWorktree(r, `check-${id}`)), false, "a rejected check leaves no checkout");
+});
+
+test("ADR 0031 upgrading from ADR 0029: a retry carried in carried.json is honoured as a retry's, adopted into job state; a pass that couldn't be carried is tested again", async () => {
+  const r = await repo();
+  const { id } = await intake(r, "check the list twice", CHECK(["list loads", "list sorts"]));
+  const dir = jobDirOf(r, id);
+  const mixed = {
+    verdict: "FAIL",
+    criteria: [
+      { id: "C1", result: "PASS", evidence: ["c1.txt"], note: "loads" },
+      { id: "C2", result: "NOT_RUN", why: "the seed has no todos", evidence: ["c2.txt"] },
+    ],
+  };
+  const { f } = await checkQa(r, id, mixed, { "c1.txt": "200\n", "c2.txt": "empty\n" });
+  assert.match(f.line, /QA couldn't test C2/);
+  // Turn it into a job ADR 0029 left mid-retry: its carry in carried.json, none in job state.
+  const jf = path.join(dir, "job.json");
+  const old = JSON.parse(fs.readFileSync(jf, "utf8"));
+  const carried = old.carried[0].rows;
+  delete old.carried;
+  fs.writeFileSync(jf, JSON.stringify(old));
+  fs.writeFileSync(path.join(qaDir(dir, 2), "carried.json"), JSON.stringify(carried));
+  const { f: done } = await checkQa(
+    r,
+    id,
+    { verdict: "PASS", criteria: [{ id: "C2", result: "PASS", evidence: ["c2.txt"], note: "sorted" }] },
+    { "c2.txt": "a, b\n" },
+  );
+  assert.match(done.line, /Checked on staging · 2 of 2 pass/);
+  const j = findJob(r, id);
+  assert.deepEqual(
+    j.carried?.map((c) => [c.round, c.from, c.ids, c.rows.map((x) => x.id)]),
+    [[2, 1, ["C2"], ["C1"]]],
+    "adopted once",
+  );
+  // Finished: the Report still shows the carried pass (from job state now).
+  assert.match(fs.readFileSync(path.join(dir, "report.html"), "utf8"), /<td>C1<\/td>[\s\S]*?class="ok">PASS/);
+  // A finished 0029 job never adopted (no state): the file is still read, as a retry's.
+  const fin2 = JSON.parse(fs.readFileSync(jf, "utf8"));
+  delete fin2.carried;
+  fs.writeFileSync(jf, JSON.stringify(fin2));
+  assert.deepEqual(
+    (await detail(r, id)).crit.map((c) => c.st),
+    ["ok", "ok"],
+  );
+});
+
+test("ADR 0031: the retry's brief names a pass that couldn't be carried, and doesn't say it stands", async () => {
+  const r = await repo();
+  const { id } = await intake(r, "check the list twice", CHECK(["list loads", "list sorts"]));
+  const mixed = {
+    verdict: "FAIL",
+    criteria: [
+      { id: "C1", result: "PASS", evidence: ["c1.txt"], note: "loads" },
+      { id: "C2", result: "NOT_RUN", why: "the seed has no todos", evidence: ["c2.txt"] },
+    ],
+  };
+  await checkQa(r, id, mixed, { "c1.txt": "200\n", "c2.txt": "empty\n" });
+  // As if C1's files had gone before Kitchen could copy them: the retry tests C1 too.
+  const jf = path.join(jobDirOf(r, id), "job.json");
+  const j = JSON.parse(fs.readFileSync(jf, "utf8"));
+  j.qaRetry.ids = ["C2", "C1"];
+  j.carried = [];
+  fs.writeFileSync(jf, JSON.stringify(j));
+  const s = await open(r, id, "qa");
+  const brief = fs.readFileSync(s.brief, "utf8");
+  assert.match(
+    brief,
+    /couldn't test C1 \(its evidence couldn't be carried\), C2 \(the seed has no todos\)|couldn't test C2 \(the seed has no todos\), C1 \(its evidence couldn't be carried\)/,
+  );
+  assert.doesNotMatch(brief, /C1 passed in round 1 and stands/);
 });
 
 const FEATURE = `# App file

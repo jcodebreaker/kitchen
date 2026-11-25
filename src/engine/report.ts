@@ -8,7 +8,7 @@ import { type Config, loadConfig } from "../config.ts";
 import { readMapChanges } from "../verify/admit.ts";
 import { checkLines, type FeatureLines, featureLines, testedLine, versionsLine } from "./checked.ts";
 import { failureOf } from "./diagnose.ts";
-import { criteriaOf, leftOutOf, qaDir, readQa, readReview, regressDir } from "./lanes.ts";
+import { causeLabel, consequential, criteriaOf, leftOutOf, qaDir, readQa, readReview, readSecondLook, regressDir, type SecondLook } from "./lanes.ts";
 import { isCheck, type Job, prOpen } from "./machine.ts";
 import { readMessages } from "./messages.ts";
 import { findJob, JOB_ID, jobDirOf, writeAtomic } from "./store.ts";
@@ -39,7 +39,7 @@ export function renderReport(repo: string, job: Job, o: { diff?: { p: string; a:
   const dir = jobDirOf(repo, job.id);
   const crit = criteriaOf(dir);
   const check = isCheck(job);
-  const qa = readQa(dir, job.round, crit, { check });
+  const qa = readQa(dir, job.round, crit, { check, job });
   const review = readReview(dir, job.round);
   const qd = qaDir(dir, job.round);
   let cfg: Config | null = null;
@@ -102,10 +102,19 @@ export function renderReport(repo: string, job: Job, o: { diff?: { p: string; a:
   if (job.mapSkipped)
     checks.push(`map update skipped: ${esc(job.mapSkipped)}. QA's map files are still in <code>rounds/*/qa/map/</code> of this job's folder.`);
   if (job.risk === "high" && !check) checks.push("High risk: read the diff yourself before you merge it anywhere else.");
-  // ADR 0028: what a check found, each proposed in the Inbox for the person to Run, Hold or set aside.
-  if ("findings" in qa && qa.findings.length)
+  // ADR 0028: what a check found, each proposed in the Inbox for the person to Run, Hold or set aside. ADR 0031 §5:
+  // a finding the second look didn't confirm is said apart and isn't proposed.
+  const looks = check && "findings" in qa ? secondLooks(dir, job, qa.findings) : [];
+  const unconfirmed = (n: number) => looks.some((l) => l.finding === n && !l.confirmed);
+  const found = "findings" in qa ? qa.findings.filter((_, i) => !unconfirmed(i + 1)) : [];
+  if (found.length)
     checks.push(
-      `Found ${qa.findings.length} problem${qa.findings.length === 1 ? "" : "s"}${job.check?.proposals?.length ? `, proposed in the Inbox as ${esc(job.check.proposals.join(", "))}` : ""}: ${qa.findings.map((f) => `<b>${esc(f.title)}</b>${f.criterion ? ` (${esc(f.criterion)})` : ""}: ${esc(f.seen)}`).join("; ")}`,
+      `Found ${found.length} problem${found.length === 1 ? "" : "s"}${job.check?.proposals?.length ? `, proposed in the Inbox as ${esc(job.check.proposals.join(", "))}` : ""}: ${found.map((f) => `<b>${esc(f.title)}</b>${f.criterion ? ` (${esc(f.criterion)})` : ""}: ${esc(f.seen)}`).join("; ")}`,
+    );
+  const notConfirmed = "findings" in qa ? qa.findings.filter((_, i) => unconfirmed(i + 1)) : [];
+  if (notConfirmed.length)
+    checks.push(
+      `Not confirmed on a second look, so not proposed: ${notConfirmed.map((f) => `<b>${esc(f.title)}</b>`).join("; ")}. Read why under Problems found.`,
     );
   if (job.check?.map) checks.push(esc(job.check.map));
   // ADR 0029 §6: the findings are kept; Kitchen proposes them again on the next wave (said once: the diagnosis above).
@@ -120,7 +129,12 @@ export function renderReport(repo: string, job: Job, o: { diff?: { p: string; a:
       const r = "criteria" in qa ? qa.criteria.find((x) => x.id === c.id) : undefined;
       // ADR 0029 §2: a criterion QA couldn't test is "not tested", with its why: never a fail.
       const not = r?.result === "NOT_RUN";
-      return `<tr><td>${esc(c.id)}</td><td>${esc(c.text)}<br><small>${esc(c.check)}</small></td><td class="${r?.result === "PASS" ? "ok" : not || (!r && unrun) ? "st" : "bad"}">${esc(not ? "not tested" : (r?.result ?? (unrun ? "" : "not checked")))}</td><td>${esc(not ? (r?.why ?? "") : (r?.note ?? ""))}${(r?.evidence ?? []).map((f) => evidenceHtml(qd, f, o.named)).join("")}</td></tr>`;
+      // ADR 0031 §4: the precondition the claim needs, and the evidence that it held.
+      const given = c.given ? `<br><small>given: ${esc(c.given)}</small>` : "";
+      const held = r?.given
+        ? `<p><small>${not ? "Given, read back" : "Given held"}${r.given.note ? `: ${esc(r.given.note)}` : ""}</small></p>${r.given.evidence.map((f) => evidenceHtml(qd, f, o.named)).join("")}`
+        : "";
+      return `<tr><td>${esc(c.id)}</td><td>${esc(c.text)}${given}<br><small>${esc(c.check)}</small></td><td class="${r?.result === "PASS" ? "ok" : not || (!r && unrun) ? "st" : "bad"}">${esc(not ? "not tested" : (r?.result ?? (unrun ? "" : "not checked")))}</td><td>${esc(not ? (r?.why ?? "") : (r?.note ?? ""))}${held}${(r?.evidence ?? []).map((f) => evidenceHtml(qd, f, o.named)).join("")}</td></tr>`;
     })
     .join("\n");
   const findings =
@@ -159,7 +173,7 @@ ${!check ? blockedHtml(qa, qd, o.named, fail?.kind === "app") : ""}
 ${drives(dir, job.round, o.named, fl?.none.filter((x) => fl.looked.includes(x)) ?? [])}
 ${
   check
-    ? findingsHtml(qa, qd, o.named)
+    ? findingsHtml(qa, qd, o.named, looks)
     : `<h2>Review</h2>${"summary" in review && review.summary ? `<p>${esc(review.summary)}</p>` : ""}${findings}
 <h2>What changed</h2>${diff}`
 }
@@ -179,17 +193,35 @@ function blockedHtml(qa: ReturnType<typeof readQa>, qd: string, named = false, s
   return `<h2>QA couldn't test it</h2><p>${esc(qa.blocked ?? "")}</p>${ev}<p class="st">The environment, not the change.</p>`;
 }
 
-/** ADR 0028: a check's problems, each as the proposed bug (what was seen, the repro, the evidence). */
-function findingsHtml(qa: ReturnType<typeof readQa>, qd: string, named = false): string {
+/**
+ * ADR 0028: a check's problems, each as the proposed bug (what was seen, the repro, the evidence). ADR 0031: Seen,
+ * Expected and the cause (suspected or confirmed) apart, and the second look's answer; an older finding is its seen.
+ */
+function findingsHtml(qa: ReturnType<typeof readQa>, qd: string, named = false, looks: SecondLook[] = []): string {
   if (!("findings" in qa)) return "";
   if (qa.blocked) return `<h2>The check couldn't run</h2><p class="st">${esc(qa.blocked)}</p>`;
   if (!qa.findings.length) return "<h2>Problems found</h2><p>None.</p>";
   return `<h2>Problems found</h2>${qa.findings
-    .map(
-      (f) =>
-        `<h3>${esc(f.title)}${f.criterion ? ` <small>(${esc(f.criterion)})</small>` : ""}</h3><p>${esc(f.seen)}</p><ol>${f.repro.map((s) => `<li>${esc(s)}</li>`).join("")}</ol>${f.evidence.map((e) => evidenceHtml(qd, e, named)).join("")}`,
-    )
+    .map((f, i) => {
+      const look = looks.find((l) => l.finding === i + 1);
+      const said = f.expected || f.cause;
+      const body = said
+        ? `<p><b>Seen</b>: ${esc(f.seen)}</p>${f.expected ? `<p><b>Expected</b>: ${esc(f.expected)}</p>` : ""}${f.cause ? `<p><b>${causeLabel(f)}</b>: ${esc(f.cause.text)}</p>${(f.cause.evidence ?? []).map((e) => evidenceHtml(qd, e, named)).join("")}` : ""}`
+        : `<p>${esc(f.seen)}</p>`;
+      const tag = look
+        ? `<p class="${look.confirmed ? "ok" : "st"}"><b>${look.confirmed ? "Confirmed on a second look" : "Not confirmed on a second look (not proposed)"}</b>: ${esc(look.note)}</p>`
+        : "";
+      return `<h3>${esc(f.title)}${f.criterion ? ` <small>(${esc(f.criterion)})</small>` : ""}${f.severity ? ` <small>· severity ${esc(f.severity)}</small>` : ""}</h3>${tag}${body}<ol>${f.repro.map((s) => `<li>${esc(s)}</li>`).join("")}</ol>${f.evidence.map((e) => evidenceHtml(qd, e, named)).join("")}`;
+    })
     .join("")}`;
+}
+
+/** ADR 0031 §5: the second look's answers for this round, or none (no second look, or it isn't written yet). */
+function secondLooks(dir: string, job: Job, findings: Parameters<typeof consequential>[0]): SecondLook[] {
+  const want = consequential(findings, job.risk);
+  if (!want.length) return [];
+  const l = readSecondLook(dir, job.round, want);
+  return Array.isArray(l) ? l : [];
 }
 
 function titleOf(repo: string, id: string): string | null {

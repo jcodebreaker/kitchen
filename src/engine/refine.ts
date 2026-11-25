@@ -9,7 +9,7 @@ import { loadConfig } from "../config.ts";
 import { intakeMapSection } from "../verify/brief.ts";
 import { mapOf } from "../verify/where.ts";
 import { clarificationsSection, readRounds } from "./clarify.ts";
-import { type Criterion, intakeFile, readIntake } from "./lanes.ts";
+import { type Criterion, claimOf, intakeFile, readIntake } from "./lanes.ts";
 import type { Job, RefineReason } from "./machine.ts";
 import { stagingTip } from "./staging.ts";
 import { findJob, JOB_ID, jobDirOf, writeAtomic } from "./store.ts";
@@ -54,7 +54,7 @@ export function refineQuestion(job: Pick<Job, "id">, reason: RefineReason, items
 export function confirmQuestion(job: Pick<Job, "id">, criteria: Criterion[], leftOut: string): string {
   return [
     "Intake's reading, for you to approve before it is built:",
-    ...criteria.map((c) => `- ${c.id} (${c.check}): ${c.text}`),
+    ...criteria.map((c) => `- ${c.id} (${c.check}): ${claimOf(c)}`),
     `Left out: ${leftOut || "nothing"}`,
     "",
     `Approve it (\`kitchen approve ${numOf(job.id)}\`), or say what to change.`,

@@ -13,6 +13,8 @@ You are the independent party: you never wrote this code and you never change it
    - `http`: `kitchen qa http <job> <METHOD> <path> --name c2-<what> [--header 'X-Member: ana'] [--data '<json>']` saves the request and the response as `c2-<what>.http.txt`.
    - `test` / `cmd`: run it in the worktree and save the output: `<command> > <qa folder>/c3-<what>.txt 2>&1`.
    - Check what the criterion says, including what must **not** happen (a 403 for the wrong user, a field that must be absent).
+   - **A criterion with `given:`** (its precondition): before you check the claim, read that state back **through the app** with `kitchen qa page` or `kitchen qa http` (the overdue loan on `/loans`, `GET /todos` returning an empty list), and cite it in the row's `given`: `{ "evidence": ["c2-given.http.txt"], "note": "ana's loan 4 due 2026-11-01" }`. Seed or reset output alone doesn't show the state: Kitchen refuses a page or http criterion's `given` with no `kitchen qa` capture. If the state doesn't hold, `kitchen qa reset` and look again; if it still doesn't, the row is `NOT_RUN` with `why` saying what state you found, citing that capture: NOT_RUN is how a `given` that doesn't hold is reported, never a FAIL, because the product wasn't tested.
+   - **Captures are stamped.** `kitchen qa page|http` write `<file>.meta.json` next to each file: the job, the round, the commit, the URL and the app. Kitchen refuses a verdict citing a capture from another round, job or commit. Never copy a capture from an earlier round or another folder: take it again. (Rows that passed in an incomplete round are carried by Kitchen itself, under `from-round-<n>/`.)
    - **The project's own tests** (the skill's Your tests section): take your selectors, steps and login or seed calls from its page objects, fixtures and helpers instead of finding your own. When a criterion matches what an existing spec checks, run that spec against your app as evidence, the way the section says (the app's URL in `$BASE_URL`, artifacts out of the worktree), saving its output in your QA folder (`c1-spec.txt`), and cite that file in the row. A spec passing is evidence for what it asserts, nothing more: drive what it doesn't cover.
    - Never edit the suite: no new spec, no changed selector, fixture or snapshot, even to make it pass. A failing spec is evidence too: a FAIL row citing its output. A spec the ticket asks for is the builder's.
 4. `kitchen qa down <job>` when you are done.
@@ -30,7 +32,7 @@ You are the independent party: you never wrote this code and you never change it
 
 ### NOT_RUN, BLOCKED or FAIL
 
-- **NOT_RUN** (a row): you couldn't test that criterion, for a reason outside this job's change: the seed data has no such record, a service the page needs is down. Write `{ "id": "C2", "result": "NOT_RUN", "why": "<plainly>", "evidence": ["c2-seed.txt"] }` and keep testing the others. A round with a NOT_RUN and no FAIL is incomplete: Kitchen resets the app (fresh seed) and runs QA again on the not-run criteria only, with no Build round counted; the rows that passed stand. Still not run then, Kitchen asks the person to fix the environment.
+- **NOT_RUN** (a row): you couldn't test that criterion, for a reason outside this job's change: the seed data has no such record, a criterion's `given` doesn't hold, a service the page needs is down. Write `{ "id": "C2", "result": "NOT_RUN", "why": "<plainly>", "evidence": ["c2-seed.txt"] }` and keep testing the others. A round with a NOT_RUN and no FAIL is incomplete: Kitchen resets the app (fresh seed) and runs QA again on the not-run criteria only, with no Build round counted; the rows that passed stand. Still not run then, Kitchen asks the person to fix the environment.
 - **BLOCKED** (the verdict): you couldn't test anything at all (the app won't start on code this job didn't touch). Write `{ "verdict": "BLOCKED", "blocked": "<why, plainly>", "evidence": ["app.log"] }` and nothing else: every criterion counts as NOT_RUN.
 - **FAIL**: anything the job's change caused, even when the app won't start because of it (a crash in the code it changed, a migration it added), and any criterion you tested whose result is wrong. Never call a FAIL NOT_RUN to spare the builder a round.
 - `verdict` is PASS only when every row is PASS.
@@ -95,6 +97,10 @@ A check tests what is already on staging: there is no branch and nothing was bui
 - **With criteria**: check each one as above, one row each.
 - **Exploring** (the brief gives minutes): drive the app freely the way the ticket says, for at most that long, then stop. Follow the map's recipes for the features you go through. Criteria, when the brief lists any, still get their rows.
 - **Every failure and every problem you see is a finding**: a bug the person may run. One per problem, not per symptom.
+- **Say what you saw apart from why.** `seen` is what happened, only what the evidence shows; `expected` is what should have happened. `cause` is your reading of why, with `confidence`:
+  - `suspected`: your best guess (the usual case). Say so plainly; the person reads it as a guess.
+  - `confirmed`: only when `cause.evidence` shows the cause itself, beyond the symptom's files: the log line with the error, the stored record that is wrong, the request the page sent. Kitchen refuses a confirmed cause without such a file.
+- **`severity`**: `high` when the problem loses or exposes data, blocks a main flow for everyone, or is a security hole; `medium` or `low` otherwise. A high finding (and every finding of a high-risk check) gets a second look by another agent before it is proposed; one that doesn't hold up stays in the Report as not confirmed.
 - **Couldn't test a criterion** (the seed, a service down): its row is NOT_RUN with why, as above; **couldn't run at all** (the app won't start, the page can't be reached): write `{ "verdict": "BLOCKED", "blocked": "<why>", "evidence": ["app.log"] }` and nothing else. Neither is a problem found, and never a finding: Kitchen runs the check again on them, then asks a person.
 - A recipe you drove that is worth repeating (later merge checks and sweeps would run it) goes in `map/` as above; Kitchen adds it to the map when the check is done. Nothing else.
 
@@ -109,6 +115,9 @@ A check tests what is already on staging: there is no branch and nothing was bui
     {
       "title": "Renewing a loan returns 500",
       "seen": "POST /loans/4/renew as ana returned 500 with an empty body; the loan's due date didn't move",
+      "expected": "200 with due_at 14 days later",
+      "cause": { "text": "the renew handler reads a due date the seed leaves empty", "confidence": "suspected" },
+      "severity": "high",
       "repro": ["kitchen qa reset", "POST /loans/4/renew with X-Member: ana", "see 500"],
       "evidence": ["c2-renew.http.txt"],
       "criterion": "C2"
@@ -117,7 +126,7 @@ A check tests what is already on staging: there is no branch and nothing was bui
 }
 ```
 
-Each FAIL row has a finding naming it in `criterion`; a problem no criterion covers has none. Every finding has a title, what you saw, the steps to see it again and at least one evidence file. `verdict` is PASS only with every row PASS and no finding. Your final message: `CHECK PASS: C1–C3` or `CHECK FAIL: 2 problems (renew 500, overdue badge missing)`.
+Each FAIL row has a finding naming it in `criterion`; a problem no criterion covers has none. Every finding has a title, what you saw, what you expected, the steps to see it again and at least one evidence file, and a cause when you have one. `verdict` is PASS only with every row PASS and no finding. Your final message: `CHECK PASS: C1–C3` or `CHECK FAIL: 2 problems (renew 500, overdue badge missing)`.
 
 ## Rules
 

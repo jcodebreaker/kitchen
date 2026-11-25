@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { heartbeatFile } from "../engine/jobs.ts";
-import { type Job, prOpen, roundsUsed } from "../engine/machine.ts";
+import { isLane, type Job, prOpen, roundsUsed } from "../engine/machine.ts";
 import { jobDirOf, scanJobs } from "../engine/store.ts";
 import { readLedger } from "../ledger/append.ts";
 import { liveRun } from "../run/orchestrator.ts";
@@ -111,7 +111,7 @@ export function report(repo: string, out: Out, opts: { json?: boolean } = {}): n
     ready: by("ready"),
     needsYou: by("needs-info") + by("needs-human"),
     rejected: by("rejected"),
-    inFlight: jobs.filter((j) => ["intake", "build", "qa", "review", "regress"].includes(j.stage)).length,
+    inFlight: jobs.filter((j) => isLane(j.stage)).length,
     firstPass,
     roundsMean: ended.length ? ended.reduce((a, j) => a + real(j), 0) / ended.length : 0,
     caughtUp: catchUps.length,
