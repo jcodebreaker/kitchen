@@ -1,5 +1,5 @@
 // ADR 0026: the branches the New ticket sheet offers as a target ("Into"), for GET /branches.json. Asked for only when
-// the sheet opens, never on the poll. Local branches, and origin's for a GitHub forge (a target must exist there);
+// the sheet opens, never on the poll. Local branches and origin's (a branch only on origin gets a local copy when a ticket names it);
 // not the default (the page lists it first), not Kitchen's own (job branches, the old evidence branch), and not the
 // base, main or master when Kitchen merges.
 import { type Config, loadConfig, protectedTarget } from "../config.ts";
@@ -14,7 +14,7 @@ const OLD_EVIDENCE = "kitchen-evidence";
 export function targetChoices(cfg: Pick<Config, "staging" | "forge">, refs: string[]): string[] {
   const out = new Set<string>();
   for (const r of refs) {
-    const name = r.startsWith("refs/heads/") ? r.slice(11) : r.startsWith("refs/remotes/origin/") && cfg.forge.kind === "github" ? r.slice(20) : null;
+    const name = r.startsWith("refs/heads/") ? r.slice(11) : r.startsWith("refs/remotes/origin/") ? r.slice(20) : null;
     if (!name || name === "HEAD" || name === cfg.staging.branch || name.startsWith("kitchen/") || name === OLD_EVIDENCE) continue;
     if (cfg.staging.merge === "kitchen" && protectedTarget(cfg, name)) continue;
     out.add(name);

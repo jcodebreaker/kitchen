@@ -254,6 +254,11 @@ async function main(argv: string[]): Promise<number> {
       if (v("every") !== undefined) {
         if (!check) throw new Error('--every files a check on a timer: kitchen ticket --check --every day "<what to check>"');
         const { scheduleCheck } = await import("./inbox/schedule.ts");
+        // A target a ticket couldn't take installs no schedule either.
+        if (v("into") && v("every") !== "off") {
+          const why = await (await import("./engine/staging.ts")).refuseTarget(repo, (await import("./config.ts")).loadConfig(repo), v("into") as string);
+          if (why) throw new Error(why);
+        }
         for (const l of scheduleCheck(repo, import.meta.filename, f.pos.join(" "), v("every") as string, {}, v("into"))) out(l);
         return 0;
       }

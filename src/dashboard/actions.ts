@@ -103,7 +103,7 @@ export const ACTIONS: Record<string, (repo: string, b: Body, out: Out) => Promis
   pause: (repo, b, out) => control.pause(repo, idOf(b), out),
   stop: (repo, b, out) => control.stop(repo, idOf(b), out),
   resume: (repo, b, out) => control.resume(repo, idOf(b), out),
-  ticket: (repo, b, out) => {
+  ticket: async (repo, b, out) => {
     const t = textOf(b);
     if (!t.trim()) throw new BadRequest("text: what you want done");
     // ADR 0026: `into`, the branch it merges into (absent: staging).
@@ -118,9 +118,11 @@ export const ACTIONS: Record<string, (repo: string, b: Body, out: Out) => Promis
       } catch (e) {
         throw new BadRequest((e as Error).message);
       }
-      for (const l of scheduleCheck(repo, CLI, t, b.every as string, {}, into)) out(l);
     }
-    return control.ticket(repo, t, out, { into, check: b.check === true });
+    // The schedule is installed only once the ticket is filed (a refused target installs nothing).
+    const code = await control.ticket(repo, t, out, { into, check: b.check === true });
+    if (code === 0 && b.every) for (const l of scheduleCheck(repo, CLI, t, b.every as string, {}, into)) out(l);
+    return code;
   },
   /** ADR 0022: Collect, `kitchen collect --detach`; the page follows it in /inbox.json. */
   collect: (repo, _b, out) => {

@@ -1677,16 +1677,18 @@ async function oEditSave(id){const t=$("#oTt").value.trim(),x=$("#oTx").value.tr
 /* The Into choices: the default first (value "": the job keeps no target), then the branches /branches.json lists. */
 function intoFill(bs){const x=$("#shInto"),v=x.value;x.innerHTML=[`<option value="">${esc(DEF())} (default)</option>`,...bs.filter(b=>b!==DEF()).map(b=>`<option value="${esc(b)}">${esc(b)}</option>`)].join("");if(bs.includes(v))x.value=v}
 let kind="auto";
-const SUB={auto:$("#shSub").innerHTML,check:()=>`Kitchen tests it on ${esc(DEF())} and reports back. Nothing is built or merged; problems it finds come to your Inbox.`};
+const SUB={auto:$("#shSub").innerHTML,check:()=>`Kitchen tests it on ${esc($("#shInto").value||DEF())} and reports back. Nothing is built or merged; problems it finds come to your Inbox.`};
 const PHT={auto:$("#shT").placeholder,check:"What should Kitchen check? “Go through checkout as a signed-out visitor”…"};
 function setKind(k){kind=k;const c=k==="check";$("#kAuto").classList.toggle("on",!c);$("#kChk").classList.toggle("on",c);$("#kAuto").setAttribute("aria-checked",String(!c));$("#kChk").setAttribute("aria-checked",String(c));
-  $("#shIntoL").hidden=c;$("#shRepL").hidden=!c;$("#shSub").innerHTML=c?SUB.check():SUB.auto;$("#shT").placeholder=PHT[k]}
+  $("#shIntoL").firstChild.textContent=c?"On":"Into";$("#shInto").setAttribute("aria-label",c?"Check on branch":"Merge into branch");$("#shRepL").hidden=!c;$("#shSub").innerHTML=c?SUB.check():SUB.auto;$("#shT").placeholder=PHT[k]}
 function sheet(on=true){const s=$("#sheet");s.classList.toggle("on",on);if(on){const t=$("#shT");t.value="";setKind("auto");$("#shRep").value="";intoFill([]);const g=gen;getJSON(BASE+"/branches.json").then(d=>{if(g===gen&&s.classList.contains("on"))intoFill(d.branches||[])}).catch(()=>{});growSh();setTimeout(()=>t.focus(),20)}}
 function growSh(){const t=$("#shT");t.style.height="auto";t.style.height=Math.min(320,Math.max(110,t.scrollHeight))+"px"}
-async function fileTicket(){const t=$("#shT").value.trim();if(!t){const f=$("#shF");f.classList.remove("nope");void f.offsetWidth;f.classList.add("nope");$("#shT").focus();return}
-  const ck=kind==="check",into=ck?"":$("#shInto").value,ev=ck?$("#shRep").value:"";const r=await post("ticket",ck?(ev?{text:t,check:true,every:ev}:{text:t,check:true}):into?{text:t,into}:{text:t});if(!r.ok){toast(said(r.lines)||"Not filed");return}
+let filing=false;
+async function fileTicket(){if(filing)return;const t=$("#shT").value.trim();if(!t){const f=$("#shF");f.classList.remove("nope");void f.offsetWidth;f.classList.add("nope");$("#shT").focus();return}
+  const ck=kind==="check",into=$("#shInto").value,ev=ck?$("#shRep").value:"";const fb=$("#shF").querySelector("button[type=submit]");filing=true;fb.disabled=true;let r;try{r=await post("ticket",{text:t,...(into?{into}:{}),...(ck?{check:true}:{}),...(ev?{every:ev}:{})})}finally{filing=false;fb.disabled=false}if(!r.ok){toast(said(r.lines)||"Not filed");return}
   const id=(/(?:ticket|check)\s+(\d{3,}-[\w-]+)/.exec(r.lines.join("\n"))||[])[1];
-  sheet(false);if(id)just.add(id);refreshSoon();setTimeout(bumpRunning,320);toast(id?`Filed as ${num(id)}${ck?(ev?", a "+EVERY[ev].toLowerCase()+" check":", a check"):into?" into "+into:""}: the intake agent is reading it`:"Filed: the intake agent is reading it",id?"Open":null,()=>openJob(id))}
+  sheet(false);if(id)just.add(id);refreshSoon();setTimeout(bumpRunning,320);toast(id?`Filed as ${num(id)}${ck?(ev?", a "+EVERY[ev].toLowerCase()+" check":", a check")+(into?" on "+into:""):into?" into "+into:""}: the intake agent is reading it`:"Filed: the intake agent is reading it",id?"Open":null,()=>openJob(id))}
+$("#shInto").addEventListener("change",()=>{if(kind==="check")$("#shSub").innerHTML=SUB.check()});
 $("#shF").addEventListener("submit",e=>{e.preventDefault();fileTicket()});
 $("#shT").addEventListener("input",growSh);
 $("#shT").addEventListener("keydown",e=>{if(e.key==="Enter"&&(e.metaKey||e.ctrlKey)){e.preventDefault();fileTicket()}else if(e.key==="Escape"){e.preventDefault();sheet(false)}});
