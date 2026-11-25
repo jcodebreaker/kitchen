@@ -5,6 +5,7 @@
 // itself is stopped (SIGTERM, SIGINT, SIGHUP: a closed terminal); then Kitchen re-raises the signal and exits too, so
 // Ctrl-C ends the whole command. Anything a lane agent started by hand (`npm run dev &`) goes with the group.
 import { spawn } from "node:child_process";
+import { type Owner, ownerAlive, sameProcess } from "../lock.ts";
 
 /** How long a session may live after its final line. */
 export const SESSION_GRACE_MS = 10_000;
@@ -124,4 +125,27 @@ export async function runAgentSession(
   await end();
   // Ended by Kitchen after a final line that said it finished well: no failure. An error result stays non-zero.
   return { ...r, ...(final && ok && killed && r.code !== 0 && r.error === undefined ? { code: 0 } : {}), ...(child.pid ? { pid: child.pid } : {}) };
+}
+
+/**
+ * ADR 0030: end a session's group from outside it (`kitchen run --stop`, `kitchen stop`, a gone run's lane) only while
+ * the pid is positively that session (sameProcess: its stored start matches; never a bare pid, which may be reused).
+ * SIGTERM now; the caller waits while the group lives, up to KILL_AFTER_MS, then SIGKILL. `ended`; `gone` (nothing to
+ * end); `unconfirmed`: a live pid that may be it but can't be confirmed (a start an earlier Kitchen stored): left alone.
+ */
+export async function endGroup(s: Owner): Promise<"ended" | "gone" | "unconfirmed"> {
+  if (!ownerAlive(s)) return "gone";
+  if (!sameProcess(s)) return "unconfirmed";
+  const group = (sig: NodeJS.Signals | 0) => {
+    try {
+      process.kill(-s.pid, sig);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  if (!group("SIGTERM")) return "gone";
+  for (let t = 0; t < KILL_AFTER_MS && group(0); t += 100) await new Promise((r) => setTimeout(r, 100));
+  group("SIGKILL");
+  return "ended";
 }

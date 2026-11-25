@@ -8,13 +8,14 @@ import { type Config, LANE_ROLES, loadConfig, modelFor, targetOf } from "../conf
 import { readControl } from "../engine/control.ts";
 import { type FailKind, failureOf } from "../engine/diagnose.ts";
 import { diffSize } from "../engine/git.ts";
-import { heartbeatFile, syncPrs } from "../engine/jobs.ts";
+import { heartbeatFile, IN_SESSION_MS, syncPrs } from "../engine/jobs.ts";
 import { claimOf, criteriaOf, leftOutOf, readIntake, readQa, readReview } from "../engine/lanes.ts";
 import { BY_YOU_STOPPED, isActive, isCheck, type Job, PR_OPEN_WORDS, pausedByYou, prOpen, promotable, type Stage } from "../engine/machine.ts";
 import { type Plan, planWave } from "../engine/plan.ts";
 import { JOB_ID, jobDirOf, scanJobs } from "../engine/store.ts";
 import { type Kept, listKept } from "../inbox/schedule.ts";
 import { type LedgerLine, readLedger } from "../ledger/append.ts";
+import { ownerAlive } from "../lock.ts";
 import { liveRun } from "../run/orchestrator.ts";
 import { activityOf, type Ev } from "./activity.ts";
 
@@ -296,6 +297,8 @@ export type JobCard = {
   live: Ev | null;
   /** A lane agent works on it now (a lane is open and an orchestrator is alive). */
   runnerOn: boolean;
+  /** ADR 0030 §3: its lane session ended and Kitchen hasn't finished the lane yet. */
+  finishing: boolean;
   /** ADR 0029 §3: what it waits for while no agent works on it (a free lane, a job on its AFTER: line, an orchestrator); else null. */
   waiting: string | null;
   files: FileStat[];
@@ -381,16 +384,23 @@ export type Snapshot = {
   corrupt: string[];
 };
 
+/** ADR 0030 §3: the lane's session (one `kitchen run` started) is over, and the lane not finished yet. */
+export const finishing = (j: Pick<Job, "running">, alive: (o: { pid: number; start: string | null }) => boolean = ownerAlive): boolean => {
+  const s = j.running?.session;
+  return !!s && !s.pending && (!!s.ended || !alive(s));
+};
+
 /** The orchestrator: `kitchen run`'s session, or an in-session one seen in the last 15 minutes. */
 export function orchestrator(repo: string, now = Date.now()): { running: boolean; text: string } {
   const r = liveRun(repo);
   if (r) return { running: true, text: `kitchen run, pid ${r.pid}` };
   try {
-    const h = JSON.parse(fs.readFileSync(heartbeatFile(repo), "utf8")) as { at: string; drained?: boolean };
+    const h = JSON.parse(fs.readFileSync(heartbeatFile(repo), "utf8")) as { at: string; drained?: boolean; by?: string };
     const ago = (now - Date.parse(h.at)) / 1000;
     const when = ago < 90 ? `${Math.round(ago)}s` : `${Math.round(ago / 60)} min`;
     if (h.drained) return { running: false, text: `idle: the last orchestrator drained the queue ${when} ago` };
-    if (ago < 900) return { running: true, text: `an orchestrator session (/kitchen run), last wave ${when} ago` };
+    // ADR 0030 §3: `kitchen run`'s own plans say nothing once it is gone (run.json says whether it lives).
+    if (h.by !== "run" && ago * 1000 < IN_SESSION_MS) return { running: true, text: `an orchestrator session (/kitchen run), last wave ${when} ago` };
     return { running: false, text: `not running (last seen ${when} ago)` };
   } catch {
     return { running: false, text: "not running" };
@@ -407,6 +417,8 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
   } catch {}
   const lines = readLedger(repo);
   const lastLine = new Map<string, LedgerLine>();
+  /** ADR 0030 §4: each job's lane sessions' spend. */
+  const spent = new Map<string, number>();
   const moves = new Map<string, LedgerLine[]>();
   /** ADR 0018: catch-ups per job; a card counts only real rounds. */
   const catchUps = new Map<string, number>();
@@ -414,11 +426,13 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
   const qaAgain = new Map<string, number>();
   for (const l of lines) {
     lastLine.set(l.job, l);
+    if (typeof l.usd === "number") spent.set(l.job, (spent.get(l.job) ?? 0) + l.usd);
     if (l.event === "move") moves.set(l.job, [...(moves.get(l.job) ?? []), l].slice(-2));
     if (l.event === "move" && l.detail?.catchUp) catchUps.set(l.job, (catchUps.get(l.job) ?? 0) + 1);
     if (l.event === "move" && l.stage === "qa" && l.result === "qa") qaAgain.set(l.job, (qaAgain.get(l.job) ?? 0) + 1);
   }
   const orch = orchestrator(repo, now);
+  const run = liveRun(repo);
   // ADR 0029 §3: the wave plan `kitchen job next` would make, for why a job waits.
   const all = scanJobs(repo);
   const open = all.flatMap((e) => (e.job && JOB_ID.test(e.job.id) && !e.job.archived ? [e.job] : []));
@@ -468,7 +482,7 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
       verdict: "criteria" in qaNow ? qaNow.verdict : null,
       criteria: crit.filter((c) => c.st !== "wait").map((c) => ({ id: c.id, result: c.st === "ok" ? "PASS" : c.st === "skip" ? "NOT_RUN" : "FAIL" })),
       review,
-      usd: 0,
+      usd: spent.get(j.id) ?? 0,
       secs: Math.max(0, Math.round((end - Date.parse(j.startedAt)) / 1000)),
       startedAt: j.startedAt,
       updatedAt: j.updatedAt,
@@ -493,6 +507,8 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
       pausedBy: pausedByYou(j) ? (j.pausedReason === BY_YOU_STOPPED ? "stop" : "pause") : null,
       live: (cur && fs.existsSync(cur) ? activityOf(cur, [j.worktree, repo]) : []).at(-1) ?? null,
       runnerOn: !!j.running && orch.running,
+      // ADR 0030 §3: only while the run that would finish it lives; after --stop the lane waits for the next run.
+      finishing: !!run && finishing(j),
       waiting: isActive(j.stage) && !(j.running && orch.running) ? waitingOf(j.id, plan, { parallel: cfg?.parallel ?? 1, orchestrator: orch.running }) : null,
       files: await changesOf(j, now),
       doneAt: j.doneAt ?? null,

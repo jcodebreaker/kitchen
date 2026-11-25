@@ -1,16 +1,15 @@
 // QA's tools against a real (tiny) app: started from kitchen.yaml's app.start on a free port, an HTTP transcript,
-// a Playwright screenshot of a page with its text, then stopped. And `kitchen run`'s headless command.
+// a Playwright screenshot of a page with its text, then stopped.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, test } from "vitest";
-import { loadConfig, parseConfig } from "../config.ts";
+import { loadConfig } from "../config.ts";
 import * as control from "../engine/control.ts";
 import { qaDir, readMeta } from "../engine/lanes.ts";
 import { findJob, jobDirOf } from "../engine/store.ts";
-import { orchestratorCommand, scrubbedEnv, streamLine } from "../run/orchestrator.ts";
 import {
   appDown,
   appEnv,
@@ -108,28 +107,6 @@ test("qa reset: down, app.reset, up again on a fresh process; without app.reset 
   assert.match(lines.at(-1) ?? "", /no app\.reset: the data is what earlier checks left/);
   assert.equal(resets(), before + 1, "nothing to reset with");
   await appDown(root, id);
-});
-
-test("kitchen run: a headless claude -p running the /kitchen skill, its tools allowed up front, no GitHub token handed over", () => {
-  const cfg = parseConfig("agent: { max_usd: 12 }\n");
-  const argv = orchestratorCommand(root, cfg, { bin: "/opt/claude" });
-  assert.deepEqual(argv.slice(0, 3), ["/opt/claude", "-p", "/kitchen:kitchen run"]);
-  assert.ok(argv.includes("--allowedTools") && argv[argv.indexOf("--allowedTools") + 1].includes("Agent"));
-  assert.deepEqual(argv.slice(-2), ["--max-budget-usd", "12"]);
-  fs.mkdirSync(path.join(root, ".claude", "skills", "kitchen"), { recursive: true });
-  fs.writeFileSync(path.join(root, ".claude", "skills", "kitchen", "SKILL.md"), "x");
-  assert.equal(orchestratorCommand(root, cfg, { bin: "c" })[2], "/kitchen run", "the repo's own copy of the skill");
-  const env = scrubbedEnv({ GH_TOKEN: "g", GITHUB_TOKEN: "h", PATH: "/bin", ANTHROPIC_API_KEY: "k" });
-  assert.deepEqual([env.GH_TOKEN, env.GITHUB_TOKEN, env.PATH, env.ANTHROPIC_API_KEY, env.KITCHEN_ORCHESTRATOR], [undefined, undefined, "/bin", "k", "1"]);
-  assert.equal(
-    streamLine(JSON.stringify({ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "Wave 1: 001 intake" }] } })),
-    "Wave 1: 001 intake",
-  );
-  assert.equal(
-    streamLine(JSON.stringify({ type: "assistant", parent_tool_use_id: "x", message: { content: [{ type: "text", text: "a lane agent" }] } })),
-    null,
-  );
-  assert.match(String(streamLine(JSON.stringify({ type: "result", total_cost_usd: 1.5, result: "done" }))), /finished · \$1\.50: done/);
 });
 
 test("ADR 0021 §4: a compose app runs in its job's own project; qa down brings it down (env and commands only, no Docker)", async () => {

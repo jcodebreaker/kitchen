@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# kitchen-hooks-version: 2  (ADR 0030: kitchen run refreshes an older installed copy, never a newer one)
 """PreToolUse(Bash) guard: never delete files outside the project.
 
 Denies `rm`, `rmdir`, `unlink`, `find ... -delete` / `find ... -exec rm`, and `git clean`

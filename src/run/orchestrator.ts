@@ -1,19 +1,17 @@
-// `kitchen run` (ADR 0016 §1): a thin wrapper that starts a headless orchestrator session, for people who aren't in
-// Claude Code. The session is `claude -p "/kitchen:kitchen run"` (the plugin's skill; `/kitchen run` when the repo has
-// the skill installed itself), with every tool it needs allowed up front: a headless session can't ask. The guard
-// hooks in .claude/settings.json still run on every tool call, the session's own and its lane agents'.
+// `kitchen run` (ADR 0016 §1, ADR 0030): Kitchen works the queue itself. A Node scheduler (src/run/scheduler.ts) plans
+// each wave and starts one headless agent session per lane (`claude -p`, or `codex exec` with agent.tool: codex),
+// finishing each lane the moment its session ends. Every tool a lane needs is allowed up front (a headless session
+// can't ask); the guard hooks in .claude/settings.json still run on every tool call.
 //
 // Agents keep a scrubbed environment: no GitHub token in it (Kitchen's merge into staging uses gh's stored login).
-// One orchestrator per repo: .kitchen/run.json names it while it lives; `kitchen run --stop` ends it.
-import { spawn, spawnSync } from "node:child_process";
+// One run per repo: .kitchen/run.json names it while it lives; `kitchen run --stop` ends it and every lane.
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { claudeBin } from "../agents/find-bin.ts";
-import { runAgentSession } from "../agents/session.ts";
+import { endGroup } from "../agents/session.ts";
 import { type Config, loadConfig } from "../config.ts";
-import { kitchenDir, writeAtomic } from "../engine/store.ts";
-import { appendLedger } from "../ledger/append.ts";
-import { ownerAlive, processStart } from "../lock.ts";
+import { kitchenDir, listJobs, writeAtomic } from "../engine/store.ts";
+import { lockOwner, ownerAlive, processStart, sameProcess, tryFileLock, unconfirmed } from "../lock.ts";
 
 export type Out = (l: string) => void;
 /** `tool`: ADR 0032 §2, the tool and the version its preflight printed ("claude 2.1.400"), when it printed one. */
@@ -21,8 +19,10 @@ type RunInfo = { pid: number; start: string | null; at: string; log: string; com
 
 export const runFile = (repo: string) => path.join(kitchenDir(repo), "run.json");
 export const runLog = (repo: string) => path.join(kitchenDir(repo), "run.log");
-/** The tools the orchestrator and its lane agents use. Anything else is refused (a headless session can't ask). */
-export const ALLOWED_TOOLS = ["Bash", "Read", "Edit", "MultiEdit", "Write", "Glob", "Grep", "Agent", "Task", "Skill", "TodoWrite", "NotebookEdit"];
+/** ADR 0030 §5: held by the one `kitchen run` scheduler of a repo, for its life. */
+export const runLock = (repo: string) => path.join(kitchenDir(repo), "run.lock");
+/** ADR 0030 §5: how long `--detach` waits for its child to take the run lock. */
+const DETACH_WAIT_MS = 5_000;
 /** Never handed to the session: Kitchen's own git and gh calls use the person's stored logins. */
 export const SCRUBBED = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "GITHUB_PAT", "NPM_TOKEN"];
 
@@ -38,25 +38,29 @@ export function olderThan(a: string, b: string): boolean {
 }
 
 /**
- * ADR 0025 §3: before a run, `<bin> --version`: why not to start (the binary isn't there, or it is older than
- * MIN_CLAUDE), or null. A wrapper that prints no version is let through.
+ * ADR 0025 §3: before a run, `<bin> --version`: why not to start (the binary isn't there, or, for Claude Code, it is
+ * older than MIN_CLAUDE), or null. A wrapper that prints no version is let through.
  */
-export function preflight(bin: string[], o: { command?: boolean; seen?: (version: string) => void } = { command: true }): string | null {
+export function preflight(
+  bin: string[],
+  o: { command?: boolean; tool?: Config["agent"]["tool"]; seen?: (version: string) => void } = { command: true },
+): string | null {
   const name = bin.join(" ");
   const r = spawnSync(bin[0], [...bin.slice(1), "--version"], { encoding: "utf8", timeout: 30_000, env: scrubbedEnv() });
   if (r.error)
     return (r.error as NodeJS.ErrnoException).code === "ENOENT"
       ? o.command
         ? `agent.command ${name} not found`
-        : `Claude Code not found (${name}): install it, or name it in kitchen.yaml's agent.command`
+        : `${o.tool === "codex" ? "Codex" : "Claude Code"} not found (${name}): install it, or name it in kitchen.yaml's agent.command`
       : `${name} --version failed: ${r.error.message}`;
   if (r.status !== 0) return `${name} --version failed (exit ${r.status ?? r.signal}): ${`${r.stderr}${r.stdout}`.trim().split("\n").pop() ?? ""}`;
   const v = /(\d+\.\d+\.\d+)/.exec(r.stdout)?.[1];
   if (v) o.seen?.(v);
+  if (o.tool === "codex") return null;
   return v && olderThan(v, MIN_CLAUDE) ? `Claude Code ${v} is older than Kitchen needs (${MIN_CLAUDE}). Update it: claude update` : null;
 }
 
-/** The live orchestrator started by `kitchen run`, or null. */
+/** The live `kitchen run` (the scheduler process), or null. */
 export function liveRun(repo: string): RunInfo | null {
   try {
     const r = JSON.parse(fs.readFileSync(runFile(repo), "utf8")) as RunInfo;
@@ -66,39 +70,11 @@ export function liveRun(repo: string): RunInfo | null {
   }
 }
 
-/** How the session names Kitchen's skill: the repo's own copy (`/kitchen`) or the plugin's (`/kitchen:kitchen`). */
-export function skillCommand(repo: string): string {
-  return fs.existsSync(path.join(repo, ".claude", "skills", "kitchen", "SKILL.md")) ? "/kitchen run" : "/kitchen:kitchen run";
-}
-
-/** The agent's argv prefix: agent.command, else the claude binary. */
-export const agentBin = (cfg: Config, bin?: string): string[] => cfg.agent.command ?? [bin ?? claudeBin()];
-
-/** Pure: the headless command (argv). */
-export function orchestratorCommand(repo: string, cfg: Config, o: { bin?: string; maxUsd?: number } = {}): string[] {
-  const bin = agentBin(cfg, o.bin);
-  const usd = o.maxUsd ?? cfg.agent.max_usd;
-  return [
-    ...bin,
-    "-p",
-    skillCommand(repo),
-    "--permission-mode",
-    "acceptEdits",
-    "--allowedTools",
-    ALLOWED_TOOLS.join(","),
-    "--output-format",
-    "stream-json",
-    "--verbose",
-    ...(usd ? ["--max-budget-usd", String(usd)] : []),
-  ];
-}
-
 export function scrubbedEnv(parent: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const env = { ...parent };
   for (const k of SCRUBBED) delete env[k];
-  // A headless `claude -p` ends when its turn ends and, by default, kills lane agents still running in the background
-  // 10 minutes later: a long Build lane was cut off mid-job. 0 = wait for them however long they take.
-  return { ...env, KITCHEN_ORCHESTRATOR: "1", CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: "0" };
+  // A session Kitchen started: a `kitchen run` inside it refuses, and a verb inside it wakes no other run.
+  return { ...env, KITCHEN_ORCHESTRATOR: "1" };
 }
 
 /** The session's spend, from its result line (what the dashboard's cost shows), or null. Pure. */
@@ -111,75 +87,71 @@ export function sessionCost(line: string): number | null {
   }
 }
 
-/** A line of the session's stream worth printing: the orchestrator's own words, and how it ended. Pure. */
-export function streamLine(line: string): string | null {
-  try {
-    const e = JSON.parse(line) as {
-      type?: string;
-      parent_tool_use_id?: string | null;
-      message?: { content?: { type: string; text?: string }[] };
-      result?: string;
-      total_cost_usd?: number;
-      is_error?: boolean;
-    };
-    if (e.type === "assistant" && !e.parent_tool_use_id)
-      return (
-        e.message?.content
-          ?.filter((c) => c.type === "text" && c.text?.trim())
-          .map((c) => (c.text as string).trim())
-          .join("\n") || null
-      );
-    if (e.type === "result")
-      return `orchestrator ${e.is_error ? "stopped with an error" : "finished"}${e.total_cost_usd !== undefined ? ` · $${e.total_cost_usd.toFixed(2)}` : ""}${e.result ? `: ${String(e.result).slice(0, 500)}` : ""}`;
-  } catch {}
-  return null;
-}
-
 export async function run(
   repo: string,
-  o: { detach?: boolean; stop?: boolean; print?: boolean; maxUsd?: number; cli?: string; graceMs?: number },
+  o: { detach?: boolean; stop?: boolean; print?: boolean; maxUsd?: number; cli?: string; graceMs?: number; pollMs?: number },
   out: Out,
 ): Promise<number> {
   if (o.stop) return stopRun(repo, out);
   const cfg = loadConfig(repo);
-  if (cfg.agent.tool !== "claude" && !cfg.agent.command) {
-    out("kitchen run starts a headless Claude Code session; with Codex, open Codex in this repo and ask it to run the Kitchen queue (/kitchen run).");
-    return 2;
-  }
-  const argv = orchestratorCommand(repo, cfg, { maxUsd: o.maxUsd });
+  const sched = await import("./scheduler.ts");
   if (o.print) {
-    out(argv.map((a) => (/^[\w./:,=-]+$/.test(a) ? a : `'${a.replace(/'/g, "'\\''")}'`)).join(" "));
+    for (const l of sched.laneCommands(cfg, o.maxUsd ?? cfg.agent.max_usd)) out(l);
     return 0;
   }
-  // Inside the session `kitchen run` started (it sets KITCHEN_ORCHESTRATOR), that session is the orchestrator:
-  // starting another would find itself "already running" and the agent would stop working the queue.
+  // Inside a session Kitchen started (it sets KITCHEN_ORCHESTRATOR), a second run would find itself "already running".
   if (process.env.KITCHEN_ORCHESTRATOR) {
     out(
-      "kitchen run: this session is the orchestrator already. Don't start another: work the queue with `kitchen job next --json --restart-stranded` (the /kitchen skill, Running the queue).",
+      "kitchen run: this session was started by Kitchen. Don't start another run: a lane agent does its brief; an orchestrator session works the queue with `kitchen job next --json --restart-stranded` (the /kitchen skill, Running the queue).",
     );
     return 2;
   }
-  const live = liveRun(repo);
-  // The session follows the repo's copy of the kitchen skill: one from an older Kitchen sends it astray.
-  if (!live) {
-    const files = await import("../init/files.ts");
-    for (const f of files.refreshSkill(repo)) out(`updated ${f} to this Kitchen's version`);
-    const ignored = files.addGitignore(repo);
-    if (ignored.length) out(`added to .gitignore: ${ignored.join(", ")}`);
-    // ADR 0027: kitchen.yaml gets verify.skill and verify.map when it lacks them; an ignored map moves to this machine.
-    for (const l of await (await import("../verify/where.ts")).settleMap(repo)) out(l);
-  }
-  if (live) {
-    out(`orchestrator: already running (pid ${live.pid}, log ${live.log})`);
+  // ADR 0030 §5: one run per repo, decided first by an exclusive lock the scheduler holds for its life (two runs
+  // started together would both start the same lanes). A detaching parent only looks; its child takes the lock.
+  fs.mkdirSync(kitchenDir(repo), { recursive: true });
+  const already = (pid?: number) => {
+    const live = liveRun(repo);
+    out(`orchestrator: already running (pid ${live?.pid ?? pid ?? "?"}${live ? `, log ${live.log}` : ""})`);
     return 0;
+  };
+  if (o.detach) {
+    const owner = lockOwner(runLock(repo));
+    return owner ? already(owner.pid) : work(repo, cfg, sched, o, out);
   }
+  const lock = tryFileLock(runLock(repo));
+  if ("heldBy" in lock) return already(lock.heldBy.pid || undefined);
+  const info: RunInfo = { pid: process.pid, start: processStart(process.pid), at: new Date().toISOString(), log: runLog(repo), command: process.argv };
+  writeAtomic(runFile(repo), JSON.stringify(info));
+  try {
+    return await work(repo, cfg, sched, o, out);
+  } finally {
+    try {
+      if ((JSON.parse(fs.readFileSync(runFile(repo), "utf8")) as RunInfo).pid === process.pid) fs.rmSync(runFile(repo));
+    } catch {}
+    lock.release();
+  }
+}
+
+async function work(
+  repo: string,
+  cfg: Config,
+  sched: typeof import("./scheduler.ts"),
+  o: { detach?: boolean; maxUsd?: number; cli?: string; graceMs?: number; pollMs?: number; detachWaitMs?: number },
+  out: Out,
+): Promise<number> {
+  // A session the person opens follows the repo's copy of the kitchen skill: keep it this Kitchen's version.
+  const files = await import("../init/files.ts");
+  for (const f of [...files.refreshSkill(repo), ...(await import("../init/hooks.ts")).refreshHooks(repo)]) out(`updated ${f} to this Kitchen's version`);
+  const ignored = files.addGitignore(repo);
+  if (ignored.length) out(`added to .gitignore: ${ignored.join(", ")}`);
+  // ADR 0027: kitchen.yaml gets verify.skill and verify.map when it lacks them; an ignored map moves to this machine.
+  for (const l of await (await import("../verify/where.ts")).settleMap(repo)) out(l);
+  // ADR 0032 §2: the tool and the version its preflight printed go into run.json (`kitchen` reports read it).
   let toolVersion: string | undefined;
-  if (cfg.agent.tool === "claude") {
-    const no = preflight(agentBin(cfg), { command: !!cfg.agent.command, seen: (v) => (toolVersion = `claude ${v}`) });
-    if (no) {
-      out(`kitchen run: ${no}. Nothing started.`);
-      return 2;
-    }
+  const no = preflight(sched.toolBin(cfg), { command: !!cfg.agent.command, tool: cfg.agent.tool, seen: (v) => (toolVersion = `${cfg.agent.tool} ${v}`) });
+  if (no) {
+    out(`kitchen run: ${no}. Nothing started.`);
+    return 2;
   }
   // ADR 0033 §3 and ADR 0029 §4: what the project declares it needs (kitchen.yaml requires:) and the browser QA
   // uses, settled before any lane finds them missing; by the session itself, never in a detaching parent (a wake):
@@ -197,7 +169,6 @@ export async function run(
       return 2;
     }
   }
-  fs.mkdirSync(kitchenDir(repo), { recursive: true });
   const log = runLog(repo);
   if (o.detach) {
     const fd = fs.openSync(log, "a");
@@ -210,72 +181,88 @@ export async function run(
         repo,
         ...(o.maxUsd ? ["--max-usd", String(o.maxUsd)] : []),
       ],
-      {
-        cwd: repo,
-        detached: true,
-        stdio: ["ignore", fd, fd],
-        env: process.env,
-      },
+      { cwd: repo, detached: true, stdio: ["ignore", fd, fd], env: process.env },
     );
+    const from = fs.fstatSync(fd).size;
+    let exited: number | null = null;
+    child.on("exit", (c) => (exited = c ?? 1));
     child.on("error", (e) => out(`orchestrator: could not start: ${e.message}`));
     child.unref();
     fs.closeSync(fd);
-    out(`orchestrator detached: pid ${child.pid}, log ${log}`);
-    return 0;
+    // ADR 0030 §5: the child takes the run lock; wait for it (or for the child to say why it didn't), up to DETACH_WAIT_MS.
+    for (let t = 0; t < (o.detachWaitMs ?? DETACH_WAIT_MS) && exited === null && lockOwner(runLock(repo))?.pid !== child.pid; t += 100)
+      await new Promise((r) => setTimeout(r, 100));
+    if (lockOwner(runLock(repo))?.pid === child.pid || exited === null) {
+      out(`orchestrator detached: pid ${child.pid}, log ${log}`);
+      return 0;
+    }
+    const said = fs
+      .readFileSync(log, "utf8")
+      .slice(from)
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean);
+    const busy = said.find((l) => l.startsWith("orchestrator: already running"));
+    if (busy) {
+      out(busy);
+      return 0;
+    }
+    out(`orchestrator: the detached run stopped at once (exit ${exited}): ${said.at(-1) ?? "no output"} (log ${log})`);
+    return exited || 1;
   }
   // ADR 0029 §5: no app left from a run before this one.
   for (const l of await (await import("../qa/app.ts")).sweepApps(repo).catch(() => [] as string[])) out(l);
-  // The raw stream, for debugging one session: this session's, and the one before it (run.prev.jsonl). Nothing reads
-  // it, so it never grows past two sessions.
-  const raw = path.join(kitchenDir(repo), "run.jsonl");
-  if (fs.existsSync(raw)) fs.renameSync(raw, path.join(kitchenDir(repo), "run.prev.jsonl"));
-  const stream = fs.createWriteStream(raw);
-  let info: RunInfo | null = null;
-  // ADR 0029 §5: its own process group, ended after its result line (or when `kitchen run` is stopped).
-  const r = await runAgentSession(argv, {
-    cwd: repo,
-    env: scrubbedEnv(),
-    graceMs: o.graceMs,
-    onStart: (pid) => {
-      info = { pid, start: processStart(pid), at: new Date().toISOString(), log, command: argv, ...(toolVersion ? { tool: toolVersion } : {}) };
-      writeAtomic(runFile(repo), JSON.stringify(info));
-      out(`orchestrator: ${argv.slice(0, 3).join(" ")} … (pid ${pid}); the dashboard shows the jobs: kitchen dashboard`);
-    },
-    onStdout: (d) => stream.write(d),
-    onStderr: (d) => process.stderr.write(d),
-    onLine: (line) => {
-      const usd = sessionCost(line);
-      if (usd !== null && info) appendLedger(repo, { job: "-", stage: "run", round: 0, event: "session", key: `run/${info.pid}/${info.at}`, usd });
-      const l = streamLine(line);
-      if (l) out(l);
-    },
-  });
-  stream.end();
-  // A binary that went missing after the preflight: say so, and end like a failed session.
-  if (r.error) out(`orchestrator: could not start ${argv[0]}: ${r.error}`);
-  try {
-    if ((JSON.parse(fs.readFileSync(runFile(repo), "utf8")) as RunInfo).pid === r.pid) fs.rmSync(runFile(repo));
-  } catch {}
-  return r.code;
+  if (toolVersion) {
+    const info = JSON.parse(fs.readFileSync(runFile(repo), "utf8")) as RunInfo;
+    if (info.pid === process.pid) writeAtomic(runFile(repo), JSON.stringify({ ...info, tool: toolVersion }));
+  }
+  out(
+    `orchestrator: kitchen run (pid ${process.pid}) starts one ${cfg.agent.tool === "codex" ? "codex exec" : "claude -p"} session per lane; the dashboard shows the jobs: kitchen dashboard`,
+  );
+  return sched.schedule(repo, { maxUsd: o.maxUsd, graceMs: o.graceMs, pollMs: o.pollMs }, out);
 }
 
-async function stopRun(repo: string, out: Out): Promise<number> {
+/** The process group `pid` is in, or null. */
+function groupOf(pid: number): number | null {
+  try {
+    const g = Number(execFileSync("ps", ["-o", "pgid=", "-p", String(pid)], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim());
+    return Number.isInteger(g) && g > 0 ? g : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * ADR 0030 §5: the run first (it ends its lanes' groups and marks nothing finished), then any lane group still alive,
+ * read from each job's open lane, so the lanes of a run that is gone end too. A run that leads its own group (a
+ * detached one, or an orchestrator session from before ADR 0030) is ended with its group.
+ */
+async function stopRun(repo: string, out: Out, waitMs = 10_000): Promise<number> {
   const live = liveRun(repo);
-  if (!live) {
+  const open = () => listJobs(repo).flatMap((j) => (j.running?.session && !j.running.session.ended && ownerAlive(j.running.session) ? [j] : []));
+  const lanes = open().map((j) => `${j.id} ${j.running?.lane}`);
+  if (live) {
+    // ADR 0030: killed only when positively that run (a start an earlier Kitchen stored may not be judged).
+    if (!sameProcess(live)) {
+      out(`orchestrator: ${unconfirmed(live.pid, "Kitchen's run")}`);
+      return 1;
+    }
+    try {
+      process.kill(groupOf(live.pid) === live.pid ? -live.pid : live.pid, "SIGTERM");
+    } catch (e) {
+      out(`orchestrator: could not stop pid ${live.pid}: ${(e as Error).message}`);
+      return 1;
+    }
+    for (let t = 0; t < waitMs && ownerAlive(live); t += 100) await new Promise((r) => setTimeout(r, 100));
+  }
+  const ends = await Promise.all(open().map(async (j) => [j, j.running?.session ? await endGroup(j.running.session) : "gone"] as const));
+  for (const [j, e] of ends)
+    if (e === "unconfirmed" && j.running?.session) out(`${j.id}  ${unconfirmed(j.running.session.pid, `its ${j.running.lane} agent`)}`);
+  if (!live && !lanes.length) {
     out("orchestrator: not running");
     return 0;
   }
-  try {
-    // ADR 0029 §5: the session's whole group (it leads it), else the session alone (one started before groups).
-    try {
-      process.kill(-live.pid, "SIGTERM");
-    } catch {
-      process.kill(live.pid, "SIGTERM");
-    }
-  } catch (e) {
-    out(`orchestrator: could not stop pid ${live.pid}: ${(e as Error).message}`);
-    return 1;
-  }
-  out(`orchestrator: asked pid ${live.pid} to stop (its jobs keep their state; kitchen run picks them up again)`);
+  const ended = lanes.length ? `; ended ${lanes.length} lane${lanes.length === 1 ? "" : "s"} (${lanes.join(", ")})` : "";
+  out(`orchestrator: ${live ? `asked pid ${live.pid} to stop` : "not running"}${ended} (their jobs keep their state; kitchen run starts them again)`);
   return 0;
 }

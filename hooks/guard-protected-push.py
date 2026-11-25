@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# kitchen-hooks-version: 2  (ADR 0030: kitchen run refreshes an older installed copy, never a newer one)
 """Kitchen guard (PreToolUse Bash): no push to the base branch or main.
 
 On by default (ADR 0016 §5): Kitchen merges passing jobs into staging itself (kitchen job finish), and main and the

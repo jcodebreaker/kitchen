@@ -13,9 +13,10 @@
 //   The folder and the branch stay: restore shows it again. Intake's checkout of the base goes too (ADR 0025 §1).
 import fs from "node:fs";
 import path from "node:path";
+import { endGroup } from "../agents/session.ts";
 import { loadConfig } from "../config.ts";
 import { appendLedger } from "../ledger/append.ts";
-import { withFileLock } from "../lock.ts";
+import { unconfirmed, withFileLock } from "../lock.ts";
 import { PromptSource } from "../sources/prompt.ts";
 import { recordAnswers } from "./clarify.ts";
 import { readIntake } from "./lanes.ts";
@@ -195,6 +196,15 @@ export async function pause(repo: string, ref: string, out: Out): Promise<number
   return 0;
 }
 
+/**
+ * ADR 0030: the lane session `kitchen run` started for this job ends now. Called after the lane is closed, so the
+ * run's finish finds no lane open and drops the result.
+ */
+async function endLane(job: Job, out: Out) {
+  const s = job.running?.session;
+  if (s && !s.ended && (await endGroup(s)) === "unconfirmed") out(`${job.id}  ${unconfirmed(s.pid, `its ${job.running?.lane} agent`)}`);
+}
+
 export async function stop(repo: string, ref: string, out: Out): Promise<number> {
   const job = findJob(repo, ref);
   if (!isActive(job.stage)) {
@@ -204,6 +214,7 @@ export async function stop(repo: string, ref: string, out: Out): Promise<number>
   await clearControl(repo, job.id);
   const was = job.running?.lane;
   await moveJob(repo, job.id, "paused", { reason: BY_YOU_STOPPED, who: "person" });
+  await endLane(job, out);
   out(`${job.id}  stopped${was ? ` (the ${was} agent's result will be dropped)` : ""}`);
   return 0;
 }
@@ -418,6 +429,7 @@ export async function remove(repo: string, ref: string, out: Out): Promise<numbe
       return j;
     });
   else await moveJob(repo, job.id, "rejected", { reason: "removed by you", who: "person", patch: archive });
+  await endLane(job, out);
   appendLedger(repo, { job: job.id, stage: job.stage, round: job.round, event: "remove", key: `${job.id}/remove/${now}`, detail: { who: "person" } });
   let gone = "";
   if (!merged) {

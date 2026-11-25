@@ -936,7 +936,7 @@ async function pollDetail(){
   }
   setTimeout(pollDetail,1500);
 }
-function sigOf(j){return [JSON.stringify(j.waits),JSON.stringify(j.pull),j.target,j.checking?[j.checking.cmd,j.checking.at,j.checking.last,j.checking.setup,j.checking.of].join("~"):"",j.check?j.check.proposalsFailed:"",j.waiting,j.state,j.phase,j.stage,j.lane,j.round,j.q,j.diag?[j.diag.what,j.diag.line,j.diag.next].join("~"):"",j.pausedBy,j.title,j.report,j.files.length,j.runnerOn,j.movedAt,j.failed,j.risk,j.proof,fresh.has(j.id),expanded===j.id].join("|")}
+function sigOf(j){return [JSON.stringify(j.waits),JSON.stringify(j.pull),j.target,j.checking?[j.checking.cmd,j.checking.at,j.checking.last,j.checking.setup,j.checking.of].join("~"):"",j.check?j.check.proposalsFailed:"",j.waiting,j.state,j.phase,j.stage,j.lane,j.round,j.q,j.diag?[j.diag.what,j.diag.line,j.diag.next].join("~"):"",j.pausedBy,j.title,j.report,j.files.length,j.runnerOn,j.finishing,j.movedAt,j.failed,j.risk,j.proof,fresh.has(j.id),expanded===j.id].join("|")}
 function paint(before){
   paintStale();
   const order0=[...before.keys()].join(),order1=jobs.map(j=>j.id).join();
@@ -971,6 +971,8 @@ function evHTML(e,uid,anim){
    The card and the row say it in their live line; the panel's step adds where the log is. */
 /* ADR 0029 §3: what a job with no agent on it waits for, as the engine's wave plan says; card and panel share it. */
 const waitTxt=j=>j.waiting||"Waiting for the orchestrator (kitchen run)";
+/* ADR 0030 §3: the lane's agent is done; Kitchen reads what it left and moves the job. */
+const FINISHING="Finishing";
 /* ADR 0029 §4: `kitchen qa up`'s setup step (setup: true) reads as the step itself; the health wait adds its limit. */
 const ckHTML=(j,two)=>{const c=j.checking,t=`<span class="num" data-ck="${esc(c.at)}">${fmtL(elapsed(c.at))}</span>`,h=c.setup?`<span class="vb">${esc(c.cmd)}</span> · ${t}${c.of?` of ${fmtL(c.of)}`:""}`:`<span class="vb">Checks</span> · <code title="${esc(c.cmd)}">${esc(c.cmd)}</code> · ${t}`;
   return two?`<span class="ckh">${h}</span>${c.last?`<span class="ckl">${esc(c.last)}</span>`:""}`:h+(c.last?`<span class="dot">·</span><span class="ckl">${esc(c.last)}</span>`:"")};
@@ -980,6 +982,7 @@ function liveHTML(j){
   if(j.state==="paused") return h+`<span>${j.pausedBy==="stop"?"Stopped by you":j.pausedBy?"Paused by you":"Waiting: "+esc(j.reason||j.paused||"")}</span>`;
   if(j.checking) return h+ckHTML(j,false);
   if(!j.runnerOn) return h+`<span>${esc(waitTxt(j))}</span>`;
+  if(j.finishing) return h+`<span class="shim">${FINISHING}</span>`;
   if(!j.agent&&!j.live) return h+`<span class="shim">${esc(j.step&&j.step.split(" · ").pop()||"Working")}</span>`;
   return h+liveEv(j);
 }
@@ -1091,6 +1094,7 @@ function evLine(j){
   if(j.state==="paused")return j.pausedBy?"Paused by you":"Waiting: "+esc(j.reason||j.paused||"");
   if(j.checking)return ckHTML(j,true);
   if(!j.runnerOn)return esc(waitTxt(j));
+  if(j.finishing)return `<span class="shim">${FINISHING}</span>`;
   if(!j.agent&&!j.live)return `<span class="shim">${esc(j.step&&j.step.split(" · ").pop()||"Working")}</span>`;
   return evOf(j);
 }
@@ -1156,7 +1160,7 @@ function renderCounts(){
   $("#sum").hidden=!you.length;$("#sum").textContent=nyou;
   renderOCounts();$("#sYou").textContent=you.length||"";$("#nYouI").innerHTML=you.length?S.you:S.wait; /* orange only when something needs you */$("#sRun").textContent=run.length||"";{const q=queueWords(!!snap.runner.running,run);$("#sRunN").textContent=q.group;$("#nRunI").innerHTML=q.busy?SB.run:S.wait}$("#sDone").textContent=done.length||"";
   $("#wsName").textContent=snap.repo;const allYou=you.length+otherYou();document.title=(allYou?`(${allYou}) `:"")+"Kitchen · "+snap.repo;
-  $("#tCost").textContent="$"+snap.usdToday.toFixed(2)+" today";$("#tCost").title="$"+snap.usdToday.toFixed(2)+" today, $"+snap.usdTotal.toFixed(2)+" in all, by kitchen run's orchestrator sessions (an in-session /kitchen run is billed to that session)";
+  $("#tCost").textContent="$"+snap.usdToday.toFixed(2)+" today";$("#tCost").title="$"+snap.usdToday.toFixed(2)+" today, $"+snap.usdTotal.toFixed(2)+" in all, by the lane sessions kitchen run started (an in-session /kitchen run is billed to that session)";
   $("#foot").innerHTML=`${modelLine()}Orchestrator: ${esc(snap.runner.text)}${snap.runner.running?"":`. Jobs move only while <span class="mono">kitchen run</span> (or <span class="mono">/kitchen run</span> in Claude Code) works the queue.`}${snap.corrupt.length?` · Unreadable job folders: ${esc(snap.corrupt.join(", "))}`:""}`;
 }
 function replaceRow(j){if(!j)return;const n=$("#rw-"+CSS.escape(j.id));if(n)keepFocus(()=>{n.outerHTML=view==="board"?cardHTML(j):rowHTML(j);just.delete(j.id);sigs[j.id]=sigOf(j);grow()})}

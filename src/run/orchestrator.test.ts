@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, test } from "vitest";
 import { loadConfig } from "../config.ts";
+import * as control from "../engine/control.ts";
 import { browserNeeded } from "../qa/app.ts";
 import { MIN_CLAUDE, olderThan, preflight, run } from "./orchestrator.ts";
 import { wake } from "./wake.ts";
@@ -82,16 +83,18 @@ test("wake: starts one when none works the queue; says so on the verb's line; --
   }
 });
 
-test("ADR 0029 §5: the session runs in its own group; after its result line, what its agents left running ends with it", async () => {
+test("ADR 0029 §5: a lane session runs in its own group; after its result line, what it left running ends with it", async () => {
   const r = path.join(root, "group");
   fs.mkdirSync(r);
   execFileSync("git", ["-C", r, "init", "-q"]);
-  // A stand-in session: a lane agent's `npm run dev &` (a sleep), the final result line, then it exits.
+  execFileSync("git", ["-C", r, "-c", "user.name=t", "-c", "user.email=t@x", "commit", "-q", "--allow-empty", "-m", "base"]);
+  // ADR 0030: a stand-in lane session: an `npm run dev &` (a sleep), the final result line, then it exits.
   const agent = standIn(
     "session",
-    `[ "$1" = "--version" ] && { echo "9.9.9 (Claude Code)"; exit 0; }\nsleep 600 &\necho $! > left.pid\necho '{"type":"result","total_cost_usd":0,"result":"drained"}'`,
+    `[ "$1" = "--version" ] && { echo "9.9.9 (Claude Code)"; exit 0; }\nsleep 600 &\necho $! > left.pid\necho '{"type":"result","total_cost_usd":0,"result":"no files"}'`,
   );
   fs.writeFileSync(path.join(r, "kitchen.yaml"), `agent: { command: ["${agent}"] }\n`);
+  await control.ticket(r, "a ticket", () => {});
   const lines: string[] = [];
   const was = process.env.KITCHEN_ORCHESTRATOR;
   delete process.env.KITCHEN_ORCHESTRATOR;
@@ -100,7 +103,7 @@ test("ADR 0029 §5: the session runs in its own group; after its result line, wh
   } finally {
     if (was !== undefined) process.env.KITCHEN_ORCHESTRATOR = was;
   }
-  assert.match(lines.join("\n"), /orchestrator finished · \$0\.00: drained/);
+  assert.match(lines.join("\n"), /intake agent: no files\n.*intake again \(try 2 of 3\)/);
   // ADR 0029 §4: no app and no page criterion: the browser isn't needed, so this run never depends on it.
   assert.equal(browserNeeded(r, loadConfig(r)), false);
   const left = Number(fs.readFileSync(path.join(r, "left.pid"), "utf8"));

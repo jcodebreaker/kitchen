@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# kitchen-hooks-version: 2  (ADR 0030: kitchen run refreshes an older installed copy, never a newer one)
 """Kitchen hook (PreToolUse and PostToolUse, every tool): a lane agent's live activity for the dashboard.
 
 Each tool call a lane agent makes (a subagent bound to a Kitchen job, see kitchen_jobs.py) is appended to the
@@ -14,7 +15,7 @@ import sys
 
 sys.dont_write_bytecode = True  # no __pycache__ beside the hooks in the person's repo
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from kitchen_jobs import bound_job, project_dir  # noqa: E402
+from kitchen_jobs import bound_job, lane_session, project_dir  # noqa: E402
 
 CAP = 20000
 
@@ -42,6 +43,9 @@ def short(resp):
 
 def main():
     try:
+        # ADR 0030: a lane session `kitchen run` started: Kitchen writes its whole stream there itself.
+        if lane_session():
+            return
         payload = json.loads(sys.stdin.read() or "{}")
         repo = project_dir(payload)
         job_id, job = bound_job(payload, repo)

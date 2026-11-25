@@ -70,6 +70,37 @@ export function mergeHooks(have: Settings, add: Record<string, Entry[]> = KITCHE
 
 export type HooksResult = { scripts: number; added: number; backup: string | null };
 
+/** ADR 0030: the `# kitchen-hooks-version: N` line in a hook script; 0 for one from before it. */
+export function hooksVersion(text: string): number {
+  return Number(/^# kitchen-hooks-version: (\d+)/m.exec(text)?.[1] ?? 0);
+}
+
+/** ADR 0030: where refreshHooks keeps the scripts it replaced (under .kitchen/, which git ignores). */
+export const hooksBackupDir = (repo: string) => path.join(repo, ".kitchen", "hooks-backup");
+
+/**
+ * ADR 0030: the installed hook scripts brought to this Kitchen's version (a lane session is bound by KITCHEN_JOB, which
+ * older scripts don't read). Only where `kitchen init` installed them, and only a script older than this Kitchen's
+ * (by its version line): a teammate on an older Kitchen never undoes a newer one, nor the other way round. Each
+ * script replaced is kept in .kitchen/hooks-backup/. settings.json is left alone. The ones rewritten.
+ */
+export function refreshHooks(repo: string, now = new Date()): string[] {
+  const dir = path.join(repo, HOOKS_DIR);
+  if (!fs.existsSync(dir)) return [];
+  return HOOK_SCRIPTS.filter((s) => {
+    const src = fs.readFileSync(path.join(HOOKS_SRC, s));
+    const dst = path.join(dir, s);
+    if (fs.existsSync(dst)) {
+      const have = fs.readFileSync(dst);
+      if (hooksVersion(have.toString("utf8")) >= hooksVersion(src.toString("utf8"))) return false;
+      fs.mkdirSync(hooksBackupDir(repo), { recursive: true });
+      fs.writeFileSync(path.join(hooksBackupDir(repo), `${s}.${now.toISOString().replace(/[:.]/g, "-")}`), have);
+    }
+    fs.writeFileSync(dst, src, { mode: 0o755 });
+    return true;
+  }).map((s) => path.join(HOOKS_DIR, s));
+}
+
 /** Copy the scripts and merge the settings. Idempotent: a second run copies the same bytes and adds nothing. */
 export function installHooks(repo: string, now = new Date()): HooksResult {
   const dir = path.join(repo, HOOKS_DIR);

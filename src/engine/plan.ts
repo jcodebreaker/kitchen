@@ -44,7 +44,10 @@ export function waitsFor(b: Job, a: Job, target: (j: Job) => string = () => ""):
   return (b.after ?? []).some((x) => num(x) === num(a.id));
 }
 
-export function planWave(jobs: Job[], o: { parallel: number; restartStranded?: boolean; paused?: Set<string>; target?: (j: Job) => string }): Plan {
+export function planWave(
+  jobs: Job[],
+  o: { parallel: number; restartStranded?: boolean | ((j: Job) => boolean); paused?: Set<string>; target?: (j: Job) => string },
+): Plan {
   const plan: Plan = { start: [], running: [], held: [], you: [], drained: false };
   const cands: { j: Job; restart?: boolean }[] = [];
   for (const j of jobs) {
@@ -58,7 +61,8 @@ export function planWave(jobs: Job[], o: { parallel: number; restartStranded?: b
     else if (j.stage === "build" && isCheck(j))
       plan.you.push({ id: j.id, stage: j.stage, why: "a check never builds: kitchen feedback it to qa, or file the change as its own ticket" });
     else if (isLane(j.stage)) {
-      if (j.running && !o.restartStranded) plan.running.push({ id: j.id, lane: j.running.lane, since: j.running.at });
+      if (j.running && !(typeof o.restartStranded === "function" ? o.restartStranded(j) : o.restartStranded))
+        plan.running.push({ id: j.id, lane: j.running.lane, since: j.running.at });
       else cands.push({ j, restart: j.running ? true : undefined });
     }
   }

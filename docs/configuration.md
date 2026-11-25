@@ -5,7 +5,7 @@ ignored, and `kitchen init` names them). The schema is `src/config.ts` (`ConfigS
 
 ```yaml
 version: 1
-agent: { tool: claude, max_usd: 20 }          # max_usd: kitchen run's spend cap
+agent: { tool: claude, max_usd: 20 }          # max_usd: kitchen run's budget, summed over its lane sessions
 round_limit: 3                                 # Build → QA → Review rounds before a person is asked
 parallel: 4                                    # lane agents at once
 checks:                                        # Kitchen runs them after Build and on staging before a merge
@@ -24,10 +24,10 @@ forge: { kind: github, repo: you/your-repo }   # merge into staging through a PR
 | `models.intake` / `builder` / `qa` / `reviewer` | strong / strong / medium / medium | the model each lane's agent runs on: a tier, or a model name. The regress lane and the verify sweep and maintain runs use `qa`'s; a collect's triage uses `intake`'s. These flat keys are the active tool's profile |
 | `models.claude` / `models.codex` | none | ADR 0023: one profile per tool, the same four keys; switching `agent.tool` keeps each tool's choices, and a tool's own profile wins over the flat keys. `kitchen models` lists each lane's model and the choices; `kitchen models set <lane> <model>` (or the dashboard's orchestrator line) writes here |
 | `intake.confirm` | false | true: every job intake accepts waits under Needs you with its criteria and what it left out; `kitchen approve <id>` (or Approve on the dashboard) sends it to Build, `kitchen feedback <id> "…"` back to intake with your edit (ADR 0020) |
-| `agent.tool` | claude | the orchestrator's tool (`kitchen run` starts Claude Code) |
-| `agent.command` | `claude` on PATH | the argv prefix `kitchen run` starts |
+| `agent.tool` | claude | the tool `kitchen run` starts for each lane: `claude -p`, or `codex exec --json` (ADR 0030) |
+| `agent.command` | `claude` (or `codex`) on PATH | the argv prefix of each lane session `kitchen run` starts |
 | `agent.models` | opus / sonnet / haiku | what `strong` / `medium` / `cheap` mean |
-| `agent.max_usd` | none | `kitchen run`'s `--max-budget-usd` |
+| `agent.max_usd` | none | `kitchen run`'s budget: nothing new starts once its lane sessions spent it; each Claude lane gets what is left as `--max-budget-usd` |
 | `checks` | [] | shell commands, run in the job's worktree from its root; a string or `{ name, run, timeout_sec, when, needs_app }` |
 | `checks[].when` | `build` | `build`: after every Build round and on the trial merge into staging. `merge`: only on the trial merge, before it lands (an end-to-end suite: slow, once per merge is the gate that matters). A red `merge` check sends the job back to Build as a round, even when staging moved (it never ran on the branch alone, so Kitchen can't tell staging caused it). `kitchen init` writes your e2e suite this way (ADR 0021) |
 | `checks[].needs_app` | false | `when: merge` only: Kitchen starts the app from the trial merge's folder first, as `kitchen qa up` does (`app.reset`, a free port, the health check), runs the check with the app's URL in `$BASE_URL`, `$PLAYWRIGHT_BASE_URL` and `$CYPRESS_BASE_URL`, and always stops the app after. Your suite's config reads one of them (Playwright: `use: { baseURL: process.env.BASE_URL }`; Cypress reads `CYPRESS_BASE_URL` itself) |
@@ -63,6 +63,6 @@ verify:
 
 `kitchen init` sets both from git: `local` when the repo ignores `.claude/` (it says so once), or when a `verify-*` skill is there but not committed (it warns you to commit it, and switches back to `repo` on the next `kitchen run` once a commit has it). A kitchen.yaml without them gets them on the next `kitchen run`. In `local` mode Kitchen copies the skill into each job's worktree, trial merge and verify run, and writes QA's map updates back to `.kitchen/verify/skill/`; nothing under `.claude/` is committed. A map update that can't be written or committed never holds a change back: the job moves on and its line and Report say `map update skipped: <reason>`. `kitchen init` writes it from `app:` (start, reset, health), the handles it finds in your page code and your end-to-end suite (its **Your tests** section: where the specs are, their page objects, fixtures and login or seed helpers, how to run one spec); edit it freely. Which features a merge drives comes from each feature file's `Code:` line, and `staging.auto_merge: false` also leaves `kitchen verify maintain`'s branch for you to merge.
 
-Environment: `KITCHEN_CLAUDE_BIN` (the `claude` binary `kitchen run` starts), `KITCHEN_GH_BIN` (the `gh` Kitchen's
+Environment: `KITCHEN_CLAUDE_BIN` / `KITCHEN_CODEX_BIN` (the binary `kitchen run` starts for each lane), `KITCHEN_GH_BIN` (the `gh` Kitchen's
 merge uses), `KITCHEN_PROTECTED_BRANCHES` (more branches the push guard protects), `KITCHEN_ALLOW_PROTECTED_PUSH=1`
 (turns the push guard off for one Claude Code session: a person's own).

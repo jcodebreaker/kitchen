@@ -1,6 +1,8 @@
 // Kitchen's git: plain `git -C <dir>` calls. Agents never push; Kitchen pushes only job branches (and, on GitHub,
 // merges into staging through the PR). Nothing here ever pushes to or updates the base branch or main.
 import { execFile } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
 
 /** The git command an argv runs, past its global options (`-c k=v`, `-C dir`). */
 const subcommand = (args: string[]) => {
@@ -28,9 +30,37 @@ function gitEnv(): NodeJS.ProcessEnv {
   return { ...env, GIT_TERMINAL_PROMPT: "0" };
 }
 
+/**
+ * ADR 0030: no fsmonitor in Kitchen's own git (finish, the merge): it costs nothing, and one a lane planted would run
+ * outside its sandbox. The person's repo hooks (pre-commit, husky) still run on Kitchen's commits and merges: a Codex
+ * lane can't write `.git/hooks` or the config (its writable roots), and a Claude lane can run any shell anyway.
+ */
+export const GIT_SAFE = ["-c", "core.fsmonitor=false"];
+
+/** Pure: the argv Kitchen's git runs. */
+export const gitArgv = (dir: string, args: string[]) => [...GIT_SAFE, "-C", dir, ...args];
+
+/**
+ * ADR 0030 §2: in a linked worktree (a job's checkout), its git dir named outright, from the worktree's `.git` file,
+ * which no Codex lane may write. The repo's git dir is left to git (the worktree's `commondir`, which finish checks
+ * against the repo before Kitchen's git trusts it): GIT_COMMON_DIR would reach the person's hooks, and a hook's own
+ * `git -C <another repo>` would land in this one. {} for anything else.
+ */
+export function worktreeEnv(dir: string): NodeJS.ProcessEnv {
+  try {
+    const m = /^gitdir: (.+)$/m.exec(fs.readFileSync(path.join(dir, ".git"), "utf8"));
+    if (!m) return {};
+    const gitDir = path.resolve(dir, m[1].trim());
+    if (path.basename(path.dirname(gitDir)) !== "worktrees") return {};
+    return { GIT_DIR: gitDir, GIT_WORK_TREE: dir };
+  } catch {
+    return {};
+  }
+}
+
 export function git(dir: string, args: string[], o: { input?: string; allowFail?: boolean } = {}): Promise<{ stdout: string; stderr: string; code: number }> {
   return new Promise((resolve, reject) => {
-    const child = execFile("git", ["-C", dir, ...args], { env: gitEnv(), maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) => {
+    const child = execFile("git", gitArgv(dir, args), { env: { ...gitEnv(), ...worktreeEnv(dir) }, maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) => {
       const code = err ? (typeof (err as NodeJS.ErrnoException & { code?: unknown }).code === "number" ? ((err as { code: number }).code as number) : 1) : 0;
       if (code && !o.allowFail) reject(new GitError(args, code, String(stderr)));
       else resolve({ stdout: String(stdout), stderr: String(stderr), code });

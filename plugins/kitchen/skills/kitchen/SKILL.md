@@ -6,8 +6,10 @@ description: "Drive Kitchen, the software factory in this repo: set it up (init)
 # /kitchen
 
 Kitchen turns tickets into reviewed changes merged into a `staging` branch. You map what the user says onto
-`kitchen` commands, run them, and relay their one-line outputs. When the user says **run** (or `/kitchen run`),
-you become the orchestrator: see Running the queue.
+`kitchen` commands, run them, and relay their one-line outputs. `kitchen run` (the CLI) is how the queue runs
+headless, by default: Kitchen itself plans the waves and starts one agent session per lane. When the user says
+**run** (or `/kitchen run`) in this session, you become the orchestrator here, so they can watch it live: see
+Running the queue.
 
 This skill comes from the Kitchen plugin, for devkitchen 0.1.0. The plugin has no pinned package yet, so
 never run Kitchen through `npx`. Find how to run it once per session, from the repo root:
@@ -29,7 +31,7 @@ Run every command below from the repo root. (This plugin's skill is `/kitchen:ki
 | "check X every day", "run that check nightly" | `kitchen ticket --check --every day "<the check>"` (hour, 2h, 30m…); `--every off "<the same text>"` removes it; `kitchen schedules` lists them |
 | "promote 006", "keep that harness after all" (a job `kitchen status` shows `Verified · not merged`) | `kitchen promote <id>`: Review, the merge check, then the merge into its target (or its PR) |
 | work aimed at another branch: "do X on feature/checkout", "this goes into release/2.1" | `kitchen ticket --into <branch> "<the request>"`: the job starts from that branch and merges into it, not staging. The branch must exist (Kitchen never creates it); with `staging.merge: kitchen` the base branch, main and master are refused |
-| `run`, start, "go", work the queue, or your prompt is `/kitchen run` | be the orchestrator yourself: Running the queue, below. Never call `kitchen run` for this: it starts another session, and inside one `kitchen run` started it refuses. When `kitchen status` shows an orchestrator already running, say Kitchen is working the queue and don't start another |
+| `run`, start, "go", work the queue, or your prompt is `/kitchen run` | be the orchestrator yourself, in this session: Running the queue, below. Never call `kitchen run` for this: that starts Kitchen's own headless run beside you. When `kitchen status` shows an orchestrator already running, say Kitchen is working the queue and don't start another |
 | what's happening, status, progress | `kitchen status`; when a job shows `needs-info(refine: …)`, offer to refine it with them (see Refining a ticket) |
 | "refine 004", "let's clarify 004", or your prompt is `/kitchen refine 004` | Refining a ticket, below |
 | "approve 004", "the criteria are fine" | `kitchen approve <id>` (only a job shown `needs-info(confirm: …)`) |
@@ -43,7 +45,7 @@ Run every command below from the repo root. (This plugin's skill is `/kitchen:ki
 | drop a job | `kitchen reject <id>` |
 | "remove 005", "get rid of it", "I don't want it on the dashboard" (any stage, even while it builds) | `kitchen remove <id>`: stops a working lane, rejects an unfinished job, removes its worktree; a merged one is only hidden. `kitchen restore <id>` brings it back in view |
 | "show me the jobs", "open the dashboard" | `kitchen dashboard` as a background command, then give the user the address it prints (http://127.0.0.1:7357/#<repo>; when a dashboard already runs it adds this repo, prints `already open: …` and exits) |
-| run the queue headless, in the background | `kitchen run --detach` (a separate Claude Code session runs this skill) |
+| run the queue headless, in the background, "run it without me" | `kitchen run --detach`: Kitchen plans the waves and starts one `claude -p` (or `codex exec`) session per lane itself, finishing each lane as its agent ends; `kitchen run --stop` ends it and every lane |
 | how is Kitchen doing | `kitchen report` |
 | "sweep", check every feature before a release, "is staging good to ship" | a verify run: see The verify map, below (`kitchen verify sweep`) |
 | "maintain the map", tidy or audit the verify skill, the map looks stale | a verify run: `kitchen verify maintain` |
@@ -83,7 +85,9 @@ in (a switcher, top left). Never start a second one for another repo:
 
 ## Running the queue (you are the orchestrator)
 
-You run the queue in this session. You **never** do product work yourself and you **never** edit
+This is `/kitchen run` in a session the user opened, for watching the work live. The headless default is the CLI,
+`kitchen run`: Kitchen runs this same loop in code, with one agent session per lane, and finishes each lane the
+moment its agent ends (ADR 0030). Here, you run the queue in this session. You **never** do product work yourself and you **never** edit
 `.kitchen/jobs/`, `job.json`, the job branches or `staging` by hand: you start one agent per lane and move jobs
 only through `kitchen job` verbs, which refuse any illegal move. The Agent tool is how you start a lane agent.
 
@@ -100,14 +104,14 @@ only through `kitchen job` verbs, which refuse any illegal move. The Agent tool 
    in one line.
 2. For **every** entry in `start`, in parallel:
    - `kitchen job start <id> <lane> --json` (`--restart` when the entry says `restart`). It prepares the job's
-     worktree and brief, hands over the person's unread messages, and returns `{ prompt, model, cwd, brief }`, or
+     worktree and brief, hands over the person's unread messages, and returns `{ prompt, model, cwd, brief, key }`, or
      `refused` / `parked` (say why and skip it).
    - Spawn one Agent with exactly that `prompt`, and `model` set to the returned model, in the foreground (never
      `run_in_background`): parallel lanes are several Agent calls in one message. Never end your turn while a lane
-     agent is still running: a headless session that ends its turn stops the run. Use one agent per lane per
+     agent is still running: ending your turn leaves its lane unfinished until you are back. Use one agent per lane per
      job: never reuse one, never give one two jobs, never do a lane yourself.
-3. When an agent returns, run `kitchen job finish <id> --json` for its job, at once. Kitchen reads the files the
-   lane left (intake.md, the commits, the QA verdict, evidence and map updates, review.json, the regress verdict),
+3. When an agent returns, run `kitchen job finish <id> --key <key> --json` for its job, at once (`key` is what its
+   start returned: a lane another run opened since is refused, untouched). Kitchen reads the files the lane left (intake.md, the commits, the QA verdict, evidence and map updates, review.json, the regress verdict),
    runs the checks itself, merges into the job's target (staging unless its ticket named one) when review passes and
    the features the merge touches still work (or opens a regress lane to drive them first; with `staging.merge: pr`
    it opens the PR for a person instead), and moves the job, or refuses and says why (the lane runs again in the next wave;
