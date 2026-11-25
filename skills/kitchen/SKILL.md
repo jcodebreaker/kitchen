@@ -113,7 +113,7 @@ until the user runs `kitchen promote`. Neither needs anything else from you: sta
 
 When the plan is `drained`, report: what merged and into which branch (with the short shas), what each check found (its result words and the
 proposals), what was verified and not merged, which PRs wait for
-review (with their links), what stopped at Ready and why, and what needs the user (`kitchen status`). Then stop. Never merge `staging` into the base branch or main,
+review (with their links), what stopped at Ready and why, and what needs the user (`kitchen status`). Then stop: start nothing more and leave nothing running (in a session the user opened themselves, Kitchen won't end it for you). Never merge `staging` into the base branch or main,
 never push either: that is the user's.
 
 If `kitchen job start` or `finish` fails with an error (not a refusal), show its last line and stop the run.

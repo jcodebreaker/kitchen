@@ -10,7 +10,7 @@ import { type Message, readMessages } from "../engine/messages.ts";
 import { findJob, jobDirOf } from "../engine/store.ts";
 import { type LedgerLine, readLedger } from "../ledger/append.ts";
 import { activityOf, type Ev } from "./activity.ts";
-import { agentOf, critOf, liveStreams, questionOf, STAGE_NAMES, stateOf } from "./data.ts";
+import { agentOf, type Crit, critOf, liveStreams, questionOf, STAGE_NAMES, stateOf } from "./data.ts";
 
 export type Seg = {
   stage: Stage;
@@ -34,7 +34,7 @@ export type Detail = {
   id: string;
   tl: Seg[];
   /** `shot`: ADR 0028, a check's screenshot for the criterion (a path under the page, /jobs/<id>/qa/<round>/<file>). */
-  crit: { id: string; text: string; st: "ok" | "bad" | "wait"; e: string; shot?: string }[];
+  crit: (Crit & { shot?: string })[];
   ticket: string;
   /** ADR 0028 §4: what a check found, each with the inbox proposal it became. */
   found?: { pid: string; title: string; seen: string }[];
@@ -58,7 +58,8 @@ function checkTab(dir: string, j: Job): Pick<Detail, "crit" | "found"> {
         const row = qa.criteria.find((x) => x.id === c.id);
         if (!row) return c;
         const shot = row.evidence.find((f) => /\.(png|jpe?g)$/i.test(f));
-        const e = [row.note, ...row.evidence.filter((f) => f !== shot)].filter(Boolean).join(" · ");
+        // ADR 0029 §2: "not tested" with its why, from critOf.
+        const e = row.result === "NOT_RUN" ? c.e : [row.note, ...row.evidence.filter((f) => f !== shot)].filter(Boolean).join(" · ");
         return { ...c, e, ...(shot ? { shot: at(shot) } : {}) };
       }),
       found: qa.findings.flatMap((f, i) => (ps[i] ? [{ pid: ps[i], title: f.title, seen: f.seen }] : [])),
@@ -200,7 +201,7 @@ export async function detail(repo: string, ref: string): Promise<Detail> {
       last.st = "paused";
       last.sum = j.pausedReason?.includes("stopped") ? "Stopped by you" : "Paused by you";
     } else if (state === "rejected") last.st = "skip";
-    else if (!j.running) last.sum = "Waiting for its lane to start";
+    // ADR 0029 §3: a job waiting for its lane says why on the panel from the card's line (data.json `waiting`).
   }
   for (const m of readMessages(dir)) {
     const seg = [...tl].reverse().find((s) => s.start <= m.at) ?? tl[0];

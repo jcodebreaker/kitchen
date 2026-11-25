@@ -8,7 +8,7 @@ import { readMapChanges } from "../verify/admit.ts";
 import { criteriaOf, leftOutOf, qaDir, readQa, readReview, regressDir } from "./lanes.ts";
 import { isCheck, type Job, prOpen } from "./machine.ts";
 import { readMessages } from "./messages.ts";
-import { findJob, JOB_ID, jobDirOf, roundDir, writeAtomic } from "./store.ts";
+import { checksFile, findJob, JOB_ID, jobDirOf, writeAtomic } from "./store.ts";
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] as string);
 const MAX_TEXT = 6000;
@@ -78,10 +78,17 @@ export function renderReport(repo: string, job: Job, o: { diff?: { p: string; a:
       `Found ${qa.findings.length} problem${qa.findings.length === 1 ? "" : "s"}${job.check?.proposals?.length ? `, proposed in the Inbox as ${esc(job.check.proposals.join(", "))}` : ""}: ${qa.findings.map((f) => `<b>${esc(f.title)}</b>${f.criterion ? ` (${esc(f.criterion)})` : ""}: ${esc(f.seen)}`).join("; ")}`,
     );
   if (job.check?.map) checks.push(esc(job.check.map));
+  // ADR 0029 §6: the findings are kept; Kitchen proposes them again on the next wave.
+  if (job.check?.proposalsFailed)
+    checks.push(
+      `<span class="bad">proposals failed: ${esc(job.check.proposalsFailed.error)}</span>. The findings are kept below; Kitchen proposes them again on the next wave.`,
+    );
   const rows = crit
     .map((c) => {
       const r = "criteria" in qa ? qa.criteria.find((x) => x.id === c.id) : undefined;
-      return `<tr><td>${esc(c.id)}</td><td>${esc(c.text)}<br><small>${esc(c.check)}</small></td><td class="${r?.result === "PASS" ? "ok" : "bad"}">${esc(r?.result ?? "not checked")}</td><td>${esc(r?.note ?? "")}${(r?.evidence ?? []).map((f) => evidenceHtml(qd, f, o.named)).join("")}</td></tr>`;
+      // ADR 0029 §2: a criterion QA couldn't test is "not tested", with its why: never a fail.
+      const not = r?.result === "NOT_RUN";
+      return `<tr><td>${esc(c.id)}</td><td>${esc(c.text)}<br><small>${esc(c.check)}</small></td><td class="${r?.result === "PASS" ? "ok" : not ? "st" : "bad"}">${esc(not ? "not tested" : (r?.result ?? "not checked"))}</td><td>${esc(not ? (r?.why ?? "") : (r?.note ?? ""))}${(r?.evidence ?? []).map((f) => evidenceHtml(qd, f, o.named)).join("")}</td></tr>`;
     })
     .join("\n");
   const findings =
@@ -114,6 +121,7 @@ pre{background:var(--card);padding:8px;border-radius:6px;overflow:auto;font-size
 <h2>Criteria, checked against the running app</h2>
 <table>${rows || "<tr><td>No criteria.</td></tr>"}</table>
 ${"refused" in qa ? `<p class="bad">QA: ${esc(qa.refused)}</p>` : ""}
+${!check ? blockedHtml(qa, qd, o.named) : ""}
 ${drives(dir, job.round, o.named)}
 ${
   check
@@ -128,10 +136,16 @@ ${thread.length ? `<h2>Your messages</h2><ul>${thread.map((m) => `<li>${esc(m.at
 `;
 }
 
+/** ADR 0029 §2: why QA couldn't test a job at all (BLOCKED), with the files it cites; "" otherwise. */
+function blockedHtml(qa: ReturnType<typeof readQa>, qd: string, named = false): string {
+  if (!("criteria" in qa) || !qa.blocked) return "";
+  return `<h2>QA couldn't test it</h2><p>${esc(qa.blocked ?? "")}</p>${(qa.evidence ?? []).map((f) => evidenceHtml(qd, f, named)).join("")}<p class="st">The environment, not the change: fix it, then Resume to run QA again.</p>`;
+}
+
 /** ADR 0028: a check's problems, each as the proposed bug (what was seen, the repro, the evidence). */
 function findingsHtml(qa: ReturnType<typeof readQa>, qd: string, named = false): string {
   if (!("findings" in qa)) return "";
-  if (qa.verdict === "BLOCKED") return `<h2>The check couldn't run</h2><p class="bad">${esc(qa.blocked ?? "")}</p>`;
+  if (qa.blocked) return `<h2>The check couldn't run</h2><p class="st">${esc(qa.blocked)}</p>`;
   if (!qa.findings.length) return "<h2>Problems found</h2><p>None.</p>";
   return `<h2>Problems found</h2>${qa.findings
     .map(
@@ -172,7 +186,7 @@ function drives(dir: string, round: number, named = false): string {
 
 function readChecks(dir: string, round: number): string {
   try {
-    const r = JSON.parse(fs.readFileSync(path.join(roundDir(dir, round), "checks.json"), "utf8")) as { name: string; ok: boolean; exit: number | null }[];
+    const r = JSON.parse(fs.readFileSync(checksFile(dir, round), "utf8")) as { name: string; ok: boolean; exit: number | null }[];
     return r.map((c) => `${c.ok ? "✓" : "✗"} ${c.name}${c.ok ? "" : ` (exit ${c.exit ?? "timeout"})`}`).join("\n") || "no checks configured";
   } catch {
     return "not run";

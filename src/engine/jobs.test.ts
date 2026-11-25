@@ -8,11 +8,14 @@ import path from "node:path";
 import { afterAll, test } from "vitest";
 import { report, stageLabel } from "../cli/commands.ts";
 import { loadConfig } from "../config.ts";
+import { checkingOf, snapshot, waitingOf } from "../dashboard/data.ts";
 import { listItems } from "../inbox/store.ts";
 import { readLedger } from "../ledger/append.ts";
+import { appDown, appUp } from "../qa/app.ts";
 import * as control from "./control.ts";
 import { finish, mergeHeld, next, start } from "./jobs.ts";
 import { intakeFile, qaDir, reviewFile } from "./lanes.ts";
+import type { Plan } from "./plan.ts";
 import { refine } from "./refine.ts";
 import { renderReport } from "./report.ts";
 import { ensureStaging } from "./staging.ts";
@@ -568,4 +571,153 @@ test("ADR 0025 §4: while Build's checks run the job names the command; the log 
   assert.match(((await done) as { line: string }).line, /checks pass → qa/);
   assert.equal(fs.readFileSync(log, "utf8"), "$ echo started; sleep 1; echo done\nstarted\ndone\n[exit 0]\n\n", "the same file as before");
   assert.equal(findJob(r, id).checking, undefined);
+});
+
+test("ADR 0029 §1: a criterion intake wrote with two kinds refuses the intake, and intake runs again with the line and the fix", async () => {
+  const r = await repo();
+  await control.ticket(r, "show the list and its API", quiet);
+  const id = findJob(r, "1").id;
+  await open(r, id, "intake");
+  fs.writeFileSync(
+    intakeFile(dirOf(r, id)),
+    INTAKE().replace("- C1 (cmd): app.txt has a fourth line", "- C1 (cmd): app.txt has four lines\n- C2 (page + http): both show it"),
+  );
+  const f = await fin(r, id);
+  assert.match(f.line, /intake again \(try 2 of 3\): intake\.md: C2 \(page \+ http\): one kind per criterion: split it into C2 \(page\) and C3 \(http\)/);
+  assert.equal(findJob(r, id).stage, "intake");
+  assert.match(fs.readFileSync((await open(r, id, "intake")).brief, "utf8"), /split it into C2 \(page\) and C3 \(http\)/);
+});
+
+test("ADR 0029 §2: a round with C2 NOT_RUN: QA drives only C2 on fresh seed data, C1's pass standing, no Build round; still not run it goes to you, and Resume runs QA", async () => {
+  const marker = path.join(root, `reset-${n + 1}.txt`);
+  const start = `node -e "require('http').createServer((q,s)=>s.end('ok')).listen(+process.env.PORT)"`;
+  const r = await repo(`round_limit: 2\napp: { start: ${JSON.stringify(start)}, health: "/", reset: "echo reset >> ${marker}" }\n`);
+  const TWO = INTAKE().replace("- C1 (cmd): app.txt has a fourth line", "- C1 (cmd): app.txt has a fourth line\n- C2 (http): GET /members/4 → 200");
+  const qaRound = async (rows: Record<string, unknown>[], files: Record<string, string>) => {
+    const s = await open(r, id, "qa");
+    const d = qaDir(dirOf(r, id), findJob(r, id).round);
+    for (const [f, t] of Object.entries(files)) fs.writeFileSync(path.join(d, f), t);
+    fs.writeFileSync(path.join(d, "verdict.json"), JSON.stringify({ verdict: "FAIL", criteria: rows }));
+    return { brief: fs.readFileSync(s.brief, "utf8"), f: await fin(r, id) };
+  };
+  const C1 = { id: "C1", result: "PASS", evidence: ["c1.txt"], note: "four lines" };
+  const C2 = { id: "C2", result: "NOT_RUN", why: "the seed has no member 4", evidence: ["c2.txt"] };
+  const id = await toBuild(r, "add a fourth line", TWO);
+  await build(r, id);
+  try {
+    // The mixed round: C1 passes, C2 can't be tested.
+    const { f } = await qaRound([C1, C2], { "c1.txt": "four\n", "c2.txt": "404 no member 4\n" });
+    assert.match(f.line, /QA couldn't test C2 \(the seed has no member 4\) → qa again on C2 on fresh seed data \(round 2, no Build round\)$/);
+    assert.ok(!fs.existsSync(path.join(dirOf(r, id), "app.json")) && !fs.existsSync(marker), "finish starts nothing: the app is down");
+    const j = findJob(r, id);
+    assert.deepEqual([j.stage, j.round, j.roundStart, j.qaRetry], ["qa", 2, 2, { from: 1, ids: ["C2"], reset: true }]);
+    const card = (await snapshot(r)).jobs[0];
+    assert.deepEqual([card.round, card.proof], [1, null], "no round counted, never a fail");
+    // A pause in the middle keeps the retry (no extra retry, the carried passes stay).
+    await control.stop(r, id, quiet);
+    await control.resume(r, id, quiet);
+    assert.deepEqual(findJob(r, id).qaRetry, { from: 1, ids: ["C2"], reset: true });
+    // The lane's first `kitchen qa up` starts the app on fresh seed data, once.
+    assert.equal(await appUp(r, id, quiet), 0);
+    assert.ok(fs.existsSync(marker), "app.reset ran");
+    assert.deepEqual(findJob(r, id).qaRetry, { from: 1, ids: ["C2"] });
+    // The retry drives C2 only; C1's pass stands.
+    const ok = await qaRound([{ id: "C2", result: "PASS", evidence: ["c2.txt"], note: "200" }], { "c2.txt": "200\n" });
+    assert.match(
+      ok.brief,
+      /## QA again on C2 only\n\nRound 1's QA couldn't test C2 \(the seed has no member 4\)\. Your first `kitchen qa up` starts the app on fresh seed data/,
+    );
+    assert.match(ok.brief, /Drive only C2, and write rows only for it\. C1 passed in round 1 and stands/);
+    assert.doesNotMatch(ok.brief, /## Re-drive, don't re-explore/);
+    assert.match(ok.f.line, /QA PASS \(2 criteria\) → review/);
+    assert.ok(fs.existsSync(path.join(qaDir(dirOf(r, id), 2), "from-round-1", "c1.txt")), "C1's evidence carried");
+    assert.match(renderReport(r, findJob(r, id)), /<h2>Checks<\/h2><pre>✓ guard<\/pre>/, "Build's checks from round 1, not 'not run'");
+  } finally {
+    await appDown(r, id).catch(() => {});
+  }
+  // Another job: C2 still not run after the retry goes to you, naming C2.
+  const id2 = await toBuild(r, "add a fourth line again", TWO);
+  await build(r, id2, "one\ntwo\nthree\nfour\nfive\n");
+  const again = async () => {
+    await open(r, id2, "qa");
+    const d = qaDir(dirOf(r, id2), findJob(r, id2).round);
+    fs.writeFileSync(path.join(d, "c1.txt"), "four\n");
+    fs.writeFileSync(path.join(d, "c2.txt"), "404\n");
+    fs.writeFileSync(path.join(d, "verdict.json"), JSON.stringify({ verdict: "FAIL", criteria: [C1, C2] }));
+    return fin(r, id2);
+  };
+  try {
+    await again();
+    assert.match((await again()).line, /QA still couldn't test C2 \(the seed has no member 4\) → needs-human/);
+    const k = findJob(r, id2);
+    assert.deepEqual([k.stage, k.escalatedFrom, k.pausedReason], ["needs-human", "qa", "QA couldn't test C2: the seed has no member 4"]);
+    assert.ok(!fs.existsSync(path.join(dirOf(r, id2), "app.json")), "needs-human stopped the app");
+    const html = fs.readFileSync(path.join(dirOf(r, id2), "report.html"), "utf8");
+    assert.match(html, /class="st">not tested<\/td><td>the seed has no member 4/);
+    assert.match(html, /<td class="ok">PASS<\/td>/, "C1's pass carried into the Report");
+    assert.doesNotMatch(html, /class="bad">(FAIL|not checked)/, "never a fail");
+    const lines: string[] = [];
+    assert.equal(await control.resume(r, id2, (l) => lines.push(l)), 0);
+    assert.match(lines.join("\n"), /resumed → qa/);
+    // QA again in the same round folder starts clean: no old verdict, no carried passes (it drives everything).
+    const qd = qaDir(dirOf(r, id2), findJob(r, id2).round);
+    assert.ok(fs.existsSync(path.join(qd, "verdict.json")) && fs.existsSync(path.join(qd, "carried.json")));
+    await open(r, id2, "qa");
+    assert.ok(!fs.existsSync(path.join(qd, "verdict.json")) && !fs.existsSync(path.join(qd, "carried.json")));
+  } finally {
+    await appDown(r, id2).catch(() => {});
+  }
+});
+
+test("ADR 0029 §3: the dashboard says what a waiting job waits for: the jobs using the lanes, the job on its AFTER: line, an orchestrator", async () => {
+  const r = await repo("parallel: 2\n");
+  const [a, b, c] = [await toBuild(r, "one"), await toBuild(r, "two"), await toBuild(r, "three")];
+  const d = await toBuild(r, "four", INTAKE().replace("FILES: app.txt", "FILES: app.txt\nAFTER: 001"));
+  const card = async (id: string) => (await snapshot(r)).jobs.find((j) => j.id === id)?.waiting;
+  assert.equal(await card(c), "Waiting for the orchestrator (kitchen run)");
+  await next(r);
+  await open(r, a, "build");
+  await open(r, b, "build");
+  assert.equal(await card(c), "Waiting for a free lane · 001 and 002 are using both (parallel: 2)");
+  assert.equal(await card(d), "Waiting for 001 to merge first (named on its AFTER: line)");
+  assert.equal(await card(a), null, "an agent works on it");
+});
+
+test("ADR 0029 §3: the waiting line, pure: one, three, more than three jobs using the lanes", () => {
+  const plan = (ids: string[], held = "waits for room (parallel: 9)"): Plan => ({
+    start: [],
+    running: ids.map((id) => ({ id, lane: "build" as const, since: "" })),
+    held: [{ id: "099-x", lane: "build" as const, why: held }],
+    you: [],
+    drained: false,
+  });
+  assert.equal(waitingOf("099-x", plan(["009-a"]), { parallel: 1, orchestrator: true }), "Waiting for a free lane · 009 is using it (parallel: 1)");
+  assert.equal(
+    waitingOf("099-x", plan(["007-a", "009-b", "010-c"]), { parallel: 3, orchestrator: true }),
+    "Waiting for a free lane · 007, 009 and 010 are using all 3 (parallel: 3)",
+  );
+  assert.equal(
+    waitingOf("099-x", plan(["1-a", "2-b", "3-c", "4-d"].map((x) => `00${x}`)), { parallel: 4, orchestrator: true }),
+    "Waiting for a free lane · 4 jobs are using all 4",
+  );
+  assert.equal(waitingOf("099-x", plan([]), { parallel: 4, orchestrator: false }), "Waiting for the orchestrator (kitchen run)");
+  // Intake starts past parallel; it doesn't count as the room the job waits for.
+  const p2 = plan(["009-a", "010-b"]);
+  p2.start = [{ id: "011-c", lane: "intake" }];
+  assert.equal(waitingOf("099-x", p2, { parallel: 2, orchestrator: true }), "Waiting for a free lane · 009 and 010 are using both (parallel: 2)");
+});
+
+test("ADR 0029 §4: the card gets a setup step as one (setup, the health wait's limit), with the log's last line", () => {
+  const dir = fs.mkdtempSync(path.join(root, "ck-"));
+  fs.writeFileSync(path.join(dir, "app.log"), "listening on 4100\n");
+  const at = new Date().toISOString();
+  assert.deepEqual(checkingOf({ checking: { cmd: "Waiting for /health", at, log: "app.log", setup: true, of: 120 } }, dir), {
+    cmd: "Waiting for /health",
+    at,
+    log: "app.log",
+    last: "listening on 4100",
+    setup: true,
+    of: 120,
+  });
+  assert.deepEqual(checkingOf({ checking: { cmd: "npm test", at, log: "app.log" } }, dir), { cmd: "npm test", at, log: "app.log", last: "listening on 4100" });
 });

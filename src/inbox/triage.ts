@@ -3,10 +3,10 @@
 // writes a verdict for each through `kitchen inbox propose|verdict`, the inbox's only writer. It never builds,
 // merges, closes an issue or posts anywhere. Started the way `kitchen run` starts the orchestrator: the same binary,
 // the scrubbed environment, the spend cap, every tool allowed up front (a headless session can't ask).
-import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { claudeBin } from "../agents/find-bin.ts";
+import { runAgentSession } from "../agents/session.ts";
 import { type Config, loadConfig, modelFor } from "../config.ts";
 import { git } from "../engine/git.ts";
 import { stagingTip } from "../engine/staging.ts";
@@ -161,32 +161,23 @@ export async function triage(repo: string, o: { items: string[]; progress: (text
   const argv = triageCommand(cfg, prompt);
   const key = `collect/${co?.id ?? now.toISOString()}`;
   appendLedger(repo, { job: "-", stage: "triage", round: 0, event: "triage", key: `${key}/start`, model: modelFor(cfg, "intake"), detail: { items: o.items } });
-  const code = await new Promise<number>((resolve) => {
-    const child = spawn(argv[0], argv.slice(1), { cwd: co?.wt ?? repo, env: scrubbedEnv(), stdio: ["ignore", "pipe", "pipe"] });
-    const log = fs.createWriteStream(path.join(dir, "triage.jsonl"));
-    let buf = "";
-    child.stdout.on("data", (d: Buffer) => {
-      log.write(d);
-      buf += d.toString("utf8");
-      for (let i = buf.indexOf("\n"); i >= 0; i = buf.indexOf("\n")) {
-        const line = buf.slice(0, i);
-        buf = buf.slice(i + 1);
-        const step = triageStep(line);
-        if (step) o.progress(step);
-        const usd = sessionCost(line);
-        if (usd !== null) appendLedger(repo, { job: "-", stage: "triage", round: 0, event: "session", key: `${key}/session`, usd });
-      }
-    });
-    child.stderr.on("data", (d: Buffer) => log.write(d));
-    child.on("error", (e) => {
-      out(`triage: could not start ${argv[0]}: ${e.message}`);
-      resolve(1);
-    });
-    child.on("close", (c) => {
-      log.end();
-      resolve(c ?? 1);
-    });
+  const log = fs.createWriteStream(path.join(dir, "triage.jsonl"));
+  // ADR 0029 §5: its own process group, ended after its final line.
+  const r = await runAgentSession(argv, {
+    cwd: co?.wt ?? repo,
+    env: scrubbedEnv(),
+    onStdout: (d) => log.write(d),
+    onStderr: (d) => log.write(d),
+    onLine: (line) => {
+      const step = triageStep(line);
+      if (step) o.progress(step);
+      const usd = sessionCost(line);
+      if (usd !== null) appendLedger(repo, { job: "-", stage: "triage", round: 0, event: "session", key: `${key}/session`, usd });
+    },
   });
+  log.end();
+  if (r.error) out(`triage: could not start ${argv[0]}: ${r.error}`);
+  const code = r.error ? 1 : r.code;
   if (co) await dropCheckout(repo, co.id);
   const made = listProposals(repo).filter((p) => !before.has(p.id));
   const proposed = made.filter((p) => p.state === "open").length;

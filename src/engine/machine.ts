@@ -66,8 +66,12 @@ export type JobCheck = {
   total?: number;
   findings?: number;
   proposals?: string[];
+  /** ADR 0029 §6: proposing its findings failed (the error, the round they are in): retried on each finish and wave. */
+  proposalsFailed?: { error: string; round: number };
   map?: string;
 };
+/** ADR 0029 §2: a needs-human reason when QA still couldn't test criteria ("QA couldn't test C2, C4: …", "QA couldn't run: …"); Resume runs QA again. */
+export const QA_BLOCKED = /^QA couldn't (test|run)\b/;
 export const isCheck = (j: Pick<Job, "kind" | "check">) => j.kind === "check" || !!j.check?.forced;
 /** ADR 0028 amendment: the words of a job verified and not merged (`KEEP: no`). */
 export const VERIFIED_WORDS = "Verified · not merged";
@@ -143,8 +147,16 @@ export type Job = {
   agentRuns: AgentRunRef[];
   /** Every move so far. Activity streams and the ledger are keyed by it. */
   moves: number;
-  /** ADR 0025 §4: the check command running now (Build's checks, the trial merge's) and its log; absent between them. */
-  checking?: { cmd: string; at: string; log: string };
+  /**
+   * ADR 0029 §2: QA's last round was INCOMPLETE (rows NOT_RUN, none FAILED): Kitchen reset the app and QA runs again on
+   * `ids` only, round `from`'s passes standing. Still not run then goes to a person. Cleared by any other move.
+   */
+  qaRetry?: { from: number; ids: string[]; reset?: true };
+  /**
+   * ADR 0025 §4: the check command running now (Build's checks, the trial merge's) and its log; absent between them.
+   * ADR 0029 §4: `setup`: the step `kitchen qa up` is on instead ("Resetting data"), `of`: the health wait's limit (s).
+   */
+  checking?: { cmd: string; at: string; log: string; setup?: true; of?: number };
   /** Why a job that passed stopped at Ready (high risk, a large diff, auto-merge off). */
   held?: string;
   /**
@@ -203,7 +215,7 @@ export type Job = {
 /** The moves the table allows: from → to. */
 export const MOVES: Record<Stage, readonly Stage[]> = {
   // ADR 0028: a check goes from intake (or the approval) straight to QA, and from QA to done; a QA that couldn't run
-  // (the app won't start) runs again in a new round (qa → qa), and a done check can be run again.
+  // (the app won't start) runs again in a new round (qa → qa; ADR 0029 §2: a job's too), and a done check can be run again.
   intake: ["build", "qa", "needs-info", "needs-human", "rejected", "paused"],
   "needs-info": ["intake", "build", "qa", "rejected"],
   build: ["qa", "needs-human", "rejected", "paused"],
@@ -265,6 +277,8 @@ export function move(j: Job, to: Stage, o: { reason?: string; now?: Date; catchU
   delete n.pausedReason;
   delete n.tries;
   delete n.waits;
+  // ADR 0029 §2: a pause in the middle of a retry keeps it (the same retry resumes); any other move ends it.
+  if (!((j.stage === "qa" && to === "paused") || (j.stage === "paused" && to === "qa"))) delete n.qaRetry;
   // ADR 0028: a check's QA again (it couldn't run, or the person runs a done check again): a new round folder. Again
   // after done is new work, a fresh budget; after a QA that couldn't run, the same budget.
   if (to === "qa" && (j.stage === "qa" || j.stage === "done")) {
@@ -273,6 +287,8 @@ export function move(j: Job, to: Stage, o: { reason?: string; now?: Date; catchU
       n.roundStart = n.round;
       delete n.doneAt;
     }
+    // ADR 0029 §2: a job's QA again on what it couldn't test (the environment, not the change): no Build round counted.
+    else if (!isCheck(j)) n.roundStart = j.roundStart + 1;
   }
   if (to === "review" && j.stage === "done") {
     n.roundStart = j.round;

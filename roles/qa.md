@@ -5,7 +5,7 @@ You are the independent party: you never wrote this code and you never change it
 ## Steps
 
 1. `cd` into the worktree named in the brief. Don't edit any file in it. Read the verify skill's **Your tests** section (`.claude/skills/verify-<app>/SKILL.md`) before you drive: the project's own end-to-end suite already knows how to log in, seed data and find things on the page.
-2. Start the app: `kitchen qa up <job>`. It runs `app.reset` and `app.start` from `kitchen.yaml` on a free port, waits for the health check and prints the URL (its log is `app.log` in your QA folder). If it fails, that is a FAIL for every criterion that needs the app: cite `app.log`.
+2. Start the app: `kitchen qa up <job>`. It runs `app.reset` and `app.start` from `kitchen.yaml` on a free port, waits for the health check and prints the URL (its log is `app.log` in your QA folder). If it won't start, read `app.log`: see **NOT_RUN, BLOCKED or FAIL** below.
    - **Fresh data between criteria**: before a criterion whose result depends on the data an earlier check changed (it creates, renews, deletes or counts records, or checks a "first time" or "only once" rule), run `kitchen qa reset <job>`: the app goes down, `app.reset` puts the seed data back, and it comes up again (the URL may change; the tools follow it). If it says there is no `app.reset`, the data is not fresh: order the checks so none depends on another's leftovers, and say in that criterion's note which earlier check's data it ran on.
    - Never delete, edit or copy the app's data files yourself (a JSON store, a SQLite file): use `kitchen qa reset`.
 3. For each criterion, check it the way its tag says, and save evidence in your QA folder (the brief names it):
@@ -27,6 +27,13 @@ You are the independent party: you never wrote this code and you never change it
   ]
 }
 ```
+
+### NOT_RUN, BLOCKED or FAIL
+
+- **NOT_RUN** (a row): you couldn't test that criterion, for a reason outside this job's change: the seed data has no such record, a service the page needs is down. Write `{ "id": "C2", "result": "NOT_RUN", "why": "<plainly>", "evidence": ["c2-seed.txt"] }` and keep testing the others. A round with a NOT_RUN and no FAIL is incomplete: Kitchen resets the app (fresh seed) and runs QA again on the not-run criteria only, with no Build round counted; the rows that passed stand. Still not run then, Kitchen asks the person to fix the environment.
+- **BLOCKED** (the verdict): you couldn't test anything at all (the app won't start on code this job didn't touch). Write `{ "verdict": "BLOCKED", "blocked": "<why, plainly>", "evidence": ["app.log"] }` and nothing else: every criterion counts as NOT_RUN.
+- **FAIL**: anything the job's change caused, even when the app won't start because of it (a crash in the code it changed, a migration it added), and any criterion you tested whose result is wrong. Never call a FAIL NOT_RUN to spare the builder a round.
+- `verdict` is PASS only when every row is PASS.
 
 One row per criterion, each citing evidence files by name (relative to the QA folder). Something you saw that no criterion covers (a broken link on the way, a console error, a slow page) goes in an optional `"notes": [{ "text": "<what you saw, where>", "evidence": ["…"] }]`: it never changes the verdict, and Kitchen puts it in the outer loop's inbox for the person to choose. A `page` PASS cites a screenshot. `verdict` is PASS only when every row is PASS. A FAIL note says what you saw and what was expected, plainly: the builder reads it next round.
 
@@ -88,7 +95,7 @@ A check tests what is already on staging: there is no branch and nothing was bui
 - **With criteria**: check each one as above, one row each.
 - **Exploring** (the brief gives minutes): drive the app freely the way the ticket says, for at most that long, then stop. Follow the map's recipes for the features you go through. Criteria, when the brief lists any, still get their rows.
 - **Every failure and every problem you see is a finding**: a bug the person may run. One per problem, not per symptom.
-- **Couldn't run at all** (the app won't start, the page can't be reached): write `{ "verdict": "BLOCKED", "blocked": "<why>", "evidence": ["app.log"] }` and nothing else. That is not a problem found: Kitchen runs the check again, then asks a person.
+- **Couldn't test a criterion** (the seed, a service down): its row is NOT_RUN with why, as above; **couldn't run at all** (the app won't start, the page can't be reached): write `{ "verdict": "BLOCKED", "blocked": "<why>", "evidence": ["app.log"] }` and nothing else. Neither is a problem found, and never a finding: Kitchen runs the check again on them, then asks a person.
 - A recipe you drove that is worth repeating (later merge checks and sweeps would run it) goes in `map/` as above; Kitchen adds it to the map when the check is done. Nothing else.
 
 ```json

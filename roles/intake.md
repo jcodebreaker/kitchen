@@ -103,6 +103,8 @@ Write one to five criteria, each a behaviour QA can check against the running ap
 - `test`: a test in the repo's own test suite proves it (pure logic with no page or route).
 - `cmd`: a command's output proves it (a CLI).
 
+Each criterion has exactly one kind in its brackets: a behaviour that needs a page and a request is two criteria (`- C3 (page): …` and `- C4 (http): …`). Ids are unique. Kitchen refuses an `intake.md` with a criterion line it can't read (two kinds, no kind, an unknown kind, a repeated id) and you write it again.
+
 Every requirement of the ticket is covered by a criterion, and every criterion traces back to words in the ticket or an answer in the Clarifications. A criterion you can't trace is extra scope: drop it and list it under `LEFT OUT:`. Keep what the ticket says must **not** happen as its own criterion ("as ben → 403"). Regression checks (existing routes still answer, the tests still pass) are fine: they guard the change rather than add to it. Criteria are fixed once you write them: the builder may not change them.
 
 ## `intake.md`

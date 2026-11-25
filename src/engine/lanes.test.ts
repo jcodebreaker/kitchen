@@ -3,14 +3,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, test } from "vitest";
-import { leftOutOf, matchPath, parseIntake, qaDir, readQa, readReview, reviewFile } from "./lanes.ts";
+import { carriedFile, criteriaOf, leftOutOf, matchPath, parseIntake, type QaVerdict, qaDir, readQa, readReview, reviewFile } from "./lanes.ts";
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kitchen-lanes-"));
 afterAll(() => fs.rmSync(root, { recursive: true, force: true }));
 
 test("intake.md: ACCEPT needs criteria with a check kind; NEEDS-INFO needs its question; anything else is refused", () => {
   const ok = parseIntake(
-    "DECISION: ACCEPT\nTITLE: Renew a loan\nKIND: feature\nRISK: medium\nSURFACES: ui, none\nFILES: server.js, `lib/loans.js`\nAFTER: 3, 004-x\n\n## Criteria\n- C1 (http): POST /loans/1/renew → 200\n- **C2** (page): /loans shows renewed\n- C3 (vibes): ignored\n",
+    "DECISION: ACCEPT\nTITLE: Renew a loan\nKIND: feature\nRISK: medium\nSURFACES: ui, none\nFILES: server.js, `lib/loans.js`\nAFTER: 3, 004-x\n\n## Criteria\n- C1 (http): POST /loans/1/renew → 200\n- **C2** (Page): /loans shows renewed\n",
   );
   assert.ok("decision" in ok && ok.decision === "ACCEPT");
   if (ok.decision !== "ACCEPT") return;
@@ -26,6 +26,51 @@ test("intake.md: ACCEPT needs criteria with a check kind; NEEDS-INFO needs its q
   assert.deepEqual(parseIntake("DECISION: NEEDS-INFO\nQUESTION: Which page?\n"), { decision: "NEEDS-INFO", question: "Which page?", title: null });
   assert.ok("refused" in parseIntake("DECISION: NEEDS-INFO\n"));
   assert.ok("refused" in parseIntake("DECISION: maybe\n"));
+});
+
+test("intake.md (ADR 0029 §1): a criterion line that can't be read refuses the intake with the line and the fix; kinds in any case", () => {
+  const refused = (crit: string) =>
+    String(
+      (
+        parseIntake(`DECISION: ACCEPT\nKIND: feature\nRISK: low\n\n## Criteria\n- C1 (http): GET /items → 200\n${crit}`, { strict: true }) as {
+          refused?: string;
+        }
+      ).refused,
+    );
+  assert.equal(
+    refused("- C2 (page): the list\n- C3 (page + http): both work\n"),
+    "C3 (page + http): one kind per criterion: split it into C3 (page) and C4 (http)",
+  );
+  assert.equal(refused("- C3 (page, http): both\n"), "C3 (page, http): one kind per criterion: split it into C3 (page) and C4 (http)");
+  assert.equal(refused("- C5: the list shows\n"), "C5 has no kind: write - C5 (page|http|test|cmd): …");
+  assert.equal(refused("- C2 was dropped: the ticket doesn't ask for it\n"), "undefined", "a note naming a criterion is no criterion");
+  assert.match(refused("- C2 (page):\n"), /^C2 \(page\) needs what must be true after the colon/);
+  assert.match(refused("- C2 (UI): the list\n"), /^C2 \(UI\): the kind is one of page, http, test or cmd/);
+  assert.equal(refused("- C1 (page): again\n"), "C1 is listed twice");
+  assert.match(refused("- C2 (page) the list\n"), /^C2 \(page\) needs a colon/);
+  // Every bad line at once, so one rerun fixes them all.
+  assert.equal(refused("- C2: x\n- C1 (http): y\n"), "C2 has no kind: write - C2 (page|http|test|cmd): …; C1 is listed twice");
+  const ok = parseIntake(
+    "DECISION: ACCEPT\nKIND: feature\nRISK: low\n\n## Criteria\n- C1 (HTTP): GET /items → 200\n- **C2** (Cmd): `make x` prints ok\n- **C3 (page):** the list\n",
+    { strict: true },
+  );
+  assert.deepEqual("decision" in ok && ok.decision === "ACCEPT" && ok.criteria.map((c) => [c.id, c.check, c.text]), [
+    ["C1", "http", "GET /items → 200"],
+    ["C2", "cmd", "`make x` prints ok"],
+    ["C3", "page", "the list"],
+  ]);
+});
+
+test("intake.md (ADR 0029 §1): an intake accepted before the rule is read leniently: what parses stays, a repeated id keeps its first", () => {
+  const job = fs.mkdtempSync(path.join(root, "old-"));
+  fs.writeFileSync(
+    path.join(job, "intake.md"),
+    "DECISION: ACCEPT\nKIND: feature\nRISK: low\n\n## Criteria\n- C1 (http): GET /items → 200\n- C2 (page + http): both\n- C1 (page): again\n- C3 (page): the list\n",
+  );
+  assert.deepEqual(
+    criteriaOf(job).map((c) => `${c.id} ${c.check} ${c.text}`),
+    ["C1 http GET /items → 200", "C3 page the list"],
+  );
 });
 
 test("intake.md ACCEPT (ADR 0020): the `- ` lines under ## Later slices are its slices, none when it has none", () => {
@@ -97,6 +142,54 @@ test("the QA verdict: every criterion has a row; every row cites evidence that e
     ],
   });
   assert.equal((readQa(job, 1, crit) as { verdict: string }).verdict, "FAIL");
+});
+
+test("the QA verdict (ADR 0029 §2): a row may be NOT_RUN with why; no FAIL makes the round INCOMPLETE; BLOCKED is every row NOT_RUN; carried passes stand", () => {
+  const job = path.join(root, "job-b");
+  const qa = qaDir(job, 1);
+  fs.mkdirSync(qa, { recursive: true });
+  const crit = [
+    { id: "C1", text: "api", check: "http" as const },
+    { id: "C2", text: "page", check: "page" as const },
+  ];
+  const write = (v: unknown, d = qa) => fs.writeFileSync(path.join(d, "verdict.json"), JSON.stringify(v));
+  fs.writeFileSync(path.join(qa, "c1.http.txt"), "HTTP 200");
+  fs.writeFileSync(path.join(qa, "c2-seed.txt"), "no member 4 in the seed");
+  const c1 = { id: "C1", result: "PASS", evidence: ["c1.http.txt"], note: "200" };
+  write({ verdict: "FAIL", criteria: [c1, { id: "C2", result: "NOT_RUN", evidence: ["c2-seed.txt"] }] });
+  assert.match(String((readQa(job, 1, crit) as { refused: string }).refused), /C2 is NOT_RUN: say why/);
+  const c2 = { id: "C2", result: "not run", why: "the seed has no member 4", evidence: ["c2-seed.txt"] };
+  write({ verdict: "FAIL", criteria: [c1, c2] });
+  const v = readQa(job, 1, crit) as QaVerdict;
+  assert.equal(v.verdict, "INCOMPLETE");
+  assert.deepEqual(v.criteria[1], { id: "C2", result: "NOT_RUN", why: "the seed has no member 4", evidence: ["c2-seed.txt"], note: "" });
+  write({ verdict: "PASS", criteria: [c1, c2] });
+  assert.match(String((readQa(job, 1, crit) as { refused: string }).refused), /verdict PASS, but a criterion's row is NOT_RUN/);
+  write({ verdict: "FAIL", criteria: [{ ...c1, result: "FAIL" }, c2] });
+  assert.equal((readQa(job, 1, crit) as QaVerdict).verdict, "FAIL", "any FAIL is FAIL");
+  // A check: a NOT_RUN is never a finding.
+  write({ verdict: "FAIL", criteria: [c1, c2], findings: [{ title: "x", seen: "y", repro: ["z"], evidence: ["c2-seed.txt"], criterion: "C2" }] });
+  assert.match(String((readQa(job, 1, crit, { check: true }) as { refused: string }).refused), /names C2, which was NOT_RUN/);
+  // BLOCKED: every row NOT_RUN with its why.
+  write({ verdict: "BLOCKED", blocked: "the app won't start", evidence: ["app.log"] });
+  assert.match(String((readQa(job, 1, crit) as { refused: string }).refused), /evidence app\.log is missing/);
+  fs.writeFileSync(path.join(qa, "app.log"), "EADDRINUSE");
+  const b = readQa(job, 1, crit) as QaVerdict;
+  assert.deepEqual(
+    [b.verdict, b.blocked, b.criteria.map((r) => `${r.id} ${r.result} ${r.why}`)],
+    ["INCOMPLETE", "the app won't start", ["C1 NOT_RUN the app won't start", "C2 NOT_RUN the app won't start"]],
+  );
+  write({ verdict: "BLOCKED", evidence: ["app.log"] });
+  assert.match(String((readQa(job, 1, crit) as { refused: string }).refused), /says why in blocked/);
+  // The retry round: C1's pass carried (Kitchen's carried.json), QA writes C2 only.
+  const qa2 = qaDir(job, 2);
+  fs.mkdirSync(path.join(qa2, "from-round-1"), { recursive: true });
+  fs.copyFileSync(path.join(qa, "c1.http.txt"), path.join(qa2, "from-round-1", "c1.http.txt"));
+  fs.writeFileSync(carriedFile(qa2), JSON.stringify([{ ...c1, evidence: ["from-round-1/c1.http.txt"] }]));
+  fs.writeFileSync(path.join(qa2, "c2.png"), "png");
+  write({ verdict: "PASS", criteria: [{ id: "C2", result: "PASS", evidence: ["c2.png"] }] }, qa2);
+  const r2 = readQa(job, 2, crit) as QaVerdict;
+  assert.deepEqual([r2.verdict, r2.criteria.map((r) => `${r.id} ${r.result}`)], ["PASS", ["C2 PASS", "C1 PASS"]]);
 });
 
 test("the review: it blocks exactly when a finding does; a blocking finding needs its why", () => {

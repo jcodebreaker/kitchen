@@ -9,6 +9,7 @@ import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { claudeBin } from "../agents/find-bin.ts";
+import { runAgentSession } from "../agents/session.ts";
 import { type Config, loadConfig } from "../config.ts";
 import { kitchenDir, writeAtomic } from "../engine/store.ts";
 import { appendLedger } from "../ledger/append.ts";
@@ -132,7 +133,11 @@ export function streamLine(line: string): string | null {
   return null;
 }
 
-export async function run(repo: string, o: { detach?: boolean; stop?: boolean; print?: boolean; maxUsd?: number; cli?: string }, out: Out): Promise<number> {
+export async function run(
+  repo: string,
+  o: { detach?: boolean; stop?: boolean; print?: boolean; maxUsd?: number; cli?: string; graceMs?: number },
+  out: Out,
+): Promise<number> {
   if (o.stop) return stopRun(repo, out);
   const cfg = loadConfig(repo);
   if (cfg.agent.tool !== "claude" && !cfg.agent.command) {
@@ -173,6 +178,16 @@ export async function run(repo: string, o: { detach?: boolean; stop?: boolean; p
       return 2;
     }
   }
+  // ADR 0029 §4: the browser QA uses, installed once before a lane needs it; by the session itself, never in a
+  // detaching parent (a wake): its output goes to the run's log. Refused only when QA here needs it.
+  if (!o.detach) {
+    const app = await import("../qa/app.ts");
+    const browser = await app.ensureBrowser(out, { needed: app.browserNeeded(repo, cfg) });
+    if (browser) {
+      out(`kitchen run: ${browser}. Nothing started.`);
+      return 2;
+    }
+  }
   fs.mkdirSync(kitchenDir(repo), { recursive: true });
   const log = runLog(repo);
   if (o.detach) {
@@ -199,46 +214,40 @@ export async function run(repo: string, o: { detach?: boolean; stop?: boolean; p
     out(`orchestrator detached: pid ${child.pid}, log ${log}`);
     return 0;
   }
-  const child = spawn(argv[0], argv.slice(1), { cwd: repo, env: scrubbedEnv(), stdio: ["ignore", "pipe", "pipe"] });
-  // A binary that went missing after the preflight: say so, and end like a failed session.
-  const failed = new Promise<number>((resolve) =>
-    child.on("error", (e) => {
-      out(`orchestrator: could not start ${argv[0]}: ${e.message}`);
-      resolve(127);
-    }),
-  );
-  if (child.pid === undefined) return failed;
-  const info: RunInfo = { pid: child.pid as number, start: processStart(child.pid as number), at: new Date().toISOString(), log, command: argv };
-  writeAtomic(runFile(repo), JSON.stringify(info));
-  out(`orchestrator: ${argv.slice(0, 3).join(" ")} … (pid ${child.pid}); the dashboard shows the jobs: kitchen dashboard`);
+  // ADR 0029 §5: no app left from a run before this one.
+  for (const l of await (await import("../qa/app.ts")).sweepApps(repo).catch(() => [] as string[])) out(l);
   // The raw stream, for debugging one session: this session's, and the one before it (run.prev.jsonl). Nothing reads
   // it, so it never grows past two sessions.
   const raw = path.join(kitchenDir(repo), "run.jsonl");
   if (fs.existsSync(raw)) fs.renameSync(raw, path.join(kitchenDir(repo), "run.prev.jsonl"));
   const stream = fs.createWriteStream(raw);
-  let buf = "";
-  child.stdout.on("data", (d: Buffer) => {
-    stream.write(d);
-    buf += d.toString("utf8");
-    for (let i = buf.indexOf("\n"); i >= 0; i = buf.indexOf("\n")) {
-      const raw = buf.slice(0, i);
-      const l = streamLine(raw);
-      buf = buf.slice(i + 1);
-      const usd = sessionCost(raw);
-      if (usd !== null) appendLedger(repo, { job: "-", stage: "run", round: 0, event: "session", key: `run/${info.pid}/${info.at}`, usd });
+  let info: RunInfo | null = null;
+  // ADR 0029 §5: its own process group, ended after its result line (or when `kitchen run` is stopped).
+  const r = await runAgentSession(argv, {
+    cwd: repo,
+    env: scrubbedEnv(),
+    graceMs: o.graceMs,
+    onStart: (pid) => {
+      info = { pid, start: processStart(pid), at: new Date().toISOString(), log, command: argv };
+      writeAtomic(runFile(repo), JSON.stringify(info));
+      out(`orchestrator: ${argv.slice(0, 3).join(" ")} … (pid ${pid}); the dashboard shows the jobs: kitchen dashboard`);
+    },
+    onStdout: (d) => stream.write(d),
+    onStderr: (d) => process.stderr.write(d),
+    onLine: (line) => {
+      const usd = sessionCost(line);
+      if (usd !== null && info) appendLedger(repo, { job: "-", stage: "run", round: 0, event: "session", key: `run/${info.pid}/${info.at}`, usd });
+      const l = streamLine(line);
       if (l) out(l);
-    }
+    },
   });
-  child.stderr.on("data", (d: Buffer) => process.stderr.write(d));
-  const stopChild = () => child.kill("SIGTERM");
-  process.once("SIGTERM", stopChild);
-  process.once("SIGINT", stopChild);
-  const code = await Promise.race([failed, new Promise<number>((resolve) => child.on("close", (c) => resolve(c ?? 1)))]);
   stream.end();
+  // A binary that went missing after the preflight: say so, and end like a failed session.
+  if (r.error) out(`orchestrator: could not start ${argv[0]}: ${r.error}`);
   try {
-    if ((JSON.parse(fs.readFileSync(runFile(repo), "utf8")) as RunInfo).pid === info.pid) fs.rmSync(runFile(repo));
+    if ((JSON.parse(fs.readFileSync(runFile(repo), "utf8")) as RunInfo).pid === r.pid) fs.rmSync(runFile(repo));
   } catch {}
-  return code;
+  return r.code;
 }
 
 async function stopRun(repo: string, out: Out): Promise<number> {
@@ -248,7 +257,12 @@ async function stopRun(repo: string, out: Out): Promise<number> {
     return 0;
   }
   try {
-    process.kill(live.pid, "SIGTERM");
+    // ADR 0029 §5: the session's whole group (it leads it), else the session alone (one started before groups).
+    try {
+      process.kill(-live.pid, "SIGTERM");
+    } catch {
+      process.kill(live.pid, "SIGTERM");
+    }
   } catch (e) {
     out(`orchestrator: could not stop pid ${live.pid}: ${(e as Error).message}`);
     return 1;

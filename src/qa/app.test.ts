@@ -11,7 +11,21 @@ import * as control from "../engine/control.ts";
 import { qaDir } from "../engine/lanes.ts";
 import { findJob, jobDirOf } from "../engine/store.ts";
 import { orchestratorCommand, scrubbedEnv, streamLine } from "../run/orchestrator.ts";
-import { appDown, appEnv, appReset, appUp, composeProject, http, page, reachable, stopApp, stopCommand } from "./app.ts";
+import {
+  appDown,
+  appEnv,
+  appReset,
+  appUp,
+  browserNeeded,
+  composeProject,
+  ensureBrowser,
+  http,
+  page,
+  reachable,
+  stopApp,
+  stopCommand,
+  sweepApps,
+} from "./app.ts";
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kitchen-qa-"));
 const lines: string[] = [];
@@ -125,4 +139,90 @@ test("ADR 0021 §3: only this machine, or the deployed URL a --url sweep drives"
   assert.ok(!reachable("https://staging.example.com/cart", null));
   assert.ok(reachable("https://staging.example.com/cart", "https://staging.example.com"));
   assert.ok(!reachable("https://evil.example.com/", "https://staging.example.com"));
+});
+
+test("ADR 0029 §4: qa up records each setup step in the job's checking, and clears it when the app is up or fails", async () => {
+  const job = path.join(jobDirOf(root, id), "job.json");
+  const seen = path.join(root, "seen");
+  fs.mkdirSync(seen, { recursive: true });
+  const cfg = loadConfig(root);
+  // app.reset runs after its step is written, so it sees it on disk; every value `checking` takes is recorded as written.
+  const app = { ...cfg.app, reset: `cp '${job}' '${path.join(seen, "reset.json")}'`, ready_timeout_sec: 20 };
+  const steps: unknown[] = [];
+  const record = (c: { cmd: string; setup?: true; of?: number } | null | undefined) => steps.push(c ? [c.cmd, c.setup, c.of] : null);
+  assert.equal(await appUp(root, id, out, { ...cfg, app }, { seen: record }), 0, lines.join("\n"));
+  const disk = (JSON.parse(fs.readFileSync(path.join(seen, "reset.json"), "utf8")) as { checking?: Record<string, unknown> }).checking;
+  assert.deepEqual([disk?.cmd, disk?.setup, disk?.log], ["Resetting data", true, path.join("rounds", "1", "qa", "app.log")]);
+  assert.deepEqual(steps, [["Resetting data", true, undefined], ["Starting the app", true, undefined], ["Waiting for /healthz", true, 20], null]);
+  assert.equal(findJob(root, id).checking, undefined, "cleared once up");
+  await appDown(root, id);
+  steps.length = 0;
+  assert.equal(await appUp(root, id, out, { ...cfg, app: { ...app, reset: "exit 3" } }, { seen: record }), 1);
+  assert.deepEqual(steps, [["Resetting data", true, undefined], null], "cleared when a step fails");
+  assert.equal(findJob(root, id).checking, undefined);
+});
+
+test("ADR 0029 §4: the browser is installed once when it is missing; a failed install is the one line to refuse with", async () => {
+  const said: string[] = [];
+  let installs = 0;
+  assert.equal(await ensureBrowser((l) => said.push(l), { ready: () => true, install: async () => !!++installs }), null);
+  assert.equal(installs, 0, "there already: nothing installed");
+  let there = false;
+  const install = async () => {
+    installs++;
+    there = true;
+    return true;
+  };
+  assert.equal(await ensureBrowser((l) => said.push(l), { ready: () => there, install }), null);
+  assert.deepEqual([installs, said], [1, ["Installing the browser QA uses, once (~150 MB)…"]]);
+  const no = await ensureBrowser(() => {}, { ready: () => false, install: async () => false });
+  assert.match(String(no), /^the browser QA uses \(Playwright's Chromium\) isn't installed: run npx playwright install chromium in \//);
+  // Not needed yet (no app, no page criterion): a note, no install, no refusal.
+  const notes: string[] = [];
+  assert.equal(await ensureBrowser((l) => notes.push(l), { needed: false, ready: () => false, install: async () => !!++installs }), null);
+  assert.equal(installs, 1, "nothing installed");
+  assert.match(notes.join(""), /^note: the browser QA uses .* \(nothing queued needs it yet\)$/);
+  // The installer's own output goes through out (the run's log when detached), never straight to the terminal.
+  const lines: string[] = [];
+  const prev = process.env.KITCHEN_BROWSER_INSTALL;
+  process.env.KITCHEN_BROWSER_INSTALL = "printf 'Downloading 10%%\\rDownloading 100%%\\n'; exit 1";
+  try {
+    assert.ok(await ensureBrowser((l) => lines.push(l), { ready: () => false }));
+  } finally {
+    process.env.KITCHEN_BROWSER_INSTALL = prev;
+  }
+  assert.deepEqual(lines, ["Installing the browser QA uses, once (~150 MB)…", "  Downloading 100%"]);
+  assert.ok(browserNeeded(root, loadConfig(root)), "an app to drive needs it");
+});
+
+test("ADR 0029 §5: stopping or rejecting a job stops its app; a sweep stops any app no lane works on", async () => {
+  const state = path.join(jobDirOf(root, id), "app.json");
+  const up = async () => {
+    assert.equal(await appUp(root, id, out), 0, lines.join("\n"));
+    return (JSON.parse(fs.readFileSync(state, "utf8")) as { pid: number }).pid;
+  };
+  const gone = async (pid: number) => {
+    for (let i = 0; i < 20 && alive(pid); i++) await new Promise((r) => setTimeout(r, 100));
+    assert.ok(!alive(pid), `app ${pid} still runs`);
+  };
+  const alive = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  let pid = await up();
+  await control.stop(root, id, () => {});
+  assert.ok(!fs.existsSync(state));
+  await gone(pid);
+  await control.resume(root, id, () => {});
+  pid = await up();
+  assert.deepEqual(await sweepApps(root), [`${id}  app stopped (no lane works on it)`]);
+  await gone(pid);
+  pid = await up();
+  await control.reject(root, id, () => {});
+  assert.ok(!fs.existsSync(state));
+  await gone(pid);
 });

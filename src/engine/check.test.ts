@@ -284,19 +284,19 @@ test("(c) an exploring check with findings: time-boxed brief, the finding propos
   assert.equal(findJob(r, id2).stage, "done");
 });
 
-test("(d) a check whose app won't start: BLOCKED runs QA again, out of rounds it goes to a person", async () => {
+test("(d) a check whose app won't start: BLOCKED runs QA again (ADR 0029 §2: every row NOT_RUN), still not run it goes to a person", async () => {
   const r = await repo("round_limit: 2\n");
   const before = g(r, "rev-parse", "staging");
   const { id } = await intake(r, "check the app", CHECK(["app answers"]));
   const blocked = { verdict: "BLOCKED", blocked: "the app won't start: port in use", evidence: ["app.log"] };
   const { f } = await checkQa(r, id, blocked, { "app.log": "EADDRINUSE\n" });
-  assert.match(f.line, /check couldn't run \(the app won't start: port in use\) → qa again \(round 2\)/);
+  assert.match(f.line, /QA couldn't test C1 \(the app won't start: port in use\) → qa again on C1 on fresh seed data \(round 2\)/);
   assert.deepEqual([findJob(r, id).stage, findJob(r, id).round], ["qa", 2]);
   const { f: f2 } = await checkQa(r, id, blocked, { "app.log": "EADDRINUSE\n" });
-  assert.match(f2.line, /out of rounds → needs-human/);
+  assert.match(f2.line, /QA still couldn't test C1 \(the app won't start: port in use\) → needs-human/);
   const j = findJob(r, id);
   assert.deepEqual([j.stage, j.escalatedFrom], ["needs-human", "qa"]);
-  assert.match(String(j.pausedReason), /couldn't run after 2 rounds/);
+  assert.equal(j.pausedReason, "QA couldn't test C1: the app won't start: port in use");
   assert.equal(listProposals(r).length, 0, "not a problem found");
   assert.equal(g(r, "rev-parse", "staging"), before);
   // The person's answer runs it again in QA, never Build.
@@ -505,4 +505,70 @@ test("the plan never sends a check to Build", () => {
   const p = planWave([job], { parallel: 2 });
   assert.deepEqual(p.start, []);
   assert.match(p.you[0]?.why ?? "", /a check never builds/);
+});
+
+test("ADR 0029 §2 and §6: a NOT_RUN on a check is no proposal; proposals that fail to save are recorded, shown and proposed again once", async () => {
+  const r = await repo();
+  const { id } = await intake(r, "check two things", CHECK(["app.txt has three lines", "the export works"]));
+  // The inbox can't take proposals now.
+  const pdir = path.join(r, ".kitchen", "inbox", "proposals");
+  fs.mkdirSync(path.dirname(pdir), { recursive: true });
+  fs.writeFileSync(pdir, "not a folder");
+  const { f } = await checkQa(
+    r,
+    id,
+    {
+      verdict: "FAIL",
+      criteria: [
+        { id: "C1", result: "FAIL", evidence: ["c1.txt"], note: "2 lines" },
+        { id: "C2", result: "NOT_RUN", why: "the export service is down", evidence: ["c2.txt"] },
+      ],
+      findings: [{ title: "app.txt lost a line", seen: "2 lines", repro: ["wc -l app.txt"], evidence: ["c1.txt"], criterion: "C1" }],
+    },
+    { "c1.txt": "2 app.txt\n", "c2.txt": "503\n" },
+  );
+  assert.match(f.line, /Found 1 problem · proposals failed: .*ENOTDIR.* \(retried on the next wave\)/);
+  const j = findJob(r, id);
+  assert.deepEqual([j.stage, j.check?.findings, j.check?.proposals, j.check?.proposalsFailed?.round], ["done", 1, [], 1]);
+  const html = fs.readFileSync(path.join(jobDirOf(r, id), "report.html"), "utf8");
+  assert.match(html, /proposals failed: .*ENOTDIR/);
+  assert.match(html, /class="st">not tested<\/td><td>the export service is down/);
+  assert.match(String((await snapshot(r)).jobs.find((x) => x.id === id)?.check?.proposalsFailed), /ENOTDIR/);
+  // Still failing: recorded again, nothing lost.
+  await next(r);
+  assert.ok(findJob(r, id).check?.proposalsFailed);
+  fs.rmSync(pdir);
+  await next(r);
+  const k = findJob(r, id);
+  assert.equal(k.check?.proposalsFailed, undefined);
+  assert.equal(k.check?.proposals?.length, 1, "one proposal: the FAIL's, never the NOT_RUN's");
+  assert.equal(listProposals(r).length, 1);
+  // Idempotent: proposing the same round again finds the same proposal.
+  await updateCheck(r, id);
+  // A finish and a wave at once: one at a time, and each line said.
+  const [a, b] = await Promise.all([next(r), next(r)]);
+  assert.deepEqual([...a.proposals, ...b.proposals].filter((l) => /proposed .* \(retried\)/.test(l)).length, 1);
+  assert.equal(listProposals(r).length, 1, "never proposed twice");
+});
+
+/** Mark the check's proposals failed again, as if the save had been lost after it was made. */
+async function updateCheck(r: string, id: string) {
+  const f = path.join(jobDirOf(r, id), "job.json");
+  const j = JSON.parse(fs.readFileSync(f, "utf8"));
+  j.check.proposalsFailed = { error: "lost", round: 1 };
+  fs.writeFileSync(f, JSON.stringify(j));
+}
+
+test("ADR 0029 §2: an exploring check (no criteria) that says BLOCKED runs again on everything, then says QA couldn't run", async () => {
+  const r = await repo("round_limit: 3\n");
+  const { id } = await intake(r, "explore the app", "DECISION: ACCEPT\nKIND: check\nEXPLORE: 10\n");
+  const blocked = { verdict: "BLOCKED", blocked: "the app won't start", evidence: ["app.log"] };
+  const { f } = await checkQa(r, id, blocked, { "app.log": "EADDRINUSE\n" });
+  assert.match(f.line, /QA couldn't run \(the app won't start\) → qa again on fresh seed data \(round 2\)$/);
+  const { s, f: f2 } = await checkQa(r, id, blocked, { "app.log": "EADDRINUSE\n" });
+  assert.match(fs.readFileSync(s.brief, "utf8"), /## QA again\n\nRound 1's QA couldn't run: the app won't start\. [\s\S]*Drive everything/);
+  assert.match(f2.line, /QA still couldn't run \(the app won't start\) → needs-human/);
+  assert.equal(findJob(r, id).pausedReason, "QA couldn't run: the app won't start");
+  assert.equal(await control.resume(r, id, quiet), 0, "Resume runs QA again");
+  assert.equal(findJob(r, id).stage, "qa");
 });
