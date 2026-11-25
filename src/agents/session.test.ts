@@ -1,10 +1,12 @@
 // ADR 0029 §5: an agent session in its own process group, ended after its final line, whatever it left running.
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, test } from "vitest";
-import { finalLine, runAgentSession } from "./session.ts";
+import { localStart, ownerAlive, processStart, sameProcess, unconfirmed } from "../lock.ts";
+import { endGroup, finalLine, runAgentSession } from "./session.ts";
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kitchen-session-"));
 afterAll(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -84,4 +86,35 @@ test("a closed terminal (SIGHUP) ends the session's group, then Kitchen itself",
   assert.deepEqual([code, sig], [null, "SIGHUP"], "Kitchen exits on the signal, after the group");
   assert.ok(!said.includes("returned"), "it didn't carry on");
   assert.ok(!alive(agentPid) && !alive(left), "the session and what it left are gone");
+});
+
+test("ADR 0030: endGroup ends a group from outside and waits for it; never on a pid whose start is unknown", async () => {
+  // A session that ignores SIGTERM: endGroup waits KILL_AFTER_MS, then SIGKILL, before it returns.
+  const c = spawn("/bin/sh", ["-c", "trap '' TERM; sleep 600 & wait"], { detached: true, stdio: "ignore" });
+  const pid = c.pid as number;
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal(await endGroup({ pid, start: null }), "unconfirmed", "a bare pid may be reused: never killed");
+  assert.ok(alive(pid));
+  assert.equal(await endGroup({ pid, start: processStart(pid) }), "ended");
+  await new Promise((r) => setTimeout(r, 100));
+  assert.ok(!alive(pid), "gone when endGroup returns");
+  assert.equal(await endGroup({ pid, start: "Mon Jan  1 00:00:07 2001" }), "gone");
+});
+
+test("ADR 0030: a kill needs a positive match: a start an earlier Kitchen stored in another locale keeps the session alive, said", async () => {
+  // A lane session from before the upgrade: alive by ownerAlive's benefit of the doubt (its command names claude),
+  // but its stored start (French, Tokyo time) can't be matched, so nothing kills it.
+  const c = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)", "claude"], { detached: true, stdio: "ignore" });
+  const pid = c.pid as number;
+  await new Promise((r) => setTimeout(r, 300));
+  const stored = localStart(pid, { ...process.env, LANG: "fr_FR.UTF-8", LC_ALL: "fr_FR.UTF-8", TZ: "Asia/Tokyo" }) as string;
+  assert.ok(ownerAlive({ pid, start: stored }), "alive: never taken over or restarted");
+  assert.ok(!sameProcess({ pid, start: stored }));
+  assert.equal(await endGroup({ pid, start: stored }), "unconfirmed");
+  assert.ok(alive(pid), "not killed");
+  assert.equal(unconfirmed(pid, "Kitchen's run"), `can't confirm pid ${pid} is Kitchen's run: stop it yourself (kill ${pid})`);
+  // Read in the caller's own locale (how an earlier Kitchen stored it on this machine): a positive match.
+  assert.ok(sameProcess({ pid, start: localStart(pid) }));
+  assert.equal(await endGroup({ pid, start: localStart(pid) }), "ended");
+  assert.ok(!alive(pid));
 });

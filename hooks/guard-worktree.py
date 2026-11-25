@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# kitchen-hooks-version: 2  (ADR 0030: kitchen run refreshes an older installed copy, never a newer one)
 """Kitchen guard (PreToolUse Bash|Edit|MultiEdit|Write|NotebookEdit): agents work inside their job's worktree.
 
 1. `git worktree add|move` may only target <repo>/.worktrees/ (Kitchen's job worktrees), <repo>/.kitchen/merge/

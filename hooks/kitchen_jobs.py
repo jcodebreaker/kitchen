@@ -1,10 +1,12 @@
+# kitchen-hooks-version: 2  (ADR 0030: kitchen run refreshes an older installed copy, never a newer one)
 """Which Kitchen job a lane agent works on, for Kitchen's hooks (guard-worktree.py, activity.py).
 
 The orchestrator starts each lane agent with `kitchen job start`, which records the lane in the job's job.json
 (`running`). A lane agent's first steps name its job: `cd <repo>/.worktrees/<id>` and a read of its brief under
 `<repo>/.kitchen/jobs/<id>/`. When a tool call made inside a subagent (the hook input carries `agent_id`) names a
 job whose lane is open, the agent is bound to that job in `.kitchen/agents/<agent_id>`; later calls of the same
-agent are found from there. Python 3 standard library only.
+agent are found from there. A lane session `kitchen run` started (ADR 0030) is a top-level session with no `agent_id`:
+its environment names its job (KITCHEN_JOB). Python 3 standard library only.
 """
 import json
 import os
@@ -35,8 +37,18 @@ def _mentions(payload):
     return "\n".join(parts)
 
 
+def lane_session():
+    """The job a lane session `kitchen run` started works on (ADR 0030: KITCHEN_JOB in its environment), or None."""
+    job_id = os.environ.get("KITCHEN_JOB") or ""
+    return job_id if re.match(r"^\d{3,}-[a-z0-9-]{1,48}$", job_id) else None
+
+
 def bound_job(payload, repo=None):
-    """(job_id, job_json) the subagent behind this call works on, or (None, None). Binds it on first sight."""
+    """(job_id, job_json) the lane agent behind this call works on, or (None, None). Binds a subagent on first sight."""
+    own = lane_session()
+    if own:
+        job = _job_json(repo or project_dir(payload), own)
+        return (own, job) if job else (None, None)
     agent = payload.get("agent_id")
     if not isinstance(agent, str) or not re.match(r"^[A-Za-z0-9_.-]{1,128}$", agent):
         return None, None

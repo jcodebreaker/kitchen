@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# kitchen-hooks-version: 2  (ADR 0030: kitchen run refreshes an older installed copy, never a newer one)
 """Guard against live credentials entering the codebase.
 
 guard-secrets stops secrets getting OUT (reading dotenv files). This stops them

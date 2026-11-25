@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, test } from "vitest";
-import { HOOKS_SRC, installHooks, KITCHEN_HOOKS, mergeHooks } from "./hooks.ts";
+import { HOOK_SCRIPTS, HOOKS_DIR, HOOKS_SRC, hooksBackupDir, hooksVersion, installHooks, KITCHEN_HOOKS, mergeHooks, refreshHooks } from "./hooks.ts";
 
 const root = fs.realpathSync(fs.mkdtempSync(path.join(os.homedir(), ".kitchen-hooks-test-")));
 afterAll(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -111,6 +111,10 @@ test("guard-worktree: worktrees only under .worktrees/; a bound lane agent write
   assert.match(String(hook("guard-worktree.py", write(path.join(job, "rounds/1/qa/verdict.json"), "agent-1"), env)), /QA's folder/);
   assert.equal(hook("guard-worktree.py", write(path.join(job, "rounds/1/second-look.json"), "agent-1"), env), null);
   fs.writeFileSync(path.join(job, "job.json"), JSON.stringify({ id, running: { lane: "build", at: "t", key: "k" }, worktree: wt }));
+  // ADR 0030: a lane session `kitchen run` started has no agent_id; KITCHEN_JOB binds it the same way.
+  const lane = { ...env, KITCHEN_JOB: id };
+  assert.match(String(hook("guard-worktree.py", write(path.join(repo, "server.js")), lane)), /outside job 001-add-x's places/);
+  assert.equal(hook("guard-worktree.py", write(path.join(wt, "server.js")), lane), null);
   // kitchen remove: the job is archived, so the bound agent is refused every call (it stops); the session isn't.
   fs.writeFileSync(path.join(job, "job.json"), JSON.stringify({ id, running: null, worktree: wt, archived: { at: "t", by: "person" } }));
   assert.match(String(hook("guard-worktree.py", write(path.join(wt, "server.js"), "agent-1"), env)), /the person removed job 001-add-x\. Stop now/);
@@ -151,6 +155,15 @@ test("the activity hook: a bound agent's calls land in its lane's stream, as str
     ],
   );
   assert.equal(lines[0].message.content[0].input.command, "kitchen qa up 002");
+  // ADR 0030: in a lane session `kitchen run` started, Kitchen writes the whole stream itself: the hook adds nothing.
+  hook("activity.py", { ...base, agent_id: undefined }, { ...env, KITCHEN_JOB: id });
+  assert.equal(
+    fs
+      .readFileSync(path.join(job, "activity", "m3-qa-1.jsonl"), "utf8")
+      .trim()
+      .split("\n").length,
+    2,
+  );
 });
 
 test("kitchen init merges the hooks into .claude/settings.json: keeps what is there, backs it up, never twice", () => {
@@ -173,4 +186,31 @@ test("kitchen init merges the hooks into .claude/settings.json: keeps what is th
   const second = installHooks(repo);
   assert.deepEqual([second.added, second.backup, second.scripts], [0, null, 0]);
   assert.equal(mergeHooks(s).added, 0);
+});
+
+test("ADR 0030: refreshHooks replaces only an older installed script, kept in .kitchen/hooks-backup; none where init never ran", () => {
+  const repo = path.join(root, "refresh");
+  fs.mkdirSync(repo, { recursive: true });
+  assert.deepEqual(refreshHooks(repo), []);
+  installHooks(repo);
+  const f = path.join(repo, HOOKS_DIR, "kitchen_jobs.py");
+  fs.writeFileSync(f, "# an older script\n");
+  assert.deepEqual(refreshHooks(repo, new Date("2026-11-24T00:00:00Z")), [path.join(HOOKS_DIR, "kitchen_jobs.py")]);
+  assert.equal(fs.readFileSync(path.join(hooksBackupDir(repo), "kitchen_jobs.py.2026-11-24T00-00-00-000Z"), "utf8"), "# an older script\n");
+  assert.ok(fs.readFileSync(f).equals(fs.readFileSync(path.join(HOOKS_SRC, "kitchen_jobs.py"))));
+  assert.deepEqual(
+    fs.readdirSync(path.join(repo, HOOKS_DIR)).filter((x) => !x.endsWith(".py")),
+    [],
+    "nothing else beside the hooks",
+  );
+  assert.deepEqual(refreshHooks(repo), [], "nothing to do the second time");
+  // A teammate's newer Kitchen installed a newer script: an older Kitchen leaves it.
+  const newer = "# kitchen-hooks-version: 99\n# from a newer Kitchen\n";
+  fs.writeFileSync(f, newer);
+  assert.deepEqual(refreshHooks(repo), []);
+  assert.equal(fs.readFileSync(f, "utf8"), newer);
+  assert.ok(
+    HOOK_SCRIPTS.every((x) => hooksVersion(fs.readFileSync(path.join(HOOKS_SRC, x), "utf8")) >= 2),
+    "every script says its version",
+  );
 });

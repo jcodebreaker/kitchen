@@ -64,13 +64,13 @@ Code asked for only to verify something now ("a harness that proves the import h
 
 ### 3. Run the queue
 
-In Claude Code, type `/kitchen run`. Or, from a terminal:
+From a terminal (the headless default):
 
 ```sh
 kitchen run --detach && kitchen dashboard
 ```
 
-The session plans waves and starts one agent per lane. Tickets run side by side, even when they touch the same file: git merges them, and one that conflicts with what landed first **catches up**: its builder resolves the merge on top of `staging`, QA re-drives what passed, review reads only the resolution, and it costs no round. Answer a job that needs you, or steer one from the dashboard.
+Kitchen plans waves and starts one agent session per lane (`claude -p`, or `codex exec`), finishing each lane the moment its agent ends, so a fast job never waits for a slow one. In Claude Code, `/kitchen run` works the queue in your session instead, so you can watch it. Tickets run side by side, even when they touch the same file: git merges them, and one that conflicts with what landed first **catches up**: its builder resolves the merge on top of `staging`, QA re-drives what passed, review reads only the resolution, and it costs no round. Answer a job that needs you, or steer one from the dashboard.
 
 **One dashboard for every repo.** `kitchen dashboard` serves http://127.0.0.1:7357/ with a switcher for every repo you ran Kitchen in. Run it in another repo and it joins the open page (`already open: …/#<repo>`) instead of taking a new port; a badge counts jobs in other repos that need you. After Kitchen is rebuilt or updated, the page says so; `kitchen dashboard --restart` starts the new build on the same port.
 
@@ -105,7 +105,7 @@ A job whose QA and review pass is merged into `staging`, after Kitchen runs your
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/how-it-works-dark.svg">
-  <img alt="You tell Claude Code what you want and it files a ticket. The orchestrator session plans waves and moves each job only through kitchen job verbs. One fresh agent per lane: intake, build, QA, review. QA starts your app and checks it with Playwright, following and keeping the verify map: one file per feature. After review, a merge check drives the features the merge touches on the merged result; green lands in staging with its Report, and you merge staging onward." src="docs/img/how-it-works-light.svg">
+  <img alt="You tell Claude Code what you want and it files a ticket. Kitchen plans waves and moves each job only through its kitchen job verbs. One fresh agent per lane: intake, build, QA, review. QA starts your app and checks it with Playwright, following and keeping the verify map: one file per feature. After review, a merge check drives the features the merge touches on the merged result; green lands in staging with its Report, and you merge staging onward." src="docs/img/how-it-works-light.svg">
 </picture>
 
 QA follows and keeps a **verify skill** in your repo (`.claude/skills/verify-<app>/`): one file per feature saying how to check it and which files are behind it. A repo that ignores `.claude/` keeps it on your machine instead (`.kitchen/verify/skill/`, `verify.map: local` in kitchen.yaml): Kitchen copies it into each job and never commits it. Before a job merges, a **merge check** drives every feature whose files the merge changes, on the merged result, so one job breaking another's feature goes back to Build instead of landing. More: [the verify map](docs/guide.md#the-verify-map).

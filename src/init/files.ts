@@ -41,6 +41,7 @@ export const GITIGNORE = [
   ".kitchen/init/",
   ".kitchen/agents/",
   ".kitchen/merge/",
+  ".kitchen/hooks-backup/",
   ".kitchen/verify/",
   ".kitchen/doctor/",
   ".kitchen/ledger.jsonl",

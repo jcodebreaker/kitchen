@@ -45,8 +45,6 @@ export function statusLine(j: Job, jobDir: string): string {
 /** The orchestrator in one line: `kitchen run`'s session, or the last `kitchen job next` of an in-session one. */
 export function orchestratorLine(repo: string): string {
   const r = liveRun(repo);
-  // Inside that session (`kitchen run` sets KITCHEN_ORCHESTRATOR), it is this session, not a second one.
-  if (r && process.env.KITCHEN_ORCHESTRATOR) return `orchestrator: this session (kitchen run, pid ${r.pid})`;
   if (r) return `orchestrator: running (kitchen run, pid ${r.pid}, log ${r.log})`;
   try {
     const h = JSON.parse(fs.readFileSync(heartbeatFile(repo), "utf8")) as { at: string };

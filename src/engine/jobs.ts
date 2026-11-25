@@ -6,6 +6,7 @@
 //   finish <id>                          close it: read the lane's files, run what Kitchen proves itself (the checks,
 //                                        the merge into the job's target), and move the job, or refuse and say why
 //   show <id> [--json]                   one job, as the orchestrator needs it
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { type OnCheck, prepareOf, runChecks } from "../checks/run-checks.ts";
@@ -13,7 +14,7 @@ import { type Config, checksFor, type LaneRole, loadConfig, modelFor, targetOf }
 import { commentOnMerge } from "../inbox/comment.ts";
 import { addFindings, findingProposal, proposeCheckFindings, qaFindings, reviewFindings } from "../inbox/findings.ts";
 import { appendLedger } from "../ledger/append.ts";
-import { withFileLock } from "../lock.ts";
+import { lockOwner, ownerAlive, withFileLock } from "../lock.ts";
 import { liveRun } from "../run/orchestrator.ts";
 import { skillsForLane } from "../skills/forjob.ts";
 import { PromptSource } from "../sources/prompt.ts";
@@ -102,9 +103,54 @@ export const MAX_TRIES = 3;
 /** The orchestrator's heartbeat: the last `kitchen job next`. The dashboard reads it. */
 export const heartbeatFile = (repo: string) => path.join(kitchenDir(repo), "orchestrator.json");
 
+/** ADR 0030 §3: how long an in-session orchestrator's last wave counts as working the queue (a lane's timeout). */
+export const IN_SESSION_MS = 15 * 60_000;
+
+type Heartbeat = { at: string; pid?: number; drained?: boolean; by?: "run" };
+export const readHeartbeat = (repo: string): Heartbeat | null => {
+  try {
+    return JSON.parse(fs.readFileSync(heartbeatFile(repo), "utf8")) as Heartbeat;
+  } catch {
+    return null;
+  }
+};
+
+/** ADR 0030 §3: an in-session orchestrator's work: `kitchen job start` and `finish` from its session say it lives. */
+export function beat(repo: string, o: { drained?: boolean; by?: "run" } = {}) {
+  fs.mkdirSync(kitchenDir(repo), { recursive: true });
+  const h: Heartbeat = { at: new Date().toISOString(), pid: process.ppid, drained: !!o.drained, ...(o.by ? { by: o.by } : {}) };
+  writeAtomic(heartbeatFile(repo), JSON.stringify(h));
+}
+
+/** ADR 0030 §3: a lane opened without a session (a subagent's) is alive while its activity stream grew this lately. */
+export const LANE_QUIET_MS = 10 * 60_000;
+
+/**
+ * ADR 0030 §3: an open lane with no session of Kitchen's (an in-session orchestrator's subagent) still works: its
+ * activity stream, which the activity hook appends to on each of its tool calls (hooks/activity.py), or the lane's
+ * opening, is younger than LANE_QUIET_MS. However long that orchestrator's wave takes.
+ */
+export function laneBusy(repo: string, j: Job, now = Date.now()): boolean {
+  if (!j.running) return false;
+  // Its orchestrator planned, opened or finished something lately (dashboard/data.ts reads it the same way).
+  const h = readHeartbeat(repo);
+  if (h && h.by !== "run" && now - Date.parse(h.at) < IN_SESSION_MS) return true;
+  let last = Date.parse(j.running.at);
+  if (j.running.stream)
+    try {
+      last = Math.max(last, fs.statSync(path.join(jobDirOf(repo, j.id), j.running.stream)).mtimeMs);
+    } catch {}
+  return now - last < LANE_QUIET_MS;
+}
+
+/**
+ * The next wave. `restartStranded`: lanes left open are started again, but never one whose session (`kitchen run`
+ * started it) still lives (ADR 0030 §3). `by: "run"`: `kitchen run`'s scheduler plans it; then a lane opened without a
+ * session (an in-session orchestrator's subagent) is left alone while it still works (laneBusy).
+ */
 export async function next(
   repo: string,
-  o: { restartStranded?: boolean } = {},
+  o: { restartStranded?: boolean; by?: "run" } = {},
 ): Promise<Plan & { prs: string[]; proposals: string[]; refiled: string[]; merges: string[] }> {
   const cfg = loadConfig(repo);
   // ADR 0026 §4: what became of the PRs waiting on a person (at most once a minute).
@@ -118,15 +164,21 @@ export async function next(
   // A job the person removed is never picked (kitchen remove).
   const jobs = listJobs(repo).filter((j) => !j.archived);
   const paused = new Set(jobs.filter((j) => !j.running && readControl(jobDirOf(repo, j.id)).pause).map((j) => j.id));
+  const stranded = (j: Job) => {
+    const ses = j.running?.session;
+    if (!o.restartStranded) return false;
+    // A run's claim before its session started: stranded once that run is gone.
+    if (ses?.pending) return !lockOwner(path.join(kitchenDir(repo), "run.lock"));
+    return ses ? !ses.ended && !ownerAlive(ses) : o.by !== "run" || !laneBusy(repo, j);
+  };
   const plan = {
-    ...planWave(jobs, { parallel: cfg.parallel, restartStranded: o.restartStranded, paused, target: (j) => targetOf(cfg, j) }),
+    ...planWave(jobs, { parallel: cfg.parallel, restartStranded: stranded, paused, target: (j) => targetOf(cfg, j) }),
     prs,
     proposals,
     refiled,
     merges: waited,
   };
-  fs.mkdirSync(kitchenDir(repo), { recursive: true });
-  writeAtomic(heartbeatFile(repo), JSON.stringify({ at: new Date().toISOString(), pid: process.ppid, drained: plan.drained }));
+  beat(repo, { drained: plan.drained, by: o.by });
   // ADR 0029 §5: a drained queue leaves no app running.
   if (plan.drained) await (await import("../qa/app.ts")).sweepApps(repo).catch(() => []);
   return plan;
@@ -220,7 +272,8 @@ export async function refileChecks(repo: string): Promise<string[]> {
   return said;
 }
 
-export type Started = { id: string; lane: Lane; brief: string; cwd: string; model: string; prompt: string };
+/** `key`: the lane's run, which `finish --key` names (ADR 0030 §3). */
+export type Started = { id: string; lane: Lane; brief: string; cwd: string; model: string; prompt: string; key: string };
 
 /** The worktree of a job's first Build: kitchen/<id> from its target's tip (or the base when there is no staging yet). */
 async function ensureWorktree(repo: string, cfg: Config, job: Job): Promise<{ wt: string; base: string }> {
@@ -628,6 +681,96 @@ function qaSummary(dir: string, job: Job): string {
   return `## QA's verdict: ${qa.verdict}\n\n${qa.criteria.map((c) => `- ${c.id} ${c.result}: ${c.note} (${c.evidence.join(", ")})`).join("\n")}\n`;
 }
 
+/** ADR 0030 §2: every other job's `kitchen/<id>` branch and its tip, when a lane opens. */
+async function otherTips(repo: string, job: Job): Promise<Record<string, string>> {
+  const r = await git(repo, ["for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads/kitchen/"], { allowFail: true });
+  const mine = new Set(listJobs(repo).flatMap((j) => (j.id === job.id ? [] : [j.branch])));
+  return Object.fromEntries(
+    r.stdout
+      .split("\n")
+      .map((l) => l.split(" "))
+      .filter(([b, sha]) => b && sha && mine.has(b)),
+  );
+}
+
+/**
+ * ADR 0030 §2: another job's branch moved while this lane ran, and no lane of that job worked meanwhile (its own
+ * Build commits, and Kitchen's catch-up at that Build's start, are the only legitimate moves): this lane moved it.
+ */
+async function movedOthers(repo: string, job: Job): Promise<string | null> {
+  const r = job.running;
+  if (!r?.tips) return null;
+  const since = Date.parse(r.at);
+  const jobs = listJobs(repo);
+  for (const [b, was] of Object.entries(r.tips)) {
+    const now = await revParse(repo, `refs/heads/${b}`);
+    if (now === was) continue;
+    const other = jobs.find((j) => j.branch === b);
+    const worked = other?.agentRuns.some((a) => a.stage === "build" && (!a.end || Date.parse(a.end) >= since));
+    if (!worked)
+      return `${b}, job ${other?.id ?? "?"}'s branch, moved while this lane ran (${was.slice(0, 7)} → ${now?.slice(0, 7) ?? "gone"}): a lane never touches another job's branch`;
+  }
+  return null;
+}
+
+/** A linked worktree's git dir (`<common>/worktrees/<name>`), from its `.git` file; null for anything else. */
+function gitDirOf(wt: string): string | null {
+  try {
+    const m = /^gitdir: (.+)$/m.exec(fs.readFileSync(path.join(wt, ".git"), "utf8"));
+    return m ? path.resolve(wt, m[1].trim()) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * ADR 0030 §2: a worktree's `config.worktree` as the lane found it: its hash, or "none"; null outside a linked
+ * worktree. `git worktree add` writes one in a sparse-checkout repo, so only a new or changed one is the lane's.
+ */
+export function worktreeConfigOf(wt: string): string | null {
+  const gd = gitDirOf(wt);
+  if (!gd) return null;
+  try {
+    return createHash("sha256")
+      .update(fs.readFileSync(path.join(gd, "config.worktree")))
+      .digest("hex");
+  } catch {
+    return "none";
+  }
+}
+
+/**
+ * ADR 0030 §2: the worktree's git dir as `git worktree add` wrote it. A lane may write that dir (a Build commits
+ * there), so it could point `commondir` at a git dir of its own, with hooks and config, or add or change a
+ * `config.worktree`: Kitchen's own git would then run them. `config`: worktreeConfigOf when the lane opened (unknown:
+ * not checked). The reason, or null.
+ */
+export async function worktreeTampered(repo: string, wt: string, config?: string | null): Promise<string | null> {
+  const gitdir = gitDirOf(wt);
+  if (!gitdir) return null; // not a linked worktree
+  const common = (await git(repo, ["rev-parse", "--path-format=absolute", "--git-common-dir"], { allowFail: true })).stdout.trim();
+  const read = (f: string) => {
+    try {
+      return fs.readFileSync(path.join(gitdir, f), "utf8").trim();
+    } catch {
+      return null;
+    }
+  };
+  const real = (p: string) => {
+    try {
+      return fs.realpathSync(p);
+    } catch {
+      return p;
+    }
+  };
+  const cd = read("commondir");
+  if (common && cd !== null && real(path.resolve(gitdir, cd)) !== real(common)) return `${wt}'s git dir now names another repo (commondir ${cd})`;
+  const back = read("gitdir");
+  if (back !== null && real(path.dirname(path.resolve(gitdir, back))) !== real(wt)) return `${wt}'s git dir now names another worktree (gitdir ${back})`;
+  if (config && worktreeConfigOf(wt) !== config) return `${wt}'s git dir has a config.worktree the lane ${config === "none" ? "wrote" : "changed"}`;
+  return null;
+}
+
 /** Why `start` refuses, or null. */
 function refuseStart(job: Job, lane: Lane, restart: boolean): string | null {
   if (job.stage !== lane) return `${job.id} is in ${job.stage}, not ${lane}`;
@@ -639,7 +782,7 @@ export async function start(
   repo: string,
   id: string,
   lane: string,
-  o: { restart?: boolean } = {},
+  o: { restart?: boolean; by?: "run" } = {},
 ): Promise<Started | { parked: string } | { refused: string }> {
   if (!isLane(lane)) return { refused: `no lane ${lane} (intake, build, qa, review, regress, second-look)` };
   const cfg = loadConfig(repo);
@@ -750,17 +893,42 @@ export async function start(
   // The brief quotes why Kitchen refused the last try (earlier(), refusedNote()); the next finish starts clean.
   fs.rmSync(path.join(dir, "refused.txt"), { force: true });
   const model = modelFor(cfg, ROLE_OF[lane]);
+  // ADR 0030: the claim is checked again under the job lock, so two starts never both open the lane.
+  const seen = job.running?.key;
+  const tips = await otherTips(repo, job);
+  const wtConfig = lane !== "intake" ? worktreeConfigOf(wt) : null;
+  let clash: string | null = null;
   job = await updateJob(repo, job.id, (j) => {
+    clash = j.archived
+      ? `${j.id} was removed by the person`
+      : j.stage !== lane
+        ? `${j.id} is in ${j.stage}, not ${lane}`
+        : j.running && j.running.key !== seen
+          ? `${j.id}: the ${j.running.lane} agent works since ${j.running.at} (another start opened it)`
+          : null;
+    if (clash) return undefined;
     if (lane === "build") j.base = base;
     // ADR 0029 §2 / 0031: QA again in a round folder it used (Resume) drives everything: no carried passes there.
     if (lane === "qa" && !j.qaRetry && j.carried?.some((c) => c.round === j.round)) j.carried = j.carried.filter((c) => c.round !== j.round);
     if (lane !== "intake") j.worktree = wt;
     if (checkRun) j.check = { ...j.check, run: checkRun, onto: base };
-    j.running = { lane, at: new Date(t0).toISOString(), key, stream, ...(head ? { head } : {}) };
+    j.running = {
+      lane,
+      at: new Date(t0).toISOString(),
+      key,
+      stream,
+      ...(head ? { head } : {}),
+      ...(Object.keys(tips).length ? { tips } : {}),
+      ...(wtConfig ? { wtConfig } : {}),
+      // ADR 0030 §3: `kitchen run` claims the lane for its session before the session starts: an in-session
+      // --restart-stranded leaves it while the run lives.
+      ...(o.by === "run" ? { session: { pid: 0, start: null, pending: true as const } } : {}),
+    };
     if (tested) j.tested = tested;
     j.agentRuns.push({ key, role: ROLE_OF[lane], stage: lane, round: j.round, at: new Date(t0).toISOString(), stream, model });
     return j;
   });
+  if (clash) return { refused: clash };
   await markRead(
     dir,
     unread.map((m) => m.id),
@@ -784,7 +952,7 @@ export async function start(
     "Work only where the brief says. Don't run `kitchen job` commands, git push or git merge.",
     "When you are done, reply with the one line your role asks for.",
   ].join(" ");
-  return { id: job.id, lane, brief: briefFile, cwd, model, prompt };
+  return { id: job.id, lane, brief: briefFile, cwd, model, prompt, key };
 }
 
 /**
@@ -875,17 +1043,23 @@ async function moveOn(
   return { id: job.id, from, to: moved.stage, line };
 }
 
-export async function finish(repo: string, id: string): Promise<Finished | { refused: string }> {
+/**
+ * `key`: the lane run the caller started (`kitchen job start`'s `key`); a lane another start opened since is refused
+ * untouched (ADR 0030 §3: two orchestrators never finish each other's lanes).
+ */
+export async function finish(repo: string, id: string, o: { key?: string } = {}): Promise<Finished | { refused: string }> {
   // ADR 0029 §6: a check's findings that failed to be proposed, proposed again; said on this finish's line.
   const again = await retryProposals(repo).catch((e: Error) => [`proposing again failed: ${e.message.split("\n")[0]}`]);
-  const f = await finishLane(repo, id);
+  const f = await finishLane(repo, id, o.key);
   return again.length && "line" in f ? { ...f, line: [f.line, ...again].join("\n") } : f;
 }
 
-async function finishLane(repo: string, id: string): Promise<Finished | { refused: string }> {
+async function finishLane(repo: string, id: string, key?: string): Promise<Finished | { refused: string }> {
   const cfg = loadConfig(repo);
   // ADR 0031: a retry carried under ADR 0029 (carried.json) is adopted into job state, once.
   const job = await adoptCarried(repo, findJob(repo, id));
+  if (key && job.running && job.running.key !== key)
+    return { refused: `${job.id}: the open ${job.running.lane} lane is another run's (${job.running.key}), not ${key}: nothing finished` };
   const dir = jobDirOf(repo, job.id);
   if (job.archived) return { refused: `${job.id} was removed by the person: this lane's result is dropped` };
   if (!job.running) {
@@ -898,6 +1072,10 @@ async function finishLane(repo: string, id: string): Promise<Finished | { refuse
     return { refused: `${job.id} has no lane open (it is ${job.stage}): nothing to finish` };
   }
   const lane = job.running.lane;
+  // ADR 0030 §2: what a lane may not touch: its worktree's git plumbing, another job's branch.
+  const tampered =
+    (job.worktree && job.worktree !== repo ? await worktreeTampered(repo, job.worktree, job.running.wtConfig) : null) ?? (await movedOthers(repo, job));
+  if (tampered) return refuseLane(repo, job, tampered);
   if (lane === "intake") {
     await dropIntakeCheckout(repo, job.id);
     const f = intakeFile(dir);

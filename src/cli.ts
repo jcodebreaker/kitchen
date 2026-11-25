@@ -7,7 +7,7 @@ import * as cmd from "./cli/commands.ts";
 import { quietOnEpipe } from "./cli/epipe.ts";
 import * as control from "./engine/control.ts";
 
-const HELP = `kitchen: tickets in, reviewed changes merged into staging out (Claude Code orchestrates)
+const HELP = `kitchen: tickets in, reviewed changes merged into staging out (one agent per lane: Claude Code or Codex)
 
 Setup
   kitchen init [--tool claude|codex] [--yes]   seconds: checks what Kitchen needs, then kitchen.yaml (checks, how to start
@@ -36,10 +36,10 @@ Work
   kitchen schedules                      this repo's timers (checks, collect), each with how to remove it
   kitchen promote <id>                   a job intake read as KEEP: no (verified, not merged): review, the merge
                                          check, then the merge into its target (or its PR)
-  kitchen run [--detach] [--max-usd n]   a headless orchestrator session works the queue (or /kitchen run in Claude Code);
+  kitchen run [--detach] [--max-usd n]   Kitchen works the queue headless: one agent session per lane (or /kitchen run in Claude Code);
                                          it checks kitchen.yaml requires: first. QA lanes and the merge gate run
                                          app.reset/app.start with your shell's environment
-  kitchen run --stop | --print           end it | print the exact command it runs
+  kitchen run --stop | --print           end it and every lane | print each lane's command
   kitchen status [--json] [--all]        one row per job (--all: the removed ones too)
   kitchen dashboard                      every repo's jobs in one browser page, on 127.0.0.1:7357: lanes, live activity,
                                          steering; run it in another repo to add that one (--forget removes it)
@@ -82,7 +82,7 @@ The outer loop (ADR 0022): sources read by code, triaged into proposals you choo
 The orchestrator's verbs (the only way a job moves)
   kitchen job next [--json] [--restart-stranded]   the next wave: lanes to start, what waits and why
   kitchen job start <id> <lane> [--json] [--restart]   open a lane (intake, build, qa, review, regress, second-look): worktree, brief, the agent's prompt and model
-  kitchen job finish <id> [--json]       read the lane's files, run the checks / the merge, move the job (or refuse)
+  kitchen job finish <id> [--json] [--key k]   read the lane's files, run the checks / the merge, move the job (or refuse); --key: only the lane run that start returned
   kitchen job show <id> [--json]
 
 QA's tools (evidence lands in the job's QA folder)
@@ -114,7 +114,7 @@ const COMMAND_HELP: Record<string, string> = {
     'kitchen promote <id>\n\nA job intake read as KEEP: no (code built only to verify something now) ends at Done, "Verified · not merged", its branch kept. promote takes it the rest of the way: Review, the merge check when it touches mapped features, then the merge into its target, or a PR with staging.merge: pr (ADR 0026).',
   schedules:
     "kitchen schedules\n\nThis repo's timers (.kitchen/schedules.json): each check filed with kitchen ticket --check --every, and collect's, with the command that removes it.",
-  run: "kitchen run [--detach] [--max-usd n] | run --stop | run --print\n\nStarts a headless Claude Code session that runs /kitchen run: it plans waves and spawns one agent per lane (intake, build, QA, review), moving jobs only through kitchen job verbs. One per repo. kitchen run checks kitchen.yaml requires: first (ADR 0033) and refuses with the fix of the first that fails. QA lanes and the merge gate run app.reset/app.start with your shell's environment: what they migrate or seed is whatever it points at.\n  --detach   in the background; the log is .kitchen/run.log\n  --max-usd  the session's spend cap (claude --max-budget-usd); default agent.max_usd in kitchen.yaml\n  --stop     end it (jobs keep their state)\n  --print    print the command and run nothing",
+  run: "kitchen run [--detach] [--max-usd n] | run --stop | run --print\n\nKitchen works the queue (ADR 0030): it plans each wave and starts one headless agent session per lane (claude -p, or codex exec with agent.tool: codex) on the lane's model, and finishes each lane the moment its session ends. One per repo. kitchen run checks kitchen.yaml requires: first (ADR 0033) and refuses with the fix of the first that fails. QA lanes and the merge gate run app.reset/app.start with your shell's environment: what they migrate or seed is whatever it points at.\n  --detach   in the background; the log is .kitchen/run.log\n  --max-usd  the run's budget, summed over its lane sessions: nothing new starts once it is spent; default agent.max_usd in kitchen.yaml\n  --stop     end the run and every lane (jobs keep their state; the next run starts them again)\n  --print    print each lane's command and run nothing",
   status:
     "kitchen status [--json]\n\nThe orchestrator, then one row per job: id, title, stage (* while an agent works on it), round, when it last moved, the merge, the Report.",
   resume: "kitchen resume <id>\n\nWakes a paused job: back to the stage it paused in. On a job whose pause wasn't made yet, cancels it.",
@@ -197,7 +197,23 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
   const { INBOX_FLAGS } = await import("./inbox/cli.ts");
-  const f = parse(rest, ["repo", "to", "into", "port", "tool", "max-usd", "name", "script", "header", "data", "url", "from-schedule", "as", ...INBOX_FLAGS]);
+  const f = parse(rest, [
+    "repo",
+    "to",
+    "into",
+    "port",
+    "tool",
+    "max-usd",
+    "name",
+    "script",
+    "header",
+    "data",
+    "url",
+    "from-schedule",
+    "as",
+    "key",
+    ...INBOX_FLAGS,
+  ]);
   // Inside a job's worktree (.worktrees/<job>), the main checkout: that is where the jobs live.
   const repo = f.vals.repo?.[0] ? path.resolve(f.vals.repo[0]) : (await import("./cli/here.ts")).kitchenRepo(process.cwd());
   const v = (k: string) => f.vals[k]?.[0];
@@ -396,14 +412,19 @@ async function jobVerb(repo: string, f: Flags, json: boolean, out: (l: string) =
   if (verb === "start") {
     if (!lane) throw new Error("kitchen job start needs <id> <lane>");
     const r = await jobs.start(repo, id, lane, { restart: f.flags.has("--restart") });
+    // ADR 0030 §3: an in-session orchestrator works the queue: each lane it opens or finishes says so.
+    jobs.beat(repo);
     if (json) out(JSON.stringify(r, null, 2));
     else if ("refused" in r) out(`refused: ${r.refused}`);
     else if ("parked" in r) out(r.parked);
-    else for (const l of [`lane ${r.lane} open for ${r.id}`, `model: ${r.model}`, `cwd: ${r.cwd}`, `brief: ${r.brief}`, `prompt: ${r.prompt}`]) out(l);
+    else
+      for (const l of [`lane ${r.lane} open for ${r.id}`, `model: ${r.model}`, `cwd: ${r.cwd}`, `brief: ${r.brief}`, `key: ${r.key}`, `prompt: ${r.prompt}`])
+        out(l);
     return "refused" in r ? 1 : 0;
   }
   if (verb === "finish") {
-    const r = await jobs.finish(repo, id);
+    const r = await jobs.finish(repo, id, { key: f.vals.key?.[0] });
+    jobs.beat(repo);
     if (json) out(JSON.stringify(r, null, 2));
     else out("refused" in r ? `refused: ${r.refused}` : r.line);
     return "refused" in r ? 1 : 0;

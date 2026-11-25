@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# kitchen-hooks-version: 2  (ADR 0030: kitchen run refreshes an older installed copy, never a newer one)
 """PreToolUse(Bash|Read|Grep) guard: refuse to read or pipe secret files.
 
 Stops secrets getting OUT -- `cat .env`, `source .env.local`, `grep KEY .env | curl`,

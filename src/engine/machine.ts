@@ -27,6 +27,8 @@ export type Stage = (typeof STAGES)[number];
 /** The stages an agent works in, in order. */
 export const LANES = ["intake", "build", "qa", "review", "regress", "second-look"] as const;
 export type Lane = (typeof LANES)[number];
+/** ADR 0030 §3: a lane session `kitchen run` started: its pid and process start, and when it ended (finish not yet run). */
+export type LaneSession = { pid: number; start: string | null; ended?: string; pending?: true };
 export const isLane = (s: string): s is Lane => (LANES as readonly string[]).includes(s);
 export const isActive = (s: Stage) => isLane(s);
 
@@ -170,8 +172,21 @@ export type Job = {
   files?: string[];
   /** Jobs this one waits for (intake's AFTER: line). */
   after?: string[];
-  /** The lane an agent works in now, opened by `kitchen job start`. `head`: the commit a review lane reviews. */
-  running: { lane: Lane; at: string; key: string; stream?: string; head?: string } | null;
+  /**
+   * The lane an agent works in now, opened by `kitchen job start`. `head`: the commit a review lane reviews. ADR 0030
+   * §3: `session`, the lane's own session when `kitchen run` started it (its pid and process start), and `ended` once
+   * it exited and before finish clears the lane. `tips`: the other jobs' branches as the lane opened (§2).
+   */
+  running: {
+    lane: Lane;
+    at: string;
+    key: string;
+    stream?: string;
+    head?: string;
+    session?: LaneSession;
+    tips?: Record<string, string>;
+    wtConfig?: string;
+  } | null;
   /** Lane runs in this stage whose files Kitchen refused (a missing verdict, red checks). Three go to a person. */
   tries?: number;
   agentRuns: AgentRunRef[];
