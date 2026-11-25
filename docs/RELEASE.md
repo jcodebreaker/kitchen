@@ -59,7 +59,7 @@ cd "$(mktemp -d)" && npx devkitchen@0.1.0 --version     # 0.1.0 (the version you
 
 ## What the package contains (and doesn't)
 
-`package.json` `files` is an allowlist: the compiled `dist/**/*.js` (no source maps, no tests), the role prompts (`roles/`), the `/kitchen` skill (`skills/`), the guard hooks (`hooks/*.py`), the dashboard page, `README.md`, `LICENSE` and `NOTICE` (third-party notices: super-board's MIT notice for the hooks; Anthropic's for the vendored security review). Playwright is a pinned dependency (`playwright` 1.65.0); its Chromium is installed once per machine (`npx playwright install chromium`). Fixtures, the benchmark data (`bench/`), `src/` and docs are not shipped. The tarball check that lived in spikes/w5 went with the spikes: read the `npm pack --dry-run` list by hand.
+`package.json` `files` is an allowlist: the compiled `dist/**/*.js` (no source maps, no tests), the role prompts (`roles/`), the `/kitchen` skill (`skills/`), the guard hooks (`hooks/*.py`), the dashboard page, `README.md`, `LICENSE` and `NOTICE` (third-party notices: super-board's MIT notice for the hooks; Anthropic's for the vendored security review). Playwright is a pinned dependency (`playwright` 1.65.0); QA drives the installed Chrome or Edge with it, else its Chromium when already on disk (ADR 0034: Kitchen never downloads a browser; `(cd <Kitchen's folder> && npx playwright install chromium)` by hand, so npx runs the pinned Playwright). Fixtures, the benchmark data (`bench/`), `src/` and docs are not shipped. The tarball check that lived in spikes/w5 went with the spikes: read the `npm pack --dry-run` list by hand.
 
 ## If something is wrong after publishing
 

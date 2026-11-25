@@ -24,6 +24,7 @@ import { namedBy, removals, touchedFeatures } from "../verify/map.ts";
 import { runDir, runWorktree } from "../verify/paths.ts";
 import { mapIn, mapMode, mapOf, seedCheckout, skillIn, skillNameOf, skippedLine } from "../verify/where.ts";
 import { KITCHEN_VERSION } from "../version.ts";
+import { retested } from "./checked.ts";
 import { CONFIRM_KEY, clarificationsSection, questionsAsked, readRounds, recordQuestion } from "./clarify.ts";
 import { clearControl, fileSlices, fileTicket, moveJob, readControl } from "./control.ts";
 import { branchExists, diffSize, git, gitOut, revParse } from "./git.ts";
@@ -924,7 +925,7 @@ export async function start(
       // --restart-stranded leaves it while the run lives.
       ...(o.by === "run" ? { session: { pid: 0, start: null, pending: true as const } } : {}),
     };
-    if (tested) j.tested = tested;
+    if (tested) j.tested = retested(j.tested, tested);
     j.agentRuns.push({ key, role: ROLE_OF[lane], stage: lane, round: j.round, at: new Date(t0).toISOString(), stream, model });
     return j;
   });
@@ -967,7 +968,7 @@ async function testedNow(repo: string, cfg: Config, job: Job, base: string, chec
     .split("\n")
     .filter((l) => l.trim() && !/^.. "?(\.kitchen|\.worktrees)\//.test(l)).length;
   const tool = liveRun(repo)?.tool;
-  return { at: new Date().toISOString(), head, target, onto, dirty, kitchen: KITCHEN_VERSION, ...(tool ? { tool } : {}) };
+  return { at: new Date().toISOString(), head, round: job.round, target, onto, dirty, kitchen: KITCHEN_VERSION, ...(tool ? { tool } : {}) };
 }
 
 /** The files a job touches: its diff once built (plus intake's FILES), intake's FILES before. */

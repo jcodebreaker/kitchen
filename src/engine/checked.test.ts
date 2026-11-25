@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, test } from "vitest";
 import type { CheckSpec } from "../config.ts";
-import { checkLines, versionsLine } from "./checked.ts";
+import { checkLines, retested, testedLine, versionsLine } from "./checked.ts";
 import type { Job } from "./machine.ts";
 import { renderReport } from "./report.ts";
 import { jobDirOf, roundDir } from "./store.ts";
@@ -85,4 +85,24 @@ test("kitchen.yaml that doesn't load: the Report says so instead of guessing", (
 
 test("no `tested` (a job from before ADR 0032): no versions line", () => {
   assert.equal(versionsLine({ agentRuns: [{ role: "builder", model: "opus" }] } as unknown as Job), null);
+});
+
+test("ADR 0034 §3: the tested line names the browser QA drove pages in; a lane with no page capture names none", () => {
+  const tested = { at: "2026-11-25T13:27:11.154Z", head: "a".repeat(40), target: "staging", onto: "b".repeat(40), dirty: 0, kitchen: "0.1.0" };
+  assert.equal(
+    testedLine({ branch: "kitchen/001-x", tested: { ...tested, browser: "Chrome 158" } }),
+    "QA tested kitchen/001-x at aaaaaaa, on staging at bbbbbbb (2026-11-25 13:27) in Chrome 158 · committed code only",
+  );
+  assert.doesNotMatch(String(testedLine({ branch: "kitchen/001-x", tested })), / in /);
+});
+
+test("ADR 0034 §3: QA again keeps the browser only on a true retry (the same head and round)", () => {
+  const prev = { at: "t0", head: "h1", round: 2, target: "staging", onto: "o", dirty: 0, kitchen: "0.1.0", browser: "Chrome 158" };
+  const now = { ...prev, at: "t1", browser: undefined };
+  delete now.browser;
+  assert.equal(retested(prev, now).browser, "Chrome 158");
+  assert.equal(retested(prev, { ...now, head: "h2" }).browser, undefined, "a new head: tested something new");
+  assert.equal(retested(prev, { ...now, round: 3 }).browser, undefined, "a new round");
+  assert.equal(retested({ ...prev, round: undefined }, now).browser, undefined, "a record without its round");
+  assert.equal(retested(undefined, now).browser, undefined);
 });

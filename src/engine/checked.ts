@@ -23,7 +23,16 @@ export function testedLine(j: Pick<Job, "tested" | "branch"> & { kind?: Job["kin
   if (!t) return null;
   const on = j.kind === "check" ? `${t.target} at ${short(t.onto)}` : `${j.branch} at ${short(t.head)}, on ${t.target} at ${short(t.onto)}`;
   const left = t.dirty ? `committed code only: ${t.dirty} uncommitted change${t.dirty === 1 ? "" : "s"} in your checkout left out` : "committed code only";
-  return `QA tested ${on} (${t.at.slice(0, 16).replace("T", " ")}) · ${left}`;
+  return `QA tested ${on} (${t.at.slice(0, 16).replace("T", " ")})${t.browser ? ` in ${t.browser}` : ""} · ${left}`;
+}
+
+/**
+ * Pure, ADR 0034 §3: `tested` as a QA lane starting now records it. A true retry (the same head and round) keeps the
+ * browser the last capture named, until a new capture sets it; anything else tested something new, so names none.
+ */
+export function retested(prev: Job["tested"], now: NonNullable<Job["tested"]>): NonNullable<Job["tested"]> {
+  const same = prev?.browser && prev.head === now.head && prev.round !== undefined && prev.round === now.round;
+  return same ? { ...now, browser: prev.browser } : now;
 }
 
 /**

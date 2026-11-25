@@ -108,6 +108,11 @@ export const ConfigSchema = z
     app: App.prefault({}),
     /** ADR 0033 §3: what the project needs on this machine; `kitchen doctor` and `kitchen run`'s preflight run each check. */
     requires: z.array(z.object({ name: z.string().min(1), check: z.string().min(1), fix: z.string().default("") }).strict()).default([]),
+    /**
+     * ADR 0034 §4: the browser QA drives pages with. Unset: the installed Chrome, then Edge, then Playwright's Chromium
+     * already on disk. Set: that one only, and a missing one is refused. Kitchen never downloads a browser.
+     */
+    browser: z.enum(["chrome", "msedge", "chromium"]).optional(),
     /** Auto-merge (ADR 0016 §5): passing jobs merge into `branch`, never into `base` or main. */
     staging: z
       .object({

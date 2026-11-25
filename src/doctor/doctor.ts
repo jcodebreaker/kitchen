@@ -14,8 +14,6 @@ import { kitchenDir, writeAtomic } from "../engine/store.ts";
 import { processStart, withFileLock } from "../lock.ts";
 import {
   appEnv,
-  browserMissing,
-  browserReady,
   composeProject,
   doctorAppFile,
   fixedPort,
@@ -30,6 +28,7 @@ import {
   stopCommand,
   stopDoctorLeftover,
 } from "../qa/app.ts";
+import { browserNeed, type Probe, resolveBrowser } from "../qa/browser.ts";
 
 export type Row = { what: string; state: "ok" | "missing" | "failing" | "not tried" | "set"; detail: string; fix?: string };
 export type Report = { rows: Row[] };
@@ -288,15 +287,19 @@ export function staticRows(cfg: Pick<Config, "app">, o: { doctor?: boolean } = {
   ];
 }
 
-const browserRow = (): Row =>
-  browserReady()
-    ? { what: "browser", state: "ok", detail: "Playwright's Chromium, for QA's pages" }
-    : {
-        what: "browser",
-        state: "missing",
-        detail: "Playwright's Chromium isn't installed (kitchen run installs it once QA here needs it)",
-        fix: browserMissing(),
-      };
+/** ADR 0034 §2: which browser QA will use, or that none was found and how to get one. Nothing is installed. */
+export function browserRow(cfg: Pick<Config, "browser">, probe?: Probe): Row {
+  const b = resolveBrowser(cfg, probe);
+  const pin = cfg.browser ? ` (browser: ${cfg.browser} in kitchen.yaml)` : "";
+  if (b) return { what: "browser", state: "ok", detail: `${b.name}, for QA's pages${pin}: ${b.executable}` };
+  const name = cfg.browser && { chrome: "Chrome", msedge: "Edge", chromium: "Playwright's Chromium" }[cfg.browser];
+  return {
+    what: "browser",
+    state: "missing",
+    detail: `${name ? `${name} isn't installed${pin}` : "no Chrome, Edge or Playwright's Chromium found"}: kitchen run refuses once QA here needs a browser`,
+    fix: browserNeed(cfg.browser).fix,
+  };
+}
 
 /** Another doctor holds the repo's doctor lock. */
 export class DoctorBusy extends Error {}
@@ -337,7 +340,7 @@ export async function doctorReport(
           await stopDoctorLeftover(repo);
           const req = await requiresRows(repo, cfg, log, ctl);
           const app = o.app || o.reset ? await appRows(repo, cfg, log, { reset: o.reset, ctl }) : staticRows(cfg, { doctor: !o.init });
-          return { rows: [...req, browserRow(), ...app], log };
+          return { rows: [...req, browserRow(cfg), ...app], log };
         } finally {
           process.off("SIGINT", onSignal);
           process.off("SIGTERM", onSignal);

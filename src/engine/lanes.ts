@@ -506,6 +506,8 @@ export type CaptureMeta = {
   dirty: boolean;
   url: string;
   app: { pid?: number; at?: string } | null;
+  /** ADR 0034 §3: the browser a page capture was taken in (Playwright's `browser.version()`); none on http. */
+  browser?: { name: string; version: string };
   at: string;
 };
 export const metaFile = (file: string) => `${file}.meta.json`;
