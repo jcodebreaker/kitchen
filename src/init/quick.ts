@@ -230,11 +230,10 @@ export async function init(o: InitOpts, out: (l: string) => void): Promise<numbe
     out(
       "No app.reset found: QA's restarts keep the data earlier checks left. If the app stores data, add app.reset to kitchen.yaml (a command that puts it back to its seed, e.g. rm -f data/*.json) so kitchen qa reset starts it fresh.",
     );
-  out('Next: kitchen ticket "<what you want>"  then  kitchen run  (or /kitchen run in Claude Code)');
-  if (local) out("      commit kitchen.yaml, .gitignore, .claude/settings.json and the skill and hook folders before the first run");
-  else {
-    out("      commit kitchen.yaml, .gitignore, .claude/settings.json and the skill and hook folders (the verify skill too) before the first run:");
-    out("      jobs start from staging, so the verify skill must be on it for QA to keep the map");
-  }
+  // Jobs start from staging (origin's, with forge github): the setup commit must be on it before the first ticket.
+  const toStaging = cfg.forge.kind === "github" ? `git push origin HEAD:${cfg.staging.branch}` : `git branch -f ${cfg.staging.branch}`;
+  out(`Next: commit kitchen.yaml, .gitignore, .claude/settings.json and the skill and hook folders${local ? "" : " (the verify skill too)"}`);
+  out(`      then bring ${cfg.staging.branch} up to that commit: ${toStaging}  (jobs start from ${cfg.staging.branch})`);
+  out('      then kitchen ticket "<what you want>": it starts kitchen run (or /kitchen run in Claude Code)');
   return 0;
 }
