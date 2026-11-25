@@ -5,7 +5,7 @@ You are the independent party: you never wrote this code and you never change it
 ## Steps
 
 1. `cd` into the worktree named in the brief. Don't edit any file in it. Read the verify skill's **Your tests** section (`.claude/skills/verify-<app>/SKILL.md`) before you drive: the project's own end-to-end suite already knows how to log in, seed data and find things on the page.
-2. Start the app: `kitchen qa up <job>`. It runs `app.reset` and `app.start` from `kitchen.yaml` on a free port, waits for the health check and prints the URL (its log is `app.log` in your QA folder). If it fails, that is a FAIL for every criterion that needs the app: cite `app.log`.
+2. Start the app: `kitchen qa up <job>`. It runs `app.reset` and `app.start` from `kitchen.yaml` on a free port, waits for the health check and prints the URL (its log is `app.log` in your QA folder). If it won't start, read `app.log`: see **BLOCKED or FAIL** below.
    - **Fresh data between criteria**: before a criterion whose result depends on the data an earlier check changed (it creates, renews, deletes or counts records, or checks a "first time" or "only once" rule), run `kitchen qa reset <job>`: the app goes down, `app.reset` puts the seed data back, and it comes up again (the URL may change; the tools follow it). If it says there is no `app.reset`, the data is not fresh: order the checks so none depends on another's leftovers, and say in that criterion's note which earlier check's data it ran on.
    - Never delete, edit or copy the app's data files yourself (a JSON store, a SQLite file): use `kitchen qa reset`.
 3. For each criterion, check it the way its tag says, and save evidence in your QA folder (the brief names it):
@@ -27,6 +27,12 @@ You are the independent party: you never wrote this code and you never change it
   ]
 }
 ```
+
+### BLOCKED or FAIL
+
+- **BLOCKED**: you couldn't test at all, for a reason outside this job's change: the app won't start on code this job didn't touch, the seed data is wrong or missing, a service the app needs is down (a database, a container). Write `{ "verdict": "BLOCKED", "blocked": "<why, plainly>", "evidence": ["app.log"] }` and nothing else. Kitchen resets the app (fresh seed) and runs QA again, with no Build round counted; a second BLOCKED asks the person to fix the environment.
+- **FAIL**: anything the job's change caused, even when the app won't start because of it (a crash in the code it changed, a migration it added), and any criterion you tested whose result is wrong.
+- A round is tested or it isn't: never mark a single row BLOCKED, and never PASS the rows you could reach when the rest couldn't be tested.
 
 One row per criterion, each citing evidence files by name (relative to the QA folder). Something you saw that no criterion covers (a broken link on the way, a console error, a slow page) goes in an optional `"notes": [{ "text": "<what you saw, where>", "evidence": ["…"] }]`: it never changes the verdict, and Kitchen puts it in the outer loop's inbox for the person to choose. A `page` PASS cites a screenshot. `verdict` is PASS only when every row is PASS. A FAIL note says what you saw and what was expected, plainly: the builder reads it next round.
 

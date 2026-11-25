@@ -30,6 +30,7 @@ import {
   move,
   pausedByYou,
   promotable,
+  QA_BLOCKED_WORDS,
   STAGES,
   type Stage,
 } from "./machine.ts";
@@ -79,8 +80,11 @@ export async function moveJob(
     result: to,
     detail: { who: o.who, ...(o.reason ? { reason: o.reason } : {}), ...(o.catchUp ? { catchUp: true } : {}) },
   });
+  // ADR 0029 §5: every way out of a lane stops the job's app (done, rejected, needs-human, paused or stopped).
+  if (LEFT_LANES.includes(to)) await (await import("../qa/app.ts")).appDown(repo, id).catch(() => {});
   return j;
 }
+const LEFT_LANES: readonly Stage[] = ["done", "rejected", "needs-human", "paused"];
 
 export async function ticket(repo: string, text: string, out: Out, o: { into?: string; check?: boolean; schedule?: string } = {}): Promise<number> {
   let job: Job;
@@ -205,6 +209,12 @@ export async function stop(repo: string, ref: string, out: Out): Promise<number>
 
 export async function resume(repo: string, ref: string, out: Out): Promise<number> {
   const job = findJob(repo, ref);
+  // ADR 0029 §2: QA couldn't test it twice; the person fixed the environment, so QA runs again.
+  if (job.stage === "needs-human" && job.escalatedFrom === "qa" && job.pausedReason?.startsWith(QA_BLOCKED_WORDS)) {
+    await moveJob(repo, job.id, "qa", { who: "person" });
+    out(`${job.id}  resumed → qa`);
+    return 0;
+  }
   if (job.stage !== "paused") {
     if (readControl(jobDirOf(repo, job.id)).pause) {
       await clearControl(repo, job.id);

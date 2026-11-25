@@ -8,8 +8,10 @@ import path from "node:path";
 import { afterAll, test } from "vitest";
 import { report, stageLabel } from "../cli/commands.ts";
 import { loadConfig } from "../config.ts";
+import { snapshot, waitingOf } from "../dashboard/data.ts";
 import { listItems } from "../inbox/store.ts";
 import { readLedger } from "../ledger/append.ts";
+import { appDown } from "../qa/app.ts";
 import * as control from "./control.ts";
 import { finish, mergeHeld, next, start } from "./jobs.ts";
 import { intakeFile, qaDir, reviewFile } from "./lanes.ts";
@@ -568,4 +570,94 @@ test("ADR 0025 §4: while Build's checks run the job names the command; the log 
   assert.match(((await done) as { line: string }).line, /checks pass → qa/);
   assert.equal(fs.readFileSync(log, "utf8"), "$ echo started; sleep 1; echo done\nstarted\ndone\n[exit 0]\n\n", "the same file as before");
   assert.equal(findJob(r, id).checking, undefined);
+});
+
+test("ADR 0029 §1: a criterion intake wrote with two kinds refuses the intake, and intake runs again with the line and the fix", async () => {
+  const r = await repo();
+  await control.ticket(r, "show the list and its API", quiet);
+  const id = findJob(r, "1").id;
+  await open(r, id, "intake");
+  fs.writeFileSync(
+    intakeFile(dirOf(r, id)),
+    INTAKE().replace("- C1 (cmd): app.txt has a fourth line", "- C1 (cmd): app.txt has four lines\n- C2 (page + http): both show it"),
+  );
+  const f = await fin(r, id);
+  assert.match(f.line, /intake again \(try 2 of 3\): intake\.md: C2 \(page \+ http\): one kind per criterion: split it into C2 \(page\) and C3 \(http\)/);
+  assert.equal(findJob(r, id).stage, "intake");
+  assert.match(fs.readFileSync((await open(r, id, "intake")).brief, "utf8"), /split it into C2 \(page\) and C3 \(http\)/);
+});
+
+test("ADR 0029 §2: a job's QA BLOCKED resets the app and runs QA again without a Build round; the second goes to you, and Resume runs QA", async () => {
+  const marker = path.join(root, `reset-${n + 1}.txt`);
+  const start = `node -e "require('http').createServer((q,s)=>s.end('ok')).listen(+process.env.PORT)"`;
+  const r = await repo(`round_limit: 2\napp: { start: ${JSON.stringify(start)}, health: "/", reset: "echo reset >> ${marker}" }\n`);
+  const id = await toBuild(r);
+  await build(r, id);
+  const blocked = async (opened = false) => {
+    if (!opened) await open(r, id, "qa");
+    const d = qaDir(dirOf(r, id), findJob(r, id).round);
+    fs.writeFileSync(path.join(d, "app.log"), "seed: 0 members\n");
+    fs.writeFileSync(path.join(d, "verdict.json"), JSON.stringify({ verdict: "BLOCKED", blocked: "the seed has no members", evidence: ["app.log"] }));
+    return fin(r, id);
+  };
+  try {
+    const f = await blocked();
+    assert.match(f.line, /QA couldn't test it \(the seed has no members\) → app reset, qa again \(round 2, no Build round\) · app: reset \(echo reset/);
+    assert.ok(fs.existsSync(marker), "Kitchen ran the reset");
+    const j = findJob(r, id);
+    assert.deepEqual([j.stage, j.round, j.roundStart, j.qaBlocked], ["qa", 2, 2, "the seed has no members"]);
+    assert.equal((await snapshot(r)).jobs[0].round, 1, "the card counts no round for it");
+    assert.equal((await snapshot(r)).jobs[0].proof, null, "a BLOCKED is never a fail");
+    await appDown(r, id);
+    const s = await open(r, id, "qa");
+    assert.match(fs.readFileSync(s.brief, "utf8"), /## The last QA couldn't test it\n\nRound 1's QA was BLOCKED: the seed has no members/);
+    const f2 = await blocked(true);
+    assert.match(f2.line, /QA couldn't test it again \(the seed has no members\) → needs-human/);
+    const k = findJob(r, id);
+    assert.deepEqual([k.stage, k.escalatedFrom, k.pausedReason], ["needs-human", "qa", "QA couldn't test it: the seed has no members"]);
+    const html = fs.readFileSync(path.join(dirOf(r, id), "report.html"), "utf8");
+    assert.match(html, /<h2>QA couldn't test it<\/h2><p>the seed has no members<\/p>/);
+    assert.match(html, /class="st">not tested</);
+    assert.doesNotMatch(html, /class="bad">not checked/);
+    const lines: string[] = [];
+    assert.equal(await control.resume(r, id, (l) => lines.push(l)), 0);
+    assert.match(lines.join("\n"), /resumed → qa/);
+    assert.equal(findJob(r, id).stage, "qa");
+  } finally {
+    await appDown(r, id).catch(() => {});
+  }
+});
+
+test("ADR 0029 §3: the dashboard says what a waiting job waits for: the jobs using the lanes, the job on its AFTER: line, an orchestrator", async () => {
+  const r = await repo("parallel: 2\n");
+  const [a, b, c] = [await toBuild(r, "one"), await toBuild(r, "two"), await toBuild(r, "three")];
+  const d = await toBuild(r, "four", INTAKE().replace("FILES: app.txt", "FILES: app.txt\nAFTER: 001"));
+  const card = async (id: string) => (await snapshot(r)).jobs.find((j) => j.id === id)?.waiting;
+  assert.equal(await card(c), "Waiting for the orchestrator (kitchen run)");
+  await next(r);
+  await open(r, a, "build");
+  await open(r, b, "build");
+  assert.equal(await card(c), "Waiting for a free lane · 001 and 002 are using both (parallel: 2)");
+  assert.equal(await card(d), "Waiting for 001 to merge first (named on its AFTER: line)");
+  assert.equal(await card(a), null, "an agent works on it");
+});
+
+test("ADR 0029 §3: the waiting line, pure: one, three, more than three jobs using the lanes", () => {
+  const plan = (ids: string[], held = "waits for room (parallel: 9)") => ({
+    start: [],
+    running: ids.map((id) => ({ id, lane: "build" as const, since: "" })),
+    held: [{ id: "099-x", lane: "build" as const, why: held }],
+    you: [],
+    drained: false,
+  });
+  assert.equal(waitingOf("099-x", plan(["009-a"]), { parallel: 1, orchestrator: true }), "Waiting for a free lane · 009 is using it (parallel: 1)");
+  assert.equal(
+    waitingOf("099-x", plan(["007-a", "009-b", "010-c"]), { parallel: 3, orchestrator: true }),
+    "Waiting for a free lane · 007, 009 and 010 are using all 3 (parallel: 3)",
+  );
+  assert.equal(
+    waitingOf("099-x", plan(["1-a", "2-b", "3-c", "4-d"].map((x) => `00${x}`)), { parallel: 4, orchestrator: true }),
+    "Waiting for a free lane · 4 jobs are using all 4",
+  );
+  assert.equal(waitingOf("099-x", plan([]), { parallel: 4, orchestrator: false }), "Waiting for the orchestrator (kitchen run)");
 });

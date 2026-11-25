@@ -200,7 +200,7 @@ export async function detail(repo: string, ref: string): Promise<Detail> {
       last.st = "paused";
       last.sum = j.pausedReason?.includes("stopped") ? "Stopped by you" : "Paused by you";
     } else if (state === "rejected") last.st = "skip";
-    else if (!j.running) last.sum = "Waiting for its lane to start";
+    // ADR 0029 §3: a job waiting for its lane says why on the panel from the card's line (data.json `waiting`).
   }
   for (const m of readMessages(dir)) {
     const seg = [...tl].reverse().find((s) => s.start <= m.at) ?? tl[0];

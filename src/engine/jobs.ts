@@ -51,6 +51,7 @@ import {
   outOfRounds,
   PR_OPEN_WORDS,
   prOpen,
+  QA_BLOCKED_WORDS,
   roundsUsed,
   type Stage,
   VERIFIED_WORDS,
@@ -86,6 +87,8 @@ export async function next(repo: string, o: { restartStranded?: boolean } = {}):
   const plan = { ...planWave(jobs, { parallel: cfg.parallel, restartStranded: o.restartStranded, paused, target: (j) => targetOf(cfg, j) }), prs };
   fs.mkdirSync(kitchenDir(repo), { recursive: true });
   writeAtomic(heartbeatFile(repo), JSON.stringify({ at: new Date().toISOString(), pid: process.ppid, drained: plan.drained }));
+  // ADR 0029 §5: a drained queue leaves no app running.
+  if (plan.drained) await (await import("../qa/app.ts")).sweepApps(repo).catch(() => []);
   return plan;
 }
 
@@ -232,6 +235,8 @@ function redriveNote(dir: string, job: Job): string {
   for (let r = job.round - 1; r >= 1; r--) {
     if (!fs.existsSync(path.join(qaDir(dir, r), "verdict.json"))) continue;
     const qa = readQa(dir, r, criteriaOf(dir));
+    // ADR 0029 §2: a round QA couldn't test says nothing about the code: look further back.
+    if ("criteria" in qa && qa.verdict === "BLOCKED") continue;
     if (!("criteria" in qa) || qa.verdict !== "PASS") return "";
     try {
       if (fs.readFileSync(criteriaSnapshot(dir, r), "utf8") !== JSON.stringify(criteriaOf(dir))) return "";
@@ -339,6 +344,9 @@ function brief(
     lane === "build" || lane === "intake" ? earlier(cfg, dir, job) : "",
     lane === "qa" || lane === "regress" ? refusedNote(dir) : "",
     lane === "qa" && !isCheck(job) ? redriveNote(dir, job) : "",
+    lane === "qa" && job.qaBlocked
+      ? `## The last QA couldn't test it\n\nRound ${job.round - 1}'s QA was BLOCKED: ${job.qaBlocked}. Kitchen reset the app (fresh seed data) and runs QA again: this is not a new Build round. Test as usual; if it still can't be tested for a reason outside this job's change, write BLOCKED again and Kitchen asks the person to fix the environment.\n`
+      : "",
     lane === "qa" && isCheck(job) ? checkNote(cfg, job, qd) : "",
     o.map ?? "",
     lane === "review" ? qaSummary(dir, job) : "",
@@ -741,6 +749,7 @@ export async function finish(repo: string, id: string): Promise<Finished | { ref
     await (await import("../qa/app.ts")).appDown(repo, job.id).catch(() => {});
     const qa = readQa(dir, job.round, criteriaOf(dir));
     if ("refused" in qa) return refuseLane(repo, job, `QA: ${qa.refused}`);
+    if (qa.verdict === "BLOCKED") return qaBlocked(repo, cfg, job, qa.blocked ?? "");
     // ADR 0022: what QA saw beyond the criteria goes to the outer loop's inbox (Kitchen findings).
     await addFindings(repo, qaFindings(job.id, job.round, qaDir(dir, job.round)));
     if (qa.verdict === "PASS") {
@@ -810,6 +819,29 @@ export async function finish(repo: string, id: string): Promise<Finished | { ref
   // ADR 0018: a catch-up's review reads only what changed since this head.
   await updateJob(repo, job.id, (j) => ({ ...j, reviewed: { head: head as string, round: j.round } }));
   return mergeOrHold(repo, cfg, job, head as string);
+}
+
+/**
+ * ADR 0029 §2: a job's QA couldn't test it (the app won't start, the seed is wrong, a service is down: not the
+ * change). The first time, QA runs again after `kitchen qa reset` (fresh seed), with no Build round counted; the
+ * second, a person fixes the environment and resumes QA.
+ */
+async function qaBlocked(repo: string, cfg: Config, job: Job, why: string): Promise<Finished> {
+  if (job.qaBlocked)
+    return moveOn(repo, job, "needs-human", `${job.id}  QA couldn't test it again (${why}) → needs-human`, { reason: `${QA_BLOCKED_WORDS}: ${why}` });
+  const moved = await moveOn(repo, job, "qa", `${job.id}  QA couldn't test it (${why}) → app reset, qa again (round ${job.round + 1}, no Build round)`, {
+    patch: (j) => {
+      j.qaBlocked = why;
+    },
+  });
+  if (moved.to !== "qa") return moved;
+  const said: string[] = [];
+  const { appReset } = await import("../qa/app.ts");
+  const code = await appReset(repo, job.id, (l) => said.push(l), cfg).catch((e: Error) => {
+    said.push(e.message.split("\n")[0]);
+    return 1;
+  });
+  return { ...moved, line: `${moved.line} · ${code ? "the reset failed: " : ""}${said.at(-1) ?? ""}` };
 }
 
 /** Pure: a check's result words (ADR 0028 §4), as its card and Report say them. */

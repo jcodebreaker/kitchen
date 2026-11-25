@@ -17,7 +17,7 @@ import { pathToFileURL } from "node:url";
 import { prepareOf, runShell } from "../checks/run-checks.ts";
 import { type AppConfig, type Config, loadConfig } from "../config.ts";
 import { qaDir, regressDir } from "../engine/lanes.ts";
-import { findJob, jobDirOf, worktreeOf, writeAtomic } from "../engine/store.ts";
+import { findJob, jobDirOf, listJobs, updateJob, worktreeOf, writeAtomic } from "../engine/store.ts";
 import { isRunId, runDir, runEvidence, runWorktree } from "../verify/paths.ts";
 
 type AppState = Partial<Started> & { url: string; at: string; legacy?: { id: string; dev: string; wt: string } };
@@ -84,6 +84,28 @@ function jobPaths(repo: string, ref: string): { id: string; wt: string; out: str
 
 const legacyDev = (wt: string, repo: string) => [wt, repo].map((d) => path.join(d, ".kitchen", "toolkit", "bin", "dev")).find((f) => fs.existsSync(f));
 
+/** A setup step `kitchen qa up` is on (`of`: the health wait's limit in seconds), or null when it is over. */
+export type Step = { cmd: string; of?: number } | null;
+
+/**
+ * ADR 0029 §4: the job records the setup step in `checking` (ADR 0025), so the dashboard shows it with the log's last
+ * line; null clears it. A verify run has no job; a failed write never fails the step.
+ */
+const setupStep =
+  (repo: string, ref: string, log: string) =>
+  async (s: Step): Promise<void> => {
+    if (isRunId(ref)) return;
+    try {
+      const id = findJob(repo, ref).id;
+      const rel = path.relative(jobDirOf(repo, id), log);
+      await updateJob(repo, id, (j) => {
+        if (s) j.checking = { cmd: s.cmd, at: new Date().toISOString(), log: rel, setup: true, ...(s.of ? { of: s.of } : {}) };
+        else if (j.checking?.setup) delete j.checking;
+        return j;
+      });
+    } catch {}
+  };
+
 export async function appUp(repo: string, ref: string, out: (l: string) => void, cfg: Config = loadConfig(repo)): Promise<number> {
   const { id: jid, wt, out: dir } = jobPaths(repo, ref);
   const remote = runUrl(repo, jid);
@@ -97,8 +119,26 @@ export async function appUp(repo: string, ref: string, out: (l: string) => void,
     return 0;
   }
   const log = path.join(dir, "app.log");
+  const step = setupStep(repo, jid, log);
+  try {
+    return await startUp(repo, jid, wt, log, out, cfg, step);
+  } finally {
+    await step(null);
+  }
+}
+
+async function startUp(
+  repo: string,
+  jid: string,
+  wt: string,
+  log: string,
+  out: (l: string) => void,
+  cfg: Config,
+  step: (s: Step) => Promise<void>,
+): Promise<number> {
   const prepare = prepareOf(cfg);
   if (prepare && fs.existsSync(path.join(wt, "package.json")) && !fs.existsSync(path.join(wt, "node_modules"))) {
+    await step({ cmd: `Preparing · ${prepare}` });
     const p = await runShell(prepare, { cwd: wt, timeoutSec: 1800, log });
     if (!p.ok) {
       out(`app: preparing failed (${prepare}); see ${log}`);
@@ -112,7 +152,9 @@ export async function appUp(repo: string, ref: string, out: (l: string) => void,
       return 1;
     }
     const id = `kq${jid.split("-")[0]}`;
+    await step({ cmd: "Preparing · bin/dev prepare" });
     await runShell(`"${dev}" prepare --src "${wt}"`, { cwd: wt, timeoutSec: 1800, log });
+    await step({ cmd: "Starting the app" });
     const r = await runShell(`"${dev}" up --id ${id} --src "${wt}"`, { cwd: wt, timeoutSec: 600, log });
     const line = r.all
       .trim()
@@ -128,7 +170,13 @@ export async function appUp(repo: string, ref: string, out: (l: string) => void,
     out(`app: up at ${url} (the repo's Toolkit, bin/dev up)`);
     return 0;
   }
-  const r = await startApp(cfg, { wt, log, project: composeProject(cfg.app, jid), onSpawn: (st) => writeAtomic(stateFile(repo, jid), JSON.stringify(st)) });
+  const r = await startApp(cfg, {
+    wt,
+    log,
+    project: composeProject(cfg.app, jid),
+    onSpawn: (st) => writeAtomic(stateFile(repo, jid), JSON.stringify(st)),
+    onStep: step,
+  });
   if (!r.ok) {
     await appDown(repo, jid);
     out(`app: ${r.why}; see ${path.relative(repo, log)}`);
@@ -164,12 +212,13 @@ export type Started = { pid?: number; port: number; url: string; at: string; pro
 
 /**
  * Start the app from `wt` as kitchen.yaml `app:` says: `app.reset`, then `app.start` on a free port (in $PORT and
- * `{port}`), then wait for the health check. `onSpawn` gets the state as soon as there is a process to stop.
+ * `{port}`), then wait for the health check. `onSpawn` gets the state as soon as there is a process to stop; `onStep`
+ * each step as it begins (ADR 0029 §4).
  * Shared by `kitchen qa up` and the merge gate's `needs_app` checks.
  */
 export async function startApp(
   cfg: Config,
-  o: { wt: string; log: string; project: string | null; onSpawn?: (s: Started) => void },
+  o: { wt: string; log: string; project: string | null; onSpawn?: (s: Started) => void; onStep?: (s: Step) => Promise<void> },
 ): Promise<{ ok: true; app: Started } | { ok: false; why: string; app?: Started }> {
   const port = cfg.app.port && !cfg.app.start.includes("{port}") && !(cfg.app.url ?? "").includes("{port}") ? cfg.app.port : await freePort();
   const extra = appEnv({ port, project: o.project });
@@ -177,9 +226,11 @@ export async function startApp(
   const fill = (s: string) => s.replaceAll("{port}", String(port));
   const stop = stopCommand(cfg.app, o.project);
   if (cfg.app.reset) {
+    await o.onStep?.({ cmd: "Resetting data" });
     const r = await runShell(fill(cfg.app.reset), { cwd: o.wt, timeoutSec: 300, log: o.log, env });
     if (!r.ok) return { ok: false, why: `app.reset failed (exit ${r.exit})` };
   }
+  await o.onStep?.({ cmd: "Starting the app" });
   const fd = fs.openSync(o.log, "a");
   const child = spawn("/bin/sh", ["-c", fill(cfg.app.start)], { cwd: o.wt, env, detached: true, stdio: ["ignore", fd, fd] });
   child.unref();
@@ -199,6 +250,7 @@ export async function startApp(
     ...(stop ? { stop: fill(stop), env: extra } : {}),
   };
   o.onSpawn?.(st);
+  await o.onStep?.({ cmd: `Waiting for ${cfg.app.health}`, of: cfg.app.ready_timeout_sec });
   const end = Date.now() + cfg.app.ready_timeout_sec * 1000;
   while (Date.now() < end) {
     if (await healthy(join(url, cfg.app.health))) return { ok: true, app: st };
@@ -235,6 +287,20 @@ export async function appDown(repo: string, ref: string, out: (l: string) => voi
   fs.rmSync(stateFile(repo, id), { force: true });
   out("app: stopped");
   return 0;
+}
+
+/**
+ * ADR 0029 §5: stop every job's app (its app.json) whose job is not in a running lane: when a wave plan drains and
+ * when `kitchen run` starts. The lines it says, one per app stopped.
+ */
+export async function sweepApps(repo: string): Promise<string[]> {
+  const said: string[] = [];
+  for (const j of listJobs(repo)) {
+    if (j.running || !fs.existsSync(stateFile(repo, j.id))) continue;
+    await appDown(repo, j.id).catch(() => {});
+    said.push(`${j.id}  app stopped (no lane works on it)`);
+  }
+  return said;
 }
 
 /**
@@ -284,7 +350,7 @@ export function reachable(url: string, remote: string | null): boolean {
 }
 
 /** Playwright, from Kitchen's own dependencies. */
-function playwright(): { chromium: { launch(o: object): Promise<Browser> } } {
+function playwright(): { chromium: { launch(o: object): Promise<Browser>; executablePath(): string } } {
   const req = createRequire(import.meta.url);
   try {
     return req("playwright") as ReturnType<typeof playwright>;
@@ -292,6 +358,41 @@ function playwright(): { chromium: { launch(o: object): Promise<Browser> } } {
     throw new Error("Playwright is missing from Kitchen's install: npm install in Kitchen's folder (it is a pinned dependency)");
   }
 }
+/** Kitchen's own folder: its package.json pins Playwright, and the browser is installed from there. */
+const KITCHEN_DIR = path.resolve(import.meta.dirname, "..", "..");
+/** ADR 0029 §4: the install command (KITCHEN_BROWSER_INSTALL: tests and hooks put a stand-in there, never a download). */
+const installCmd = () => process.env.KITCHEN_BROWSER_INSTALL || "npx playwright install chromium";
+/** The one line for a missing browser: `kitchen run` refuses with it, `kitchen qa page` says it. */
+export const browserMissing = () => `the browser QA uses (Playwright's Chromium) isn't installed: run ${installCmd()} in ${KITCHEN_DIR}`;
+
+/** ADR 0029 §4: Playwright's Chromium is on this machine. */
+export function browserReady(): boolean {
+  try {
+    return fs.existsSync(playwright().chromium.executablePath());
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * ADR 0029 §4: before QA needs it (`kitchen init`, `kitchen run`), Chromium is installed once when it is missing.
+ * Null when it is there, else the line to refuse with. `ready` and `install` are seams for tests.
+ */
+export async function ensureBrowser(out: (l: string) => void, o: { ready?: () => boolean; install?: () => Promise<boolean> } = {}): Promise<string | null> {
+  const ready = o.ready ?? browserReady;
+  if (ready()) return null;
+  out("Installing the browser QA uses, once (~150 MB)…");
+  const ok = await (o.install ?? installBrowser)();
+  return ok && ready() ? null : browserMissing();
+}
+
+const installBrowser = () =>
+  new Promise<boolean>((resolve) => {
+    const c = spawn("/bin/sh", ["-c", installCmd()], { cwd: KITCHEN_DIR, stdio: ["ignore", "inherit", "inherit"] });
+    c.on("error", () => resolve(false));
+    c.on("exit", (code) => resolve(code === 0));
+  });
+
 type Page = {
   goto(u: string, o: object): Promise<unknown>;
   on(e: string, f: (x: unknown) => void): void;
@@ -313,7 +414,17 @@ export async function page(repo: string, ref: string, target: string, o: { name:
   }
   const url = join(base ?? "", target);
   if (!reachable(url, runUrl(repo, jid))) throw new Error(`page: ${url} is not this machine (127.0.0.1 or localhost only)`);
-  const browser = await playwright().chromium.launch({ headless: true });
+  let browser: Browser;
+  try {
+    browser = await playwright().chromium.launch({ headless: true });
+  } catch (e) {
+    // ADR 0029 §4: Playwright's own missing-browser error, as one line.
+    if (!browserReady()) {
+      out(`page: ${browserMissing()}`);
+      return 1;
+    }
+    throw e;
+  }
   const errors: string[] = [];
   let ok = true;
   let why = "";

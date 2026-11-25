@@ -81,7 +81,9 @@ export function renderReport(repo: string, job: Job, o: { diff?: { p: string; a:
   const rows = crit
     .map((c) => {
       const r = "criteria" in qa ? qa.criteria.find((x) => x.id === c.id) : undefined;
-      return `<tr><td>${esc(c.id)}</td><td>${esc(c.text)}<br><small>${esc(c.check)}</small></td><td class="${r?.result === "PASS" ? "ok" : "bad"}">${esc(r?.result ?? "not checked")}</td><td>${esc(r?.note ?? "")}${(r?.evidence ?? []).map((f) => evidenceHtml(qd, f, o.named)).join("")}</td></tr>`;
+      // ADR 0029 §2: a criterion QA couldn't test is not a fail.
+      const blocked = "criteria" in qa && qa.verdict === "BLOCKED";
+      return `<tr><td>${esc(c.id)}</td><td>${esc(c.text)}<br><small>${esc(c.check)}</small></td><td class="${r?.result === "PASS" ? "ok" : blocked ? "st" : "bad"}">${esc(r?.result ?? (blocked ? "not tested" : "not checked"))}</td><td>${esc(r?.note ?? "")}${(r?.evidence ?? []).map((f) => evidenceHtml(qd, f, o.named)).join("")}</td></tr>`;
     })
     .join("\n");
   const findings =
@@ -114,6 +116,7 @@ pre{background:var(--card);padding:8px;border-radius:6px;overflow:auto;font-size
 <h2>Criteria, checked against the running app</h2>
 <table>${rows || "<tr><td>No criteria.</td></tr>"}</table>
 ${"refused" in qa ? `<p class="bad">QA: ${esc(qa.refused)}</p>` : ""}
+${!check ? blockedHtml(qa, qd, o.named) : ""}
 ${drives(dir, job.round, o.named)}
 ${
   check
@@ -126,6 +129,12 @@ ${thread.length ? `<h2>Your messages</h2><ul>${thread.map((m) => `<li>${esc(m.at
 <p class="st">Evidence files: ${esc(path.relative(repo, qd))}/</p>
 </main></body></html>
 `;
+}
+
+/** ADR 0029 §2: why QA couldn't test a job, with the files it cites; "" otherwise. */
+function blockedHtml(qa: ReturnType<typeof readQa>, qd: string, named = false): string {
+  if (!("criteria" in qa) || qa.verdict !== "BLOCKED") return "";
+  return `<h2>QA couldn't test it</h2><p>${esc(qa.blocked ?? "")}</p>${(qa.evidence ?? []).map((f) => evidenceHtml(qd, f, named)).join("")}<p class="st">The environment, not the change: fix it, then Resume to run QA again.</p>`;
 }
 
 /** ADR 0028: a check's problems, each as the proposed bug (what was seen, the repro, the evidence). */

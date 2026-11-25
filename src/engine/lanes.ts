@@ -47,15 +47,38 @@ const list = (v: string) =>
     .map((x) => x.replace(/^[`'"]+|[`'".;]+$/g, ""))
     .filter((x) => x && !/^(none|-|n\/a)$/i.test(x));
 
-/** Pure: the criteria lines `- C1 (page): what must be true`, in order. */
-export function parseCriteria(text: string): Criterion[] {
+/**
+ * Pure: the criteria lines `- C1 (page): what must be true`, in order, or why one can't be read. ADR 0029 §1: every
+ * line that looks like a criterion (`- C<n>` …) must parse: one kind (any case), text after the colon, a new id.
+ * Nothing is guessed or merged.
+ */
+export function parseCriteria(text: string): Criterion[] | { refused: string } {
   const out: Criterion[] = [];
-  for (const m of text.matchAll(/^\s*[-*]\s*\**(C\d+)\**\s*\(\s*([a-z]+)\s*\)\s*:\s*(.+)$/gim)) {
-    const check = m[2].toLowerCase() as CheckKind;
-    if ((CHECK_KINDS as readonly string[]).includes(check) && !out.some((c) => c.id === m[1].toUpperCase()))
-      out.push({ id: m[1].toUpperCase(), text: m[3].trim(), check });
+  const bad: string[] = [];
+  const lines = [...text.matchAll(/^[ \t]*[-*][ \t]*\**[ \t]*(C\d+)\b\**(.*)$/gim)];
+  let next = Math.max(0, ...lines.map((m) => Number(m[1].slice(1)))) + 1;
+  for (const m of lines) {
+    const id = m[1].toUpperCase();
+    const k = /^\s*\(([^)]*)\)\**\s*(?::\s*(.*))?$/.exec(m[2]) ?? /^\s*\(([^)]*)\)()/.exec(m[2]);
+    if (!k) {
+      bad.push(`${id} has no kind: write - ${id} (page|http|test|cmd): …`);
+      continue;
+    }
+    const said = k[1].trim();
+    const kinds = said
+      .toLowerCase()
+      .split(/\s*(?:[+,/&|]|\band\b|\bor\b)\s*|\s+/)
+      .filter(Boolean);
+    const known = kinds.every((x) => (CHECK_KINDS as readonly string[]).includes(x));
+    if (kinds.length > 1 && known) {
+      const ids = kinds.map((x, i) => `${i ? `C${next++}` : id} (${x})`);
+      bad.push(`${id} (${said}): one kind per criterion: split it into ${ids.slice(0, -1).join(", ")} and ${ids.at(-1)}`);
+    } else if (kinds.length !== 1 || !known) bad.push(`${id} (${said}): the kind is one of page, http, test or cmd: write - ${id} (page|http|test|cmd): …`);
+    else if (!k[2]?.trim()) bad.push(`${id} (${kinds[0]}) needs a colon and what must be true after it: write - ${id} (${kinds[0]}): …`);
+    else if (out.some((c) => c.id === id)) bad.push(`${id} is listed twice`);
+    else out.push({ id, text: k[2].trim(), check: kinds[0] as CheckKind });
   }
-  return out;
+  return bad.length ? { refused: bad.join("; ") } : out;
 }
 
 /** Pure: intake.md, or the reason it can't be used (the intake lane runs again with that reason). */
@@ -87,6 +110,7 @@ export function parseIntake(text: string): Intake | { refused: string } {
   if (!["low", "medium", "high"].includes(risk)) return { refused: "RISK: is low, medium or high" };
   const surfaces = list(header(text, "SURFACES").toLowerCase()).filter((s): s is "ui" | "security" => s === "ui" || s === "security");
   const criteria = parseCriteria(text);
+  if ("refused" in criteria) return criteria;
   const explore = check ? exploreOf(text) : undefined;
   if (!criteria.length && explore === undefined)
     return {
@@ -176,13 +200,17 @@ export type QaRow = { id: string; result: "PASS" | "FAIL"; evidence: string[]; n
 /** ADR 0028: a problem a check found: a proposed bug (what was seen, how to see it again, the evidence). */
 export type QaFinding = { title: string; seen: string; repro: string[]; evidence: string[]; criterion?: string };
 export type QaVerdict = {
-  /** BLOCKED: only a check's, when QA couldn't run at all (the app won't start, the page is unreachable). */
+  /**
+   * BLOCKED: QA couldn't test at all: the app won't start, the seed data is wrong or missing, a service it needs is
+   * down (a check's, ADR 0028; a job's too, ADR 0029 §2). Never a fail.
+   */
   verdict: "PASS" | "FAIL" | "BLOCKED";
   criteria: QaRow[];
   /** A check's problems, one per failure or finding (ADR 0028 §3); [] for a job's QA. */
   findings: QaFinding[];
-  /** BLOCKED: why QA couldn't run. */
+  /** BLOCKED: why QA couldn't run, and the files it cites (in the QA folder). */
   blocked?: string;
+  evidence?: string[];
 };
 
 /** Pure apart from the stat: the evidence file is in `dir`, a file, and not empty. */
@@ -196,7 +224,10 @@ const goodEvidence = (dir: string, f: string) => {
  * every row cites evidence files that exist in the QA folder and aren't empty; a page criterion cites a screenshot.
  * The verdict is PASS only when every row is (the agent's own verdict line is checked against its rows).
  *
- * ADR 0028, `check`: the verdict may be BLOCKED (`blocked`: why QA couldn't run), and `findings` lists each problem
+ * The verdict may be BLOCKED (`blocked`: why QA couldn't test, `evidence`: its files): a check's (ADR 0028) or a
+ * job's (ADR 0029 §2).
+ *
+ * ADR 0028, `check`: `findings` lists each problem
  * as a proposed bug: `{ title, seen, repro: [steps], evidence: [files], criterion? }`. Every FAIL row has one (its
  * `criterion`); an exploring check's findings stand alone. A check passes only with every row PASS and no finding.
  */
@@ -210,13 +241,13 @@ export function readQa(jobDir: string, round: number, criteria: Criterion[], o: 
   }
   const v = raw as { verdict?: unknown; criteria?: unknown; findings?: unknown; blocked?: unknown; evidence?: unknown };
   const said = String(v.verdict ?? "").toUpperCase();
-  if (o.check && said === "BLOCKED") {
+  if (said === "BLOCKED") {
     const blocked = String(v.blocked ?? "").trim();
-    if (!blocked) return { refused: "a BLOCKED verdict says why in blocked (the app won't start, the page is unreachable)" };
+    if (!blocked) return { refused: "a BLOCKED verdict says why in blocked (the app won't start, the seed data is wrong, a service is down)" };
     const ev = Array.isArray(v.evidence) ? v.evidence.map(String) : [];
     const bad = ev.find((f) => !goodEvidence(dir, f));
     if (bad) return { refused: `BLOCKED: evidence ${bad} is missing, empty or outside the QA folder` };
-    return { verdict: "BLOCKED", criteria: [], findings: [], blocked };
+    return { verdict: "BLOCKED", criteria: [], findings: [], blocked, evidence: ev };
   }
   if (!Array.isArray(v.criteria)) return { refused: "verdict.json needs a criteria array" };
   const rows: QaRow[] = [];

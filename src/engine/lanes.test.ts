@@ -10,7 +10,7 @@ afterAll(() => fs.rmSync(root, { recursive: true, force: true }));
 
 test("intake.md: ACCEPT needs criteria with a check kind; NEEDS-INFO needs its question; anything else is refused", () => {
   const ok = parseIntake(
-    "DECISION: ACCEPT\nTITLE: Renew a loan\nKIND: feature\nRISK: medium\nSURFACES: ui, none\nFILES: server.js, `lib/loans.js`\nAFTER: 3, 004-x\n\n## Criteria\n- C1 (http): POST /loans/1/renew → 200\n- **C2** (page): /loans shows renewed\n- C3 (vibes): ignored\n",
+    "DECISION: ACCEPT\nTITLE: Renew a loan\nKIND: feature\nRISK: medium\nSURFACES: ui, none\nFILES: server.js, `lib/loans.js`\nAFTER: 3, 004-x\n\n## Criteria\n- C1 (http): POST /loans/1/renew → 200\n- **C2** (Page): /loans shows renewed\n",
   );
   assert.ok("decision" in ok && ok.decision === "ACCEPT");
   if (ok.decision !== "ACCEPT") return;
@@ -26,6 +26,28 @@ test("intake.md: ACCEPT needs criteria with a check kind; NEEDS-INFO needs its q
   assert.deepEqual(parseIntake("DECISION: NEEDS-INFO\nQUESTION: Which page?\n"), { decision: "NEEDS-INFO", question: "Which page?", title: null });
   assert.ok("refused" in parseIntake("DECISION: NEEDS-INFO\n"));
   assert.ok("refused" in parseIntake("DECISION: maybe\n"));
+});
+
+test("intake.md (ADR 0029 §1): a criterion line that can't be read refuses the intake with the line and the fix; kinds in any case", () => {
+  const refused = (crit: string) =>
+    String((parseIntake(`DECISION: ACCEPT\nKIND: feature\nRISK: low\n\n## Criteria\n- C1 (http): GET /items → 200\n${crit}`) as { refused?: string }).refused);
+  assert.equal(
+    refused("- C2 (page): the list\n- C3 (page + http): both work\n"),
+    "C3 (page + http): one kind per criterion: split it into C3 (page) and C4 (http)",
+  );
+  assert.equal(refused("- C3 (page, http): both\n"), "C3 (page, http): one kind per criterion: split it into C3 (page) and C4 (http)");
+  assert.equal(refused("- C5: the list shows\n"), "C5 has no kind: write - C5 (page|http|test|cmd): …");
+  assert.equal(refused("- **C5** the list shows\n"), "C5 has no kind: write - C5 (page|http|test|cmd): …");
+  assert.match(refused("- C2 (UI): the list\n"), /^C2 \(UI\): the kind is one of page, http, test or cmd/);
+  assert.equal(refused("- C1 (page): again\n"), "C1 is listed twice");
+  assert.match(refused("- C2 (page) the list\n"), /^C2 \(page\) needs a colon/);
+  // Every bad line at once, so one rerun fixes them all.
+  assert.equal(refused("- C2: x\n- C1 (http): y\n"), "C2 has no kind: write - C2 (page|http|test|cmd): …; C1 is listed twice");
+  const ok = parseIntake("DECISION: ACCEPT\nKIND: feature\nRISK: low\n\n## Criteria\n- C1 (HTTP): GET /items → 200\n- **C2** (Cmd): `make x` prints ok\n");
+  assert.deepEqual("decision" in ok && ok.decision === "ACCEPT" && ok.criteria.map((c) => [c.id, c.check]), [
+    ["C1", "http"],
+    ["C2", "cmd"],
+  ]);
 });
 
 test("intake.md ACCEPT (ADR 0020): the `- ` lines under ## Later slices are its slices, none when it has none", () => {
@@ -97,6 +119,20 @@ test("the QA verdict: every criterion has a row; every row cites evidence that e
     ],
   });
   assert.equal((readQa(job, 1, crit) as { verdict: string }).verdict, "FAIL");
+});
+
+test("the QA verdict (ADR 0029 §2): a job's QA may say BLOCKED, with why and the evidence it cites", () => {
+  const job = path.join(root, "job-b");
+  const qa = qaDir(job, 1);
+  fs.mkdirSync(qa, { recursive: true });
+  const crit = [{ id: "C1", text: "api", check: "http" as const }];
+  const write = (v: unknown) => fs.writeFileSync(path.join(qa, "verdict.json"), JSON.stringify(v));
+  write({ verdict: "BLOCKED", blocked: "the seed has no members", evidence: ["app.log"] });
+  assert.match(String((readQa(job, 1, crit) as { refused: string }).refused), /evidence app\.log is missing/);
+  fs.writeFileSync(path.join(qa, "app.log"), "seed: 0 members");
+  assert.deepEqual(readQa(job, 1, crit), { verdict: "BLOCKED", criteria: [], findings: [], blocked: "the seed has no members", evidence: ["app.log"] });
+  write({ verdict: "BLOCKED", evidence: ["app.log"] });
+  assert.match(String((readQa(job, 1, crit) as { refused: string }).refused), /says why in blocked/);
 });
 
 test("the review: it blocks exactly when a finding does; a blocking finding needs its why", () => {

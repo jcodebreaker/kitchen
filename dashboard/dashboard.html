@@ -921,7 +921,7 @@ async function pollDetail(){
   }
   setTimeout(pollDetail,1500);
 }
-function sigOf(j){return [JSON.stringify(j.waits),JSON.stringify(j.pull),j.target,j.checking?j.checking.cmd+j.checking.at:"",j.state,j.phase,j.stage,j.lane,j.round,j.q,j.pausedBy,j.title,j.report,j.files.length,j.runnerOn,j.movedAt,j.failed,j.risk,j.proof,fresh.has(j.id),expanded===j.id].join("|")}
+function sigOf(j){return [JSON.stringify(j.waits),JSON.stringify(j.pull),j.target,j.checking?j.checking.cmd+j.checking.at:"",j.waiting,j.state,j.phase,j.stage,j.lane,j.round,j.q,j.pausedBy,j.title,j.report,j.files.length,j.runnerOn,j.movedAt,j.failed,j.risk,j.proof,fresh.has(j.id),expanded===j.id].join("|")}
 function paint(before){
   const order0=[...before.keys()].join(),order1=jobs.map(j=>j.id).join();
   const groups=j=>j?(view==="board"?j.lane:group(j)):"";
@@ -953,14 +953,17 @@ function evHTML(e,uid,anim){
 }
 /* ADR 0025 §4: a check running now (Build's checks, the trial merge's): its command, for how long, its log's last line.
    The card and the row say it in their live line; the panel's step adds where the log is. */
-const ckHTML=(j,two)=>{const c=j.checking,h=`<span class="vb">Checks</span> · <code title="${esc(c.cmd)}">${esc(c.cmd)}</code> · <span class="num" data-ck="${esc(c.at)}">${fmtL(elapsed(c.at))}</span>`;
+/* ADR 0029 §3: what a job with no agent on it waits for, as the engine's wave plan says; card and panel share it. */
+const waitTxt=j=>j.waiting||"Waiting for the orchestrator (kitchen run)";
+/* ADR 0029 §4: `kitchen qa up`'s setup step (setup: true) reads as the step itself; the health wait adds its limit. */
+const ckHTML=(j,two)=>{const c=j.checking,t=`<span class="num" data-ck="${esc(c.at)}">${fmtL(elapsed(c.at))}</span>`,h=c.setup?`<span class="vb">${esc(c.cmd)}</span> · ${t}${c.of?` of ${fmtL(c.of)}`:""}`:`<span class="vb">Checks</span> · <code title="${esc(c.cmd)}">${esc(c.cmd)}</code> · ${t}`;
   return two?`<span class="ckh">${h}</span>${c.last?`<span class="ckl">${esc(c.last)}</span>`:""}`:h+(c.last?`<span class="dot">·</span><span class="ckl">${esc(c.last)}</span>`:"")};
 function liveHTML(j){
   const st=stp(j);
   let h=`<span class="stg">${esc(st.nm)}</span>${j.round>1?`<span class="rd">round ${j.round}</span>`:""}<span class="dot">·</span>`;
   if(j.state==="paused") return h+`<span>${j.pausedBy==="stop"?"Stopped by you":j.pausedBy?"Paused by you":"Waiting: "+esc(j.reason||j.paused||"")}</span>`;
   if(j.checking) return h+ckHTML(j,false);
-  if(!j.runnerOn) return h+`<span>${snap&&snap.runner.running?"Waiting for a free lane":"Waiting for the orchestrator (kitchen run)"}</span>`;
+  if(!j.runnerOn) return h+`<span>${esc(waitTxt(j))}</span>`;
   if(!j.agent&&!j.live) return h+`<span class="shim">${esc(j.step&&j.step.split(" · ").pop()||"Working")}</span>`;
   return h+liveEv(j);
 }
@@ -1070,7 +1073,7 @@ function evLine(j){
   if(j.pausedBy==="stop")return "Stopped by you";
   if(j.state==="paused")return j.pausedBy?"Paused by you":"Waiting: "+esc(j.reason||j.paused||"");
   if(j.checking)return ckHTML(j,true);
-  if(!j.runnerOn)return snap&&snap.runner.running?"Waiting for a free lane":"Waiting for the orchestrator (kitchen run)";
+  if(!j.runnerOn)return esc(waitTxt(j));
   if(!j.agent&&!j.live)return `<span class="shim">${esc(j.step&&j.step.split(" · ").pop()||"Working")}</span>`;
   return evOf(j);
 }
@@ -1268,7 +1271,7 @@ function segHTML(j,s,i,n){
   return `<button class="sg ${can?"exp":""}" ${can?`onclick="togSeg(${i})"`:"tabindex=-1"}>${S[state]||S.wait}<b>${esc(s.nm)}</b><span class="who">${esc(who)}</span><span class="du mono num" ${liveT?`id="segt" data-start="${esc(s.start)}"`:""}>${liveT?clock(elapsed(s.start)):dur}</span></button>
     ${s.sk&&s.sk.length?`<div class="sgsk" title="Skills quoted into this step's prompt">${s.sk.map(n=>`<span class="mono" title="${esc(n)}">${esc(n.split(":").pop())}</span>`).join("")}</div>`:""}
     ${s.sum?`<div class="sgsum ${s.st==="bad"?"bad":""}">${esc(s.sum)}</div>`:""}
-    ${last&&j.checking?`<div class="sgsum ckr" id="segck">${ckPanel(j)}</div>`:""}
+    ${last&&j.checking?`<div class="sgsum ckr" id="segck">${ckPanel(j)}</div>`:last&&s.st==="run"&&!j.runnerOn&&!s.sum?`<div class="sgsum">${esc(waitTxt(j))}</div>`:""}
     ${isOpen&&(s.evs.length||(last&&s.st==="run"&&j.runnerOn))?`<div class="evs" ${last?'id="evs"':""}>${s.evs.map(e=>evHTML(e)).join("")}</div>`:""}`;
 }
 const ckPanel=j=>ckHTML(j,true)+`<span class="lg">log: <span class="mono">${esc(j.checking.log)}</span> in the job folder</span>`;

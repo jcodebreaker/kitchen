@@ -11,7 +11,7 @@ import * as control from "../engine/control.ts";
 import { qaDir } from "../engine/lanes.ts";
 import { findJob, jobDirOf } from "../engine/store.ts";
 import { orchestratorCommand, scrubbedEnv, streamLine } from "../run/orchestrator.ts";
-import { appDown, appEnv, appReset, appUp, composeProject, http, page, reachable, stopApp, stopCommand } from "./app.ts";
+import { appDown, appEnv, appReset, appUp, composeProject, ensureBrowser, http, page, reachable, stopApp, stopCommand, sweepApps } from "./app.ts";
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kitchen-qa-"));
 const lines: string[] = [];
@@ -125,4 +125,79 @@ test("ADR 0021 §3: only this machine, or the deployed URL a --url sweep drives"
   assert.ok(!reachable("https://staging.example.com/cart", null));
   assert.ok(reachable("https://staging.example.com/cart", "https://staging.example.com"));
   assert.ok(!reachable("https://evil.example.com/", "https://staging.example.com"));
+});
+
+test("ADR 0029 §4: qa up records each setup step in the job's checking, and clears it when the app is up or fails", async () => {
+  const job = path.join(jobDirOf(root, id), "job.json");
+  const seen = path.join(root, "seen");
+  fs.mkdirSync(seen, { recursive: true });
+  const peek = (name: string) => `cp '${job}' '${path.join(seen, name)}'`;
+  const cfg = loadConfig(root);
+  const app = {
+    ...cfg.app,
+    reset: peek("reset.json"),
+    start: `${peek("start.json")}; sleep 1; ${peek("wait.json")}; exec node srv.mjs`,
+    ready_timeout_sec: 20,
+  };
+  assert.equal(await appUp(root, id, out, { ...cfg, app }), 0, lines.join("\n"));
+  const at = (name: string) => (JSON.parse(fs.readFileSync(path.join(seen, name), "utf8")) as { checking?: Record<string, unknown> }).checking;
+  assert.deepEqual(
+    [at("reset.json")?.cmd, at("reset.json")?.setup, at("reset.json")?.log],
+    ["Resetting data", true, path.join("rounds", "1", "qa", "app.log")],
+  );
+  assert.equal(at("start.json")?.cmd, "Starting the app");
+  assert.deepEqual([at("wait.json")?.cmd, at("wait.json")?.of], ["Waiting for /healthz", 20]);
+  assert.equal(findJob(root, id).checking, undefined, "cleared once up");
+  await appDown(root, id);
+  assert.equal(await appUp(root, id, out, { ...cfg, app: { ...app, reset: "exit 3" } }), 1);
+  assert.equal(findJob(root, id).checking, undefined, "cleared when a step fails");
+});
+
+test("ADR 0029 §4: the browser is installed once when it is missing; a failed install is the one line to refuse with", async () => {
+  const said: string[] = [];
+  let installs = 0;
+  assert.equal(await ensureBrowser((l) => said.push(l), { ready: () => true, install: async () => !!++installs }), null);
+  assert.equal(installs, 0, "there already: nothing installed");
+  let there = false;
+  const install = async () => {
+    installs++;
+    there = true;
+    return true;
+  };
+  assert.equal(await ensureBrowser((l) => said.push(l), { ready: () => there, install }), null);
+  assert.deepEqual([installs, said], [1, ["Installing the browser QA uses, once (~150 MB)…"]]);
+  const no = await ensureBrowser(() => {}, { ready: () => false, install: async () => false });
+  assert.match(String(no), /^the browser QA uses \(Playwright's Chromium\) isn't installed: run .+ in \//);
+});
+
+test("ADR 0029 §5: stopping or rejecting a job stops its app; a sweep stops any app no lane works on", async () => {
+  const state = path.join(jobDirOf(root, id), "app.json");
+  const up = async () => {
+    assert.equal(await appUp(root, id, out), 0, lines.join("\n"));
+    return (JSON.parse(fs.readFileSync(state, "utf8")) as { pid: number }).pid;
+  };
+  const gone = async (pid: number) => {
+    for (let i = 0; i < 20 && alive(pid); i++) await new Promise((r) => setTimeout(r, 100));
+    assert.ok(!alive(pid), `app ${pid} still runs`);
+  };
+  const alive = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  let pid = await up();
+  await control.stop(root, id, () => {});
+  assert.ok(!fs.existsSync(state));
+  await gone(pid);
+  await control.resume(root, id, () => {});
+  pid = await up();
+  assert.deepEqual(await sweepApps(root), [`${id}  app stopped (no lane works on it)`]);
+  await gone(pid);
+  pid = await up();
+  await control.reject(root, id, () => {});
+  assert.ok(!fs.existsSync(state));
+  await gone(pid);
 });

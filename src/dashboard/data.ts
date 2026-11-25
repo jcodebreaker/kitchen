@@ -5,10 +5,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { type Config, LANE_ROLES, loadConfig, modelFor, targetOf } from "../config.ts";
+import { readControl } from "../engine/control.ts";
 import { diffSize } from "../engine/git.ts";
 import { heartbeatFile, syncPrs } from "../engine/jobs.ts";
 import { criteriaOf, leftOutOf, readIntake, readQa, readReview } from "../engine/lanes.ts";
 import { BY_YOU_STOPPED, isActive, isCheck, type Job, PR_OPEN_WORDS, pausedByYou, prOpen, promotable, type Stage } from "../engine/machine.ts";
+import { type Plan, planWave } from "../engine/plan.ts";
 import { JOB_ID, jobDirOf, scanJobs } from "../engine/store.ts";
 import { type Kept, listKept } from "../inbox/schedule.ts";
 import { type LedgerLine, readLedger } from "../ledger/append.ts";
@@ -184,6 +186,30 @@ export function checkingOf(j: Pick<Job, "checking">, dir: string): { cmd: string
   return { cmd: j.checking.cmd, at: j.checking.at, log: j.checking.log, last: last === `$ ${j.checking.cmd}` ? "" : last.slice(0, 300) };
 }
 
+export const NO_ORCHESTRATOR = "Waiting for the orchestrator (kitchen run)";
+const numOf = (id: string) => JOB_ID.exec(id)?.[1] ?? id;
+const and = (xs: string[]) => (xs.length > 1 ? `${xs.slice(0, -1).join(", ")} and ${xs.at(-1)}` : (xs[0] ?? ""));
+
+/**
+ * ADR 0029 §3: why a job in a lane with no agent on it waits, from the same wave plan `kitchen job next` makes: for
+ * room (the jobs using it), for a job on its AFTER: line, or for an orchestrator. The card and the panel both show it.
+ * Null while an agent works on it. Pure.
+ */
+export function waitingOf(id: string, plan: Plan | null, o: { parallel: number; orchestrator: boolean }): string | null {
+  if (!o.orchestrator) return NO_ORCHESTRATOR;
+  if (!plan || plan.running.some((r) => r.id === id)) return null;
+  const h = plan.held.find((x) => x.id === id);
+  if (!h) return plan.start.some((x) => x.id === id) ? "Starting its lane" : null;
+  const dep = /^waits for (\S+) .*named on its AFTER: line$/.exec(h.why);
+  if (dep) return `Waiting for ${numOf(dep[1])} to merge first (named on its AFTER: line)`;
+  if (!h.why.startsWith("waits for room")) return `Waiting: ${h.why}`;
+  const using = [...plan.running, ...plan.start].map((x) => numOf(x.id));
+  const all = using.length === 1 ? "is using it" : using.length === 2 ? "are using both" : `are using all ${using.length}`;
+  if (!using.length) return `Waiting for a free lane (parallel: ${o.parallel})`;
+  if (using.length > 3) return `Waiting for a free lane · ${using.length} jobs are using all ${using.length}`;
+  return `Waiting for a free lane · ${and(using)} ${all} (parallel: ${o.parallel})`;
+}
+
 /** One ledger line, as a card's "now" line. Pure. */
 export function stepOf(l: LedgerLine): string {
   if (l.event === "agent") return `${l.role ?? "agent"} ${String(l.result ?? "started")}`.trim();
@@ -242,6 +268,8 @@ export type JobCard = {
   live: Ev | null;
   /** A lane agent works on it now (a lane is open and an orchestrator is alive). */
   runnerOn: boolean;
+  /** ADR 0029 §3: what it waits for while no agent works on it (a free lane, a job on its AFTER: line, an orchestrator); else null. */
+  waiting: string | null;
   files: FileStat[];
   doneAt: string | null;
   lane: Lane;
@@ -340,17 +368,25 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
   const moves = new Map<string, LedgerLine[]>();
   /** ADR 0018: catch-ups per job; a card counts only real rounds. */
   const catchUps = new Map<string, number>();
+  /** ADR 0029 §2: a job's QA again after a BLOCKED is no round either (a check's is: ADR 0028). */
+  const qaAgain = new Map<string, number>();
   for (const l of lines) {
     lastLine.set(l.job, l);
     if (l.event === "move") moves.set(l.job, [...(moves.get(l.job) ?? []), l].slice(-2));
     if (l.event === "move" && l.detail?.catchUp) catchUps.set(l.job, (catchUps.get(l.job) ?? 0) + 1);
+    if (l.event === "move" && l.stage === "qa" && l.result === "qa") qaAgain.set(l.job, (qaAgain.get(l.job) ?? 0) + 1);
   }
   const orch = orchestrator(repo, now);
+  // ADR 0029 §3: the wave plan `kitchen job next` would make, for why a job waits.
+  const all = scanJobs(repo);
+  const open = all.flatMap((e) => (e.job && JOB_ID.test(e.job.id) && !e.job.archived ? [e.job] : []));
+  const paused = new Set(open.filter((j) => !j.running && readControl(jobDirOf(repo, j.id)).pause).map((j) => j.id));
+  const plan = cfg ? planWave(open, { parallel: cfg.parallel, paused, target: (j) => targetOf(cfg as Config, j) }) : null;
   const jobs: JobCard[] = [];
   const corrupt: string[] = [];
   const removed: { id: string; at: string }[] = [];
   const kept = listKept(repo);
-  for (const e of scanJobs(repo)) {
+  for (const e of all) {
     if (!e.job || !JOB_ID.test(e.job.id)) {
       corrupt.push(e.id);
       continue;
@@ -384,7 +420,7 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
       paused: j.stage === "paused" ? `paused${j.pausedFrom ? ` (from ${j.pausedFrom})` : ""}` : null,
       reason: j.pausedReason ?? null,
       risk: j.risk,
-      round: j.round - (catchUps.get(j.id) ?? 0),
+      round: j.round - (catchUps.get(j.id) ?? 0) - (chk ? 0 : (qaAgain.get(j.id) ?? 0)),
       roundLimit: j.roundLimit,
       kind: chk ? "check" : j.kind,
       verdict: "criteria" in qaNow ? qaNow.verdict : null,
@@ -415,6 +451,7 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
       pausedBy: pausedByYou(j) ? (j.pausedReason === BY_YOU_STOPPED ? "stop" : "pause") : null,
       live: (cur && fs.existsSync(cur) ? activityOf(cur, [j.worktree, repo]) : []).at(-1) ?? null,
       runnerOn: !!j.running && orch.running,
+      waiting: isActive(j.stage) && !(j.running && orch.running) ? waitingOf(j.id, plan, { parallel: cfg?.parallel ?? 1, orchestrator: orch.running }) : null,
       files: await changesOf(j, now),
       doneAt: j.doneAt ?? null,
       lane: laneOf(j),

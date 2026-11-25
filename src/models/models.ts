@@ -4,12 +4,12 @@
 // written to kitchen.yaml (the tool's profile, comments kept) and applies from the next lane a job starts.
 // `check` sends one tiny request per chosen model through the tool itself: it costs a fraction of a cent and nothing
 // else in Kitchen runs it.
-import { execFile } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseDocument } from "yaml";
 import { claudeBin, codexBin } from "../agents/find-bin.ts";
+import { runAgentSession } from "../agents/session.ts";
 import { type Config, configFile, LANE_ROLES, type LaneRole, loadConfig, modelFor, parseConfig, profileOf, TIERS, TOOLS, type Tool } from "../config.ts";
 
 /** Claude Code's `--model` aliases. */
@@ -150,12 +150,15 @@ export function setModel(repo: string, role: LaneRole, value: string, tool?: Too
 }
 
 export type CheckRun = (argv: string[]) => Promise<{ code: number; out: string }>;
-const realRun: CheckRun = (argv) =>
-  new Promise((resolve) =>
-    execFile(argv[0], argv.slice(1), { timeout: 120_000, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) =>
-      resolve({ code: err ? Number((err as { code?: unknown }).code) || 1 : 0, out: `${stdout}${stderr}`.trim() }),
-    ),
-  );
+// ADR 0029 §5: a one-shot session too runs in its own group, ended when it closes (or after 2 minutes).
+const realRun: CheckRun = async (argv) => {
+  let text = "";
+  const add = (d: Buffer) => {
+    if (text.length < 1024 * 1024) text += d.toString("utf8");
+  };
+  const r = await runAgentSession(argv, { cwd: process.cwd(), timeoutMs: 120_000, onStdout: add, onStderr: add });
+  return { code: r.error ? 1 : r.code, out: (r.error ?? text).trim() };
+};
 
 /** Pure: the one tiny request that checks a model answers, through the tool itself. */
 export function checkCommand(tool: Tool, model: string, env: NodeJS.ProcessEnv = process.env): string[] {
