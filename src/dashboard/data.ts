@@ -512,7 +512,8 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
       checking: checkingOf(j, dir),
       check: chk
         ? {
-            result: j.check?.result ?? null,
+            // ADR 0033 §4: a failed filing-again shows on the card until the next wave manages it.
+            result: j.check?.result ? `${j.check.result}${j.check.refileError ? ` · filing it again failed: ${j.check.refileError}` : ""}` : null,
             findings: j.check?.findings ?? 0,
             proposals: j.check?.proposals ?? [],
             explore: j.check?.explore ?? null,

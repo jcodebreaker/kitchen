@@ -30,7 +30,19 @@ export type MergeOutcome =
    * `back`: the work goes back to Build (a conflict, checks red on staging); else it stops at Ready. `cause` and
    * `onto` (staging's tip it merged onto) let Kitchen tell a catch-up from a round (ADR 0018 §3).
    */
-  | { ok: false; why: string; back: boolean; log?: string; drive?: undefined; cause?: "conflict" | "checks"; onto?: string; tail?: string; mergeOnly?: boolean }
+  | {
+      ok: false;
+      why: string;
+      back: boolean;
+      log?: string;
+      drive?: undefined;
+      cause?: "conflict" | "checks";
+      onto?: string;
+      tail?: string;
+      mergeOnly?: boolean;
+      /** ADR 0033: the merge check waits for a fixed port in use; held and tried again on the next wave, no round. */
+      wait?: string;
+    }
   /** Not merged yet: these features must be driven on the trial merge first (its worktree is kept). */
   | { ok: false; why: string; back: false; drive: Drive };
 
@@ -160,10 +172,16 @@ function mergeApp(cfg: Config, job: Job, wt: string, log: string): AppForCheck {
     const r = await startApp(cfg, { wt, log, project: project ? `${project}-merge` : null });
     if (!r.ok) {
       if (r.app) await stopApp(r.app, log);
-      return { ok: false, why: r.why };
+      return { ok: false, why: r.why, step: r.step };
     }
     const app = r.app;
-    return { ok: true, url: app.url, stop: () => stopApp(app, log) };
+    return {
+      ok: true,
+      url: app.url,
+      stop: async () => {
+        await stopApp(app, log);
+      },
+    };
   };
 }
 
@@ -178,7 +196,7 @@ async function trialMerge(
   onCheck?: OnCheck,
 ): Promise<
   | { ok: true; sha: string; wt: string }
-  | { ok: false; why: string; back: boolean; wt: string; cause: "conflict" | "checks"; tail?: string; mergeOnly?: boolean }
+  | { ok: false; why: string; back: boolean; wt: string; cause: "conflict" | "checks"; tail?: string; mergeOnly?: boolean; wait?: string }
 > {
   const wt = trialWorktree(repo, job.id);
   await dropTrial(repo, wt);
@@ -199,6 +217,8 @@ async function trialMerge(
   const checks = await runChecks({ dir: wt, checks: checksFor(cfg, "merge"), prepare: prepareOf(cfg), log, app: mergeApp(cfg, job, wt, log), onCheck });
   if (!checks.ok) {
     const bad = checks.results.find((r) => !r.ok);
+    // ADR 0033: the app's fixed port is in use (another job's app, or the person's): nothing to build again.
+    if (bad?.wait) return { ok: false, why: `merge check waits: ${bad.wait}`, back: false, wt, cause: "checks", wait: bad.wait };
     return {
       ok: false,
       why: `the checks fail on ${targetOf(cfg, job)} with this change merged (${bad?.name}: ${bad?.exit !== null ? `exit ${bad?.exit}` : bad.tail.startsWith("the app did not start") ? "the app did not start" : "timeout"})`,
@@ -271,6 +291,7 @@ export async function mergeToTarget(
               onto,
               ...(t.tail ? { tail: t.tail } : {}),
               ...(t.mergeOnly ? { mergeOnly: true } : {}),
+              ...(t.wait ? { wait: t.wait } : {}),
             };
           sha = t.sha;
           const features = o.gate ? await o.gate({ onto, sha, wt: t.wt }) : [];

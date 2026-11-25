@@ -189,6 +189,40 @@ test("the QA verdict (ADR 0029 §2): a row may be NOT_RUN with why; no FAIL make
   // A check: a NOT_RUN is never a finding.
   write({ verdict: "FAIL", criteria: [c1, c2], findings: [{ title: "x", seen: "y", repro: ["z"], evidence: ["c2-seed.txt"], criterion: "C2" }] });
   assert.match(String((readQa(job, 1, crit, { check: true }) as { refused: string }).refused), /names C2, which was NOT_RUN/);
+  // ADR 0033 §4: missing tooling is why a criterion couldn't run: a tooling finding (no repro) names that NOT_RUN row,
+  // and with every NOT_RUN row covered the check is FAIL (done, waiting for the tooling), not INCOMPLETE.
+  const tool = { kind: "tooling", title: "a fixture loader", seen: "C2 needs member 4", evidence: ["c2-seed.txt"], criterion: "C2" };
+  const refused = (v: unknown) => {
+    write(v);
+    return String((readQa(job, 1, crit, { check: true }) as { refused?: string }).refused);
+  };
+  write({ verdict: "FAIL", criteria: [c1, c2], findings: [tool] });
+  const t = readQa(job, 1, crit, { check: true }) as QaVerdict;
+  assert.deepEqual([t.verdict, t.findings[0]?.kind, t.findings[0]?.repro], ["FAIL", "tooling", []]);
+  const { criterion: _, ...noCriterion } = tool;
+  assert.match(refused({ verdict: "FAIL", criteria: [c1, c2], findings: [noCriterion] }), /names no criterion/);
+  const c2fail = { id: "C2", result: "FAIL", evidence: ["c2-seed.txt"], note: "no member" };
+  assert.match(refused({ verdict: "FAIL", criteria: [c1, c2fail], findings: [tool] }), /names C2, which is FAIL: .*covers only a NOT_RUN row/);
+  assert.match(refused({ verdict: "FAIL", criteria: [c1, c2], findings: [tool, { ...tool, criterion: "C1" }] }), /names C1, which is PASS/);
+  // A NOT_RUN row no tooling covers is run again first (INCOMPLETE), the tooling one with it.
+  const c1nr = { id: "C1", result: "NOT_RUN", why: "the service is down", evidence: ["c1.http.txt"] };
+  write({ verdict: "FAIL", criteria: [c1nr, c2], findings: [tool] });
+  assert.equal((readQa(job, 1, crit, { check: true }) as QaVerdict).verdict, "INCOMPLETE");
+  write({ verdict: "FAIL", criteria: [c1nr, c2], findings: [tool, { ...tool, criterion: "C1", title: "a stub service" }] });
+  assert.equal((readQa(job, 1, crit, { check: true }) as QaVerdict).verdict, "FAIL", "every NOT_RUN row covered: waits for the tooling");
+  // A real FAIL stays FAIL (everything proposed), even beside tooling and a NOT_RUN row nobody covers.
+  const c1fail = { id: "C1", result: "FAIL", evidence: ["c1.http.txt"], note: "500" };
+  const real = { title: "renew 500", seen: "500", repro: ["renew"], evidence: ["c1.http.txt"], criterion: "C1" };
+  const c3nr = { id: "C3", result: "NOT_RUN", why: "the service is down", evidence: ["c2-seed.txt"] };
+  write({ verdict: "FAIL", criteria: [c1fail, c2, c3nr], findings: [real, tool] });
+  const rf = readQa(job, 1, crit, { check: true }) as QaVerdict;
+  assert.deepEqual([rf.verdict, rf.findings.length], ["FAIL", 2]);
+  // One finding may cover several rows (criteria), each NOT_RUN.
+  const { criterion: _c, ...bare } = tool;
+  write({ verdict: "FAIL", criteria: [c1nr, c2], findings: [{ ...bare, criteria: ["c1", "C2"] }] });
+  const m = readQa(job, 1, crit, { check: true }) as QaVerdict;
+  assert.deepEqual([m.verdict, m.findings[0]?.criterion, m.findings[0]?.criteria], ["FAIL", "C1", ["C1", "C2"]]);
+  assert.match(refused({ verdict: "FAIL", criteria: [c1, c2], findings: [{ ...bare, criteria: ["C1", "C2"] }] }), /names C1, which is PASS/);
   // BLOCKED: every row NOT_RUN with its why.
   write({ verdict: "BLOCKED", blocked: "the app won't start", evidence: ["app.log"] });
   assert.match(String((readQa(job, 1, crit) as { refused: string }).refused), /evidence app\.log is missing/);
@@ -456,6 +490,7 @@ test("ADR 0031 with ADR 0029's retry: a mixed round (C1 PASS, C2 NOT_RUN) retrie
 test("ADR 0031 §5: which findings get a second look, and its answers", () => {
   assert.deepEqual(consequential([{ severity: "high" }, {}, { severity: "low" }], "low"), [1]);
   assert.deepEqual(consequential([{ severity: "high" }, {}], "high"), [1, 2], "a high-risk check: every finding");
+  assert.deepEqual(consequential([{ severity: "high", kind: "tooling" }, { severity: "high" }], "high"), [2], "ADR 0033: tooling never gets a second look");
   const job = path.join(root, "031-look");
   fs.mkdirSync(path.dirname(secondLookFile(job, 1)), { recursive: true });
   const write = (v: unknown) => fs.writeFileSync(secondLookFile(job, 1), JSON.stringify(v));

@@ -51,6 +51,8 @@ export function planWave(jobs: Job[], o: { parallel: number; restartStranded?: b
     if (j.stage === "needs-info") plan.you.push({ id: j.id, stage: j.stage, why: j.pausedReason ?? "intake asked a question" });
     else if (j.stage === "needs-human") plan.you.push({ id: j.id, stage: j.stage, why: j.pausedReason ?? "it needs a person" });
     else if (prOpen(j)) plan.you.push({ id: j.id, stage: j.stage, why: `${PR_OPEN_WORDS} (PR #${j.pr?.number}${j.pr?.url ? ` ${j.pr.url}` : ""})` });
+    // ADR 0033: a merge check waiting for a port is Kitchen's to retry, not the person's.
+    else if (j.stage === "ready" && j.mergeWait) plan.held.push({ id: j.id, lane: "review", why: j.held ?? j.mergeWait.why });
     else if (j.stage === "ready") plan.you.push({ id: j.id, stage: j.stage, why: j.held ?? "ready for a person to merge" });
     else if (j.stage === "paused") plan.you.push({ id: j.id, stage: j.stage, why: j.pausedReason ?? "paused" });
     else if (j.stage === "build" && isCheck(j))

@@ -65,6 +65,8 @@ export type Proposal = {
   edited?: boolean;
   /** run: the job it became. */
   job?: string;
+  /** ADR 0033 §4: the branch its job goes into (a check's tooling: the check's target); absent: staging. */
+  target?: string;
   /** removed: the state to bring it back to. */
   prev?: PState;
 };
@@ -203,6 +205,7 @@ export type ProposeInput = {
   evidence?: string[];
   sha?: string;
   cap?: string;
+  target?: string;
 };
 
 /** Triage's verdict "propose": a ticket the person may run. */
@@ -238,6 +241,7 @@ export async function propose(repo: string, o: ProposeInput, now = new Date()): 
       },
       at: now.toISOString(),
       by: "triage",
+      ...(o.target ? { target: o.target } : {}),
     };
     saveProposal(repo, p);
     return p;
@@ -427,7 +431,7 @@ export async function run(repo: string, ids: string[]): Promise<{ proposal: stri
         items: p.items,
         refs,
       };
-      const job = await fileTicket(repo, ticketBody(p, items), { title: p.title, from });
+      const job = await fileTicket(repo, ticketBody(p, items), { title: p.title, from, target: p.target });
       saveProposal(repo, { ...p, state: "run", job: job.id });
       made.push({ proposal: p.id, job: job.id });
     }

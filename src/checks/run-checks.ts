@@ -10,7 +10,8 @@ import type { CheckSpec, Config } from "../config.ts";
 
 /** `yarn`: Yarn Berry (2+); `yarn-classic`: Yarn 1. */
 export type PackageManager = "npm" | "pnpm" | "yarn" | "yarn-classic" | "bun";
-export type CheckRun = { name: string; run: string; ok: boolean; exit: number | null; secs: number; tail: string };
+/** `wait`: ADR 0033: the app couldn't start because its fixed port is in use: not the change's fault, try later. */
+export type CheckRun = { name: string; run: string; ok: boolean; exit: number | null; secs: number; tail: string; wait?: string };
 export type ChecksResult = { ok: boolean; results: CheckRun[] };
 
 const INSTALL: Record<PackageManager, string> = {
@@ -57,7 +58,10 @@ function prepareKey(cmd: string, dir: string): string {
  * One shell command in `cwd`, its output kept (the last 60 lines in `tail`, all of it in `log` when given). ADR 0025
  * §4: the log is written as the output arrives (`$ cmd` first, `[exit …]` last), so a long check shows progress.
  */
-export function runShell(cmd: string, o: { cwd: string; timeoutSec: number; log?: string; env?: NodeJS.ProcessEnv }): Promise<CheckRun & { all: string }> {
+export function runShell(
+  cmd: string,
+  o: { cwd: string; timeoutSec: number; log?: string; env?: NodeJS.ProcessEnv; onSpawn?: (pid: number | undefined) => void },
+): Promise<CheckRun & { all: string }> {
   const t0 = Date.now();
   const log = o.log;
   if (log) {
@@ -66,6 +70,8 @@ export function runShell(cmd: string, o: { cwd: string; timeoutSec: number; log?
   }
   return new Promise((resolve) => {
     const child = spawn("/bin/sh", ["-c", cmd], { cwd: o.cwd, env: { ...process.env, CI: "1", ...o.env }, stdio: ["ignore", "pipe", "pipe"], detached: true });
+    // ADR 0033: the caller may end this command's whole group (kitchen doctor on Ctrl-C).
+    o.onSpawn?.(child.pid);
     let all = "";
     const take = (d: Buffer) => {
       all += d;
@@ -93,7 +99,7 @@ export function runShell(cmd: string, o: { cwd: string; timeoutSec: number; log?
 export type OnCheck = (cmd: string | null) => Promise<void> | void;
 
 /** The app for a `needs_app` check (ADR 0021): started, with the env that names its URL, and how to stop it. */
-export type AppForCheck = () => Promise<{ ok: true; url: string; stop: () => Promise<void> } | { ok: false; why: string }>;
+export type AppForCheck = () => Promise<{ ok: true; url: string; stop: () => Promise<void> } | { ok: false; why: string; step?: string }>;
 
 /** Pure: the env a `needs_app` check gets: the app's URL under the names the usual suites read. */
 export const baseUrlEnv = (url: string): Record<string, string> => ({ BASE_URL: url, PLAYWRIGHT_BASE_URL: url, CYPRESS_BASE_URL: url });
@@ -147,7 +153,7 @@ async function checksIn(o: Parameters<typeof runChecks>[0]): Promise<ChecksResul
   for (const c of o.checks) {
     await o.onCheck?.(c.run);
     const r = c.needsApp ? await withApp(c, o) : await runShell(c.run, { cwd: o.dir, timeoutSec: c.timeoutSec, log: o.log });
-    results.push({ name: c.name, run: r.run, ok: r.ok, exit: r.exit, secs: r.secs, tail: r.tail });
+    results.push({ name: c.name, run: r.run, ok: r.ok, exit: r.exit, secs: r.secs, tail: r.tail, ...("wait" in r && r.wait ? { wait: r.wait } : {}) });
     if (!r.ok) break;
   }
   return { ok: results.every((r) => r.ok), results };
@@ -161,7 +167,7 @@ async function withApp(c: CheckSpec, o: { dir: string; log?: string; app?: AppFo
   const a = await o.app();
   if (!a.ok) {
     note(o.log, `# ${c.name}: the app did not start: ${a.why}\n\n`);
-    return fail(`the app did not start for ${c.name}: ${a.why}`);
+    return { ...fail(`the app did not start for ${c.name}: ${a.why}`), ...(a.step === "port" ? { wait: a.why } : {}) };
   }
   try {
     note(o.log, `# ${c.name}: the app is up at ${a.url} (BASE_URL)\n`);

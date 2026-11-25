@@ -12,9 +12,17 @@ const HELP = `kitchen: tickets in, reviewed changes merged into staging out (Cla
 Setup
   kitchen init [--tool claude|codex] [--yes]   seconds: checks what Kitchen needs, then kitchen.yaml (checks, how to start
                                          the app, staging), the /kitchen skill, the guard hooks, .gitignore, the
-                                         staging branch; runs the checks once
+                                         staging branch; runs the checks and requires: once, and says how the app is
+                                         set up (init itself never resets, starts or stops it: kitchen doctor --app
+                                         does; QA lanes and the merge gate run app.reset/app.start with your shell's
+                                         environment)
   kitchen init --skill                   only the /kitchen skill (then: /kitchen set up Kitchen in Claude Code)
   kitchen skills                         which role skills are found for the agent tool
+  kitchen doctor [--app] [--reset]       the project's setup (ADR 0033): requires: checks, the browser, and the app
+                                         as kitchen.yaml sets it, each ok / missing / failing / not tried with its fix.
+                                         --app: prepare, start, health and stop once on a throwaway checkout of HEAD
+                                         (your shell's environment: a migrate or seed on start touches what it points
+                                         at); --reset: app.reset too (it may wipe your local app's data)
 
 Work
   kitchen ticket "<what you want>" [--into <branch>] [--no-run]   a ticket; intake writes its criteria. Kitchen
@@ -28,7 +36,9 @@ Work
   kitchen schedules                      this repo's timers (checks, collect), each with how to remove it
   kitchen promote <id>                   a job intake read as KEEP: no (verified, not merged): review, the merge
                                          check, then the merge into its target (or its PR)
-  kitchen run [--detach] [--max-usd n]   a headless orchestrator session works the queue (or /kitchen run in Claude Code)
+  kitchen run [--detach] [--max-usd n]   a headless orchestrator session works the queue (or /kitchen run in Claude Code);
+                                         it checks kitchen.yaml requires: first. QA lanes and the merge gate run
+                                         app.reset/app.start with your shell's environment
   kitchen run --stop | --print           end it | print the exact command it runs
   kitchen status [--json] [--all]        one row per job (--all: the removed ones too)
   kitchen dashboard                      every repo's jobs in one browser page, on 127.0.0.1:7357: lanes, live activity,
@@ -80,6 +90,10 @@ QA's tools (evidence lands in the job's QA folder)
   kitchen qa reset <id>                  down, app.reset, up: the app again on fresh seed data
   kitchen qa page <id> <path> --name <n> [--script f.mjs]   Playwright: screenshot + page text
   kitchen qa http <id> <METHOD> <path> --name <n> [--header 'K: v']… [--data '<json>']   an HTTP transcript
+  kitchen qa scenario <id> <name>        app.scenarios' command against the job's app: a state just before the action
+                                         under test; its JSON (ids, who to log in as) saved as scenario-<name>.json
+  kitchen qa whoami <id> [--header 'K: v']… [--as <who>] [--name n]   app.whoami: who QA is, saved as
+                                         whoami[-<who or n>].json (.txt when it isn't JSON), secrets masked
 
 The verify map (the verify skill's features/: how to check each feature; QA keeps it). It lives in the repo
 (.claude/skills/<verify.skill>/, committed with each change), or on this machine (.kitchen/verify/skill/) when the
@@ -100,7 +114,7 @@ const COMMAND_HELP: Record<string, string> = {
     'kitchen promote <id>\n\nA job intake read as KEEP: no (code built only to verify something now) ends at Done, "Verified · not merged", its branch kept. promote takes it the rest of the way: Review, the merge check when it touches mapped features, then the merge into its target, or a PR with staging.merge: pr (ADR 0026).',
   schedules:
     "kitchen schedules\n\nThis repo's timers (.kitchen/schedules.json): each check filed with kitchen ticket --check --every, and collect's, with the command that removes it.",
-  run: "kitchen run [--detach] [--max-usd n] | run --stop | run --print\n\nStarts a headless Claude Code session that runs /kitchen run: it plans waves and spawns one agent per lane (intake, build, QA, review), moving jobs only through kitchen job verbs. One per repo.\n  --detach   in the background; the log is .kitchen/run.log\n  --max-usd  the session's spend cap (claude --max-budget-usd); default agent.max_usd in kitchen.yaml\n  --stop     end it (jobs keep their state)\n  --print    print the command and run nothing",
+  run: "kitchen run [--detach] [--max-usd n] | run --stop | run --print\n\nStarts a headless Claude Code session that runs /kitchen run: it plans waves and spawns one agent per lane (intake, build, QA, review), moving jobs only through kitchen job verbs. One per repo. kitchen run checks kitchen.yaml requires: first (ADR 0033) and refuses with the fix of the first that fails. QA lanes and the merge gate run app.reset/app.start with your shell's environment: what they migrate or seed is whatever it points at.\n  --detach   in the background; the log is .kitchen/run.log\n  --max-usd  the session's spend cap (claude --max-budget-usd); default agent.max_usd in kitchen.yaml\n  --stop     end it (jobs keep their state)\n  --print    print the command and run nothing",
   status:
     "kitchen status [--json]\n\nThe orchestrator, then one row per job: id, title, stage (* while an agent works on it), round, when it last moved, the merge, the Report.",
   resume: "kitchen resume <id>\n\nWakes a paused job: back to the stage it paused in. On a job whose pause wasn't made yet, cancels it.",
@@ -124,7 +138,7 @@ const COMMAND_HELP: Record<string, string> = {
   dashboard:
     "kitchen dashboard | dashboard --forget | dashboard --private [--port n] | dashboard --restart [--port n]\n\nThe jobs in a browser, on 127.0.0.1 only: a list or a board by lane, each job's live activity, criteria and changes. From it you answer, steer, pause, resume, stop, reject, follow up and start the orchestrator.\nOne page, http://127.0.0.1:7357/, for every repo on ~/.kitchen/repos.json (kitchen init and kitchen dashboard add the repo they run in; the repo name top-left switches). When the dashboard already runs, it adds this repo and prints its address.\n  --forget   take this repo off the list\n  --private  this repo alone, on its own server, not added to the list (--port implies it; default port 7357)\n  --restart  stop the Kitchen dashboard on the port and start this build there, detached, in the same mode (the page says when Kitchen was updated under it)",
   skills: "kitchen skills\n\nEvery skill in Kitchen's role registry (skills/registry.json): found or not for the agent tool, and how to install a missing one.",
-  init: "kitchen init [--tool claude|codex] [--yes] | init --skill\n\nChecks what Kitchen needs (node, git and a commit, python3 for the hooks, claude or codex signed in, gh optional), then writes kitchen.yaml with the checks and how to start the app it finds (one question at most when none is obvious; --yes asks nothing), installs the /kitchen skill and the guard hooks (merged into .claude/settings.json, with a backup), adds .gitignore entries, creates the staging branch from your branch, and runs the checks once.",
+  init: "kitchen init [--tool claude|codex] [--yes] | init --skill\n\nChecks what Kitchen needs (node, git and a commit, python3 for the hooks, claude or codex signed in, gh optional), then writes kitchen.yaml with the checks and how to start the app it finds (one question at most when none is obvious; --yes asks nothing), installs the /kitchen skill and the guard hooks (merged into .claude/settings.json, with a backup), adds .gitignore entries, creates the staging branch from your branch, and runs the checks once. ADR 0033: it runs kitchen.yaml's requires: checks and prints how the app is set up (reset, start, health, stop, scenarios, whoami). Init itself never resets, starts or stops the app: kitchen doctor --app (and --reset) does, when you ask. QA lanes and the merge gate run app.reset/app.start with your shell's environment.",
   job: "kitchen job next|start|finish|show …\n\nThe orchestrator's verbs: the single writer of job state. See kitchen --help.",
   verify:
     "kitchen verify sweep [--url <url>]|maintain [--json] | verify finish <run>\n\nThe verify skill's feature map (ADR 0017).\n  sweep      checks out staging, starts the app and writes a brief that drives every feature in features/README.md order; prints the agent's prompt. Changes nothing.\n             --url <url>: drive that deployed environment instead of starting the app (ADR 0021); recipes that need a reset or seed are reported not run. The URL stays in the run, never in a job.\n  maintain   the same on a branch of staging, with a brief to keep the map honest: prune, merge duplicates, fix drift from each feature's Code:, drive every feature; product regressions become tickets.\n  finish     reads the agent's verdict.json (sweep) or report.json (maintain), writes report.html in .kitchen/verify/<run>/, stops the app; maintain's map fixes (verify skill files only) merge into staging, or (verify.map: local) are copied back to .kitchen/verify/skill/.\nkitchen qa … <run> drives the run's app, like a job's.",
@@ -136,7 +150,9 @@ const COMMAND_HELP: Record<string, string> = {
     "kitchen collect [--detach] [--no-triage] | collect --install-schedule [--every 1h] | collect --remove-schedule\n\nReads every source by code (GitHub through gh, Slack through your workspace's Kitchen app), adds what is new to the inbox, then starts one headless Claude Code session that triages the new items together (groups, reproduces on staging, proposes or sets aside). It never builds, merges or posts. One collect at a time per repo: a busy one exits 4 without writing. A source that can't be read is reported unavailable and keeps its watermark.\n  --detach            in the background; the log is .kitchen/collect.log\n  --no-triage         read only; the items wait for the next collect\n  --install-schedule  a launchd agent (macOS) or systemd user timer (Linux) that runs it every --every (default 1h)",
   sources:
     "kitchen sources [list] | add github <owner/repo> [--label kitchen] | add slack <channel id> [--channel-name '#bugs'] [--emoji kitchen] | try … | remove <name> | slack-token\n\nWhere the outer loop reads reports from (.kitchen/sources/<name>.json). In Claude Code, /kitchen sources sets one up by talking: it tries a read, shows you a few items and saves the source on your yes.",
-  qa: "kitchen qa up|down|reset|page|http <id> …\n\nThe QA lane's tools: the app from the job's worktree (reset: down, app.reset, up, for fresh seed data), Playwright screenshots, HTTP transcripts. See kitchen --help.",
+  qa: "kitchen qa up|down|reset|page|http|scenario|whoami <id> …\n\nThe QA lane's tools: the app from the job's worktree (reset: down, app.reset, up, for fresh seed data), Playwright screenshots, HTTP transcripts. See kitchen --help.\n  scenario <id> <name>   ADR 0033: runs kitchen.yaml app.scenarios.<name> from the worktree with $BASE_URL, $PORT, $COMPOSE_PROJECT_NAME and $KITCHEN_JOB; it prepares a state just before the action under test and prints JSON (record ids, who to log in as), saved as scenario-<name>.json (its output in scenario-<name>.log). Output that isn't JSON fails.\n  whoami <id> [--header 'K: v']… [--as <who>] [--name n]   ADR 0033: app.whoami, a path on the app (GET with the headers) or a command ($BASE_URL, $KITCHEN_AS): the effective identity, saved as whoami.json, or whoami-<n>.json with --name, whoami-<who>.json with --as (always whoami-…; .txt when the answer isn't JSON), with how it was asked and the headers (authorization, cookie, x-api-key and *token* values masked). A path whoami takes --as only with a --header.",
+  doctor:
+    "kitchen doctor [--app] [--reset]\n\nThe project's setup (ADR 0033 §3). Each kitchen.yaml requires: entry ({ name, check, fix }) runs its check from the repo: ok, or failing with its fix (kitchen run refuses on a failing one too). The browser row says whether Playwright's Chromium is installed (missing is not failing: kitchen run installs it). Then the app as kitchen.yaml sets it: reset, start, health, stop, scenarios, whoami, nothing of it run. One doctor at a time per repo: a second one says which pid runs. Exit 1 when anything fails.\n  --app     on a throwaway checkout of HEAD under .kitchen/doctor/ (removed after, also on Ctrl-C): the prepare step (checks_install/checks_prepare), app.start, the health check and the stop, as QA runs them, each ok, failing or not tried with the fix. It starts your app with your shell's environment: if it migrates or seeds on start, it touches whatever DATABASE_URL/env points at. A fixed port (app.port, or a port in app.url) that already answers is left alone: start not tried.\n  --reset   --app, and app.reset before the start: it may wipe the data your local app uses.",
 };
 
 type Flags = { pos: string[]; flags: Set<string>; vals: Record<string, string[]> };
@@ -181,7 +197,7 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
   const { INBOX_FLAGS } = await import("./inbox/cli.ts");
-  const f = parse(rest, ["repo", "to", "into", "port", "tool", "max-usd", "name", "script", "header", "data", "url", "from-schedule", ...INBOX_FLAGS]);
+  const f = parse(rest, ["repo", "to", "into", "port", "tool", "max-usd", "name", "script", "header", "data", "url", "from-schedule", "as", ...INBOX_FLAGS]);
   // Inside a job's worktree (.worktrees/<job>), the main checkout: that is where the jobs live.
   const repo = f.vals.repo?.[0] ? path.resolve(f.vals.repo[0]) : (await import("./cli/here.ts")).kitchenRepo(process.cwd());
   const v = (k: string) => f.vals[k]?.[0];
@@ -231,6 +247,8 @@ async function main(argv: string[]): Promise<number> {
       }
       return code;
     }
+    case "doctor":
+      return (await import("./doctor/doctor.ts")).doctor(repo, out, { app: f.flags.has("--app"), reset: f.flags.has("--reset") });
     case "skills": {
       const r = (await import("./init/skills-report.ts")).skillsReport(repo);
       for (const l of [`role skills: ${r.summary}`, ...r.lines]) out(l);
@@ -364,6 +382,8 @@ async function jobVerb(repo: string, f: Flags, json: boolean, out: (l: string) =
     else {
       for (const l of p.prs) out(`pr     ${l}`);
       for (const l of p.proposals) out(`inbox  ${l}`);
+      for (const l of p.refiled) out(`check  ${l}`);
+      for (const l of p.merges) out(`merge  ${l}`);
       for (const s of p.start) out(`start  ${s.id}  ${s.lane}${s.restart ? " (restart: its last agent is gone)" : ""}`);
       for (const r of p.running) out(`busy   ${r.id}  ${r.lane} since ${r.since}`);
       for (const h of p.held) out(`held   ${h.id}  ${h.lane}: ${h.why}`);
@@ -460,7 +480,13 @@ async function qaVerb(repo: string, f: Flags, out: (l: string) => void): Promise
     if (!a || !b || !name) throw new Error("kitchen qa http <id> <METHOD> <path> --name <name> [--header 'K: v']… [--data '<json>']");
     return qa.http(repo, id, a, b, { name, headers: f.vals.header ?? [], data: f.vals.data?.[0] }, out);
   }
-  throw new Error(`kitchen qa: up, down, reset, page or http (got ${verb ?? "nothing"})`);
+  // ADR 0033 §1-§2.
+  if (verb === "scenario") {
+    if (!a) throw new Error("kitchen qa scenario <id> <name> (the names: kitchen.yaml app.scenarios)");
+    return (await import("./qa/scenario.ts")).scenario(repo, id, a, out);
+  }
+  if (verb === "whoami") return (await import("./qa/scenario.ts")).whoami(repo, id, { headers: f.vals.header ?? [], as: f.vals.as?.[0], name }, out);
+  throw new Error(`kitchen qa: up, down, reset, page, http, scenario or whoami (got ${verb ?? "nothing"})`);
 }
 
 quietOnEpipe(process.stdout);

@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, test } from "vitest";
+import { parseConfig } from "../config.ts";
 import { detectApp } from "./detect-app.ts";
 import { appYaml } from "./files.ts";
 
@@ -36,5 +37,20 @@ test("kitchen.yaml's app block: the reset when found; else a comment saying how 
   assert.match(appYaml({ start: "npm start", health: "/", reset: "npm run seed", from: "package.json scripts.start" }), /reset: "npm run seed"/);
   const y = appYaml({ start: "npm start", health: "/", from: "package.json scripts.start" });
   assert.match(y, /# No reset found\. So QA can restart on fresh data \(kitchen qa reset\)/);
-  assert.doesNotMatch(y, /^app: .*reset/m);
+  assert.doesNotMatch(y, /^ {2}reset:/m);
+});
+
+test("ADR 0033: the optional keys sit inside app: as comments; uncommenting them (or the whole none-found block) is valid kitchen.yaml", () => {
+  const y = appYaml({ start: "npm start", health: "/", reset: "npm run seed", from: "package.json scripts.start" });
+  assert.deepEqual(parseConfig(y).app.scenarios, {}, "as written: nothing optional is on");
+  const on = y.replace(/^( {2})# (scenarios|whoami)/gm, "$1$2").replace(/^# (requires)/m, "$1");
+  const c = parseConfig(on);
+  assert.deepEqual(
+    [c.app.start, c.app.reset, Object.keys(c.app.scenarios), c.app.whoami, c.requires.map((r) => r.name)],
+    ["npm start", "npm run seed", ["offer-pending"], "/api/me", ["venv"]],
+  );
+  const none = appYaml(null);
+  assert.equal(parseConfig(none).app.start, "", "all commented");
+  const all = parseConfig(none.replace(/^# (app:| {2}\S)/gm, "$1").replace(/^# (requires)/m, "$1"));
+  assert.deepEqual([all.app.start, all.app.whoami, Object.keys(all.app.scenarios), all.requires.length], ["npm start", "/api/me", ["offer-pending"], 1]);
 });

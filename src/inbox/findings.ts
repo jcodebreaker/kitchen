@@ -7,7 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { causeLabel, checkFindingKey, type QaFinding } from "../engine/lanes.ts";
 import { readState, writeState } from "../sources/config.ts";
-import { addItems, listProposals, type NewItem, type Proposal, propose } from "./store.ts";
+import { addItems, listItems, listProposals, type NewItem, type Proposal, propose } from "./store.ts";
 
 const num = (id: string) => /^(\d{3,})-/.exec(id)?.[1] ?? id;
 
@@ -89,7 +89,17 @@ export function findingText(f: Pick<QaFinding, "seen" | "expected" | "cause">): 
  */
 export async function proposeCheckFindings(
   repo: string,
-  c: { job: string; round: number; onto: string; target: string; qaFolder: string; findings: QaFinding[]; skip?: number[] },
+  c: {
+    job: string;
+    title?: string;
+    round: number;
+    onto: string;
+    target: string;
+    qaFolder: string;
+    findings: QaFinding[];
+    skip?: number[];
+    earlier?: string;
+  },
   now = new Date(),
 ): Promise<string[]> {
   // ADR 0031 §5: a finding the second look didn't confirm (1-based in `skip`) is never proposed; keys stay QA's numbering.
@@ -107,6 +117,9 @@ export async function proposeCheckFindings(
   );
   const st = readState(repo, "kitchen");
   writeState(repo, "kitchen", { ...st, lastAt: now.toISOString(), lastNew: added.filter((a) => a.added !== "seen").length, status: "available" });
+  // ADR 0033 §4: tooling findings with the same title are one chore. Its proposal takes every one of their items, so
+  // each finding (by its key, ADR 0031 §5) links to it.
+  const toolKey = (f: QaFinding) => (f.kind === "tooling" ? f.title.trim().toLowerCase() : null);
   const ids: string[] = [];
   for (const [i, a] of added.entries()) {
     const had = listProposals(repo).find((p: Proposal) => p.items.includes(a.item.id));
@@ -115,6 +128,11 @@ export async function proposeCheckFindings(
       continue;
     }
     const f = kept[i].f;
+    if (f.kind === "tooling") {
+      const group = added.filter((_, j) => toolKey(kept[j].f) === toolKey(f)).map((x) => x.item.id);
+      ids.push((await proposeTooling(repo, c, f, group, now)).id);
+      continue;
+    }
     const p = await propose(
       repo,
       {
@@ -134,4 +152,48 @@ export async function proposeCheckFindings(
     ids.push(p.id);
   }
   return ids;
+}
+
+/** ADR 0031 §5: the proposal that took a check finding's inbox item (by its key), or null (also when unreadable). */
+export function findingProposal(repo: string, job: string, round: number, n: number): string | null {
+  // Never throws: an inbox that can't be read (ADR 0029 §6's failed proposals) is "not proposed yet".
+  try {
+    const item = listItems(repo).find((x) => x.key === checkFindingKey(job, round, n));
+    return item ? (listProposals(repo).find((p) => p.items.includes(item.id))?.id ?? null) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Pure: a tooling proposal's title, "Add <tooling> so <check> can run" (ADR 0033 §4). */
+const toolingTitle = (tooling: string, check: string) => `Add ${tooling.replace(/^add\s+/i, "")} so "${check}" can run`.slice(0, 120);
+
+/**
+ * ADR 0033 §4: a check's missing tooling as a chore the person may Run, linked to the check like its other findings.
+ * Once its job merges, `kitchen job next` files the check again.
+ */
+function proposeTooling(
+  repo: string,
+  c: { job: string; title?: string; target: string; onto: string; qaFolder: string; earlier?: string },
+  f: QaFinding,
+  items: string[],
+  now: Date,
+): Promise<Proposal> {
+  return propose(
+    repo,
+    {
+      title: toolingTitle(f.title, c.title ?? `check ${num(c.job)}`),
+      text: `${f.seen}\n\nCheck ${num(c.job)} couldn't verify this on ${c.target} (${c.onto.slice(0, 12)}): the project has no ${f.title}. Add it, with one example that runs. Once this merges into ${c.target}, Kitchen files check ${num(c.job)} again.${c.earlier ? `\n\n${c.earlier}` : ""}`,
+      items,
+      kind: "chore",
+      prio: "P2",
+      why: `check ${num(c.job)} can't run without it`,
+      line: `Tooling check ${num(c.job)} needs`,
+      evidence: f.evidence.map((e) => path.join(c.qaFolder, e)),
+      sha: c.onto,
+      // ADR 0033 §4: the tooling goes where the check runs, so the check filed again finds it.
+      target: c.target,
+    },
+    now,
+  );
 }

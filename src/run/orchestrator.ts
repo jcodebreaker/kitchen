@@ -181,9 +181,15 @@ export async function run(
       return 2;
     }
   }
-  // ADR 0029 §4: the browser QA uses, installed once before a lane needs it; by the session itself, never in a
-  // detaching parent (a wake): its output goes to the run's log. Refused only when QA here needs it.
+  // ADR 0033 §3 and ADR 0029 §4: what the project declares it needs (kitchen.yaml requires:) and the browser QA
+  // uses, settled before any lane finds them missing; by the session itself, never in a detaching parent (a wake):
+  // its output goes to the run's log. The browser is refused only when QA here needs it.
   if (!o.detach) {
+    const req = await (await import("../doctor/doctor.ts")).requiresRefusal(repo, cfg);
+    if (req) {
+      out(`kitchen run: ${req}. Nothing started.`);
+      return 2;
+    }
     const app = await import("../qa/app.ts");
     const browser = await app.ensureBrowser(out, { needed: app.browserNeeded(repo, cfg) });
     if (browser) {

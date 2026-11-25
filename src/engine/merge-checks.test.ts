@@ -5,12 +5,14 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, test } from "vitest";
 import { loadConfig } from "../config.ts";
+import { freePort } from "../qa/app.ts";
 import * as control from "./control.ts";
-import { finish, start } from "./jobs.ts";
+import { finish, next, start } from "./jobs.ts";
 import { intakeFile, qaDir, reviewFile } from "./lanes.ts";
 import { ensureStaging } from "./staging.ts";
 import { findJob, jobDirOf, roundDir } from "./store.ts";
@@ -35,6 +37,7 @@ require("node:http").createServer((q, s) => {
 `;
 // The stand-in suite: what a Playwright run would assert, against the URL Kitchen passes.
 const E2E = `import fs from "node:fs";
+import http from "node:http";
 const url = process.env.BASE_URL;
 fs.appendFileSync(process.env.KITCHEN_TEST_E2E_SEEN, \`\${url} \${process.env.PLAYWRIGHT_BASE_URL} \${process.env.CYPRESS_BASE_URL}\\n\`);
 const html = await (await fetch(url + "/")).text();
@@ -44,8 +47,8 @@ if (!html.includes("0 items")) { console.error("expected an empty cart on the se
 console.log("1 passed");
 `;
 
-async function repo(): Promise<string> {
-  const r = path.join(root, "shop");
+async function repo(name = "shop"): Promise<string> {
+  const r = path.join(root, name);
   fs.mkdirSync(r);
   g(r, "init", "-q", "-b", "main");
   fs.writeFileSync(path.join(r, "server.js"), SERVER);
@@ -158,4 +161,43 @@ test("a when: merge needs_app check: skipped after Build, run on the trial merge
     "the next builder reads the suite's output",
   );
   assert.match(fs.readFileSync(s.brief, "utf8"), /on the trial merge into staging only: `node e2e\.mjs` \(with the app running/);
+});
+
+test("ADR 0033: a merge check whose fixed port is in use waits at Ready, no round spent, and merges on the wave after the port frees", async () => {
+  const r = await repo("shop-port");
+  const port = await freePort();
+  const y = path.join(r, "kitchen.yaml");
+  fs.writeFileSync(y, fs.readFileSync(y, "utf8").replace('start: "node server.js",', `start: "node server.js", port: ${port},`));
+  // Someone else's server on that port, on :: (the default listen(port)).
+  const theirs = http.createServer((_q, s) => s.end("theirs")).listen(port);
+  await new Promise((x) => theirs.once("listening", x));
+  const words = `merge check waits: port ${port} is in use (another job's app or yours)`;
+  try {
+    await control.ticket(r, "say Shop", () => {});
+    const a = findJob(r, "1").id;
+    await start(r, a, "intake");
+    fs.writeFileSync(intakeFile(jobDirOf(r, a)), INTAKE);
+    await fin(r, a);
+    const waited = await throughReview(r, a, "Shop \n");
+    assert.ok(waited.includes(`${words} → ready (tried again on the next wave once the port is free; no round spent)`), waited);
+    const j = findJob(r, a);
+    assert.deepEqual([j.stage, j.round, j.catchUps ?? 0, j.held], ["ready", 1, 0, words]);
+    assert.ok(j.mergeWait);
+    assert.equal(await (await fetch(`http://localhost:${port}/`)).text(), "theirs", "their server untouched");
+    const still = await next(r);
+    assert.deepEqual([still.merges, findJob(r, a).stage], [[], "ready"], "the port still answers: nothing runs");
+    assert.ok(
+      still.held.some((h) => h.id === a && h.why === words),
+      "Kitchen's wait, not the person's",
+    );
+  } finally {
+    await new Promise((x) => theirs.close(x));
+  }
+  const after = await next(r);
+  assert.ok(
+    after.merges.some((l) => /merged into staging/.test(l)),
+    after.merges.join("\n"),
+  );
+  const j = findJob(r, findJob(r, "1").id);
+  assert.deepEqual([j.stage, j.round, j.mergeWait], ["done", 1, undefined]);
 });

@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { type Config, loadConfig } from "../config.ts";
+import { findingProposal } from "../inbox/findings.ts";
 import { readMapChanges } from "../verify/admit.ts";
 import { checkLines, type FeatureLines, featureLines, testedLine, versionsLine } from "./checked.ts";
 import { failureOf } from "./diagnose.ts";
@@ -103,19 +104,32 @@ export function renderReport(repo: string, job: Job, o: { diff?: { p: string; a:
     checks.push(`map update skipped: ${esc(job.mapSkipped)}. QA's map files are still in <code>rounds/*/qa/map/</code> of this job's folder.`);
   if (job.risk === "high" && !check) checks.push("High risk: read the diff yourself before you merge it anywhere else.");
   // ADR 0028: what a check found, each proposed in the Inbox for the person to Run, Hold or set aside. ADR 0031 §5:
-  // a finding the second look didn't confirm is said apart and isn't proposed.
+  // a finding the second look didn't confirm is said apart and isn't proposed. ADR 0033 §4: missing tooling is no
+  // problem found; it is said apart, with the proposals it waits for (each finding's by its inbox item).
   const looks = check && "findings" in qa ? secondLooks(dir, job, qa.findings) : [];
   const unconfirmed = (n: number) => looks.some((l) => l.finding === n && !l.confirmed);
-  const found = "findings" in qa ? qa.findings.filter((_, i) => !unconfirmed(i + 1)) : [];
+  const all = "findings" in qa ? qa.findings.map((f, i) => ({ f, n: i + 1, p: findingProposal(repo, job.id, job.round, i + 1) })) : [];
+  const line = (xs: typeof all) =>
+    xs.map(({ f }) => `<b>${esc(f.title)}</b>${f.criterion ? ` (${esc((f.criteria ?? [f.criterion]).join(", "))})` : ""}: ${esc(f.seen)}`).join("; ");
+  const ids = (xs: typeof all) => [...new Set(xs.flatMap(({ p }) => (p ? [p] : [])))];
+  const found = all.filter(({ f, n }) => f.kind !== "tooling" && !unconfirmed(n));
+  const tooling = all.filter(({ f }) => f.kind === "tooling");
   if (found.length)
     checks.push(
-      `Found ${found.length} problem${found.length === 1 ? "" : "s"}${job.check?.proposals?.length ? `, proposed in the Inbox as ${esc(job.check.proposals.join(", "))}` : ""}: ${found.map((f) => `<b>${esc(f.title)}</b>${f.criterion ? ` (${esc(f.criterion)})` : ""}: ${esc(f.seen)}`).join("; ")}`,
+      `Found ${found.length} problem${found.length === 1 ? "" : "s"}${ids(found).length ? `, proposed in the Inbox as ${esc(ids(found).join(", "))}` : ""}: ${line(found)}`,
     );
-  const notConfirmed = "findings" in qa ? qa.findings.filter((_, i) => unconfirmed(i + 1)) : [];
+  if (tooling.length)
+    checks.push(
+      `Missing tooling${ids(tooling).length ? `, proposed in the Inbox as ${esc(ids(tooling).join(", "))}` : ""} (the check is filed again once it merges): ${line(tooling)}`,
+    );
+  const notConfirmed = all.filter(({ n }) => unconfirmed(n)).map(({ f }) => f);
   if (notConfirmed.length)
     checks.push(
       `Not confirmed on a second look, so not proposed: ${notConfirmed.map((f) => `<b>${esc(f.title)}</b>`).join("; ")}. Read why under Problems found.`,
     );
+  if (job.check?.refiled) checks.push(`Filed again as ${esc(job.check.refiled)} after its tooling merged.`);
+  if (job.check?.refileError)
+    checks.push(`<span class="bad">filing it again failed: ${esc(job.check.refileError)}</span>. Kitchen tries again on the next wave.`);
   if (job.check?.map) checks.push(esc(job.check.map));
   // ADR 0029 §6: the findings are kept; Kitchen proposes them again on the next wave (said once: the diagnosis above).
   if (job.check?.proposalsFailed && fail?.kind !== "proposals")

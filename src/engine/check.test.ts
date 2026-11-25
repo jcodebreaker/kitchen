@@ -19,7 +19,7 @@ import { checkWords, finish, next, start } from "./jobs.ts";
 import { intakeFile, parseIntake, qaDir, reviewFile, secondLookFile } from "./lanes.ts";
 import { planWave } from "./plan.ts";
 import { ensureStaging } from "./staging.ts";
-import { findJob, jobDirOf } from "./store.ts";
+import { findJob, jobDirOf, updateJob } from "./store.ts";
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kitchen-check-"));
 process.env.KITCHEN_HOME = path.join(root, "home");
@@ -793,4 +793,212 @@ test("ADR 0029 §2: an exploring check (no criteria) that says BLOCKED runs agai
   assert.equal(findJob(r, id).pausedReason, "QA couldn't run: the app won't start");
   assert.equal(await control.resume(r, id, quiet), 0, "Resume runs QA again");
   assert.equal(findJob(r, id).stage, "qa");
+});
+
+test("(j) ADR 0033 §4: missing tooling → a chore proposal, 'Waiting for tooling'; once its job merges, next files the check again", async () => {
+  const r = await repo();
+  const { id } = await intake(r, "check the import handles 10k rows", CHECK(["the import handles 10k rows", "app.txt has 3 lines"]));
+  const tooling = { kind: "tooling", title: "a fixture loader", seen: "C1 needs 10k rows; nothing seeds them", evidence: ["c1.txt"], criterion: "C1" };
+  const verdict = {
+    verdict: "FAIL",
+    criteria: [
+      { id: "C1", result: "NOT_RUN", why: "no way to load 10k rows", evidence: ["c1.txt"] },
+      { id: "C2", result: "PASS", evidence: ["c2.txt"], note: "3" },
+    ],
+    findings: [tooling],
+  };
+  const { f } = await checkQa(r, id, verdict, { "c1.txt": "no loader\n", "c2.txt": "3\n" });
+  assert.match(f.line, /Waiting for tooling: p1 · proposed p1 in the inbox → done/);
+  const j = findJob(r, id);
+  assert.deepEqual([j.stage, j.check?.result, j.check?.findings, j.check?.tooling], ["done", "Waiting for tooling: p1", 0, ["p1"]]);
+  const p1 = getProposal(r, "p1");
+  assert.deepEqual([p1.title, p1.kind, p1.ev?.steps], ['Add a fixture loader so "Check the app" can run', "chore", undefined]);
+  assert.deepEqual((await next(r)).start, [], "nothing filed again before the tooling merges");
+  const [made] = await runProposals(r, ["p1"]);
+  await open(r, made.job, "intake");
+  fs.writeFileSync(intakeFile(jobDirOf(r, made.job)), "DECISION: ACCEPT\nKIND: chore\nRISK: low\n\n- C1 (cmd): load.sh exists\n");
+  await fin(r, made.job);
+  const b = await open(r, made.job, "build");
+  fs.writeFileSync(path.join(b.cwd, "load.sh"), "echo loaded\n");
+  g(b.cwd, "add", "-A");
+  g(b.cwd, "commit", "-qm", "loader");
+  await fin(r, made.job);
+  assert.deepEqual(
+    (await next(r)).start.map((s) => s.id),
+    [made.job],
+    "still waiting while the tooling job is in QA",
+  );
+  await open(r, made.job, "qa");
+  const d = qaDir(jobDirOf(r, made.job), 1);
+  fs.writeFileSync(path.join(d, "c1.txt"), "ok\n");
+  fs.writeFileSync(
+    path.join(d, "verdict.json"),
+    JSON.stringify({ verdict: "PASS", criteria: [{ id: "C1", result: "PASS", evidence: ["c1.txt"], note: "x" }] }),
+  );
+  await fin(r, made.job);
+  await open(r, made.job, "review");
+  fs.writeFileSync(reviewFile(jobDirOf(r, made.job), 1), JSON.stringify({ summary: "ok", findings: [] }));
+  assert.match((await fin(r, made.job)).line, /merged into staging/);
+  const plan = await next(r);
+  const again = lastId(r);
+  assert.notEqual(again, made.job);
+  assert.deepEqual(plan.start, [{ id: again, lane: "intake" }], "the check filed again starts in this wave");
+  const fresh = findJob(r, again);
+  assert.deepEqual([fresh.title, fresh.check?.forced, fresh.check?.refiledFrom], [j.title, true, id]);
+  assert.match(fs.readFileSync(path.join(jobDirOf(r, again), "ticket.md"), "utf8"), /check the import handles 10k rows/);
+  const old = findJob(r, id);
+  assert.deepEqual([old.check?.refiled, old.check?.result], [again, `Tooling merged (p1): filed again as ${again.slice(0, 3)}`]);
+  await next(r);
+  assert.equal(lastId(r), again, "filed once");
+});
+
+test("ADR 0033 §4 with ADR 0029 §2 and §6: a tooling finding may name a NOT_RUN criterion; its proposal, retried by job next, is what the check waits for", async () => {
+  const r = await repo();
+  const { id } = await intake(r, "check the import handles 10k rows", CHECK(["the import handles 10k rows", "app.txt has 3 lines"]));
+  const pdir = path.join(r, ".kitchen", "inbox", "proposals");
+  fs.mkdirSync(path.dirname(pdir), { recursive: true });
+  fs.writeFileSync(pdir, "not a folder");
+  const { f } = await checkQa(
+    r,
+    id,
+    {
+      verdict: "FAIL",
+      criteria: [
+        { id: "C1", result: "NOT_RUN", why: "nothing seeds 10k rows", evidence: ["c1.txt"] },
+        { id: "C2", result: "PASS", evidence: ["c2.txt"], note: "3" },
+      ],
+      findings: [{ kind: "tooling", title: "a fixture loader", seen: "C1 needs 10k rows", evidence: ["c1.txt"], criterion: "C1" }],
+    },
+    { "c1.txt": "no loader\n", "c2.txt": "3\n" },
+  );
+  assert.match(f.line, /Waiting for tooling: not proposed yet · proposals failed: .*ENOTDIR/);
+  assert.deepEqual([findJob(r, id).stage, findJob(r, id).check?.tooling], ["done", undefined]);
+  fs.rmSync(pdir);
+  const plan = await next(r);
+  assert.ok(plan.proposals.some((l) => /proposed p1 in the inbox \(retried\)/.test(l)));
+  const j = findJob(r, id);
+  assert.deepEqual([j.check?.tooling, j.check?.result, j.check?.findings], [["p1"], "Waiting for tooling: p1", 0]);
+  assert.equal(getProposal(r, "p1").kind, "chore");
+  assert.deepEqual(plan.start, [], "nothing filed again before the tooling merges");
+});
+
+test("(k) ADR 0033 §4: tooling goes into the check's target; only a merge there files it again; a failure is kept, never double-filed", async () => {
+  const r = await repo();
+  g(r, "branch", "release", "main");
+  const tooled = async (text: string) => {
+    await control.ticket(r, text, quiet, { check: true, into: "release" });
+    const id = lastId(r);
+    await open(r, id, "intake");
+    fs.writeFileSync(intakeFile(jobDirOf(r, id)), CHECK(["the import handles 10k rows"]));
+    await fin(r, id);
+    const verdict = {
+      verdict: "FAIL",
+      criteria: [{ id: "C1", result: "NOT_RUN", why: "nothing loads 10k rows", evidence: ["c1.txt"] }],
+      findings: [{ kind: "tooling", title: "a fixture loader", seen: "C1 needs 10k rows", evidence: ["c1.txt"], criterion: "C1" }],
+    };
+    const { f } = await checkQa(r, id, verdict, { "c1.txt": "no loader\n" });
+    assert.match(f.line, /check on release .*Waiting for tooling: p\d+/);
+    return id;
+  };
+  const a = await tooled("check the import on release");
+  const b = await tooled("check the export on release");
+  const [pa, pb] = [findJob(r, a).check?.tooling?.[0] as string, findJob(r, b).check?.tooling?.[0] as string];
+  assert.equal(getProposal(r, pa).target, "release", "the proposal carries the check's target");
+  const made = await runProposals(r, [pa, pb]);
+  const ja = made.find((m) => m.proposal === pa)?.job as string;
+  const jb = made.find((m) => m.proposal === pb)?.job as string;
+  assert.equal(findJob(r, ja).target, "release", "its job builds from and merges into the check's target");
+  const merge = (id: string, into: string) =>
+    updateJob(r, id, (j) => {
+      j.stage = "done";
+      j.merged = { into, sha: "abc1234", at: new Date().toISOString(), via: "local" };
+      return j;
+    });
+  await merge(ja, "staging");
+  await merge(jb, "release");
+  // b's old ticket is unreadable: its filing fails, is kept on it, and never stops a.
+  fs.renameSync(path.join(jobDirOf(r, b), "ticket.md"), path.join(jobDirOf(r, b), "ticket.gone"));
+  let plan = await next(r);
+  assert.equal(findJob(r, a).check?.refiled, undefined, "merged into staging, not the check's target: still waiting");
+  assert.ok(
+    plan.refiled.some((l) => l.startsWith(`${b}  filing it again failed`)),
+    plan.refiled.join("\n"),
+  );
+  assert.match(findJob(r, b).check?.refileError ?? "", /ticket\.md/);
+  assert.match((await snapshot(r)).jobs.find((c) => c.id === b)?.check?.result ?? "", /filing it again failed/);
+  await merge(ja, "release");
+  fs.renameSync(path.join(jobDirOf(r, b), "ticket.gone"), path.join(jobDirOf(r, b), "ticket.md"));
+  // A crash after the new check was filed and before the old one was linked: the next wave only links it.
+  const ghost = await control.fileTicket(r, "check the export on release", { check: true, target: "release", refiledFrom: b });
+  plan = await next(r);
+  const ra = findJob(r, a).check?.refiled as string;
+  assert.ok(ra && findJob(r, ra).target === "release" && findJob(r, ra).check?.refiledFrom === a);
+  assert.deepEqual([findJob(r, b).check?.refiled, findJob(r, b).check?.refileError], [ghost.id, undefined], "linked, not filed twice");
+  assert.ok(
+    plan.refiled.some((l) => l === `${a}  tooling merged (${pa}) → filed again as ${ra}`),
+    plan.refiled.join("\n"),
+  );
+  assert.match(fs.readFileSync(path.join(jobDirOf(r, a), "report.html"), "utf8"), /Filed again as/, "the old check's Report is written again");
+  // The check filed again still finds it missing: its proposal says what was tried.
+  await open(r, ra, "intake");
+  fs.writeFileSync(intakeFile(jobDirOf(r, ra)), CHECK(["the import handles 10k rows"]));
+  await fin(r, ra);
+  await checkQa(
+    r,
+    ra,
+    {
+      verdict: "FAIL",
+      criteria: [{ id: "C1", result: "NOT_RUN", why: "still nothing", evidence: ["c1.txt"] }],
+      findings: [{ kind: "tooling", title: "a fixture loader", seen: "C1 needs 10k rows", evidence: ["c1.txt"], criterion: "C1" }],
+    },
+    { "c1.txt": "no loader\n" },
+  );
+  const again = getProposal(r, findJob(r, ra).check?.tooling?.[0] as string);
+  assert.match(again.text, new RegExp(`Tried before: check ${a.slice(0, 3)} proposed ${pa}, which merged`));
+  const report = fs.readFileSync(path.join(jobDirOf(r, ra), "report.html"), "utf8");
+  assert.match(report, /Missing tooling, proposed in the Inbox/);
+  assert.doesNotMatch(report, /Found 1 problem/, "tooling is no problem found");
+});
+
+test("(l) ADR 0033 §4: two tooling findings with the same title are one proposal; a real problem beside them is its own", async () => {
+  const r = await repo();
+  const { id } = await intake(r, "check imports and exports", CHECK(["imports 10k rows", "exports 10k rows", "app.txt has 3 lines"]));
+  const tool = (c: string) => ({ kind: "tooling", title: "A fixture loader", seen: `${c} needs 10k rows`, evidence: ["c.txt"], criterion: c });
+  const { f } = await checkQa(
+    r,
+    id,
+    {
+      verdict: "FAIL",
+      criteria: [
+        { id: "C1", result: "NOT_RUN", why: "no loader", evidence: ["c.txt"] },
+        { id: "C2", result: "NOT_RUN", why: "no loader", evidence: ["c.txt"] },
+        { id: "C3", result: "FAIL", evidence: ["c.txt"], note: "2 lines" },
+      ],
+      findings: [
+        tool("C1"),
+        { ...tool("C2"), title: "a fixture loader" },
+        { title: "app.txt lost a line", seen: "2 lines", repro: ["wc -l app.txt"], evidence: ["c.txt"], criterion: "C3" },
+      ],
+    },
+    { "c.txt": "x\n" },
+  );
+  assert.match(f.line, /Found 1 problem · Waiting for tooling: p1 · proposed p1, p2 in the inbox/);
+  const j = findJob(r, id);
+  assert.deepEqual([j.check?.tooling, j.check?.proposals, j.check?.findings], [["p1"], ["p1", "p1", "p2"], 1]);
+  assert.deepEqual(
+    listProposals(r).map((p) => [p.id, p.kind]),
+    [
+      ["p1", "chore"],
+      ["p2", "bug"],
+    ],
+  );
+  // ADR 0031 §5's links by inbox item: both tooling findings link to the one chore they share.
+  assert.deepEqual(
+    (await detail(r, id)).found?.map((f) => [f.pid, f.title]),
+    [
+      ["p1", "Missing tooling: A fixture loader"],
+      ["p1", "Missing tooling: a fixture loader"],
+      ["p2", "app.txt lost a line"],
+    ],
+  );
 });

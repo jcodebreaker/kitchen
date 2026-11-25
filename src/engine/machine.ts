@@ -92,6 +92,13 @@ export type JobCheck = {
    */
   proposalsFailed?: { error: string; round: number; skip?: number[] };
   map?: string;
+  /** ADR 0033 §4: the proposals to add the tooling this check lacked; it is filed again once all of them merged. */
+  tooling?: string[];
+  /** ADR 0033 §4: the check filed again after its tooling merged (on the old one), and the one it came from (on the new). */
+  refiled?: string;
+  refiledFrom?: string;
+  /** ADR 0033 §4: why filing it again failed (tried again on the next wave); shown on its card and Report. */
+  refileError?: string;
 };
 /** ADR 0029 §2: a needs-human reason when QA still couldn't test criteria ("QA couldn't test C2, C4: …", "QA couldn't run: …"); Resume runs QA again. */
 export const QA_BLOCKED = /^QA couldn't (test|run)\b/;
@@ -190,6 +197,8 @@ export type Job = {
   tested?: { at: string; head: string; target: string; onto: string; dirty: number; kitchen: string; tool?: string };
   /** Why a job that passed stopped at Ready (high risk, a large diff, auto-merge off). */
   held?: string;
+  /** ADR 0033: held because the merge check's app found its fixed port in use; `job next` tries again once it is free. */
+  mergeWait?: { why: string; at: string };
   /**
    * The trial merge waiting for its features to be driven (ADR 0017 §3): staging's tip it merged onto, the merged
    * commit (kept under refs/kitchen/drive/<id>), its worktree, and the features Kitchen chose from `Code:` lines.

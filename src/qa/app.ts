@@ -20,14 +20,15 @@ import { type AppConfig, type Config, loadConfig } from "../config.ts";
 import { git } from "../engine/git.ts";
 import { type CaptureMeta, criteriaOf, metaFile, qaDir, regressDir } from "../engine/lanes.ts";
 import type { Job } from "../engine/machine.ts";
-import { findJob, jobDirOf, listJobs, updateJob, worktreeOf, writeAtomic } from "../engine/store.ts";
+import { findJob, jobDirOf, kitchenDir, listJobs, updateJob, worktreeOf, writeAtomic } from "../engine/store.ts";
+import { ownerAlive } from "../lock.ts";
 import { isRunId, runDir, runEvidence, runWorktree } from "../verify/paths.ts";
 
 type AppState = Partial<Started> & { url: string; at: string; legacy?: { id: string; dev: string; wt: string } };
 const stateFile = (repo: string, id: string) => path.join(isRunId(id) ? runDir(repo, id) : jobDirOf(repo, id), "app.json");
-const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$/;
+export const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$/;
 
-function readState(repo: string, id: string): AppState | null {
+export function readState(repo: string, id: string): AppState | null {
   try {
     return JSON.parse(fs.readFileSync(stateFile(repo, id), "utf8")) as AppState;
   } catch {
@@ -54,7 +55,7 @@ export function freePort(): Promise<number> {
   });
 }
 
-async function healthy(url: string): Promise<boolean> {
+export async function healthy(url: string): Promise<boolean> {
   try {
     const r = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(3000) });
     return r.status < 400;
@@ -63,14 +64,30 @@ async function healthy(url: string): Promise<boolean> {
   }
 }
 
-const join = (base: string, p: string) => (/^https?:\/\//.test(p) ? p : `${base.replace(/\/$/, "")}/${p.replace(/^\//, "")}`);
+/** Header names whose values are secrets: masked in every transcript and saved file (ADR 0033). */
+const SECRET = /^(authorization|proxy-authorization|cookie|set-cookie|x-api-key)$|token/i;
+/** Pure: headers with each secret value cut to its first 4 characters and an ellipsis. */
+export const mask = (h: Record<string, string>): Record<string, string> =>
+  Object.fromEntries(Object.entries(h).map(([k, v]) => [k, SECRET.test(k) ? `${v.slice(0, 4)}…` : v]));
+/** Pure: `--header 'Name: value'` flags as a map. */
+export function parseHeaders(hs: string[]): Record<string, string> {
+  const headers: Record<string, string> = {};
+  for (const h of hs) {
+    const i = h.indexOf(":");
+    if (i < 1) throw new Error(`--header takes 'Name: value', got ${h}`);
+    headers[h.slice(0, i).trim()] = h.slice(i + 1).trim();
+  }
+  return headers;
+}
+
+export const join = (base: string, p: string) => (/^https?:\/\//.test(p) ? p : `${base.replace(/\/$/, "")}/${p.replace(/^\//, "")}`);
 const LOOPBACK = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?(\/|$)/;
 
 /**
  * What `kitchen qa … <ref>` works on: a job (its worktree; its QA folder, or its regress folder while the job is in
  * regress) or a verify run (`sweep-…`, `maintain-…`: its checkout and evidence folder under .kitchen/verify/).
  */
-function jobPaths(repo: string, ref: string): { id: string; wt: string; out: string } {
+export function jobPaths(repo: string, ref: string): { id: string; wt: string; out: string } {
   if (isRunId(ref)) {
     if (!fs.existsSync(runDir(repo, ref))) throw new Error(`no verify run ${ref}`);
     const out = runEvidence(repo, ref);
@@ -151,7 +168,8 @@ export async function appUp(
   const fresh = !isRunId(jid) && !!findJob(repo, jid).qaRetry?.reset;
   if (fresh) await appDown(repo, jid);
   const had = readState(repo, jid);
-  if (had && (had.legacy || (had.pid && alive(had.pid))) && (await healthy(join(had.url, cfg.app.health)))) {
+  // Its own app, still answering: a detached start (`docker compose up -d`) has no live pid, only its project.
+  if (had && (had.legacy || (had.pid && alive(had.pid)) || had.project) && (await healthy(join(had.url, cfg.app.health)))) {
     out(`app: up at ${had.url}`);
     return 0;
   }
@@ -222,7 +240,8 @@ async function startUp(
     onStep: step,
   });
   if (!r.ok) {
-    await appDown(repo, jid);
+    // A port someone else answers on: stop nothing (their server, or another job's stack).
+    if (r.step !== "port") await appDown(repo, jid);
     out(`app: ${r.why}; see ${path.relative(repo, log)}`);
     return 1;
   }
@@ -239,6 +258,47 @@ export function composeProject(app: Pick<AppConfig, "start">, id: string): strin
   if (!COMPOSE.test(app.start)) return null;
   const num = /^(\d+)-/.exec(id)?.[1];
   return (num ? `kq${num}` : `kq-${id}`).toLowerCase().replace(/[^a-z0-9_-]/g, "-");
+}
+
+/** Pure: the port kitchen.yaml fixes (app.port, when neither app.start nor app.url takes `{port}`), or null: a free one. */
+export function fixedPort(app: Pick<AppConfig, "port" | "start" | "url">): number | null {
+  if (app.start.includes("{port}") || (app.url ?? "").includes("{port}")) return null;
+  if (app.port) return app.port;
+  // ADR 0033: an app.url with its own port fixes it too (the app serves there, whatever $PORT says).
+  const m = /^https?:\/\/[^/]*:(\d+)(\/|$)/.exec(app.url ?? "");
+  return m ? Number(m[1]) : null;
+}
+
+/** ADR 0033: the words for a fixed port someone else answers on (QA's app.log, the merge gate, doctor). */
+export const portWords = (port: number) => `port ${port} is in use (another job's app or yours)`;
+
+/** ADR 0033: the fixed port kitchen.yaml names, when something answers on it now; else null. */
+export async function fixedPortBusy(app: AppConfig): Promise<number | null> {
+  const p = fixedPort(app);
+  if (!p) return null;
+  const url = (app.url ?? "http://127.0.0.1:{port}").replaceAll("{port}", String(p));
+  return (await portInUse(p, join(url, app.health))) ? p : null;
+}
+
+/** A TCP connect to host:port succeeds. */
+const answers = (host: string, port: number) =>
+  new Promise<boolean>((resolve) => {
+    const s = net.connect({ host, port });
+    const done = (ok: boolean) => {
+      s.destroy();
+      resolve(ok);
+    };
+    s.setTimeout(1000, () => done(false));
+    s.once("connect", () => done(true));
+    s.once("error", () => done(false));
+  });
+
+/**
+ * ADR 0033: something already answers on a fixed port: the health URL, or a TCP connect on 127.0.0.1 or ::1 (a
+ * server on `::` or 0.0.0.0, the default `listen(port)`, answers one of them). Kitchen then starts nothing there.
+ */
+export async function portInUse(port: number, healthUrl: string): Promise<boolean> {
+  return (await healthy(healthUrl)) || (await answers("127.0.0.1", port)) || (await answers("::1", port));
 }
 
 /** Pure: what the app's commands (start, reset, stop) get on top of Kitchen's environment. */
@@ -262,17 +322,26 @@ export type Started = { pid?: number; port: number; url: string; at: string; pro
  */
 export async function startApp(
   cfg: Config,
-  o: { wt: string; log: string; project: string | null; onSpawn?: (s: Started) => void; onStep?: (s: Step) => Promise<void> },
-): Promise<{ ok: true; app: Started } | { ok: false; why: string; app?: Started }> {
-  const port = cfg.app.port && !cfg.app.start.includes("{port}") && !(cfg.app.url ?? "").includes("{port}") ? cfg.app.port : await freePort();
+  o: { wt: string; log: string; project: string | null; port?: number; onSpawn?: (s: Started) => void; onStep?: (s: Step) => Promise<void> },
+): Promise<{ ok: true; app: Started } | { ok: false; why: string; app?: Started; step: "port" | "reset" | "start" | "health" }> {
+  const fixed = fixedPort(cfg.app);
+  const port = o.port ?? fixed ?? (await freePort());
   const extra = appEnv({ port, project: o.project });
   const env = { ...process.env, ...extra };
   const fill = (s: string) => s.replaceAll("{port}", String(port));
+  // ADR 0033: a fixed port something already answers on is someone else's app (the person's own dev server): never
+  // reset, start or stop anything there.
+  if (port === fixed && (await portInUse(port, join(fill(cfg.app.url ?? "http://127.0.0.1:{port}"), cfg.app.health)))) {
+    const why = portWords(port);
+    fs.mkdirSync(path.dirname(o.log), { recursive: true });
+    fs.appendFileSync(o.log, `kitchen: ${why}: nothing was reset, started or stopped\n`);
+    return { ok: false, why, step: "port" };
+  }
   const stop = stopCommand(cfg.app, o.project);
   if (cfg.app.reset) {
     await o.onStep?.({ cmd: "Resetting data" });
     const r = await runShell(fill(cfg.app.reset), { cwd: o.wt, timeoutSec: 300, log: o.log, env });
-    if (!r.ok) return { ok: false, why: `app.reset failed (exit ${r.exit})` };
+    if (!r.ok) return { ok: false, why: `app.reset failed (exit ${r.exit ?? "timeout"})`, step: "reset" };
   }
   await o.onStep?.({ cmd: "Starting the app" });
   const fd = fs.openSync(o.log, "a");
@@ -299,14 +368,15 @@ export async function startApp(
   while (Date.now() < end) {
     if (await healthy(join(url, cfg.app.health))) return { ok: true, app: st };
     // A start command that exits 0 (`docker compose up -d`) leaves the app running: keep waiting for the health check.
-    if (exit !== undefined && exit !== 0) break;
+    if (exit !== undefined && exit !== 0)
+      return { ok: false, why: `app.start exited (exit ${exit ?? "signal"}) before ${cfg.app.health} answered`, app: st, step: "start" };
     await new Promise((r) => setTimeout(r, 300));
   }
-  return { ok: false, why: `not healthy at ${join(url, cfg.app.health)} within ${cfg.app.ready_timeout_sec}s`, app: st };
+  return { ok: false, why: `not healthy at ${join(url, cfg.app.health)} within ${cfg.app.ready_timeout_sec}s`, app: st, step: "health" };
 }
 
-/** Stop what `startApp` started: its process group, then `app.stop` (or the compose project's down). */
-export async function stopApp(s: Partial<Pick<Started, "pid" | "stop" | "env" | "wt">>, log?: string): Promise<void> {
+/** Stop what `startApp` started: its process group, then `app.stop` (or the compose project's down). False: that stop command failed. */
+export async function stopApp(s: Partial<Pick<Started, "pid" | "stop" | "env" | "wt">>, log?: string): Promise<boolean> {
   if (s.pid) {
     try {
       process.kill(-s.pid, "SIGTERM");
@@ -316,7 +386,8 @@ export async function stopApp(s: Partial<Pick<Started, "pid" | "stop" | "env" | 
       process.kill(-s.pid, "SIGKILL");
     } catch {}
   }
-  if (s.stop) await runShell(s.stop, { cwd: s.wt && fs.existsSync(s.wt) ? s.wt : process.cwd(), timeoutSec: 300, log, env: s.env });
+  if (!s.stop) return true;
+  return (await runShell(s.stop, { cwd: s.wt && fs.existsSync(s.wt) ? s.wt : process.cwd(), timeoutSec: 300, log, env: s.env })).ok;
 }
 
 export async function appDown(repo: string, ref: string, out: (l: string) => void = () => {}): Promise<number> {
@@ -339,12 +410,38 @@ export async function appDown(repo: string, ref: string, out: (l: string) => voi
  */
 export async function sweepApps(repo: string): Promise<string[]> {
   const said: string[] = [];
+  // ADR 0033: an app a `kitchen doctor` left behind (stopped or crashed); a doctor still running keeps its own.
+  if (await stopDoctorLeftover(repo)) said.push("doctor  app stopped (left by a kitchen doctor that didn't finish)");
   for (const j of listJobs(repo)) {
     if (j.running || !fs.existsSync(stateFile(repo, j.id))) continue;
     await appDown(repo, j.id).catch(() => {});
     said.push(`${j.id}  app stopped (no lane works on it)`);
   }
   return said;
+}
+
+/** ADR 0033: the app a `kitchen doctor` started, with the doctor's pid (`owner`), so a crash or Ctrl-C leaves a trace. */
+export const doctorAppFile = (repo: string) => path.join(kitchenDir(repo), "doctor", "app.json");
+
+/** Stop the app a doctor that is gone left behind. True when there was one. */
+export async function stopDoctorLeftover(repo: string): Promise<boolean> {
+  const f = doctorAppFile(repo);
+  let s: Started & { owner?: number; ownerStart?: string | null; appStart?: string | null };
+  try {
+    s = JSON.parse(fs.readFileSync(f, "utf8"));
+  } catch {
+    return false;
+  }
+  // The doctor that wrote it is still that same process: it keeps its app.
+  if (s.owner && s.owner !== process.pid && ownerAlive({ pid: s.owner, start: s.ownerStart ?? null })) return false;
+  // The app's pid now names another process (reused): nothing of ours is left to stop there.
+  if (s.pid && !ownerAlive({ pid: s.pid, start: s.appStart ?? null })) {
+    fs.rmSync(f, { force: true });
+    return false;
+  }
+  await stopApp(s).catch(() => true);
+  fs.rmSync(f, { force: true });
+  return true;
 }
 
 /**
@@ -565,14 +662,9 @@ export async function http(
   }
   const url = join(base ?? "", target);
   if (!reachable(url, runUrl(repo, jid))) throw new Error(`http: ${url} is not this machine (127.0.0.1 or localhost only)`);
-  const headers: Record<string, string> = {};
-  for (const h of o.headers) {
-    const i = h.indexOf(":");
-    if (i < 1) throw new Error(`--header takes 'Name: value', got ${h}`);
-    headers[h.slice(0, i).trim()] = h.slice(i + 1).trim();
-  }
+  const headers = parseHeaders(o.headers);
   if (o.data !== undefined && !Object.keys(headers).some((k) => k.toLowerCase() === "content-type")) headers["content-type"] = "application/json";
-  const req = [`${method.toUpperCase()} ${url}`, ...Object.entries(headers).map(([k, v]) => `${k}: ${v}`), "", o.data ?? ""].join("\n");
+  const req = [`${method.toUpperCase()} ${url}`, ...Object.entries(mask(headers)).map(([k, v]) => `${k}: ${v}`), "", o.data ?? ""].join("\n");
   let resText: string;
   let status = 0;
   try {
@@ -581,7 +673,10 @@ export async function http(
     const body = await r.text();
     resText = [
       `HTTP ${r.status} ${r.statusText}`,
-      ...[...r.headers].map(([k, v]) => `${k}: ${v}`),
+      // Response headers as sent (the local app's session: QA needs Set-Cookie and CSRF tokens to go on), every
+      // Set-Cookie kept.
+      ...[...r.headers].filter(([k]) => k !== "set-cookie").map(([k, v]) => `${k}: ${v}`),
+      ...r.headers.getSetCookie().map((v) => `set-cookie: ${v}`),
       "",
       body.length > 20000 ? `${body.slice(0, 20000)}\n…` : body,
     ].join("\n");

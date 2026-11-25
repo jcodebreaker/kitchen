@@ -39,6 +39,7 @@ beforeAll(async () => {
     `import http from "node:http";
 http.createServer((req, res) => {
   if (req.url === "/healthz") return res.end("ok");
+  if (req.url === "/login") { res.setHeader("set-cookie", ["sid=abc; HttpOnly", "csrf=xyz"]); return res.end("in"); }
   if (req.url === "/api/n") { res.setHeader("content-type", "application/json"); return res.end(JSON.stringify({ n: Number(process.env.N || 0) + 1, who: req.headers["x-member"] ?? null })); }
   res.setHeader("content-type", "text/html"); res.end("<title>Shelf</title><h1>Books on the shelf</h1><button onclick=\\"document.body.append('borrowed!')\\">Borrow</button>");
 }).listen(Number(process.env.PORT));
@@ -61,6 +62,12 @@ test("up on a free port after the reset, an HTTP transcript, a Playwright screen
   assert.ok(fs.existsSync(path.join(root, "reset.txt")), "app.reset ran first");
   const dir = qaDir(jobDirOf(root, id), 1);
   assert.equal(await http(root, id, "GET", "/api/n", { name: "c1-n", headers: ["X-Member: ana"] }, out), 0);
+  // ADR 0033: request secrets masked; the response as sent, every Set-Cookie kept (QA goes on with the session).
+  assert.equal(await http(root, id, "POST", "/login", { name: "c0-login", headers: ["Authorization: Bearer s3cret-token"] }, out), 0);
+  const login = fs.readFileSync(path.join(dir, "c0-login.http.txt"), "utf8");
+  assert.match(login, /Authorization: Bear…/);
+  assert.doesNotMatch(login, /s3cret/);
+  assert.match(login, /set-cookie: sid=abc; HttpOnly\nset-cookie: csrf=xyz/);
   const t = fs.readFileSync(path.join(dir, "c1-n.http.txt"), "utf8");
   assert.match(t, /# request\nGET http:\/\/127\.0\.0\.1:\d+\/api\/n\nX-Member: ana/);
   assert.match(t, /# response\nHTTP 200 OK[\s\S]*\{"n":1,"who":"ana"\}/);
