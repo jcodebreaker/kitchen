@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, test } from "vitest";
-import { carriedFile, leftOutOf, matchPath, parseIntake, type QaVerdict, qaDir, readQa, readReview, reviewFile } from "./lanes.ts";
+import { carriedFile, criteriaOf, leftOutOf, matchPath, parseIntake, type QaVerdict, qaDir, readQa, readReview, reviewFile } from "./lanes.ts";
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kitchen-lanes-"));
 afterAll(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -30,24 +30,47 @@ test("intake.md: ACCEPT needs criteria with a check kind; NEEDS-INFO needs its q
 
 test("intake.md (ADR 0029 §1): a criterion line that can't be read refuses the intake with the line and the fix; kinds in any case", () => {
   const refused = (crit: string) =>
-    String((parseIntake(`DECISION: ACCEPT\nKIND: feature\nRISK: low\n\n## Criteria\n- C1 (http): GET /items → 200\n${crit}`) as { refused?: string }).refused);
+    String(
+      (
+        parseIntake(`DECISION: ACCEPT\nKIND: feature\nRISK: low\n\n## Criteria\n- C1 (http): GET /items → 200\n${crit}`, { strict: true }) as {
+          refused?: string;
+        }
+      ).refused,
+    );
   assert.equal(
     refused("- C2 (page): the list\n- C3 (page + http): both work\n"),
     "C3 (page + http): one kind per criterion: split it into C3 (page) and C4 (http)",
   );
   assert.equal(refused("- C3 (page, http): both\n"), "C3 (page, http): one kind per criterion: split it into C3 (page) and C4 (http)");
   assert.equal(refused("- C5: the list shows\n"), "C5 has no kind: write - C5 (page|http|test|cmd): …");
-  assert.equal(refused("- **C5** the list shows\n"), "C5 has no kind: write - C5 (page|http|test|cmd): …");
+  assert.equal(refused("- C2 was dropped: the ticket doesn't ask for it\n"), "undefined", "a note naming a criterion is no criterion");
+  assert.match(refused("- C2 (page):\n"), /^C2 \(page\) needs what must be true after the colon/);
   assert.match(refused("- C2 (UI): the list\n"), /^C2 \(UI\): the kind is one of page, http, test or cmd/);
   assert.equal(refused("- C1 (page): again\n"), "C1 is listed twice");
   assert.match(refused("- C2 (page) the list\n"), /^C2 \(page\) needs a colon/);
   // Every bad line at once, so one rerun fixes them all.
   assert.equal(refused("- C2: x\n- C1 (http): y\n"), "C2 has no kind: write - C2 (page|http|test|cmd): …; C1 is listed twice");
-  const ok = parseIntake("DECISION: ACCEPT\nKIND: feature\nRISK: low\n\n## Criteria\n- C1 (HTTP): GET /items → 200\n- **C2** (Cmd): `make x` prints ok\n");
-  assert.deepEqual("decision" in ok && ok.decision === "ACCEPT" && ok.criteria.map((c) => [c.id, c.check]), [
-    ["C1", "http"],
-    ["C2", "cmd"],
+  const ok = parseIntake(
+    "DECISION: ACCEPT\nKIND: feature\nRISK: low\n\n## Criteria\n- C1 (HTTP): GET /items → 200\n- **C2** (Cmd): `make x` prints ok\n- **C3 (page):** the list\n",
+    { strict: true },
+  );
+  assert.deepEqual("decision" in ok && ok.decision === "ACCEPT" && ok.criteria.map((c) => [c.id, c.check, c.text]), [
+    ["C1", "http", "GET /items → 200"],
+    ["C2", "cmd", "`make x` prints ok"],
+    ["C3", "page", "the list"],
   ]);
+});
+
+test("intake.md (ADR 0029 §1): an intake accepted before the rule is read leniently: what parses stays, a repeated id keeps its first", () => {
+  const job = fs.mkdtempSync(path.join(root, "old-"));
+  fs.writeFileSync(
+    path.join(job, "intake.md"),
+    "DECISION: ACCEPT\nKIND: feature\nRISK: low\n\n## Criteria\n- C1 (http): GET /items → 200\n- C2 (page + http): both\n- C1 (page): again\n- C3 (page): the list\n",
+  );
+  assert.deepEqual(
+    criteriaOf(job).map((c) => `${c.id} ${c.check} ${c.text}`),
+    ["C1 http GET /items → 200", "C3 page the list"],
+  );
 });
 
 test("intake.md ACCEPT (ADR 0020): the `- ` lines under ## Later slices are its slices, none when it has none", () => {

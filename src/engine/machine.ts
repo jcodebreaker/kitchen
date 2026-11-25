@@ -70,8 +70,8 @@ export type JobCheck = {
   proposalsFailed?: { error: string; round: number };
   map?: string;
 };
-/** ADR 0029 §2: a job's needs-human reason when QA still couldn't test criteria (`<words> C2, C4: …`); Resume runs QA again. */
-export const QA_BLOCKED_WORDS = "QA couldn't test";
+/** ADR 0029 §2: a needs-human reason when QA still couldn't test criteria ("QA couldn't test C2, C4: …", "QA couldn't run: …"); Resume runs QA again. */
+export const QA_BLOCKED = /^QA couldn't (test|run)\b/;
 export const isCheck = (j: Pick<Job, "kind" | "check">) => j.kind === "check" || !!j.check?.forced;
 /** ADR 0028 amendment: the words of a job verified and not merged (`KEEP: no`). */
 export const VERIFIED_WORDS = "Verified · not merged";
@@ -151,7 +151,7 @@ export type Job = {
    * ADR 0029 §2: QA's last round was INCOMPLETE (rows NOT_RUN, none FAILED): Kitchen reset the app and QA runs again on
    * `ids` only, round `from`'s passes standing. Still not run then goes to a person. Cleared by any other move.
    */
-  qaRetry?: { from: number; ids: string[] };
+  qaRetry?: { from: number; ids: string[]; reset?: true };
   /**
    * ADR 0025 §4: the check command running now (Build's checks, the trial merge's) and its log; absent between them.
    * ADR 0029 §4: `setup`: the step `kitchen qa up` is on instead ("Resetting data"), `of`: the health wait's limit (s).
@@ -277,7 +277,8 @@ export function move(j: Job, to: Stage, o: { reason?: string; now?: Date; catchU
   delete n.pausedReason;
   delete n.tries;
   delete n.waits;
-  delete n.qaRetry;
+  // ADR 0029 §2: a pause in the middle of a retry keeps it (the same retry resumes); any other move ends it.
+  if (!((j.stage === "qa" && to === "paused") || (j.stage === "paused" && to === "qa"))) delete n.qaRetry;
   // ADR 0028: a check's QA again (it couldn't run, or the person runs a done check again): a new round folder. Again
   // after done is new work, a fresh budget; after a QA that couldn't run, the same budget.
   if (to === "qa" && (j.stage === "qa" || j.stage === "done")) {

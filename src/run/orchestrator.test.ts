@@ -5,6 +5,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, test } from "vitest";
+import { loadConfig } from "../config.ts";
+import { browserNeeded } from "../qa/app.ts";
 import { MIN_CLAUDE, olderThan, preflight, run } from "./orchestrator.ts";
 import { wake } from "./wake.ts";
 
@@ -99,6 +101,8 @@ test("ADR 0029 §5: the session runs in its own group; after its result line, wh
     if (was !== undefined) process.env.KITCHEN_ORCHESTRATOR = was;
   }
   assert.match(lines.join("\n"), /orchestrator finished · \$0\.00: drained/);
+  // ADR 0029 §4: no app and no page criterion: the browser isn't needed, so this run never depends on it.
+  assert.equal(browserNeeded(r, loadConfig(r)), false);
   const left = Number(fs.readFileSync(path.join(r, "left.pid"), "utf8"));
   await new Promise((res) => setTimeout(res, 300));
   assert.throws(() => process.kill(left, 0), "the agent's leftover process is gone");

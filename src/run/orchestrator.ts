@@ -178,11 +178,15 @@ export async function run(
       return 2;
     }
   }
-  // ADR 0029 §4: the browser QA uses, installed once before a lane needs it.
-  const browser = await (await import("../qa/app.ts")).ensureBrowser(out);
-  if (browser) {
-    out(`kitchen run: ${browser}. Nothing started.`);
-    return 2;
+  // ADR 0029 §4: the browser QA uses, installed once before a lane needs it; by the session itself, never in a
+  // detaching parent (a wake): its output goes to the run's log. Refused only when QA here needs it.
+  if (!o.detach) {
+    const app = await import("../qa/app.ts");
+    const browser = await app.ensureBrowser(out, { needed: app.browserNeeded(repo, cfg) });
+    if (browser) {
+      out(`kitchen run: ${browser}. Nothing started.`);
+      return 2;
+    }
   }
   fs.mkdirSync(kitchenDir(repo), { recursive: true });
   const log = runLog(repo);

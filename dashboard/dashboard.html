@@ -921,7 +921,7 @@ async function pollDetail(){
   }
   setTimeout(pollDetail,1500);
 }
-function sigOf(j){return [JSON.stringify(j.waits),JSON.stringify(j.pull),j.target,j.checking?j.checking.cmd+j.checking.at:"",j.waiting,j.state,j.phase,j.stage,j.lane,j.round,j.q,j.pausedBy,j.title,j.report,j.files.length,j.runnerOn,j.movedAt,j.failed,j.risk,j.proof,fresh.has(j.id),expanded===j.id].join("|")}
+function sigOf(j){return [JSON.stringify(j.waits),JSON.stringify(j.pull),j.target,j.checking?[j.checking.cmd,j.checking.at,j.checking.last,j.checking.setup,j.checking.of].join("~"):"",j.check?j.check.proposalsFailed:"",j.waiting,j.state,j.phase,j.stage,j.lane,j.round,j.q,j.pausedBy,j.title,j.report,j.files.length,j.runnerOn,j.movedAt,j.failed,j.risk,j.proof,fresh.has(j.id),expanded===j.id].join("|")}
 function paint(before){
   const order0=[...before.keys()].join(),order1=jobs.map(j=>j.id).join();
   const groups=j=>j?(view==="board"?j.lane:group(j)):"";

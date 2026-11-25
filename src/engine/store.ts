@@ -16,6 +16,17 @@ export const worktreeOf = (repo: string, id: string) => path.join(repo, ".worktr
 /** ADR 0025 §1: intake's read-only checkout of the job's base (detached), while its lane is open. */
 export const intakeCheckoutOf = (repo: string, id: string) => path.join(repo, ".kitchen", "intake", id);
 export const roundDir = (jobDir: string, round: number) => path.join(jobDir, "rounds", String(round));
+/**
+ * Build's checks.json for `round`: that round's, else the latest earlier one's (ADR 0029 §2: a QA retry starts a
+ * round folder Build didn't run in). The path, possibly missing.
+ */
+export function checksFile(jobDir: string, round: number): string {
+  for (let r = round; r >= 1; r--) {
+    const f = path.join(roundDir(jobDir, r), "checks.json");
+    if (fs.existsSync(f)) return f;
+  }
+  return path.join(roundDir(jobDir, round), "checks.json");
+}
 
 export const JOB_ID = /^(\d{3,})-[a-z0-9-]{1,48}$/;
 

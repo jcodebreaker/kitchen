@@ -2,13 +2,27 @@
 // check`) runs here: in its own process group, its stdout read line by line. Once the stream sends its final line
 // (claude's `{"type":"result"}`, codex exec's `turn.completed`/`turn.failed`), the session gets a grace to exit, then
 // the group ends: SIGTERM, then SIGKILL. On close whatever is left of the group ends too, and so it does when Kitchen
-// itself is stopped (SIGTERM, SIGINT). Anything a lane agent started by hand (`npm run dev &`) goes with the group.
+// itself is stopped (SIGTERM, SIGINT, SIGHUP: a closed terminal); then Kitchen re-raises the signal and exits too, so
+// Ctrl-C ends the whole command. Anything a lane agent started by hand (`npm run dev &`) goes with the group.
 import { spawn } from "node:child_process";
 
 /** How long a session may live after its final line. */
 export const SESSION_GRACE_MS = 10_000;
 /** After SIGTERM, how long the group has before SIGKILL. */
 export const KILL_AFTER_MS = 3_000;
+
+/** Pure: a final line that says the session finished well (claude's result without is_error, subtype success). */
+export function finalOk(line: string): boolean {
+  try {
+    const e = JSON.parse(line) as { type?: unknown; is_error?: unknown; subtype?: unknown };
+    if (e.type === "turn.completed") return true;
+    return e.type === "result" && e.is_error !== true && (e.subtype ?? "success") === "success";
+  } catch {
+    return false;
+  }
+}
+
+const SIGNALS: NodeJS.Signals[] = ["SIGTERM", "SIGINT", "SIGHUP"];
 
 /** Pure: the stream's final line (claude's result; codex exec --json's last turn event). */
 export function finalLine(line: string): boolean {
@@ -63,6 +77,7 @@ export async function runAgentSession(
   };
   let timer: NodeJS.Timeout | undefined;
   let final = false;
+  let ok = false;
   const after = (ms: number) => {
     timer ??= setTimeout(end, ms);
   };
@@ -73,6 +88,7 @@ export async function runAgentSession(
     o.onLine?.(l);
     if (finalLine(l)) {
       final = true;
+      ok = finalOk(l);
       after(grace);
     }
   };
@@ -88,9 +104,14 @@ export async function runAgentSession(
   child.stderr.on("data", (d: Buffer) => o.onStderr?.(d));
   // Exited (or crashed) while something it started still holds the pipes: the same grace, then the group.
   child.on("exit", () => after(grace));
-  const stop = () => void end();
-  process.on("SIGTERM", stop);
-  process.on("SIGINT", stop);
+  // Kitchen stopped: the group first, then Kitchen itself (the signal again, with the default handler).
+  const stop = (sig: NodeJS.Signals) => {
+    void end().then(() => {
+      for (const x of SIGNALS) process.off(x, stop);
+      process.kill(process.pid, sig);
+    });
+  };
+  for (const x of SIGNALS) process.on(x, stop);
   const r = await new Promise<Session>((resolve) => {
     child.on("error", (e) => resolve({ code: 127, error: e.message }));
     child.on("close", (c) => resolve({ code: c ?? 1 }));
@@ -99,9 +120,8 @@ export async function runAgentSession(
   if (buf) line(buf);
   clearTimeout(timer);
   clearTimeout(limit);
-  process.off("SIGTERM", stop);
-  process.off("SIGINT", stop);
+  for (const x of SIGNALS) process.off(x, stop);
   await end();
-  // Ended by Kitchen after its final line: the session itself had finished.
-  return { ...r, ...(final && killed && r.code !== 0 && r.error === undefined ? { code: 0 } : {}), ...(child.pid ? { pid: child.pid } : {}) };
+  // Ended by Kitchen after a final line that said it finished well: no failure. An error result stays non-zero.
+  return { ...r, ...(final && ok && killed && r.code !== 0 && r.error === undefined ? { code: 0 } : {}), ...(child.pid ? { pid: child.pid } : {}) };
 }

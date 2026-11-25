@@ -165,7 +165,9 @@ export function critOf(dir: string, round: number, o: { check?: boolean } = {}):
 }
 
 /** ADR 0025 §4: the check running now and the last line its log has so far (the log is written as it arrives). */
-export function checkingOf(j: Pick<Job, "checking">, dir: string): { cmd: string; at: string; log: string; last: string } | null {
+export type Checking = { cmd: string; at: string; log: string; last: string; setup?: true; of?: number };
+/** ADR 0025 §4 (ADR 0029 §4: `setup` is `kitchen qa up`'s step, `of` the health wait's limit). */
+export function checkingOf(j: Pick<Job, "checking">, dir: string): Checking | null {
   if (!j.checking) return null;
   let last = "";
   try {
@@ -188,7 +190,15 @@ export function checkingOf(j: Pick<Job, "checking">, dir: string): { cmd: string
     }
   } catch {}
   // The header alone: nothing printed yet.
-  return { cmd: j.checking.cmd, at: j.checking.at, log: j.checking.log, last: last === `$ ${j.checking.cmd}` ? "" : last.slice(0, 300) };
+  const c = j.checking;
+  return {
+    cmd: c.cmd,
+    at: c.at,
+    log: c.log,
+    last: last === `$ ${c.cmd}` ? "" : last.slice(0, 300),
+    ...(c.setup ? { setup: true as const } : {}),
+    ...(c.of ? { of: c.of } : {}),
+  };
 }
 
 export const NO_ORCHESTRATOR = "Waiting for the orchestrator (kitchen run)";
@@ -208,7 +218,11 @@ export function waitingOf(id: string, plan: Plan | null, o: { parallel: number; 
   const dep = /^waits for (\S+) .*named on its AFTER: line$/.exec(h.why);
   if (dep) return `Waiting for ${numOf(dep[1])} to merge first (named on its AFTER: line)`;
   if (!h.why.startsWith("waits for room")) return `Waiting: ${h.why}`;
-  const using = [...plan.running, ...plan.start].map((x) => numOf(x.id));
+  // The lanes that take room: build, QA, review, merge check first (intake may start past parallel), at most parallel.
+  const using = [...plan.running, ...plan.start]
+    .sort((a, b) => Number(a.lane === "intake") - Number(b.lane === "intake"))
+    .slice(0, o.parallel)
+    .map((x) => numOf(x.id));
   const all = using.length === 1 ? "is using it" : using.length === 2 ? "are using both" : `are using all ${using.length}`;
   if (!using.length) return `Waiting for a free lane (parallel: ${o.parallel})`;
   if (using.length > 3) return `Waiting for a free lane · ${using.length} jobs are using all ${using.length}`;
@@ -286,7 +300,7 @@ export type JobCard = {
   /** ADR 0022: where it came from in the outer loop ("GitHub #17", "3 reports"), or null (New ticket). */
   from: string | null;
   /** ADR 0025 §4: the check command running now, since when, its log (in the job folder) and its last line; null between checks. */
-  checking: { cmd: string; at: string; log: string; last: string } | null;
+  checking: Checking | null;
   /**
    * ADR 0028: a check ticket (`kind: "check"`): tested on its target's tip, never built. `result`: the words once done
    * ("Checked on staging · 4 of 4 pass", "Found 2 problems"); `findings`: the problems found, and the inbox proposals

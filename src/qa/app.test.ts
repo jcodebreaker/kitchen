@@ -11,7 +11,21 @@ import * as control from "../engine/control.ts";
 import { qaDir } from "../engine/lanes.ts";
 import { findJob, jobDirOf } from "../engine/store.ts";
 import { orchestratorCommand, scrubbedEnv, streamLine } from "../run/orchestrator.ts";
-import { appDown, appEnv, appReset, appUp, composeProject, ensureBrowser, http, page, reachable, stopApp, stopCommand, sweepApps } from "./app.ts";
+import {
+  appDown,
+  appEnv,
+  appReset,
+  appUp,
+  browserNeeded,
+  composeProject,
+  ensureBrowser,
+  http,
+  page,
+  reachable,
+  stopApp,
+  stopCommand,
+  sweepApps,
+} from "./app.ts";
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kitchen-qa-"));
 const lines: string[] = [];
@@ -167,7 +181,23 @@ test("ADR 0029 §4: the browser is installed once when it is missing; a failed i
   assert.equal(await ensureBrowser((l) => said.push(l), { ready: () => there, install }), null);
   assert.deepEqual([installs, said], [1, ["Installing the browser QA uses, once (~150 MB)…"]]);
   const no = await ensureBrowser(() => {}, { ready: () => false, install: async () => false });
-  assert.match(String(no), /^the browser QA uses \(Playwright's Chromium\) isn't installed: run .+ in \//);
+  assert.match(String(no), /^the browser QA uses \(Playwright's Chromium\) isn't installed: run npx playwright install chromium in \//);
+  // Not needed yet (no app, no page criterion): a note, no install, no refusal.
+  const notes: string[] = [];
+  assert.equal(await ensureBrowser((l) => notes.push(l), { needed: false, ready: () => false, install: async () => !!++installs }), null);
+  assert.equal(installs, 1, "nothing installed");
+  assert.match(notes.join(""), /^note: the browser QA uses .* \(nothing queued needs it yet\)$/);
+  // The installer's own output goes through out (the run's log when detached), never straight to the terminal.
+  const lines: string[] = [];
+  const prev = process.env.KITCHEN_BROWSER_INSTALL;
+  process.env.KITCHEN_BROWSER_INSTALL = "printf 'Downloading 10%%\\rDownloading 100%%\\n'; exit 1";
+  try {
+    assert.ok(await ensureBrowser((l) => lines.push(l), { ready: () => false }));
+  } finally {
+    process.env.KITCHEN_BROWSER_INSTALL = prev;
+  }
+  assert.deepEqual(lines, ["Installing the browser QA uses, once (~150 MB)…", "  Downloading 100%"]);
+  assert.ok(browserNeeded(root, loadConfig(root)), "an app to drive needs it");
 });
 
 test("ADR 0029 §5: stopping or rejecting a job stops its app; a sweep stops any app no lane works on", async () => {

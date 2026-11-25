@@ -48,18 +48,19 @@ const list = (v: string) =>
     .filter((x) => x && !/^(none|-|n\/a)$/i.test(x));
 
 /**
- * Pure: the criteria lines `- C1 (page): what must be true`, in order, or why one can't be read. ADR 0029 §1: every
- * line that looks like a criterion (`- C<n>` …) must parse: one kind (any case), text after the colon, a new id.
- * Nothing is guessed or merged.
+ * Pure: the criteria lines `- C1 (page): what must be true`, in order. ADR 0029 §1, `strict` (intake's own finish):
+ * every criterion line (`- C<n> (` or `- C<n>:`) must parse: one kind (any case), text after the colon, a new id;
+ * else why not. Nothing is guessed or merged. Lenient (everyone reading an intake already accepted, possibly before
+ * this rule): the lines that parse, the first of a repeated id.
  */
-export function parseCriteria(text: string): Criterion[] | { refused: string } {
+export function parseCriteria(text: string, o: { strict?: boolean } = {}): Criterion[] | { refused: string } {
   const out: Criterion[] = [];
   const bad: string[] = [];
-  const lines = [...text.matchAll(/^[ \t]*[-*][ \t]*\**[ \t]*(C\d+)\b\**(.*)$/gim)];
+  const lines = [...text.matchAll(/^[ \t]*[-*][ \t]*\**[ \t]*(C\d+)\**[ \t]*(?=[(:])(.*)$/gim)];
   let next = Math.max(0, ...lines.map((m) => Number(m[1].slice(1)))) + 1;
   for (const m of lines) {
     const id = m[1].toUpperCase();
-    const k = /^\s*\(([^)]*)\)\**\s*(?::\s*(.*))?$/.exec(m[2]) ?? /^\s*\(([^)]*)\)()/.exec(m[2]);
+    const k = /^\(([^)]*)\)\**[ \t]*(:)?\**[ \t]*(.*)$/.exec(m[2]);
     if (!k) {
       bad.push(`${id} has no kind: write - ${id} (page|http|test|cmd): …`);
       continue;
@@ -70,19 +71,24 @@ export function parseCriteria(text: string): Criterion[] | { refused: string } {
       .split(/\s*(?:[+,/&|]|\band\b|\bor\b)\s*|\s+/)
       .filter(Boolean);
     const known = kinds.every((x) => (CHECK_KINDS as readonly string[]).includes(x));
+    const body = k[3].replace(/^\*+\s*/, "").trim();
     if (kinds.length > 1 && known) {
       const ids = kinds.map((x, i) => `${i ? `C${next++}` : id} (${x})`);
       bad.push(`${id} (${said}): one kind per criterion: split it into ${ids.slice(0, -1).join(", ")} and ${ids.at(-1)}`);
     } else if (kinds.length !== 1 || !known) bad.push(`${id} (${said}): the kind is one of page, http, test or cmd: write - ${id} (page|http|test|cmd): …`);
-    else if (!k[2]?.trim()) bad.push(`${id} (${kinds[0]}) needs a colon and what must be true after it: write - ${id} (${kinds[0]}): …`);
+    else if (!k[2]) bad.push(`${id} (${kinds[0]}) needs a colon and what must be true after it: write - ${id} (${kinds[0]}): …`);
+    else if (!body) bad.push(`${id} (${kinds[0]}) needs what must be true after the colon: write - ${id} (${kinds[0]}): …`);
     else if (out.some((c) => c.id === id)) bad.push(`${id} is listed twice`);
-    else out.push({ id, text: k[2].trim(), check: kinds[0] as CheckKind });
+    else out.push({ id, text: body, check: kinds[0] as CheckKind });
   }
-  return bad.length ? { refused: bad.join("; ") } : out;
+  return o.strict && bad.length ? { refused: bad.join("; ") } : out;
 }
 
-/** Pure: intake.md, or the reason it can't be used (the intake lane runs again with that reason). */
-export function parseIntake(text: string): Intake | { refused: string } {
+/**
+ * Pure: intake.md, or the reason it can't be used (the intake lane runs again with that reason). `strict` (ADR 0029
+ * §1): only when intake's lane finishes; an intake accepted earlier is read leniently, keeping what parses.
+ */
+export function parseIntake(text: string, o: { strict?: boolean } = {}): Intake | { refused: string } {
   const decision = header(text, "DECISION").toUpperCase();
   const title = header(text, "TITLE") || null;
   if (decision === "NEEDS-INFO") {
@@ -109,7 +115,7 @@ export function parseIntake(text: string): Intake | { refused: string } {
   const risk = header(text, "RISK").toLowerCase() || (check ? "low" : "");
   if (!["low", "medium", "high"].includes(risk)) return { refused: "RISK: is low, medium or high" };
   const surfaces = list(header(text, "SURFACES").toLowerCase()).filter((s): s is "ui" | "security" => s === "ui" || s === "security");
-  const criteria = parseCriteria(text);
+  const criteria = parseCriteria(text, o);
   if ("refused" in criteria) return criteria;
   const explore = check ? exploreOf(text) : undefined;
   if (!criteria.length && explore === undefined)

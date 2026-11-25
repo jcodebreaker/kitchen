@@ -351,6 +351,7 @@ async function jobVerb(repo: string, f: Flags, json: boolean, out: (l: string) =
     if (json) out(JSON.stringify(p, null, 2));
     else {
       for (const l of p.prs) out(`pr     ${l}`);
+      for (const l of p.proposals) out(`inbox  ${l}`);
       for (const s of p.start) out(`start  ${s.id}  ${s.lane}${s.restart ? " (restart: its last agent is gone)" : ""}`);
       for (const r of p.running) out(`busy   ${r.id}  ${r.lane} since ${r.since}`);
       for (const h of p.held) out(`held   ${h.id}  ${h.lane}: ${h.why}`);

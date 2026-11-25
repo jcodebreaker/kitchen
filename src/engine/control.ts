@@ -30,7 +30,7 @@ import {
   move,
   pausedByYou,
   promotable,
-  QA_BLOCKED_WORDS,
+  QA_BLOCKED,
   STAGES,
   type Stage,
 } from "./machine.ts";
@@ -210,7 +210,7 @@ export async function stop(repo: string, ref: string, out: Out): Promise<number>
 export async function resume(repo: string, ref: string, out: Out): Promise<number> {
   const job = findJob(repo, ref);
   // ADR 0029 §2: QA couldn't test it twice; the person fixed the environment, so QA runs again.
-  if (job.stage === "needs-human" && job.escalatedFrom === "qa" && job.pausedReason?.startsWith(QA_BLOCKED_WORDS)) {
+  if (job.stage === "needs-human" && job.escalatedFrom === "qa" && QA_BLOCKED.test(job.pausedReason ?? "")) {
     await moveJob(repo, job.id, "qa", { who: "person" });
     out(`${job.id}  resumed → qa`);
     return 0;

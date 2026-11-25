@@ -54,3 +54,34 @@ test("a session that exits leaves nothing behind; one that crashes keeps its exi
   assert.equal(no.code, 127);
   assert.match(String(no.error), /ENOENT/);
 });
+
+test("a final result that says it failed stays a failure when the session is ended after the grace", async () => {
+  const a = agent("fails", `echo '{"type":"result","is_error":true,"subtype":"error_max_turns"}'\nsleep 600`);
+  const r = await runAgentSession([a], { cwd: root, graceMs: 200 });
+  assert.notEqual(r.code, 0);
+});
+
+test("a closed terminal (SIGHUP) ends the session's group, then Kitchen itself", async () => {
+  const { spawn } = await import("node:child_process");
+  const a = agent("long", `sleep 600 &\necho $! > "${root}/hup.pid"\necho started\nsleep 600`);
+  const driver = path.join(root, "driver.mts");
+  fs.writeFileSync(
+    driver,
+    `import { runAgentSession } from ${JSON.stringify(path.resolve(import.meta.dirname, "session.ts"))};\nawait runAgentSession([${JSON.stringify(a)}], { cwd: ${JSON.stringify(root)}, onStart: (p) => console.log("agent " + p) });\nconsole.log("returned");\n`,
+  );
+  const tsx = path.resolve(import.meta.dirname, "..", "..", "node_modules", "tsx", "dist", "loader.mjs");
+  const k = spawn(process.execPath, ["--import", tsx, driver], { stdio: ["ignore", "pipe", "inherit"] });
+  let said = "";
+  k.stdout.on("data", (d: Buffer) => {
+    said += d.toString();
+  });
+  const pidFile = path.join(root, "hup.pid");
+  for (let i = 0; i < 100 && !(fs.existsSync(pidFile) && /agent \d+/.test(said)); i++) await new Promise((r) => setTimeout(r, 100));
+  const agentPid = Number(/agent (\d+)/.exec(said)?.[1]);
+  const left = Number(fs.readFileSync(pidFile, "utf8"));
+  k.kill("SIGHUP");
+  const [code, sig] = await new Promise<[number | null, string | null]>((res) => k.on("exit", (c, s) => res([c, s])));
+  assert.deepEqual([code, sig], [null, "SIGHUP"], "Kitchen exits on the signal, after the group");
+  assert.ok(!said.includes("returned"), "it didn't carry on");
+  assert.ok(!alive(agentPid) && !alive(left), "the session and what it left are gone");
+});

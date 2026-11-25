@@ -290,7 +290,7 @@ test("(d) a check whose app won't start: BLOCKED runs QA again (ADR 0029 §2: ev
   const { id } = await intake(r, "check the app", CHECK(["app answers"]));
   const blocked = { verdict: "BLOCKED", blocked: "the app won't start: port in use", evidence: ["app.log"] };
   const { f } = await checkQa(r, id, blocked, { "app.log": "EADDRINUSE\n" });
-  assert.match(f.line, /QA couldn't test C1 \(the app won't start: port in use\) → qa again on C1 \(round 2\)/);
+  assert.match(f.line, /QA couldn't test C1 \(the app won't start: port in use\) → qa again on C1 on fresh seed data \(round 2\)/);
   assert.deepEqual([findJob(r, id).stage, findJob(r, id).round], ["qa", 2]);
   const { f: f2 } = await checkQa(r, id, blocked, { "app.log": "EADDRINUSE\n" });
   assert.match(f2.line, /QA still couldn't test C1 \(the app won't start: port in use\) → needs-human/);
@@ -545,7 +545,9 @@ test("ADR 0029 §2 and §6: a NOT_RUN on a check is no proposal; proposals that 
   assert.equal(listProposals(r).length, 1);
   // Idempotent: proposing the same round again finds the same proposal.
   await updateCheck(r, id);
-  await next(r);
+  // A finish and a wave at once: one at a time, and each line said.
+  const [a, b] = await Promise.all([next(r), next(r)]);
+  assert.deepEqual([...a.proposals, ...b.proposals].filter((l) => /proposed .* \(retried\)/.test(l)).length, 1);
   assert.equal(listProposals(r).length, 1, "never proposed twice");
 });
 
@@ -556,3 +558,17 @@ async function updateCheck(r: string, id: string) {
   j.check.proposalsFailed = { error: "lost", round: 1 };
   fs.writeFileSync(f, JSON.stringify(j));
 }
+
+test("ADR 0029 §2: an exploring check (no criteria) that says BLOCKED runs again on everything, then says QA couldn't run", async () => {
+  const r = await repo("round_limit: 3\n");
+  const { id } = await intake(r, "explore the app", "DECISION: ACCEPT\nKIND: check\nEXPLORE: 10\n");
+  const blocked = { verdict: "BLOCKED", blocked: "the app won't start", evidence: ["app.log"] };
+  const { f } = await checkQa(r, id, blocked, { "app.log": "EADDRINUSE\n" });
+  assert.match(f.line, /QA couldn't run \(the app won't start\) → qa again on fresh seed data \(round 2\)$/);
+  const { s, f: f2 } = await checkQa(r, id, blocked, { "app.log": "EADDRINUSE\n" });
+  assert.match(fs.readFileSync(s.brief, "utf8"), /## QA again\n\nRound 1's QA couldn't run: the app won't start\. [\s\S]*Drive everything/);
+  assert.match(f2.line, /QA still couldn't run \(the app won't start\) → needs-human/);
+  assert.equal(findJob(r, id).pausedReason, "QA couldn't run: the app won't start");
+  assert.equal(await control.resume(r, id, quiet), 0, "Resume runs QA again");
+  assert.equal(findJob(r, id).stage, "qa");
+});

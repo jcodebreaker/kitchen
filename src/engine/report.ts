@@ -8,7 +8,7 @@ import { readMapChanges } from "../verify/admit.ts";
 import { criteriaOf, leftOutOf, qaDir, readQa, readReview, regressDir } from "./lanes.ts";
 import { isCheck, type Job, prOpen } from "./machine.ts";
 import { readMessages } from "./messages.ts";
-import { findJob, JOB_ID, jobDirOf, roundDir, writeAtomic } from "./store.ts";
+import { checksFile, findJob, JOB_ID, jobDirOf, writeAtomic } from "./store.ts";
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] as string);
 const MAX_TEXT = 6000;
@@ -186,7 +186,7 @@ function drives(dir: string, round: number, named = false): string {
 
 function readChecks(dir: string, round: number): string {
   try {
-    const r = JSON.parse(fs.readFileSync(path.join(roundDir(dir, round), "checks.json"), "utf8")) as { name: string; ok: boolean; exit: number | null }[];
+    const r = JSON.parse(fs.readFileSync(checksFile(dir, round), "utf8")) as { name: string; ok: boolean; exit: number | null }[];
     return r.map((c) => `${c.ok ? "✓" : "✗"} ${c.name}${c.ok ? "" : ` (exit ${c.exit ?? "timeout"})`}`).join("\n") || "no checks configured";
   } catch {
     return "not run";

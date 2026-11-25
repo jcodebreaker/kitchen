@@ -16,7 +16,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { prepareOf, runShell } from "../checks/run-checks.ts";
 import { type AppConfig, type Config, loadConfig } from "../config.ts";
-import { qaDir, regressDir } from "../engine/lanes.ts";
+import { criteriaOf, qaDir, regressDir } from "../engine/lanes.ts";
 import { findJob, jobDirOf, listJobs, updateJob, worktreeOf, writeAtomic } from "../engine/store.ts";
 import { isRunId, runDir, runEvidence, runWorktree } from "../verify/paths.ts";
 
@@ -113,6 +113,9 @@ export async function appUp(repo: string, ref: string, out: (l: string) => void,
     out(`app: this sweep drives ${remote}: Kitchen starts nothing here (kitchen qa page|http ${jid} <path> go there)`);
     return 1;
   }
+  // ADR 0029 §2: QA again on what it couldn't test: the first `qa up` of that lane starts the app on fresh seed data.
+  const fresh = !isRunId(jid) && !!findJob(repo, jid).qaRetry?.reset;
+  if (fresh) await appDown(repo, jid);
   const had = readState(repo, jid);
   if (had && (had.legacy || (had.pid && alive(had.pid))) && (await healthy(join(had.url, cfg.app.health)))) {
     out(`app: up at ${had.url}`);
@@ -120,10 +123,17 @@ export async function appUp(repo: string, ref: string, out: (l: string) => void,
   }
   const log = path.join(dir, "app.log");
   const step = setupStep(repo, jid, log);
+  let code = 1;
   try {
-    return await startUp(repo, jid, wt, log, out, cfg, step);
+    code = await startUp(repo, jid, wt, log, out, cfg, step);
+    return code;
   } finally {
     await step(null);
+    if (fresh && code === 0)
+      await updateJob(repo, jid, (j) => {
+        if (j.qaRetry) delete j.qaRetry.reset;
+        return j;
+      });
   }
 }
 
@@ -361,36 +371,64 @@ function playwright(): { chromium: { launch(o: object): Promise<Browser>; execut
 /** Kitchen's own folder: its package.json pins Playwright, and the browser is installed from there. */
 const KITCHEN_DIR = path.resolve(import.meta.dirname, "..", "..");
 /** ADR 0029 §4: the install command (KITCHEN_BROWSER_INSTALL: tests and hooks put a stand-in there, never a download). */
-const installCmd = () => process.env.KITCHEN_BROWSER_INSTALL || "npx playwright install chromium";
+const INSTALL = "npx playwright install chromium";
+const installCmd = () => process.env.KITCHEN_BROWSER_INSTALL || INSTALL;
 /** The one line for a missing browser: `kitchen run` refuses with it, `kitchen qa page` says it. */
-export const browserMissing = () => `the browser QA uses (Playwright's Chromium) isn't installed: run ${installCmd()} in ${KITCHEN_DIR}`;
+export const browserMissing = () => `the browser QA uses (Playwright's Chromium) isn't installed: run ${INSTALL} in ${KITCHEN_DIR}`;
 
-/** ADR 0029 §4: Playwright's Chromium is on this machine. */
+/** ADR 0029 §4: Playwright's Chromium is on this machine: the full browser, or the headless shell a headless launch uses. */
 export function browserReady(): boolean {
   try {
-    return fs.existsSync(playwright().chromium.executablePath());
+    const exe = playwright().chromium.executablePath();
+    if (fs.existsSync(exe)) return true;
+    const m = /^(.*[\\/])chromium-(\d+)[\\/]/.exec(exe);
+    return !!m && fs.existsSync(`${m[1]}chromium_headless_shell-${m[2]}`);
   } catch {
     return false;
   }
 }
 
+/** ADR 0029 §4: QA here needs the browser: there is an app to drive, or an open job has a page criterion. */
+export function browserNeeded(repo: string, cfg: Config): boolean {
+  if (cfg.app.start) return true;
+  return listJobs(repo).some(
+    (j) => !j.archived && j.stage !== "done" && j.stage !== "rejected" && criteriaOf(jobDirOf(repo, j.id)).some((c) => c.check === "page"),
+  );
+}
+
 /**
- * ADR 0029 §4: before QA needs it (`kitchen init`, `kitchen run`), Chromium is installed once when it is missing.
- * Null when it is there, else the line to refuse with. `ready` and `install` are seams for tests.
+ * ADR 0029 §4: before QA needs it (`kitchen init`, `kitchen run`), Chromium is installed once when it is missing, its
+ * output through `out`. Null when it is there (or isn't needed yet: then only a note), else the line to refuse with.
+ * `ready` and `install` are seams for tests.
  */
-export async function ensureBrowser(out: (l: string) => void, o: { ready?: () => boolean; install?: () => Promise<boolean> } = {}): Promise<string | null> {
+export async function ensureBrowser(
+  out: (l: string) => void,
+  o: { needed?: boolean; ready?: () => boolean; install?: (out: (l: string) => void) => Promise<boolean> } = {},
+): Promise<string | null> {
   const ready = o.ready ?? browserReady;
   if (ready()) return null;
+  if (o.needed === false) {
+    out(`note: ${browserMissing()} (nothing queued needs it yet)`);
+    return null;
+  }
   out("Installing the browser QA uses, once (~150 MB)…");
-  const ok = await (o.install ?? installBrowser)();
+  const ok = await (o.install ?? installBrowser)(out);
   return ok && ready() ? null : browserMissing();
 }
 
-const installBrowser = () =>
+const installBrowser = (out: (l: string) => void) =>
   new Promise<boolean>((resolve) => {
-    const c = spawn("/bin/sh", ["-c", installCmd()], { cwd: KITCHEN_DIR, stdio: ["ignore", "inherit", "inherit"] });
+    const c = spawn("/bin/sh", ["-c", installCmd()], { cwd: KITCHEN_DIR, stdio: ["ignore", "pipe", "pipe"] });
+    const say = (d: Buffer) => {
+      for (const l of d.toString("utf8").split("\n")) {
+        const t = l.split("\r").at(-1)?.trim();
+        if (t) out(`  ${t}`);
+      }
+    };
+    c.stdout.on("data", say);
+    c.stderr.on("data", say);
     c.on("error", () => resolve(false));
-    c.on("exit", (code) => resolve(code === 0));
+    c.on("close", (code) => resolve(code === 0));
   });
 
 type Page = {

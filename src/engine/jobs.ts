@@ -13,6 +13,7 @@ import { type Config, checksFor, type LaneRole, loadConfig, modelFor, targetOf }
 import { commentOnMerge } from "../inbox/comment.ts";
 import { addFindings, proposeCheckFindings, qaFindings, reviewFindings } from "../inbox/findings.ts";
 import { appendLedger } from "../ledger/append.ts";
+import { withFileLock } from "../lock.ts";
 import { skillsForLane } from "../skills/forjob.ts";
 import { PromptSource } from "../sources/prompt.ts";
 import { type Admitted, admitMap, builderMapEdits, writeMapChanges } from "../verify/admit.ts";
@@ -34,6 +35,7 @@ import {
   type QaRow,
   type QaVerdict,
   qaDir,
+  qaVerdictFile,
   readFeatureVerdict,
   readQa,
   readReview,
@@ -54,7 +56,6 @@ import {
   outOfRounds,
   PR_OPEN_WORDS,
   prOpen,
-  QA_BLOCKED_WORDS,
   roundsUsed,
   type Stage,
   VERIFIED_WORDS,
@@ -65,7 +66,7 @@ import { type Plan, planWave } from "./plan.ts";
 import { confirmQuestion, refineQuestion } from "./refine.ts";
 import { prReport, writeReport } from "./report.ts";
 import { type CatchUp, catchUpWithTarget, dropTrial, type MergeOutcome, mergeToTarget, realGh, targetTip } from "./staging.ts";
-import { findJob, intakeCheckoutOf, jobDirOf, kitchenDir, listJobs, roundDir, shortTitle, updateJob, worktreeOf, writeAtomic } from "./store.ts";
+import { checksFile, findJob, intakeCheckoutOf, jobDirOf, kitchenDir, listJobs, roundDir, shortTitle, updateJob, worktreeOf, writeAtomic } from "./store.ts";
 
 export type Out = (line: string) => void;
 const ROLES = path.resolve(import.meta.dirname, "..", "..", "roles");
@@ -80,16 +81,16 @@ export const MAX_TRIES = 3;
 /** The orchestrator's heartbeat: the last `kitchen job next`. The dashboard reads it. */
 export const heartbeatFile = (repo: string) => path.join(kitchenDir(repo), "orchestrator.json");
 
-export async function next(repo: string, o: { restartStranded?: boolean } = {}): Promise<Plan & { prs: string[] }> {
+export async function next(repo: string, o: { restartStranded?: boolean } = {}): Promise<Plan & { prs: string[]; proposals: string[] }> {
   const cfg = loadConfig(repo);
   // ADR 0026 §4: what became of the PRs waiting on a person (at most once a minute).
   const prs = await syncPrs(repo);
   // A job the person removed is never picked (kitchen remove).
   // ADR 0029 §6: a check's findings that failed to be proposed, proposed again.
-  await retryProposals(repo).catch(() => []);
+  const proposals = await retryProposals(repo).catch((e: Error) => [`proposing again failed: ${e.message.split("\n")[0]}`]);
   const jobs = listJobs(repo).filter((j) => !j.archived);
   const paused = new Set(jobs.filter((j) => !j.running && readControl(jobDirOf(repo, j.id)).pause).map((j) => j.id));
-  const plan = { ...planWave(jobs, { parallel: cfg.parallel, restartStranded: o.restartStranded, paused, target: (j) => targetOf(cfg, j) }), prs };
+  const plan = { ...planWave(jobs, { parallel: cfg.parallel, restartStranded: o.restartStranded, paused, target: (j) => targetOf(cfg, j) }), prs, proposals };
   fs.mkdirSync(kitchenDir(repo), { recursive: true });
   writeAtomic(heartbeatFile(repo), JSON.stringify({ at: new Date().toISOString(), pid: process.ppid, drained: plan.drained }));
   // ADR 0029 §5: a drained queue leaves no app running.
@@ -364,17 +365,30 @@ function brief(
 function retryNote(dir: string, r: { from: number; ids: string[] }): string {
   const was = readQa(dir, r.from, criteriaOf(dir));
   const rows = "criteria" in was ? was.criteria : [];
+  const fresh = "Your first `kitchen qa up` starts the app on fresh seed data; this is not a new Build round.";
+  const tail =
+    "If it still can't be tested for a reason outside this job's change, mark it NOT_RUN (or the verdict BLOCKED) again with why: Kitchen then asks the person to fix the environment.";
+  // ADR 0029 §2: QA couldn't run at all (no criterion to name): everything again.
+  if (!r.ids.length)
+    return [
+      "## QA again",
+      "",
+      `Round ${r.from}'s QA couldn't run: ${"criteria" in was ? (was.blocked ?? "") : ""}. ${fresh}`,
+      "Drive everything, as your role says.",
+      tail,
+      "",
+    ].join("\n");
   const passed = rows.filter((x) => x.result === "PASS").map((x) => x.id);
   const which = r.ids.join(", ");
   return [
     `## QA again on ${which} only`,
     "",
-    `Round ${r.from}'s QA couldn't test ${which}: ${rows
+    `Round ${r.from}'s QA couldn't test ${rows
       .filter((x) => r.ids.includes(x.id))
-      .map((x) => `${x.id}: ${x.why ?? ""}`)
-      .join("; ")}. Kitchen reset the app (fresh seed data); this is not a new Build round.`,
+      .map((x) => `${x.id} (${x.why ?? ""})`)
+      .join(", ")}. ${fresh}`,
     `Drive only ${which}, and write rows only for ${r.ids.length === 1 ? "it" : "them"}.${passed.length ? ` ${passed.join(", ")} passed in round ${r.from} and stand${passed.length === 1 ? "s" : ""}: Kitchen carried ${passed.length === 1 ? "its row" : "their rows"} and evidence into your QA folder (carried.json, from-round-${r.from}/).` : ""}`,
-    `If one still can't be tested for a reason outside this job's change, mark it NOT_RUN again with why: Kitchen then asks the person to fix the environment.`,
+    tail,
     "",
   ].join("\n");
 }
@@ -510,6 +524,10 @@ export async function start(
   fs.writeFileSync(path.join(dir, stream), "");
   if (lane === "qa") {
     fs.mkdirSync(qaDir(dir, job.round), { recursive: true });
+    // ADR 0029 §2: QA again in a round folder it used before (Resume from Needs you) starts clean: no old verdict, and
+    // no carried passes unless this is the retry they were carried for.
+    fs.rmSync(qaVerdictFile(dir, job.round), { force: true });
+    if (!job.qaRetry) fs.rmSync(carriedFile(qaDir(dir, job.round)), { force: true });
     writeAtomic(criteriaSnapshot(dir, job.round), JSON.stringify(criteriaOf(dir)));
   }
   if (lane === "regress") fs.mkdirSync(regressDir(dir, job.round), { recursive: true });
@@ -643,8 +661,14 @@ async function moveOn(
 }
 
 export async function finish(repo: string, id: string): Promise<Finished | { refused: string }> {
+  // ADR 0029 §6: a check's findings that failed to be proposed, proposed again; said on this finish's line.
+  const again = await retryProposals(repo).catch((e: Error) => [`proposing again failed: ${e.message.split("\n")[0]}`]);
+  const f = await finishLane(repo, id);
+  return again.length && "line" in f ? { ...f, line: [f.line, ...again].join("\n") } : f;
+}
+
+async function finishLane(repo: string, id: string): Promise<Finished | { refused: string }> {
   const cfg = loadConfig(repo);
-  await retryProposals(repo).catch(() => []);
   const job = findJob(repo, id);
   const dir = jobDirOf(repo, job.id);
   if (job.archived) return { refused: `${job.id} was removed by the person: this lane's result is dropped` };
@@ -662,7 +686,7 @@ export async function finish(repo: string, id: string): Promise<Finished | { ref
     await dropIntakeCheckout(repo, job.id);
     const f = intakeFile(dir);
     if (!fs.existsSync(f)) return refuseLane(repo, job, `no ${path.relative(repo, f)}`);
-    const i = parseIntake(fs.readFileSync(f, "utf8"));
+    const i = parseIntake(fs.readFileSync(f, "utf8"), { strict: true });
     if ("refused" in i) return refuseLane(repo, job, `intake.md: ${i.refused}`);
     if (i.decision === "REJECT") return moveOn(repo, job, "rejected", `${job.id}  rejected by intake: ${i.reason}`, { reason: i.reason });
     if (i.decision === "NEEDS-INFO" || i.decision === "REFINE") {
@@ -772,7 +796,7 @@ export async function finish(repo: string, id: string): Promise<Finished | { ref
     await (await import("../qa/app.ts")).appDown(repo, job.id).catch(() => {});
     const qa = readQa(dir, job.round, criteriaOf(dir));
     if ("refused" in qa) return refuseLane(repo, job, `QA: ${qa.refused}`);
-    if (qa.verdict === "INCOMPLETE") return qaIncomplete(repo, cfg, job, qa);
+    if (qa.verdict === "INCOMPLETE") return qaIncomplete(repo, job, qa);
     // ADR 0022: what QA saw beyond the criteria goes to the outer loop's inbox (Kitchen findings).
     await addFindings(repo, qaFindings(job.id, job.round, qaDir(dir, job.round)));
     if (qa.verdict === "PASS") {
@@ -858,38 +882,31 @@ function notRunOf(qa: QaVerdict): { ids: string[]; why: string } {
  * then, a person fixes the environment and resumes QA. A check (ADR 0028) runs again the same way, on its own
  * checkout, and its round limit applies.
  */
-async function qaIncomplete(repo: string, cfg: Config, job: Job, qa: QaVerdict): Promise<Finished> {
+async function qaIncomplete(repo: string, job: Job, qa: QaVerdict): Promise<Finished> {
   const check = isCheck(job);
   const { ids, why } = notRunOf(qa);
-  const which = ids.join(", ");
+  // No criteria to name (an exploring check, BLOCKED): QA couldn't run at all, and runs again on everything.
+  const what = ids.length ? `test ${ids.join(", ")}` : "run";
+  const again = ids.length ? `qa again on ${ids.join(", ")}` : "qa again";
   if (check) await dropCheckCheckout(repo, job.id);
   if (job.qaRetry || (check && outOfRounds(job)))
-    return moveOn(repo, job, "needs-human", `${job.id}  QA still couldn't test ${which} (${why}) → needs-human`, {
-      reason: `${QA_BLOCKED_WORDS} ${which}: ${why}`,
-    });
+    return moveOn(repo, job, "needs-human", `${job.id}  QA still couldn't ${what} (${why}) → needs-human`, { reason: `QA couldn't ${what}: ${why}` });
   const from = job.round;
+  // The app is down (finish stopped it); the next lane's first `kitchen qa up` starts it on fresh seed data. Kitchen
+  // starts nothing here: `job finish` returns at once.
   const moved = await moveOn(
     repo,
     job,
     "qa",
-    `${job.id}  QA couldn't test ${which} (${why}) → ${check ? "" : "app reset, "}qa again on ${which} (round ${from + 1}${check ? "" : ", no Build round"})`,
+    `${job.id}  QA couldn't ${what} (${why}) → ${again} on fresh seed data (round ${from + 1}${check ? "" : ", no Build round"})`,
     {
       patch: (j) => {
-        j.qaRetry = { from, ids };
+        j.qaRetry = { from, ids, reset: true };
       },
     },
   );
-  if (moved.to !== "qa") return moved;
-  const dir = jobDirOf(repo, job.id);
-  carryPasses(qaDir(dir, from), qaDir(dir, from + 1), from, qa.criteria);
-  if (check) return moved;
-  const said: string[] = [];
-  const { appReset } = await import("../qa/app.ts");
-  const code = await appReset(repo, job.id, (l) => said.push(l), cfg).catch((e: Error) => {
-    said.push(e.message.split("\n")[0]);
-    return 1;
-  });
-  return { ...moved, line: `${moved.line} · ${code ? "the reset failed: " : ""}${said.at(-1) ?? ""}` };
+  if (moved.to === "qa" || moved.to === "paused") carryPasses(qaDir(jobDirOf(repo, job.id), from), qaDir(jobDirOf(repo, job.id), from + 1), from, qa.criteria);
+  return moved;
 }
 
 /** ADR 0029 §2: a round's PASS rows into the next round's QA folder (`carried.json`), their evidence under `from-round-<n>/`. */
@@ -932,7 +949,7 @@ async function finishCheck(repo: string, cfg: Config, job: Job): Promise<Finishe
   if ("refused" in qa) return refuseLane(repo, job, `QA: ${qa.refused}`);
   const onto = job.check?.onto ?? "";
   const target = targetOf(cfg, job);
-  if (qa.verdict === "INCOMPLETE") return qaIncomplete(repo, cfg, job, qa);
+  if (qa.verdict === "INCOMPLETE") return qaIncomplete(repo, job, qa);
   await addFindings(repo, qaFindings(job.id, job.round, qd));
   // ADR 0029 §6: a proposal that fails to save is recorded and retried, never dropped.
   let failed: string | null = null;
@@ -973,6 +990,12 @@ async function finishCheck(repo: string, cfg: Config, job: Job): Promise<Finishe
  * The lines to say.
  */
 export async function retryProposals(repo: string): Promise<string[]> {
+  if (!listJobs(repo).some((x) => x.check?.proposalsFailed && !x.archived)) return [];
+  // One at a time: `job finish` and `job next` may both get here.
+  return withFileLock(path.join(kitchenDir(repo), "proposals.lock"), () => proposeAgain(repo));
+}
+
+async function proposeAgain(repo: string): Promise<string[]> {
   const said: string[] = [];
   for (const j of listJobs(repo).filter((x) => x.check?.proposalsFailed && !x.archived)) {
     const pf = j.check?.proposalsFailed as { error: string; round: number };
@@ -1197,7 +1220,7 @@ async function prOpened(
 /** The round's checks were green on the job branch alone (Build's `job finish` ran them). */
 function greenAlone(dir: string, round: number): boolean {
   try {
-    return (JSON.parse(fs.readFileSync(path.join(roundDir(dir, round), "checks.json"), "utf8")) as { ok: boolean }[]).every((c) => c.ok);
+    return (JSON.parse(fs.readFileSync(checksFile(dir, round), "utf8")) as { ok: boolean }[]).every((c) => c.ok);
   } catch {
     return false;
   }
