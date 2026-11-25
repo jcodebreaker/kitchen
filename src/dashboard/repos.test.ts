@@ -8,7 +8,7 @@ import path from "node:path";
 import { afterAll, beforeAll, test } from "vitest";
 import * as control from "../engine/control.ts";
 import { findJob, jobDirOf } from "../engine/store.ts";
-import { addRepo, forgetRepo, readRepos } from "./repos.ts";
+import { addRepo, forgetRepo, kitchenHome, readRepos } from "./repos.ts";
 import { dashboardServer, serveDashboard } from "./server.ts";
 
 const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "kitchen-repos-")));
@@ -85,6 +85,8 @@ test("routes carry the repo: each key its own jobs; a key not on the list is a 4
     kitchen: true,
     version: JSON.parse(fs.readFileSync("package.json", "utf8")).version,
     private: false,
+    pid: process.pid,
+    home: path.resolve(kitchenHome()),
   });
   const post = (k: string, token = s.token) =>
     fetch(`${base}/r/${k}/api/steer`, {

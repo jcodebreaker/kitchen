@@ -3,9 +3,10 @@
 // (WAKES) wakes Kitchen as its CLI verb does (ADR 0025 §2, run/wake.ts).
 import path from "node:path";
 import * as control from "../engine/control.ts";
+import { failureOf } from "../engine/diagnose.ts";
 import { mergeHeld } from "../engine/jobs.ts";
 import { MAX_MESSAGE } from "../engine/messages.ts";
-import { findJob } from "../engine/store.ts";
+import { findJob, jobDirOf } from "../engine/store.ts";
 import { detachCollect, liveCollect } from "../inbox/collect.ts";
 import { parseEvery, scheduleCheck } from "../inbox/schedule.ts";
 import * as inbox from "../inbox/store.ts";
@@ -65,7 +66,11 @@ export const ACTIONS: Record<string, (repo: string, b: Body, out: Out) => Promis
       out(`${j.id}  is ${j.stage}: it is not waiting for an answer`);
       return 1;
     }
-    return control.feedback(repo, id, textOf(b, j.stage === "needs-info"), out);
+    // ADR 0032 §3: a merge that keeps failing goes back to Build, not to the lane it escalated from (review, merge
+    // check), as its diagnosis says. `to` is taken only for that diagnosis.
+    if (b.to !== undefined && (b.to !== "build" || failureOf(jobDirOf(repo, j.id), j)?.kind !== "merge"))
+      throw new BadRequest('to: only "build", and only for a job whose merge failed');
+    return control.feedback(repo, id, textOf(b, j.stage === "needs-info"), out, b.to === "build" ? { to: "build" } : {});
   },
   /** Follow up on a ready or merged job: another Build round. It reopens the job, so the page must say so: `reopen: true`. */
   "follow-up": (repo, b, out) => {

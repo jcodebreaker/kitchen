@@ -23,6 +23,8 @@ const Check = z.union([
       when: z.enum(["build", "merge"]).optional(),
       /** ADR 0021: start the app (`app:`) from the trial merge first and pass its URL in $BASE_URL. Needs `when: merge`. */
       needs_app: z.boolean().optional(),
+      /** ADR 0032 §4: `false` keeps the check written down but never runs it; the Report says it was off. */
+      enabled: z.boolean().optional(),
     })
     .strict(),
 ]);
@@ -186,7 +188,8 @@ const LEGACY_MODEL_ROLES = ["spec", "smith", "verifier", "report", "retro", "set
 const LEGACY_AGENT_KEYS = ["script", "timeout_sec", "max_turns"];
 
 export type RawConfig = z.infer<typeof ConfigSchema>;
-export type Config = RawConfig & { checkList: CheckSpec[]; dropped: string[] };
+/** `checksOff`: the checks written with `enabled: false` (ADR 0032 §4), never run. */
+export type Config = RawConfig & { checkList: CheckSpec[]; checksOff: CheckSpec[]; dropped: string[] };
 
 export class ConfigError extends Error {}
 
@@ -262,11 +265,17 @@ export function parseConfig(text: string): Config {
   if (protectedTarget(r.data, st.branch)) throw new ConfigError(`kitchen.yaml: staging.branch is ${st.branch}: ${neverMerges(r.data)}`);
   if (st.merge === "pr" && r.data.forge.kind !== "github")
     throw new ConfigError("kitchen.yaml: staging.merge: pr opens pull requests on GitHub: it needs forge: { kind: github }");
-  const checkList: CheckSpec[] = r.data.checks.map((c, i) =>
+  const all: CheckSpec[] = r.data.checks.map((c, i) =>
     typeof c === "string"
       ? { name: `check${i + 1}`, run: c, timeoutSec: 600, when: "build", needsApp: false }
       : { name: c.name, run: c.run, timeoutSec: c.timeout_sec ?? 600, when: c.when ?? "build", needsApp: c.needs_app ?? false },
   );
+  const off = (i: number) => {
+    const c = r.data.checks[i];
+    return typeof c !== "string" && c.enabled === false;
+  };
+  const checkList = all.filter((_, i) => !off(i));
+  const checksOff = all.filter((_, i) => off(i));
   const early = checkList.find((c) => c.needsApp && c.when !== "merge");
   if (early)
     throw new ConfigError(
@@ -274,7 +283,7 @@ export function parseConfig(text: string): Config {
     );
   const noApp = checkList.find((c) => c.needsApp) && !r.data.app.start;
   if (noApp) throw new ConfigError("kitchen.yaml: a check has needs_app: true but app.start is empty: say how to start the app, or set needs_app: false");
-  return { ...r.data, checkList, dropped: u.dropped };
+  return { ...r.data, checkList, checksOff, dropped: u.dropped };
 }
 
 /** Pure: a branch Kitchen never merges into itself: the base, main or master. */

@@ -631,7 +631,11 @@ test("ADR 0029 §2: a round with C2 NOT_RUN: QA drives only C2 on fresh seed dat
     assert.doesNotMatch(ok.brief, /## Re-drive, don't re-explore/);
     assert.match(ok.f.line, /QA PASS \(2 criteria\) → review/);
     assert.ok(fs.existsSync(path.join(qaDir(dirOf(r, id), 2), "from-round-1", "c1.txt")), "C1's evidence carried");
-    assert.match(renderReport(r, findJob(r, id)), /<h2>Checks<\/h2><pre>✓ guard<\/pre>/, "Build's checks from round 1, not 'not run'");
+    assert.match(
+      renderReport(r, findJob(r, id)),
+      /<h2>What was checked<\/h2>.*<td class="ok">✓<\/td><td>guard<\/td><td class="st">passed<\/td>/,
+      "Build's checks from round 1, not 'not run'",
+    );
   } finally {
     await appDown(r, id).catch(() => {});
   }

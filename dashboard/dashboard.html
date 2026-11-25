@@ -730,6 +730,20 @@ button.fl:hover{text-decoration-color:currentColor}
 .crit .thumb{grid-column:3;grid-row:1/3;display:block;width:84px;height:54px;border-radius:6px;border:1px solid var(--line2);overflow:hidden;background:var(--raise);cursor:zoom-in}
 .crit .thumb img{display:block;width:100%;height:100%;object-fit:cover;object-position:top left}
 .crit.bad .thumb{border-color:color-mix(in srgb,var(--fail) 45%,var(--line2))}
+/* ADR 0032: the stale-build banner, a failed step's three lines, and what QA tested (the Checks tab's foot). */
+.stale{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:7px 20px;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--fg2);background:var(--raise)}
+.stale[hidden]{display:none}
+.stale code{font:12px var(--mono);color:var(--fg);background:var(--bg);border:1px solid var(--line2);border-radius:6px;padding:1px 4px 1px 8px;display:inline-flex;align-items:center;gap:2px}
+.stale .ib{width:22px;height:22px;border-radius:5px;color:var(--mute)}
+.dg{display:flex;flex-direction:column;gap:2px;font-size:12.5px;line-height:1.45;min-width:0}
+.dg b{font-weight:600;color:var(--fg)}
+.dg code{font:11.5px var(--mono);color:var(--fail);border:0;background:none;padding:0;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.dg span{color:var(--fg2)}
+.ev.ask .dg code{-webkit-line-clamp:unset;display:block}
+.ev.ask details{margin-top:6px;font-size:12px;color:var(--faint)}
+.ev.ask details summary{cursor:pointer}
+.ev.ask details pre{font:11.5px/1.45 var(--mono);color:var(--fg2);white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto;margin:6px 0 0;padding:8px;background:var(--raise);border-radius:6px}
+.tsted{color:var(--faint);font-size:12px;line-height:1.55;padding:10px 0 0;border-top:1px solid var(--line);margin-top:4px}
 </style>
 </head>
 <body>
@@ -766,6 +780,7 @@ button.fl:hover{text-decoration-color:currentColor}
       <div class="tg"><button class="ib" onclick="palette()" aria-label="Search and commands" title="Search and commands"><span id="kI"></span></button>
       <button class="btn pri" id="newB" onclick="newTicket()">New<span class="lg">ticket</span></button></div>
     </div>
+    <div class="stale" id="stale" role="status" hidden></div>
     <div class="scroll" id="scroll">
       <div id="list"></div>
       <div class="foot2" id="foot"></div>
@@ -921,8 +936,9 @@ async function pollDetail(){
   }
   setTimeout(pollDetail,1500);
 }
-function sigOf(j){return [JSON.stringify(j.waits),JSON.stringify(j.pull),j.target,j.checking?[j.checking.cmd,j.checking.at,j.checking.last,j.checking.setup,j.checking.of].join("~"):"",j.check?j.check.proposalsFailed:"",j.waiting,j.state,j.phase,j.stage,j.lane,j.round,j.q,j.pausedBy,j.title,j.report,j.files.length,j.runnerOn,j.movedAt,j.failed,j.risk,j.proof,fresh.has(j.id),expanded===j.id].join("|")}
+function sigOf(j){return [JSON.stringify(j.waits),JSON.stringify(j.pull),j.target,j.checking?[j.checking.cmd,j.checking.at,j.checking.last,j.checking.setup,j.checking.of].join("~"):"",j.check?j.check.proposalsFailed:"",j.waiting,j.state,j.phase,j.stage,j.lane,j.round,j.q,j.diag?[j.diag.what,j.diag.line,j.diag.next].join("~"):"",j.pausedBy,j.title,j.report,j.files.length,j.runnerOn,j.movedAt,j.failed,j.risk,j.proof,fresh.has(j.id),expanded===j.id].join("|")}
 function paint(before){
+  paintStale();
   const order0=[...before.keys()].join(),order1=jobs.map(j=>j.id).join();
   const groups=j=>j?(view==="board"?j.lane:group(j)):"";
   const runner=!!(snap&&snap.runner.running),runnerChanged=paint.runner!==runner;paint.runner=runner; // the runner bar comes and goes with it
@@ -948,7 +964,7 @@ function evHTML(e,uid,anim){
   if(e.c==="tool"){const live=liveOpen(e);return `<div class="ev tool${live?" live":""}${a}"><span class="vb">${esc(e.vb||e.t)}</span><span class="tg${live?" shim":""}">${esc(e.tg||"")}</span>${e.df?dfHTML(...e.df):""}<span class="du num" ${live&&e.at?`data-at="${esc(e.at)}"`:""}>${live?(e.at?elapsed(e.at).toFixed(1):"0.0")+"s":(e.dur||0).toFixed(1)+"s"}</span></div>`}
   if(e.c==="res"||e.c==="bad") return `<div class="ev ${e.c}${a}">${e.c==="res"?I.chk:I.xx}<span>${esc(e.t)}</span></div>`;
   if(e.c==="you") return `<div class="ev you${a}"><div class="bub">${esc(e.t)}</div><div class="ms">${esc(e.status)}${e.at?" · "+hhmm(e.at):""}</div></div>`;
-  if(e.c==="ask") return `<div class="ev ask${a}"><span class="whoo">${e.who==="Kitchen"?"Kitchen needs you":esc(e.who||"Agent")+" asks"}</span><p>${md(e.t)}</p></div>`;
+  if(e.c==="ask") return `<div class="ev ask${a}"><span class="whoo">${e.who==="Kitchen"?"Kitchen needs you":esc(e.who||"Agent")+" asks"}</span>${e.diag?dgPanel(e.diag):`<p>${md(e.t)}</p>`}</div>`;
   return `<div class="ev sys${a}">${esc(e.t)}${e.at?` · <span class="mono">${hhmm(e.at)}</span>`:""}</div>`;
 }
 /* ADR 0025 §4: a check running now (Build's checks, the trial merge's): its command, for how long, its log's last line.
@@ -1039,8 +1055,8 @@ function rowHTML(j){
   const g=group(j),ex=expanded===j.id;
   let sub="",mid="",tm="",acts="";
   if(g==="you"&&j.waits){sub=waitHTML(j)+(j.waits.for==="confirm"?approveBtns(j,ex):"");mid=j.waits.for==="confirm"?"":`<button class="btn sm rep" data-act="message" data-id="${esc(j.id)}">${ex?"Close":"Reply"}</button>`;tm=`<span class="tm mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`}
-  else if(g==="you"&&held(j)){sub=j.checking?`<div class="sub" id="lv-${esc(j.id)}">${liveHTML(j)}</div>`:`<div class="sub q">${md(j.q)}</div>`+readyBtns(j,ex&&asking.has(j.id));tm=`<span class="tm mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`}
-  else if(g==="you"){sub=`<div class="sub q">${md(j.q)}</div>`;mid=`<button class="btn act sm rep" data-act="message" data-id="${esc(j.id)}">${ex?"Close":"Reply"}</button>`;tm=`<span class="tm mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`}
+  else if(g==="you"&&held(j)){sub=j.checking?`<div class="sub" id="lv-${esc(j.id)}">${liveHTML(j)}</div>`:dgRow(j)+readyBtns(j,ex&&asking.has(j.id));tm=`<span class="tm mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`}
+  else if(g==="you"){sub=dgRow(j);mid=`<button class="btn act sm rep" data-act="message" data-id="${esc(j.id)}">${ex?"Close":"Reply"}</button>`;tm=`<span class="tm mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`}
   else if(g==="run"){sub=`<div class="sub" id="lv-${esc(j.id)}">${liveHTML(j)}</div>`;mid=chgHTML(j)+trackHTML(j);tm=`<span class="tm mono num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`;
     acts=`<span class="acts"><button class="ib" title="Message ${esc(agent(j))}" aria-label="Message agent" data-act="message" data-id="${esc(j.id)}">${I.msg}</button></span>`}
   else{mid=`<span class="fin ${fresh.has(j.id)?"new":""}">${fresh.has(j.id)?"Just finished · ":""}${isCk(j)&&j.state==="done"?ckDoneHTML(j):esc(finLabel(j))}</span>`;tm=`<span class="tm mono num">${costTxt(j)}</span>`;
@@ -1091,9 +1107,9 @@ function cardHTML(j){
   const l=j.lane,end=ended(j)||l==="done",idt="#"+j.num;
   const cls=`${l==="you"?"ny":""} ${end?"end":""} ${j.state==="done"?"rdy":""} ${j.state==="rejected"||j.pausedBy==="stop"?"gone":""} ${open===j.id?"open":""} ${sel===j.id?"sel":""} ${just.has(j.id)?"flash":""}`;
   const bot=l==="you"
-    ?held(j)?j.checking?`<div class="cbot"><div class="evl" id="lv-${esc(j.id)}">${evLine(j)}</div></div>`:`<div class="cq">${md(j.q)}</div>${readyCardBtns(j)}`
+    ?held(j)?j.checking?`<div class="cbot"><div class="evl" id="lv-${esc(j.id)}">${evLine(j)}</div></div>`:dgCard(j)+readyCardBtns(j)
     :j.waits?waitHTML(j)+(j.waits.for==="confirm"?approveBtns(j,false):`<span class="tka"><button class="btn sm" data-act="message" data-id="${esc(j.id)}">Reply</button></span>`)
-    :`<div class="cq">${md(j.q)}</div><button class="btn act sm" data-act="message" data-id="${esc(j.id)}">Reply</button>`
+    :dgCard(j)+`<button class="btn act sm" data-act="message" data-id="${esc(j.id)}">Reply</button>`
     :`<div class="cbot"><div class="evl" id="lv-${esc(j.id)}">${evLine(j)}</div>${j.state==="rejected"?"":`<button class="ib" title="${j.state==="done"?"Follow up":"Message "+esc(agent(j))}" aria-label="${j.state==="done"?"Follow up":"Message agent"}" data-act="message" data-id="${esc(j.id)}">${I.msg}</button>`}</div>`;
   return `<div class="rw card ${cls}" id="rw-${esc(j.id)}" style="view-transition-name:r-${esc(j.id)}" tabindex="0" role="button" data-row="${esc(j.id)}">
     <div class="ctop"><span class="id">${esc(idt)}</span>${j.round>1?`<span class="rnd">round ${j.round}</span>`:""}${isCk(j)?(end?"":`<span class="kck" title="A check: Kitchen tests ${esc(tgt(j))}, nothing is built or merged">Check</span>`)+(every(j)?`<span class="ev" title="Filed again every ${esc(j.check.every)} (kitchen schedules)">${esc(every(j))}</span>`:""):offDef(j)&&!end?`<span class="tgt" title="Merges into ${esc(j.target)}, not ${esc(DEF())}">→ ${esc(j.target)}</span>`:""}<span class="sp"></span>${j.state==="run"&&j.runnerOn?'<i class="pulse" title="Working now"></i>':""}${end?"":`<span class="mt num" data-tm="${esc(j.id)}" title="${esc(timerTitle(j))}">${timerHTML(j)}</span>`}</div>
@@ -1114,7 +1130,7 @@ function order(){if(view==="board")return lanes().flatMap(l=>inLane(l.k));
 /* Jobs in a lane move only while an orchestrator works the queue (kitchen run, or /kitchen run in Claude Code); with
    none they are queued. The sidebar and the list (or Board) take their words from here. */
 function queueWords(runnerRunning,run){
-  if(runnerRunning)return {group:"Running",hint:"Your message reaches the job's next agent",empty:"Nothing running. Start one with New ticket.",busy:run.length>0};
+  if(runnerRunning)return {group:"Running",hint:"",empty:"Nothing running. Start one with New ticket.",busy:run.length>0};
   return {group:"Queued",hint:"Waiting for the orchestrator: start it and they move",empty:"Nothing queued. Start one with New ticket.",busy:false};
 }
 /* queue-words:end */
@@ -1162,8 +1178,9 @@ function composerHTML(j,where="row"){
   if(held(j)&&!asking.has(j.id))return where==="panel"?readyBar(j):"";
   if(held(j))return `<form class="cmp" data-cmp="${esc(j.id)}"><div class="box"><textarea rows="1" data-draft="${esc(j.id)}" data-where="${where}" placeholder="What should change in ${esc(j.num)}?" aria-label="What should change in ${esc(j.num)}?" maxlength="4000">${esc(drafts[j.id]||"")}</textarea>
     <div class="cbar"><span class="hint">This starts round ${j.round+1} instead of merging</span><span class="sp"></span>${where==="panel"?`<button type="button" class="btn ghost sm" data-act="ask-cancel" data-id="${esc(j.id)}">Cancel</button>`:""}<button class="send" type="submit" aria-label="Send" title="Send">${I.up}</button></div></div></form>`;
-  const ph=cf?"What should change in the criteria?":rf?`Answer here, or refine it in Claude Code…`:g==="you"?`Reply to ${a}…`:j.state==="paused"?`Leave a note for ${a}…`:g==="run"?`A note for its next lane: redirect it, add context…`:`What should change in ${j.num}?`;
-  const hint=cf?"Approve builds it on these criteria; a change goes back to intake":rf?"Your answer goes back to intake as your own words":g==="you"?`${Agent(j)} is waiting for you`:g==="done"?"This starts round "+(j.round+1):j.state==="paused"?"Paused. It reads this when you resume":g==="run"?"Goes to its next lane":"Starts round "+(j.round+1);
+  const mg=j.diag&&j.diag.kind==="merge"; /* ADR 0032: its Reply goes to Build, whatever lane it escalated from */
+  const ph=cf?"What should change in the criteria?":rf?`Answer here, or refine it in Claude Code…`:mg?"Reply to the Build agent…":g==="you"?`Reply to ${a}…`:j.state==="paused"?`Leave a note for ${a}…`:g==="run"?`A note for its next lane: redirect it, add context…`:`What should change in ${j.num}?`;
+  const hint=cf?"Approve builds it on these criteria; a change goes back to intake":rf?"Your answer goes back to intake as your own words":mg?"Your reply goes back to Build":g==="you"?`${Agent(j)} is waiting for you`:g==="done"?"This starts round "+(j.round+1):j.state==="paused"?"Paused. It reads this when you resume":g==="run"?"Goes to its next lane":"Starts round "+(j.round+1);
   const chips=g==="run"&&j.state!=="paused"?(j.kind==="check"?["Also check it on a phone width","Try an edge case too"]:["Add a test for this","Keep the diff minimal"]):[];
   const ctl=g==="run"&&where==="panel"?"":g==="run"?`<button type="button" class="btn ghost sm" data-act="${j.state==="paused"?"resume":"pause"}" data-id="${esc(j.id)}">${j.state==="paused"?I.play+"Resume":I.pause+"Pause"}</button>${j.state==="paused"?"":`<button type="button" class="btn ghost sm" data-act="stop" data-id="${esc(j.id)}">${I.stop}Stop</button>`}`
     :g==="you"?`<button type="button" class="btn ghost sm" data-act="reject" data-id="${esc(j.id)}">Reject</button>${cf?`<button type="button" class="btn act sm" data-act="approve" data-id="${esc(j.id)}" title="Build it on these criteria (kitchen approve ${esc(j.num)})">Approve</button>`:""}`
@@ -1223,7 +1240,7 @@ async function post(verb,body){
   }catch(e){return {ok:false,lines:["Kitchen's dashboard server is not answering"]}}
 }
 const said=lines=>(lines.at(-1)||"").replace(/^\S+\s\s/,"");
-function refreshSoon(){clearTimeout(refreshSoon.t);refreshSoon.t=setTimeout(async()=>{const g=gen;try{const d=await getJSON(BASE+"/data.json");if(g!==gen)return;snap=d;const before=new Map(jobs.map(j=>[j.id,j]));jobs=d.jobs.filter(x=>!hideJobs.has(x.id)).map(fromSnap);paint(before);if(open&&J(open)){const dd=await getJSON(`${BASE}/jobs/${encodeURIComponent(open)}/detail.json`);if(g!==gen)return;const old=details[open];details[open]=dd;panelUpdate(old,dd)}}catch(e){}},120)}
+function refreshSoon(){clearTimeout(refreshSoon.t);refreshSoon.t=setTimeout(async()=>{const g=gen;try{const d=await getJSON(BASE+"/data.json");if(g!==gen)return;snap=d;const before=new Map(jobs.map(j=>[j.id,j]));jobs=d.jobs.filter(x=>!hideJobs.has(x.id)).map(fromSnap);paint(before);if(open&&J(open)){const dd=await getJSON(`${BASE}/jobs/${encodeURIComponent(open)}/detail.json`);if(g!==gen)return;const old=details[open],oj=J(open);dd.mv=oj?oj.movedAt:null;if(oj)oj.crit=dd.crit;details[open]=dd;panelUpdate(old,dd)}}catch(e){}},120)}
 function clearDraft(id){drafts[id]="";$$(`textarea[data-draft="${id}"]`).forEach(o=>o.value="");grow()}
 const sureRefine=new Set();
 async function send(id){
@@ -1237,7 +1254,7 @@ async function send(id){
   clearDraft(id);
   const d=details[id];
   if(d&&open===id){const last=d.tl.at(-1);if(last){last.evs.push({c:"you",t:text,at:new Date().toISOString(),kind:verb,status:"Sending…"});if(tab==="activity")renderPanel()}}
-  const r=await post(verb,verb==="follow-up"?{id:j.id,text,reopen:true}:{id:j.id,text});
+  const r=await post(verb,verb==="follow-up"?{id:j.id,text,reopen:true}:verb==="answer"&&j.diag&&j.diag.kind==="merge"?{id:j.id,text,to:"build"}:{id:j.id,text});
   if(r.ok&&verb==="follow-up")asking.delete(id);
   if(!r.ok){drafts[id]=text;$$(`textarea[data-draft="${id}"]`).forEach(o=>o.value=text);grow();nope(id);toast(said(r.lines)||"Not sent")}
   else{if(open!==id){expanded=null;toast(verb==="steer"?`Sent to ${agent(j)} on ${j.num}`:verb==="answer"?`Answer sent to ${j.num}`:`${j.num} reopened for another round`,"View",()=>openJob(id))}}
@@ -1278,8 +1295,9 @@ function segHTML(j,s,i,n){
 const ckPanel=j=>ckHTML(j,true)+`<span class="lg">log: <span class="mono">${esc(j.checking.log)}</span> in the job folder</span>`;
 function tabBody(j){
   const d=details[j.id];
-  if(tab==="checks"&&isCk(j)&&d) return ckTab(j,d);
-  if(tab==="checks") return !j.crit.length&&j.checks&&j.checks.total?`<div class="none">Loading…</div>`:j.crit.length?j.crit.map((c,i)=>`<div class="crit">${S[c.st]||S.wait}<span><span class="mono" style="color:var(--faint);margin-right:6px">${esc(c.id)}</span>${esc(c.text)}</span>${c.e?`<span class="e">${esc(c.e)}</span>`:""}</div>`).join(""):`<div class="none">No checks yet. Intake writes them.</div>`;
+  if(tab==="checks"&&isCk(j)&&d) return ckTab(j,d)+testedHTML(d);
+  if(tab==="checks"&&!j.crit.length&&j.checks&&j.checks.total) return `<div class="none">Loading…</div>`;
+  if(tab==="checks") return (j.crit.length?j.crit.map((c,i)=>`<div class="crit">${S[c.st]||S.wait}<span><span class="mono" style="color:var(--faint);margin-right:6px">${esc(c.id)}</span>${esc(c.text)}</span>${c.e?`<span class="e">${esc(c.e)}</span>`:""}</div>`).join(""):`<div class="none">No checks yet. Intake writes them.</div>`)+testedHTML(d);
   if(tab==="changes") return j.files.length?j.files.map(f=>`<div class="file"><span class="p">${esc(f.p)}</span>${dfHTML(f.a,f.d)}</div>`).join(""):`<div class="none">No files touched yet.</div>`;
   if(!d)return `<div class="none">Loading…</div>`;
   return d.tl.map((s,i)=>segHTML(j,s,i,d.tl.length)).join("");
@@ -1753,6 +1771,20 @@ document.addEventListener("keydown",e=>{if(e.key==="Escape"&&!$("#mpop").hidden)
 /* ───────── boot ───────── */
 $("#nYouI").innerHTML=S.wait;$("#nRunI").innerHTML=SB.run;$("#nDoneI").innerHTML=SB.done;if($("#rmAddI"))$("#rmAddI").innerHTML=SB.add;$("#thB").innerHTML=SB.look;$("#sbB").innerHTML=SB.side;$("#kI").innerHTML=I.search;$("#nInI").innerHTML=OI.tray;$("#nHeldI").innerHTML=OI.held;$("#nAddSI").innerHTML=SB.add;sbLabel();paintLoopNav();
 renderList();poll(gen);pollDetail();pollInbox();
+/* ───────── ADR 0032: versions and diagnostics ───────── */
+/* The server keeps the code it started with: once the build on disk differs, one quiet line says how to restart. */
+function paintStale(){const b=$("#stale");if(!b)return;const on=!!(snap&&snap.kitchenStale),c=on?snap.restart||"kitchen dashboard --restart":"";
+  if(b.hidden===!on&&b.dataset.cmd===c)return;b.hidden=!on;b.dataset.cmd=c;
+  b.innerHTML=on?`<span>Kitchen was updated · restart the dashboard to use it</span><code>${esc(c)}<button type="button" class="ib" onclick="copyRestart()" title="Copy ${esc(c)}" aria-label="Copy ${esc(c)}">${I.copy}</button></code>`:""}
+async function copyRestart(){const c=$("#stale").dataset.cmd;try{await navigator.clipboard.writeText(c);toast("Copied: "+c+". Run it in a terminal")}catch(e){toast("Run in a terminal: "+c)}}
+/* A failed step: what, the line that matters, what to do; in place of Kitchen's raw reason. The panel adds the raw output. */
+const dgHTML=d=>`<div class="dg"><b>${esc(d.what)}</b>${d.line?`<code title="${esc(d.line)}">${esc(d.line)}</code>`:""}<span>${esc(d.next)}</span></div>`;
+const dgRow=j=>j.diag?`<div class="sub">${dgHTML(j.diag)}</div>`:`<div class="sub q">${md(j.q)}</div>`;
+const dgCard=j=>j.diag?dgHTML(j.diag):`<div class="cq">${md(j.q)}</div>`;
+/* Raw output only when there is a log: without one it would be Kitchen's reason again. */
+const dgPanel=d=>dgHTML(d)+(d.log?`<details><summary>Raw output · <span class="mono">${esc(d.log)}</span> in the job folder</summary><pre>${esc(d.raw)}</pre></details>`:"");
+/* What QA tested, and the versions in play: the foot of the Checks tab (absent on a job from before ADR 0032). */
+const testedHTML=d=>d&&d.tested?`<div class="tsted">${esc(d.tested.line)}${d.tested.versions?`<br>${esc(d.tested.versions)}`:""}</div>`:"";
 </script>
 </body>
 </html>

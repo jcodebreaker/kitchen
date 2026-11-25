@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { type Config, LANE_ROLES, loadConfig, modelFor, targetOf } from "../config.ts";
 import { readControl } from "../engine/control.ts";
+import { type FailKind, failureOf } from "../engine/diagnose.ts";
 import { diffSize } from "../engine/git.ts";
 import { heartbeatFile, syncPrs } from "../engine/jobs.ts";
 import { criteriaOf, leftOutOf, readIntake, readQa, readReview } from "../engine/lanes.ts";
@@ -229,6 +230,12 @@ export function waitingOf(id: string, plan: Plan | null, o: { parallel: number; 
   return `Waiting for a free lane · ${and(using)} ${all} (parallel: ${o.parallel})`;
 }
 
+/** ADR 0032 §3: the card's three lines for a failed step (the raw output stays in detail.json). */
+function diagOf(dir: string, j: Job, cfg: Config | null): JobCard["diag"] {
+  const f = failureOf(dir, j, cfg ?? undefined);
+  return f ? { kind: f.kind, what: f.what, line: f.line, next: f.next, log: f.log } : null;
+}
+
 /** One ledger line, as a card's "now" line. Pure. */
 export function stepOf(l: LedgerLine): string {
   if (l.event === "agent") return `${l.role ?? "agent"} ${String(l.result ?? "started")}`.trim();
@@ -319,6 +326,11 @@ export type JobCard = {
   } | null;
   /** ADR 0028 amendment: false for intake's `KEEP: no` (built to verify, not merged unless promoted); absent otherwise. */
   keep?: false;
+  /**
+   * ADR 0032 §3: a step that failed (checks, the app, a lane refused, a merge): what, its useful line and what to do,
+   * with its log (in the job folder); the card shows these in place of the raw reason. Null otherwise.
+   */
+  diag: { kind: FailKind; what: string; line: string; next: string; log: string | null } | null;
   /** Verified and not merged: the words ("Verified · not merged"), or null. */
   verified: string | null;
   /** It can be promoted now (`kitchen promote`, the `promote` action): done, KEEP: no, not merged. */
@@ -508,6 +520,7 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
           }
         : null,
       ...(j.keep === false ? { keep: false as const } : {}),
+      diag: diagOf(dir, j, cfg),
       verified: j.stage === "done" ? (j.verified?.words ?? null) : null,
       promotable: promotable(j),
     });

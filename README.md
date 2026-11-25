@@ -72,7 +72,7 @@ kitchen run --detach && kitchen dashboard
 
 The session plans waves and starts one agent per lane. Tickets run side by side, even when they touch the same file: git merges them, and one that conflicts with what landed first **catches up**: its builder resolves the merge on top of `staging`, QA re-drives what passed, review reads only the resolution, and it costs no round. Answer a job that needs you, or steer one from the dashboard.
 
-**One dashboard for every repo.** `kitchen dashboard` serves http://127.0.0.1:7357/ with a switcher for every repo you ran Kitchen in. Run it in another repo and it joins the open page (`already open: …/#<repo>`) instead of taking a new port; a badge counts jobs in other repos that need you.
+**One dashboard for every repo.** `kitchen dashboard` serves http://127.0.0.1:7357/ with a switcher for every repo you ran Kitchen in. Run it in another repo and it joins the open page (`already open: …/#<repo>`) instead of taking a new port; a badge counts jobs in other repos that need you. After Kitchen is rebuilt or updated, the page says so; `kitchen dashboard --restart` starts the new build on the same port.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/dashboard-switcher-dark.webp">

@@ -157,6 +157,12 @@ export type Job = {
    * ADR 0029 §4: `setup`: the step `kitchen qa up` is on instead ("Resetting data"), `of`: the health wait's limit (s).
    */
   checking?: { cmd: string; at: string; log: string; setup?: true; of?: number };
+  /**
+   * ADR 0032 §2: what the last QA lane tested, recorded when it started: the branch head (a check: the tip it drives),
+   * the target and its tip, how many uncommitted paths the person's checkout had (never tested: lanes work on commits),
+   * Kitchen's version, and the tool with its version when `kitchen run`'s preflight saw it. Absent on older jobs.
+   */
+  tested?: { at: string; head: string; target: string; onto: string; dirty: number; kitchen: string; tool?: string };
   /** Why a job that passed stopped at Ready (high risk, a large diff, auto-merge off). */
   held?: string;
   /**
