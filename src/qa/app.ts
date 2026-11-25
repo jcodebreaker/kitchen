@@ -17,6 +17,7 @@ import { pathToFileURL } from "node:url";
 import { prepareOf, runShell } from "../checks/run-checks.ts";
 import { type AppConfig, type Config, loadConfig } from "../config.ts";
 import { criteriaOf, qaDir, regressDir } from "../engine/lanes.ts";
+import type { Job } from "../engine/machine.ts";
 import { findJob, jobDirOf, listJobs, updateJob, worktreeOf, writeAtomic } from "../engine/store.ts";
 import { isRunId, runDir, runEvidence, runWorktree } from "../verify/paths.ts";
 
@@ -92,7 +93,7 @@ export type Step = { cmd: string; of?: number } | null;
  * line; null clears it. A verify run has no job; a failed write never fails the step.
  */
 const setupStep =
-  (repo: string, ref: string, log: string) =>
+  (repo: string, ref: string, log: string, seen?: (c: Job["checking"] | null) => void) =>
   async (s: Step): Promise<void> => {
     if (isRunId(ref)) return;
     try {
@@ -101,12 +102,20 @@ const setupStep =
       await updateJob(repo, id, (j) => {
         if (s) j.checking = { cmd: s.cmd, at: new Date().toISOString(), log: rel, setup: true, ...(s.of ? { of: s.of } : {}) };
         else if (j.checking?.setup) delete j.checking;
+        seen?.(j.checking ? { ...j.checking } : null);
         return j;
       });
     } catch {}
   };
 
-export async function appUp(repo: string, ref: string, out: (l: string) => void, cfg: Config = loadConfig(repo)): Promise<number> {
+/** `seen`: each value the job's `checking` takes, as written (a seam for tests). */
+export async function appUp(
+  repo: string,
+  ref: string,
+  out: (l: string) => void,
+  cfg: Config = loadConfig(repo),
+  o: { seen?: (c: Job["checking"] | null) => void } = {},
+): Promise<number> {
   const { id: jid, wt, out: dir } = jobPaths(repo, ref);
   const remote = runUrl(repo, jid);
   if (remote) {
@@ -122,7 +131,7 @@ export async function appUp(repo: string, ref: string, out: (l: string) => void,
     return 0;
   }
   const log = path.join(dir, "app.log");
-  const step = setupStep(repo, jid, log);
+  const step = setupStep(repo, jid, log, o.seen);
   let code = 1;
   try {
     code = await startUp(repo, jid, wt, log, out, cfg, step);

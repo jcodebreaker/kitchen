@@ -145,26 +145,21 @@ test("ADR 0029 §4: qa up records each setup step in the job's checking, and cle
   const job = path.join(jobDirOf(root, id), "job.json");
   const seen = path.join(root, "seen");
   fs.mkdirSync(seen, { recursive: true });
-  const peek = (name: string) => `cp '${job}' '${path.join(seen, name)}'`;
   const cfg = loadConfig(root);
-  const app = {
-    ...cfg.app,
-    reset: peek("reset.json"),
-    start: `${peek("start.json")}; sleep 1; ${peek("wait.json")}; exec node srv.mjs`,
-    ready_timeout_sec: 20,
-  };
-  assert.equal(await appUp(root, id, out, { ...cfg, app }), 0, lines.join("\n"));
-  const at = (name: string) => (JSON.parse(fs.readFileSync(path.join(seen, name), "utf8")) as { checking?: Record<string, unknown> }).checking;
-  assert.deepEqual(
-    [at("reset.json")?.cmd, at("reset.json")?.setup, at("reset.json")?.log],
-    ["Resetting data", true, path.join("rounds", "1", "qa", "app.log")],
-  );
-  assert.equal(at("start.json")?.cmd, "Starting the app");
-  assert.deepEqual([at("wait.json")?.cmd, at("wait.json")?.of], ["Waiting for /healthz", 20]);
+  // app.reset runs after its step is written, so it sees it on disk; every value `checking` takes is recorded as written.
+  const app = { ...cfg.app, reset: `cp '${job}' '${path.join(seen, "reset.json")}'`, ready_timeout_sec: 20 };
+  const steps: unknown[] = [];
+  const record = (c: { cmd: string; setup?: true; of?: number } | null | undefined) => steps.push(c ? [c.cmd, c.setup, c.of] : null);
+  assert.equal(await appUp(root, id, out, { ...cfg, app }, { seen: record }), 0, lines.join("\n"));
+  const disk = (JSON.parse(fs.readFileSync(path.join(seen, "reset.json"), "utf8")) as { checking?: Record<string, unknown> }).checking;
+  assert.deepEqual([disk?.cmd, disk?.setup, disk?.log], ["Resetting data", true, path.join("rounds", "1", "qa", "app.log")]);
+  assert.deepEqual(steps, [["Resetting data", true, undefined], ["Starting the app", true, undefined], ["Waiting for /healthz", true, 20], null]);
   assert.equal(findJob(root, id).checking, undefined, "cleared once up");
   await appDown(root, id);
-  assert.equal(await appUp(root, id, out, { ...cfg, app: { ...app, reset: "exit 3" } }), 1);
-  assert.equal(findJob(root, id).checking, undefined, "cleared when a step fails");
+  steps.length = 0;
+  assert.equal(await appUp(root, id, out, { ...cfg, app: { ...app, reset: "exit 3" } }, { seen: record }), 1);
+  assert.deepEqual(steps, [["Resetting data", true, undefined], null], "cleared when a step fails");
+  assert.equal(findJob(root, id).checking, undefined);
 });
 
 test("ADR 0029 §4: the browser is installed once when it is missing; a failed install is the one line to refuse with", async () => {
