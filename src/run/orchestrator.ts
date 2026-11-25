@@ -16,7 +16,8 @@ import { appendLedger } from "../ledger/append.ts";
 import { ownerAlive, processStart } from "../lock.ts";
 
 export type Out = (l: string) => void;
-type RunInfo = { pid: number; start: string | null; at: string; log: string; command: string[] };
+/** `tool`: ADR 0032 §2, the tool and the version its preflight printed ("claude 2.1.400"), when it printed one. */
+type RunInfo = { pid: number; start: string | null; at: string; log: string; command: string[]; tool?: string };
 
 export const runFile = (repo: string) => path.join(kitchenDir(repo), "run.json");
 export const runLog = (repo: string) => path.join(kitchenDir(repo), "run.log");
@@ -40,7 +41,7 @@ export function olderThan(a: string, b: string): boolean {
  * ADR 0025 §3: before a run, `<bin> --version`: why not to start (the binary isn't there, or it is older than
  * MIN_CLAUDE), or null. A wrapper that prints no version is let through.
  */
-export function preflight(bin: string[], o: { command?: boolean } = { command: true }): string | null {
+export function preflight(bin: string[], o: { command?: boolean; seen?: (version: string) => void } = { command: true }): string | null {
   const name = bin.join(" ");
   const r = spawnSync(bin[0], [...bin.slice(1), "--version"], { encoding: "utf8", timeout: 30_000, env: scrubbedEnv() });
   if (r.error)
@@ -51,6 +52,7 @@ export function preflight(bin: string[], o: { command?: boolean } = { command: t
       : `${name} --version failed: ${r.error.message}`;
   if (r.status !== 0) return `${name} --version failed (exit ${r.status ?? r.signal}): ${`${r.stderr}${r.stdout}`.trim().split("\n").pop() ?? ""}`;
   const v = /(\d+\.\d+\.\d+)/.exec(r.stdout)?.[1];
+  if (v) o.seen?.(v);
   return v && olderThan(v, MIN_CLAUDE) ? `Claude Code ${v} is older than Kitchen needs (${MIN_CLAUDE}). Update it: claude update` : null;
 }
 
@@ -171,8 +173,9 @@ export async function run(
     out(`orchestrator: already running (pid ${live.pid}, log ${live.log})`);
     return 0;
   }
+  let toolVersion: string | undefined;
   if (cfg.agent.tool === "claude") {
-    const no = preflight(agentBin(cfg), { command: !!cfg.agent.command });
+    const no = preflight(agentBin(cfg), { command: !!cfg.agent.command, seen: (v) => (toolVersion = `claude ${v}`) });
     if (no) {
       out(`kitchen run: ${no}. Nothing started.`);
       return 2;
@@ -228,7 +231,7 @@ export async function run(
     env: scrubbedEnv(),
     graceMs: o.graceMs,
     onStart: (pid) => {
-      info = { pid, start: processStart(pid), at: new Date().toISOString(), log, command: argv };
+      info = { pid, start: processStart(pid), at: new Date().toISOString(), log, command: argv, ...(toolVersion ? { tool: toolVersion } : {}) };
       writeAtomic(runFile(repo), JSON.stringify(info));
       out(`orchestrator: ${argv.slice(0, 3).join(" ")} … (pid ${pid}); the dashboard shows the jobs: kitchen dashboard`);
     },

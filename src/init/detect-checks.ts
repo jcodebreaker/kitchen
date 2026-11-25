@@ -309,6 +309,24 @@ export function detectChecks(repo: string): Detected | null {
   };
 }
 
+/**
+ * ADR 0032 §4: each language the repo has, and its end-to-end suite, on its own (the Report's "What was checked" says
+ * which one no kitchen.yaml check covers): its label, the file it was read from, the checks it names. A Makefile is an
+ * entry point, not a language: it isn't one.
+ */
+export function detectSources(repo: string): { label: string; from: string; checks: DetectedCheck[] }[] {
+  const named: [string, Detected | null][] = [
+    ["node", fromPackageJson(repo)],
+    ["python", fromPyproject(repo)],
+    ["go", fromGo(repo)],
+    ["rust", fromCargo(repo)],
+  ];
+  const out = named.flatMap(([label, d]) => (d?.checks.length ? [{ label, from: d.from[0] ?? "", checks: d.checks }] : []));
+  const e = detectE2e(repo);
+  if (e.check) out.push({ label: "end-to-end", from: e.from ?? "", checks: [e.check] });
+  return out;
+}
+
 function unitChecks(repo: string): Detected | null {
   const make = fromMakefile(repo);
   const eco = [fromPackageJson(repo), fromPyproject(repo), fromGo(repo), fromCargo(repo)].filter((d): d is Detected => d !== null);

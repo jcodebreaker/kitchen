@@ -103,3 +103,20 @@ test("actions are the CLI's verbs: refused without the token; a steer lands on t
   assert.deepEqual(started, ["x"], "no orchestrator was running, so one was started");
   assert.match(t.lines.join("\n"), /→ intake · Kitchen started$/m, "the ticket line says Kitchen started");
 });
+
+test("ADR 0032 §3: Reply on a merge that keeps failing sends it to Build; `to` is refused for any other job", async () => {
+  await control.ticket(root, "Merge keeps failing", () => {});
+  const id = findJob(root, "3").id;
+  const f = path.join(jobDirOf(root, id), "job.json");
+  const stuck = (reason: string) => {
+    const j = JSON.parse(fs.readFileSync(f, "utf8"));
+    Object.assign(j, { stage: "needs-human", escalatedFrom: "review", pausedReason: reason });
+    fs.writeFileSync(f, JSON.stringify(j));
+  };
+  stuck("the qa lane failed 3 times: QA: no verdict.json");
+  assert.equal((await post("answer", { id, text: "go", to: "build" })).status, 400);
+  stuck("staging keeps moving under it (3 catch-ups)");
+  const r = (await (await post("answer", { id, text: "rebase it", to: "build" })).json()) as { ok: boolean; lines: string[] };
+  assert.equal(r.ok, true, r.lines.join());
+  assert.equal(findJob(root, id).stage, "build");
+});

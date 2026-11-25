@@ -14,6 +14,7 @@ import { commentOnMerge } from "../inbox/comment.ts";
 import { addFindings, proposeCheckFindings, qaFindings, reviewFindings } from "../inbox/findings.ts";
 import { appendLedger } from "../ledger/append.ts";
 import { withFileLock } from "../lock.ts";
+import { liveRun } from "../run/orchestrator.ts";
 import { skillsForLane } from "../skills/forjob.ts";
 import { PromptSource } from "../sources/prompt.ts";
 import { type Admitted, admitMap, builderMapEdits, writeMapChanges } from "../verify/admit.ts";
@@ -21,6 +22,7 @@ import { intakeMapSection, qaMapSection, regressSection } from "../verify/brief.
 import { namedBy, removals, touchedFeatures } from "../verify/map.ts";
 import { runDir, runWorktree } from "../verify/paths.ts";
 import { mapIn, mapMode, mapOf, seedCheckout, skillIn, skillNameOf, skippedLine } from "../verify/where.ts";
+import { KITCHEN_VERSION } from "../version.ts";
 import { CONFIRM_KEY, clarificationsSection, questionsAsked, readRounds, recordQuestion } from "./clarify.ts";
 import { clearControl, fileSlices, moveJob, readControl } from "./control.ts";
 import { branchExists, diffSize, git, gitOut, revParse } from "./git.ts";
@@ -516,6 +518,7 @@ export async function start(
   // ADR 0027: a map kept on this machine is copied into the checkout the lane works in.
   await seedCheckout(repo, cfg, wt);
   const head = lane === "review" ? ((await revParse(repo, job.branch)) ?? undefined) : undefined;
+  const tested = lane === "qa" ? await testedNow(repo, cfg, job, base, isCheck(job)) : undefined;
   const unread = unreadMessages(dir);
   const t0 = Date.now();
   const key = `${job.id}/m${job.moves}/${lane}/${t0}`;
@@ -558,6 +561,7 @@ export async function start(
     if (lane !== "intake") j.worktree = wt;
     if (checkRun) j.check = { ...j.check, run: checkRun, onto: base };
     j.running = { lane, at: new Date(t0).toISOString(), key, stream, ...(head ? { head } : {}) };
+    if (tested) j.tested = tested;
     j.agentRuns.push({ key, role: ROLE_OF[lane], stage: lane, round: j.round, at: new Date(t0).toISOString(), stream, model });
     return j;
   });
@@ -585,6 +589,21 @@ export async function start(
     "When you are done, reply with the one line your role asks for.",
   ].join(" ");
   return { id: job.id, lane, brief: briefFile, cwd, model, prompt };
+}
+
+/**
+ * ADR 0032 §2: what a QA lane starting now tests: the branch head on the target's tip (a check: the tip it drives),
+ * and what it leaves out (the person's uncommitted paths; Kitchen's own folders aside), with the versions in play.
+ */
+async function testedNow(repo: string, cfg: Config, job: Job, base: string, check: boolean): Promise<NonNullable<Job["tested"]>> {
+  const target = targetOf(cfg, job);
+  const onto = check ? base : ((await revParse(repo, target)) ?? "");
+  const head = check ? base : ((await revParse(repo, job.branch)) ?? "");
+  const dirty = (await git(repo, ["status", "--porcelain"], { allowFail: true })).stdout
+    .split("\n")
+    .filter((l) => l.trim() && !/^.. "?(\.kitchen|\.worktrees)\//.test(l)).length;
+  const tool = liveRun(repo)?.tool;
+  return { at: new Date().toISOString(), head, target, onto, dirty, kitchen: KITCHEN_VERSION, ...(tool ? { tool } : {}) };
 }
 
 /** The files a job touches: its diff once built (plus intake's FILES), intake's FILES before. */

@@ -531,7 +531,7 @@ test("ADR 0029 §2 and §6: a NOT_RUN on a check is no proposal; proposals that 
   const j = findJob(r, id);
   assert.deepEqual([j.stage, j.check?.findings, j.check?.proposals, j.check?.proposalsFailed?.round], ["done", 1, [], 1]);
   const html = fs.readFileSync(path.join(jobDirOf(r, id), "report.html"), "utf8");
-  assert.match(html, /proposals failed: .*ENOTDIR/);
+  assert.match(html, /<b>Proposals failed<\/b>: <code>ENOTDIR/);
   assert.match(html, /class="st">not tested<\/td><td>the export service is down/);
   assert.match(String((await snapshot(r)).jobs.find((x) => x.id === id)?.check?.proposalsFailed), /ENOTDIR/);
   // Still failing: recorded again, nothing lost.

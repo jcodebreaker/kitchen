@@ -3,7 +3,9 @@
 // Read from .kitchen/ only.
 import fs from "node:fs";
 import path from "node:path";
-import { loadConfig, targetOf } from "../config.ts";
+import { type Config, loadConfig, targetOf } from "../config.ts";
+import { testedLine, versionsLine } from "../engine/checked.ts";
+import { type Failure, failureOf } from "../engine/diagnose.ts";
 import { criteriaOf, qaDir, readQa } from "../engine/lanes.ts";
 import { CATCH_UP_LIMIT, isActive, isCheck, type Job, prOpen, STAGES, type Stage } from "../engine/machine.ts";
 import { type Message, readMessages } from "../engine/messages.ts";
@@ -28,7 +30,8 @@ export type Seg = {
 };
 export type MsgEv =
   | { c: "you"; t: string; at: string; kind: Message["kind"]; status: string; sent: boolean }
-  | { c: "ask"; t: string; at: string; who: string }
+  /** ADR 0032 §3: `diag`, a failed step's three lines and raw output, in place of the raw reason. */
+  | { c: "ask"; t: string; at: string; who: string; diag?: Failure }
   | { c: "sys"; t: string; at: string };
 export type Detail = {
   id: string;
@@ -38,6 +41,8 @@ export type Detail = {
   ticket: string;
   /** ADR 0028 §4: what a check found, each with the inbox proposal it became. */
   found?: { pid: string; title: string; seen: string }[];
+  /** ADR 0032 §2: what QA tested and the versions in play (the Checks tab's foot); null on a job from before. */
+  tested: { line: string; versions: string | null } | null;
 };
 
 /**
@@ -132,11 +137,14 @@ export async function detail(repo: string, ref: string): Promise<Detail> {
   // ADR 0026: the job's target (staging.branch unless it names another).
   let target = j.target || "staging";
   let defaultTarget = "staging";
+  let cfg: Config | undefined;
   try {
-    const cfg = loadConfig(repo);
+    cfg = loadConfig(repo);
     target = targetOf(cfg, j);
     defaultTarget = cfg.staging.branch;
   } catch {}
+  // ADR 0032 §3: a step that failed and left the job with you: the ask below says it, once (its segment says nothing).
+  const failed = failureOf(dir, j, cfg);
   const close = (m: number, end: string | null, to: string | null, l?: LedgerLine) => {
     const catchUp = !!l?.detail?.catchUp;
     const evs = liveStreams(dir, m).flatMap((f) => activityOf(f.file, roots));
@@ -160,7 +168,9 @@ export async function detail(repo: string, ref: string): Promise<Detail> {
         : readyEnded
           ? readyEnded
           : bad && reason
-            ? reason
+            ? failed && to === j.stage && l === moves.at(-1)
+              ? ""
+              : reason
             : (runs.at(-1)?.line ?? reason)
       ).slice(0, 220),
       evs: evs.slice(-EVENTS_PER_SEG),
@@ -190,12 +200,14 @@ export async function detail(repo: string, ref: string): Promise<Detail> {
       );
     } else if (state === "you") {
       last.st = "you";
+      const diag = failed;
       last.evs.push({
         c: "ask",
-        t: questionOf(j, dir) ?? "",
+        t: diag?.what ?? questionOf(j, dir) ?? "",
+        ...(diag ? { diag } : {}),
         at: j.updatedAt,
         // Held at Ready: Kitchen asks (the lanes passed); else the agent that stopped.
-        who: j.stage === "ready" ? "Kitchen" : (agentOf(j.stage === "needs-human" ? (j.escalatedFrom ?? "intake") : "intake") ?? "Kitchen"),
+        who: diag || j.stage === "ready" ? "Kitchen" : (agentOf(j.stage === "needs-human" ? (j.escalatedFrom ?? "intake") : "intake") ?? "Kitchen"),
       });
     } else if (state === "paused") {
       last.st = "paused";
@@ -215,5 +227,13 @@ export async function detail(repo: string, ref: string): Promise<Detail> {
     t: `${j.from ? `Filed from the Outer loop · ${j.from.label}` : j.check?.filedBy === "schedule" ? `Filed by its schedule (${often(j.check.every)})` : "Filed by you (New ticket)"}${target !== defaultTarget ? ` · into ${target}` : ""}`,
     at: j.startedAt,
   });
-  return { id: j.id, tl, ...(isCheck(j) ? checkTab(dir, j) : { crit: critOf(dir, j.round) }), ticket: ticketText(dir) };
+  const tested = testedLine(j);
+  return {
+    id: j.id,
+    tl,
+    ...(isCheck(j) ? checkTab(dir, j) : { crit: critOf(dir, j.round) }),
+    ticket: ticketText(dir),
+    // The lanes' models are on the Activity segments; the foot says Kitchen's and the tool's versions only.
+    tested: tested ? { line: tested, versions: versionsLine(j, { models: false }) } : null,
+  };
 }

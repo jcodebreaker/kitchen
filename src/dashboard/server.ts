@@ -2,10 +2,12 @@
 // list (repos.ts, ADR 0019); the routes below sit under /r/<key>/, and a key not on the list is a 404.
 // `kitchen dashboard --private` (or --port n) serves the one repo it runs in, on the routes as written.
 //   GET  /                         the page, with this launch's token in it (no CDN, nothing from elsewhere; system fonts)
-//   GET  /kitchen.json             { kitchen: true, version, private }: a second `kitchen dashboard` asks the port who holds it
+//   GET  /kitchen.json             { kitchen: true, version, private, pid, home, repo? }: a second `kitchen dashboard` asks the port
+//                                  who holds it (`--restart` stops that pid and starts this build in the same mode)
 //   GET  /repos.json               (the list) each repo's key, name, path and its needs-you, running and job counts
 //   GET  /data.json                snapshot(repo): every job, read from .kitchen/ on each request, and this launch's
-//                                  id (not the token): a tab from an earlier launch sees it changed and reloads once
+//                                  id (not the token): a tab from an earlier launch sees it changed and reloads once;
+//                                  ADR 0032 §1: `kitchenStale` once the build on disk differs from this one, and `restart`
 //   GET  /jobs/<id>/detail.json    one job: stage history with its agents' activity, thread, criteria
 //   GET  /jobs/<id>/report.html    a job's rendered Report
 //   GET  /jobs/<id>/qa/<n>/<f>     ADR 0028: a check's screenshot from its round n QA folder (png or jpeg only)
@@ -21,6 +23,7 @@
 // the Host check (DNS rebinding), an Origin, when sent, that is this server's own, the per-launch
 // token in `x-kitchen-token`, and `content-type: application/json`. A cross-site form or simple
 // request can send neither that header nor that type, and can't read the token.
+import { spawn, spawnSync } from "node:child_process";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
@@ -28,15 +31,16 @@ import path from "node:path";
 import { loadConfig } from "../config.ts";
 import { JOB_ID, jobDirOf, scanJobs } from "../engine/store.ts";
 import { type Listing, listModels } from "../models/models.ts";
+import { KITCHEN_VERSION, staleWatch } from "../version.ts";
 import { act, BadRequest } from "./actions.ts";
 import { branchesOf } from "./branches.ts";
 import { snapshot } from "./data.ts";
 import { detail, qaShot } from "./detail.ts";
 import { evidenceFile, inboxSnapshot } from "./inbox.ts";
-import { addRepo, type RepoEntry, type RepoList, readRepos, shownPath } from "./repos.ts";
+import { addRepo, kitchenHome, type RepoEntry, type RepoList, readRepos, shownPath } from "./repos.ts";
 
 export const DASHBOARD_HTML = path.resolve(import.meta.dirname, "..", "..", "dashboard", "dashboard.html");
-const VERSION = (JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "..", "..", "package.json"), "utf8")) as { version: string }).version;
+export const DEFAULT_PORT = 7357;
 /** A POST body larger than this is refused unread. */
 export const MAX_BODY = 16 * 1024;
 
@@ -68,8 +72,14 @@ export function refusePost(h: http.IncomingHttpHeaders, token: string, port: num
 }
 
 /** `one`: that repo alone, on the routes without /r/<key> (--private). null: every repo `list` gives, read on each request. */
-export function dashboardServer(one: string | null, o: { token?: string; list?: () => RepoList } = {}): http.Server & { token: string; launch: string } {
+export function dashboardServer(
+  one: string | null,
+  o: { token?: string; list?: () => RepoList; stale?: () => boolean; restart?: string } = {},
+): http.Server & { token: string; launch: string } {
   const list = o.list ?? (() => readRepos());
+  // ADR 0032 §1: this process keeps the code it started with; the page says when the build on disk moved on.
+  const stale = o.stale ?? staleWatch();
+  const restart = o.restart ?? "kitchen dashboard --restart";
   const token = o.token ?? randomBytes(32).toString("hex");
   // Not a secret: it only tells a tab from an earlier launch (holding that launch's token) that the server restarted.
   const launch = randomBytes(8).toString("hex");
@@ -87,7 +97,15 @@ export function dashboardServer(one: string | null, o: { token?: string; list?: 
     const port = (s.address() as { port?: number } | null)?.port ?? 0;
     const get = req.method === "GET" || req.method === "HEAD";
     const run = async () => {
-      if (get && url.pathname === "/kitchen.json") return json(200, { kitchen: true, version: VERSION, private: one !== null });
+      if (get && url.pathname === "/kitchen.json")
+        return json(200, {
+          kitchen: true,
+          version: KITCHEN_VERSION,
+          private: one !== null,
+          pid: process.pid,
+          home: path.resolve(kitchenHome()),
+          ...(one ? { repo: one } : {}),
+        });
       if (get && (url.pathname === "/" || url.pathname === "/index.html")) {
         page ??= fs
           .readFileSync(DASHBOARD_HTML, "utf8")
@@ -143,7 +161,7 @@ export function dashboardServer(one: string | null, o: { token?: string; list?: 
         }
       }
       if (!get) return send(405, "text/plain", "GET, HEAD or POST\n", { allow: "GET, HEAD, POST" });
-      if (route === "/data.json") return json(200, { ...(await snapshot(repo)), launch });
+      if (route === "/data.json") return json(200, { ...(await snapshot(repo)), launch, ...(stale() ? { kitchenStale: true, restart } : {}) });
       if (route === "/inbox.json") return json(200, inboxSnapshot(repo));
       if (route === "/models.json") return json(200, await modelsListing(repo));
       if (route === "/branches.json") return json(200, await branchesOf(repo));
@@ -224,31 +242,173 @@ async function counts(e: RepoEntry) {
 }
 
 /** What holds the port: a Kitchen dashboard (shared or --private), or something else. */
-async function whoHolds(port: number): Promise<{ kitchen: true; private: boolean } | null> {
+type Holder = { kitchen: true; private: boolean; pid: number | null; repo: string | null; home: string | null };
+async function whoHolds(port: number): Promise<Holder | null> {
   try {
     const r = await fetch(`http://127.0.0.1:${port}/kitchen.json`, { signal: AbortSignal.timeout(2000) });
-    const d = (await r.json()) as { kitchen?: unknown; private?: unknown };
-    return d.kitchen === true ? { kitchen: true, private: d.private === true } : null;
+    const d = (await r.json()) as { kitchen?: unknown; private?: unknown; pid?: unknown; repo?: unknown; home?: unknown };
+    const str = (v: unknown) => (typeof v === "string" ? v : null);
+    return d.kitchen === true
+      ? { kitchen: true, private: d.private === true, pid: typeof d.pid === "number" ? d.pid : null, repo: str(d.repo), home: str(d.home) }
+      : null;
   } catch {
     return null;
   }
 }
 
+/** True once the port can be bound (tried at least once, then every 150 ms until `ms` passed). */
+async function portFree(port: number, ms: number): Promise<boolean> {
+  const end = Date.now() + ms;
+  for (;;) {
+    const free = await new Promise<boolean>((resolve) => {
+      const t = http.createServer();
+      t.once("error", () => resolve(false));
+      t.listen(port, "127.0.0.1", () => t.close(() => resolve(true)));
+    });
+    if (free) return true;
+    if (Date.now() >= end) return false;
+    await new Promise((r) => setTimeout(r, 150));
+  }
+}
+
+/**
+ * ADR 0032 §1: what `kitchen dashboard --check` proves before `--restart` stops the running dashboard: this build's
+ * dashboard modules load, a server builds (it doesn't listen), and its page is there. Throws otherwise.
+ */
+export function checkBuild(): string {
+  dashboardServer(null, { list: () => ({ repos: [], last: null }), stale: () => false });
+  if (!fs.readFileSync(DASHBOARD_HTML, "utf8").includes("__KITCHEN_TOKEN__")) throw new Error(`${DASHBOARD_HTML} isn't the dashboard page`);
+  return "dashboard ok";
+}
+
+/** The pid LISTENING on the port (lsof), or null. */
+function listenerOf(port: number): number | null {
+  const r = spawnSync("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"], { encoding: "utf8", timeout: 10_000 });
+  const pid = Number((r.stdout ?? "").trim().split("\n")[0]);
+  return Number.isInteger(pid) && pid > 0 ? pid : null;
+}
+/** A process's command line (ps), or "". */
+const commandOf = (pid: number) => (spawnSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8", timeout: 10_000 }).stdout ?? "").trim();
+const isDir = (d: string) => {
+  try {
+    return fs.statSync(d).isDirectory();
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * ADR 0032 §1: `kitchen dashboard --restart`: stop the Kitchen dashboard on `port` and start this build there,
+ * detached, in the same mode and with the same KITCHEN_HOME: shared (serving the list as it is: no repo is added,
+ * wherever this runs), or --private for the repo it served.
+ * - The pid /kitchen.json gives is stopped only when it is the process listening on the port and its command is a
+ *   Kitchen CLI's `dashboard`; the home and repo it reports must be folders.
+ * - This build must pass `dashboard --check` (its dashboard modules load, the page is there) before the old one is
+ *   stopped.
+ * Nothing on the port: start one (shared unless `private`). Something else there, or a Kitchen too old to give its
+ * pid: say so and stop.
+ */
+export async function restartDashboard(
+  repo: string,
+  port: number,
+  print: (l: string) => void,
+  o: { private?: boolean; cli: string; execArgv?: string[]; wait?: number },
+): Promise<number> {
+  const who = await whoHolds(port);
+  if (who && !who.pid) {
+    print(`port ${port} has a Kitchen dashboard too old to restart itself: stop it (Ctrl-C where it runs), then kitchen dashboard`);
+    return 1;
+  }
+  if (!who && !(await portFree(port, 0))) {
+    print(`port ${port} is taken by something that isn't a Kitchen dashboard: stop it, or pick another with --port`);
+    return 1;
+  }
+  if (who?.pid) {
+    const listening = listenerOf(port);
+    const cmd = commandOf(who.pid);
+    if (listening !== who.pid || !/\bdashboard\b/.test(cmd) || !/(cli\.[jt]s|kitchen)\b/.test(cmd)) {
+      print(
+        `port ${port} says pid ${who.pid} serves it, but ${listening ? `pid ${listening} listens there` : "no process could be seen listening there"}${cmd ? ` (pid ${who.pid}: ${cmd.slice(0, 120)})` : ""}: nothing was stopped`,
+      );
+      return 1;
+    }
+    if (who.home && !isDir(who.home)) {
+      print(`the running dashboard's KITCHEN_HOME (${who.home}) isn't a folder: nothing was stopped`);
+      return 1;
+    }
+    if (o.private !== undefined && o.private !== who.private)
+      print(
+        `port ${port} has a ${who.private ? "--private" : "shared"} dashboard: restarting it as it is (${o.private ? "--private" : "shared"} picks the mode only when nothing runs there)`,
+      );
+  }
+  const priv = who ? who.private : !!o.private;
+  const served = (priv && who?.repo) || repo;
+  const home = path.resolve(who?.home ?? kitchenHome());
+  if (priv && !isDir(served)) {
+    print(`the repo the dashboard serves is gone (${served}): nothing was stopped; start one with kitchen dashboard`);
+    return 1;
+  }
+  const node = [...(o.execArgv ?? process.execArgv), o.cli];
+  const env = { ...process.env, KITCHEN_HOME: home };
+  fs.mkdirSync(home, { recursive: true });
+  // This build's dashboard must load before the old one goes.
+  const can = spawnSync(process.execPath, [...node, "dashboard", "--check"], { encoding: "utf8", env, cwd: priv ? served : home, timeout: 60_000 });
+  if (can.status !== 0 || !(can.stdout ?? "").includes("dashboard ok")) {
+    const why = `${can.stderr ?? ""}${can.error?.message ?? ""}`.trim().split("\n").filter(Boolean).pop() || `exit ${can.status}`;
+    print(`this Kitchen build's dashboard doesn't start (${why}): nothing was stopped`);
+    return 1;
+  }
+  fs.mkdirSync(home, { recursive: true });
+  const log = path.join(home, "dashboard.log");
+  const fd = fs.openSync(log, "a");
+  if (who?.pid) {
+    try {
+      process.kill(who.pid, "SIGTERM");
+    } catch (e) {
+      fs.closeSync(fd);
+      print(`could not stop the dashboard (pid ${who.pid}): ${(e as Error).message}`);
+      return 1;
+    }
+    if (!(await portFree(port, o.wait ?? 5000))) {
+      fs.closeSync(fd);
+      print(`the dashboard on port ${port} (pid ${who.pid}) didn't stop: stop it by hand, then kitchen dashboard`);
+      return 1;
+    }
+  }
+  const child = spawn(process.execPath, [...node, "dashboard", ...(priv ? ["--private", "--repo", served] : ["--list-only"]), "--port", String(port)], {
+    cwd: priv ? served : home,
+    detached: true,
+    stdio: ["ignore", fd, fd],
+    env,
+  });
+  child.unref();
+  fs.closeSync(fd);
+  for (const end = Date.now() + (o.wait ?? 5000); Date.now() < end; await new Promise((r) => setTimeout(r, 150)))
+    if ((await whoHolds(port))?.pid === child.pid) {
+      print(`${who ? "restarted" : "started"}: http://127.0.0.1:${port}/ (pid ${child.pid}, log ${log})`);
+      return 0;
+    }
+  print(`the dashboard didn't come up on port ${port}: see ${log}`);
+  return 1;
+}
+
 /** `kitchen dashboard`: adds the repo to the list, then serves the list on `port`, or, when a Kitchen dashboard already
  *  serves it there, says where and returns null. Something else on the port is an error; it never takes another port.
- *  `private`: this repo alone, not on the list (--private, --port). */
+ *  `private`: this repo alone, not on the list (--private, --port). `listOnly`: the list as it is, no repo added
+ *  (what `--restart` starts for a shared dashboard). */
 export async function serveDashboard(
   repo: string,
   port: number,
   print: (l: string) => void,
-  o: { private?: boolean; file?: string } = {},
+  o: { private?: boolean; file?: string; listOnly?: boolean } = {},
 ): Promise<http.Server | null> {
   let key = "";
-  if (!o.private) {
+  if (!o.private && !o.listOnly) {
     if (!fs.existsSync(path.join(repo, ".kitchen"))) throw new Error(`${repo} has no .kitchen/ yet: kitchen init first (or kitchen dashboard --private)`);
     key = addRepo(repo, o.file).key;
   }
-  const s = o.private ? dashboardServer(repo) : dashboardServer(null, o.file ? { list: () => readRepos(o.file) } : {});
+  const restart = `kitchen dashboard --restart${port === DEFAULT_PORT ? "" : ` --port ${port}`}`;
+  const s = o.private ? dashboardServer(repo, { restart }) : dashboardServer(null, { restart, ...(o.file ? { list: () => readRepos(o.file) } : {}) });
   try {
     await new Promise<void>((resolve, reject) => {
       s.once("error", reject);
