@@ -69,10 +69,11 @@ function checkTab(repo: string, dir: string, j: Job): Pick<Detail, "crit" | "fou
         return { ...c, e, ...(shot ? { shot: at(shot) } : {}) };
       }),
       // ADR 0031 §5: by the finding's inbox item (its key keeps QA's numbering), never by position: a finding the
-      // second look didn't confirm has no proposal, and the ones after it keep theirs.
+      // second look didn't confirm has no proposal, and the ones after it keep theirs. ADR 0033 §4: missing tooling
+      // says so; tooling findings that share a chore all link to it.
       found: qa.findings.flatMap((f, i) => {
         const pid = proposalOf(repo, ps, checkFindingKey(j.id, r, i + 1));
-        return pid ? [{ pid, title: f.title, seen: f.seen }] : [];
+        return pid ? [{ pid, title: f.kind === "tooling" ? `Missing tooling: ${f.title}` : f.title, seen: f.seen }] : [];
       }),
     };
   }

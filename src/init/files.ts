@@ -42,6 +42,7 @@ export const GITIGNORE = [
   ".kitchen/agents/",
   ".kitchen/merge/",
   ".kitchen/verify/",
+  ".kitchen/doctor/",
   ".kitchen/ledger.jsonl",
   ".kitchen/run.json",
   ".kitchen/run.log",
@@ -118,15 +119,46 @@ export function checksYaml(d: Detected, o: { proposed?: boolean } = {}): string 
   ].join("\n");
 }
 
-/** Pure: the `app:` block for kitchen.yaml: how QA starts the app ($PORT / {port} is a free port). */
+/**
+ * Pure: the `app:` block for kitchen.yaml: how QA starts the app ($PORT / {port} is a free port), in block style, with
+ * ADR 0033's optional keys as commented lines inside it: uncommenting one adds it to this `app:`, never a second one.
+ */
 export function appYaml(a: DetectedApp | null, o: { asked?: boolean } = {}): string {
-  if (!a) return '# How QA starts the app (none found): app: { start: "npm start", health: "/" }\n';
-  const fields = [`start: ${scalar(a.start)}`, `health: ${scalar(a.health)}`, ...(a.reset ? [`reset: ${scalar(a.reset)}`] : [])];
-  const noReset = a.reset
-    ? ""
-    : '# No reset found. So QA can restart on fresh data (kitchen qa reset), add to app: reset: "<a command that puts the data back to its seed>"\n';
-  return `# How QA starts the app (${o.asked ? "your answer" : `found in ${a.from}`}); it gets a free port in $PORT\n${noReset}app: { ${fields.join(", ")} }\n`;
+  if (!a)
+    return [
+      "# How QA starts the app (none found). Uncomment and edit (scenarios and whoami are optional, ADR 0033):",
+      "# app:",
+      '#   start: "npm start"',
+      '#   health: "/"',
+      ...APP_HINTS.slice(1).map((l) => `#   ${l.replace(/^ {2}# /, "")}`),
+      ...REQUIRES_HINT,
+      "",
+    ].join("\n");
+  return [
+    `# How QA starts the app (${o.asked ? "your answer" : `found in ${a.from}`}); it gets a free port in $PORT`,
+    ...(a.reset
+      ? []
+      : ['# No reset found. So QA can restart on fresh data (kitchen qa reset), add inside app: reset: "<a command that puts the data back to its seed>"']),
+    "app:",
+    `  start: ${scalar(a.start)}`,
+    `  health: ${scalar(a.health)}`,
+    ...(a.reset ? [`  reset: ${scalar(a.reset)}`] : []),
+    ...APP_HINTS,
+    ...REQUIRES_HINT,
+    "",
+  ].join("\n");
 }
+
+/** ADR 0033: the optional keys, commented, inside app: (kitchen doctor --app tries the app; --reset its reset). */
+const APP_HINTS = [
+  "  # Optional (ADR 0033), add inside app: by uncommenting:",
+  '  # scenarios: { offer-pending: "node scripts/scenario.js offer-pending" }   # a state just before the action under test; prints JSON of what it made',
+  "  # whoami: /api/me   # or a command: who QA acts as, and its role or plan",
+];
+const REQUIRES_HINT = [
+  "# Tools this project needs on the machine (kitchen doctor and kitchen run check them first):",
+  '# requires: [{ name: venv, check: "test -x .venv/bin/python", fix: "python3 -m venv .venv && .venv/bin/pip install -r requirements.txt" }]',
+];
 
 /** The config the person already has decides: a kitchen.yaml that names checks keeps them, whoever runs (quick init or the build). */
 export const hasOwnChecks = (repo: string): boolean => {

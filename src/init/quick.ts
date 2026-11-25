@@ -179,7 +179,25 @@ export async function init(o: InitOpts, out: (l: string) => void): Promise<numbe
     }
   }
 
-  // 4. the checks, once, on your checkout
+  // 4. ADR 0033 §3: the project's setup as kitchen.yaml says it, and `requires` run. Init never resets, starts or
+  // stops the app (a reset may wipe the person's local data): kitchen doctor tries those. Said, never fatal.
+  try {
+    const d0 = Date.now();
+    const { doctorLines, doctorReport } = await import("../doctor/doctor.ts");
+    const rep = await doctorReport(repo, cfg, { init: true });
+    const bad = rep.rows.filter((x) => x.state === "failing").length;
+    out(phaseLine(!bad, "Project setup", bad ? `${bad} failing` : "nothing failing", (Date.now() - d0) / 1000));
+    for (const l of doctorLines(rep)) out(l);
+    if (cfg.app.start) {
+      out("  run kitchen doctor --app to try prepare/start/health/stop (and --reset when it's safe)");
+      out("  QA lanes and the merge gate run app.reset/app.start with your shell's environment");
+    }
+    if (cfg.requires.length) out("  kitchen run checks kitchen.yaml requires: first");
+  } catch (e) {
+    out(phaseLine(false, "Project setup", `not checked: ${(e as Error).message.split("\n")[0]} (kitchen doctor tries again)`));
+  }
+
+  // 5. the checks, once, on your checkout
   let failed = false;
   if (checksFor(cfg, "build").length && sha) {
     const c0 = Date.now();

@@ -252,6 +252,8 @@ export type NewJob = {
   check?: boolean;
   /** ADR 0028 §5: the check's schedule filed it, this often ("day", "hour"…). */
   schedule?: string;
+  /** ADR 0033 §4: the check this one files again (its tooling merged): written with the job, so a crash can't file it twice. */
+  refiledFrom?: string;
 };
 
 /** Create a job folder. Numbers are taken under a lock, so two `kitchen ticket`s never share one. */
@@ -284,7 +286,15 @@ export async function createJob(repo: string, o: NewJob): Promise<Job> {
       moves: 0,
       filed: [],
       ...(o.from ? { from: o.from } : {}),
-      ...(o.check ? { check: { forced: true, ...(o.schedule ? { filedBy: "schedule" as const, every: o.schedule } : {}) } } : {}),
+      ...(o.check
+        ? {
+            check: {
+              forced: true,
+              ...(o.schedule ? { filedBy: "schedule" as const, every: o.schedule } : {}),
+              ...(o.refiledFrom ? { refiledFrom: o.refiledFrom } : {}),
+            },
+          }
+        : {}),
       startedAt: now,
       updatedAt: now,
     };

@@ -252,6 +252,10 @@ export type QaFinding = {
   expected?: string;
   cause?: FindingCause;
   severity?: Risk;
+  /** ADR 0033 §4: not a problem in the app: the project lacks the tooling to verify it (`title` names the tooling). */
+  kind?: "tooling";
+  /** ADR 0033 §4: a tooling finding's NOT_RUN rows (`criterion` and any `criteria`). */
+  criteria?: string[];
 };
 export type QaVerdict = {
   /**
@@ -371,18 +375,46 @@ export function readQa(
       const seen = String(x?.seen ?? "").trim();
       if (!title || !seen) return { refused: `finding ${i + 1} needs a title and what was seen (seen)` };
       const repro = (Array.isArray(x.repro) ? x.repro.map(String) : x.repro ? [String(x.repro)] : []).map((s) => s.trim()).filter(Boolean);
-      if (!repro.length) return { refused: `finding ${i + 1} (${title}) needs repro: the steps to see it again` };
+      if (x.kind !== undefined && x.kind !== "tooling") return { refused: `finding ${i + 1} (${title}): kind is "tooling" or absent` };
+      const tooling = x.kind === "tooling";
+      // ADR 0033 §4: missing tooling has nothing to reproduce.
+      if (!repro.length && !tooling) return { refused: `finding ${i + 1} (${title}) needs repro: the steps to see it again` };
       const evidence = Array.isArray(x.evidence) ? x.evidence.map(String) : [];
       if (!evidence.length) return { refused: `finding ${i + 1} (${title}) cites no evidence file` };
       const bad = evidence.find((f) => !goodEvidence(dir, f));
       if (bad) return { refused: `finding ${i + 1} (${title}): evidence ${bad} is missing, empty or outside the QA folder` };
-      const criterion = x.criterion ? String(x.criterion).toUpperCase() : undefined;
+      // ADR 0033 §4: a tooling finding may cover several rows (`criteria`); `criterion` is its first.
+      const many = tooling && Array.isArray(x.criteria) ? [...new Set(x.criteria.map((c) => String(c).toUpperCase()))] : [];
+      const criterion = x.criterion ? String(x.criterion).toUpperCase() : many[0];
+      const all = tooling && criterion ? [...new Set([criterion, ...many])] : [];
+      // ADR 0031 §1 for every finding; a tooling one needs no expected or cause (nothing is broken, a tool is missing).
       const honest = findingHonesty(dir, x, evidence, `finding ${i + 1} (${title})`, !!o.strict);
       if ("refused" in honest) return honest;
-      findings.push({ title: title.slice(0, 120), seen, repro, evidence, ...(criterion ? { criterion } : {}), ...honest });
+      findings.push({
+        title: title.slice(0, 120),
+        seen,
+        repro,
+        evidence,
+        ...(criterion ? { criterion } : {}),
+        ...(tooling ? { kind: "tooling" as const, criteria: all } : {}),
+        ...honest,
+      });
+    }
+    // ADR 0033 §4: a tooling finding covers exactly the NOT_RUN rows it names (missing tooling is why they couldn't
+    // run). Never a FAIL or a PASS: a failure is a problem found and needs a real finding.
+    for (const f of findings.filter((x) => x.kind === "tooling")) {
+      if (!f.criteria?.length)
+        return { refused: `tooling finding "${f.title}" names no criterion: give it criterion: "<the NOT_RUN row>" (or criteria: [...])` };
+      for (const id of f.criteria) {
+        const row = rows.find((r) => r.id === id);
+        if (row?.result !== "NOT_RUN")
+          return {
+            refused: `tooling finding "${f.title}" names ${id}, which is ${row ? row.result : "no row"}: missing tooling covers only a NOT_RUN row (a FAIL needs its own finding)`,
+          };
+      }
     }
     // ADR 0029 §2: what QA couldn't test is never a problem found.
-    const notRunFinding = findings.find((f) => rows.some((r) => r.id === f.criterion && r.result === "NOT_RUN"));
+    const notRunFinding = findings.find((f) => f.kind !== "tooling" && rows.some((r) => r.id === f.criterion && r.result === "NOT_RUN"));
     if (notRunFinding)
       return { refused: `finding "${notRunFinding.title}" names ${notRunFinding.criterion}, which was NOT_RUN: a criterion not tested is no problem found` };
     const unexplained = rows.filter((r) => r.result === "FAIL" && !findings.some((f) => f.criterion === r.id)).map((r) => r.id);
@@ -392,8 +424,10 @@ export function readQa(
       };
   }
   const counted = rows.filter((r) => criteria.some((c) => c.id === r.id) || r.id.startsWith("R-") || o.check);
-  const failed = counted.some((r) => r.result === "FAIL") || findings.length > 0;
-  const notRun = counted.some((r) => r.result === "NOT_RUN");
+  // ADR 0033 §4: a NOT_RUN row a tooling finding covers waits for that tooling; any other NOT_RUN row is retried first.
+  const covered = new Set(findings.flatMap((f) => (f.kind === "tooling" ? (f.criteria ?? []) : [])));
+  const failed = counted.some((r) => r.result === "FAIL") || findings.some((f) => f.kind !== "tooling");
+  const notRun = counted.some((r) => r.result === "NOT_RUN" && !covered.has(r.id));
   if (said === "PASS" && findings.length) return { refused: "verdict PASS, but it lists findings: a check with problems is FAIL" };
   if (said === "PASS" && (failed || notRun)) return { refused: `verdict PASS, but a criterion's row is ${failed ? "FAIL" : "NOT_RUN"}` };
   // ADR 0031 §2: rows carried from an earlier round (their evidence under from-round-<n>/) were checked in that round,
@@ -401,7 +435,9 @@ export function readQa(
   const fresh = rows.filter((r) => !kept.has(r));
   const foreign = foreignCapture(dir, citedFiles(fresh, findings), { job: path.basename(jobDir), round, sha: o.sha });
   if (foreign) return { refused: foreign };
-  return { verdict: failed ? "FAIL" : notRun ? "INCOMPLETE" : "PASS", criteria: rows, findings };
+  // ADR 0033 §4: a real FAIL is FAIL (everything proposed, ADR 0029); else rows nobody could test are run again first.
+  const verdict = failed ? "FAIL" : notRun ? "INCOMPLETE" : covered.size ? "FAIL" : "PASS";
+  return { verdict, criteria: rows, findings };
 }
 
 /**
@@ -691,8 +727,9 @@ export const secondLookFile = (jobDir: string, round: number) => path.join(round
 export type SecondLook = { finding: number; confirmed: boolean; note: string };
 
 /** Pure, ADR 0031 §5: the findings (1-based) that get a second look: severity high, or all of a high-risk check's. */
-export const consequential = (findings: Pick<QaFinding, "severity">[], risk: Risk | null): number[] =>
-  findings.flatMap((f, i) => (risk === "high" || f.severity === "high" ? [i + 1] : []));
+export const consequential = (findings: Pick<QaFinding, "severity" | "kind">[], risk: Risk | null): number[] =>
+  // ADR 0033 §4: missing tooling is never a second look's: nothing in the app is claimed broken.
+  findings.flatMap((f, i) => (f.kind !== "tooling" && (risk === "high" || f.severity === "high") ? [i + 1] : []));
 
 /** Pure apart from the read: the second look's answer on each finding in `want`, or why it is refused. */
 export function readSecondLook(jobDir: string, round: number, want: number[]): SecondLook[] | { refused: string } {

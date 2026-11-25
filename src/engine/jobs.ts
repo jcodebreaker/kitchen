@@ -11,7 +11,7 @@ import path from "node:path";
 import { type OnCheck, prepareOf, runChecks } from "../checks/run-checks.ts";
 import { type Config, checksFor, type LaneRole, loadConfig, modelFor, targetOf } from "../config.ts";
 import { commentOnMerge } from "../inbox/comment.ts";
-import { addFindings, proposeCheckFindings, qaFindings, reviewFindings } from "../inbox/findings.ts";
+import { addFindings, findingProposal, proposeCheckFindings, qaFindings, reviewFindings } from "../inbox/findings.ts";
 import { appendLedger } from "../ledger/append.ts";
 import { withFileLock } from "../lock.ts";
 import { liveRun } from "../run/orchestrator.ts";
@@ -24,7 +24,7 @@ import { runDir, runWorktree } from "../verify/paths.ts";
 import { mapIn, mapMode, mapOf, seedCheckout, skillIn, skillNameOf, skippedLine } from "../verify/where.ts";
 import { KITCHEN_VERSION } from "../version.ts";
 import { CONFIRM_KEY, clarificationsSection, questionsAsked, readRounds, recordQuestion } from "./clarify.ts";
-import { clearControl, fileSlices, moveJob, readControl } from "./control.ts";
+import { clearControl, fileSlices, fileTicket, moveJob, readControl } from "./control.ts";
 import { branchExists, diffSize, git, gitOut, revParse } from "./git.ts";
 import {
   causeLabel,
@@ -39,6 +39,7 @@ import {
   matchPath,
   metaFile,
   parseIntake,
+  type QaFinding,
   type QaRow,
   type QaVerdict,
   qaDir,
@@ -73,7 +74,7 @@ import {
 import { markRead, operatorNotes, unreadMessages } from "./messages.ts";
 import { afterSection, queueSection } from "./others.ts";
 import { type Plan, planWave } from "./plan.ts";
-import { confirmQuestion, refineQuestion } from "./refine.ts";
+import { confirmQuestion, numOf, refineQuestion } from "./refine.ts";
 import { prReport, writeReport } from "./report.ts";
 import { type CatchUp, catchUpWithTarget, dropTrial, type MergeOutcome, mergeToTarget, realGh, targetTip } from "./staging.ts";
 import { checksFile, findJob, intakeCheckoutOf, jobDirOf, kitchenDir, listJobs, roundDir, shortTitle, updateJob, worktreeOf, writeAtomic } from "./store.ts";
@@ -101,21 +102,122 @@ export const MAX_TRIES = 3;
 /** The orchestrator's heartbeat: the last `kitchen job next`. The dashboard reads it. */
 export const heartbeatFile = (repo: string) => path.join(kitchenDir(repo), "orchestrator.json");
 
-export async function next(repo: string, o: { restartStranded?: boolean } = {}): Promise<Plan & { prs: string[]; proposals: string[] }> {
+export async function next(
+  repo: string,
+  o: { restartStranded?: boolean } = {},
+): Promise<Plan & { prs: string[]; proposals: string[]; refiled: string[]; merges: string[] }> {
   const cfg = loadConfig(repo);
   // ADR 0026 §4: what became of the PRs waiting on a person (at most once a minute).
   const prs = await syncPrs(repo);
-  // A job the person removed is never picked (kitchen remove).
-  // ADR 0029 §6: a check's findings that failed to be proposed, proposed again.
+  // ADR 0029 §6: a check's findings that failed to be proposed, proposed again (a tooling one then waits by its id).
   const proposals = await retryProposals(repo).catch((e: Error) => [`proposing again failed: ${e.message.split("\n")[0]}`]);
+  // ADR 0033: a merge check that waited for a fixed port in use is tried again once the port is free.
+  const waited = await retryMergeWaits(repo, cfg).catch((e: Error) => [`merge check retry failed: ${e.message.split("\n")[0]}`]);
+  // ADR 0033 §4: a check whose tooling merged is filed again, so this wave can start it.
+  const refiled = await refileChecks(repo).catch((e: Error) => [`filing checks again failed: ${e.message.split("\n")[0]}`]);
+  // A job the person removed is never picked (kitchen remove).
   const jobs = listJobs(repo).filter((j) => !j.archived);
   const paused = new Set(jobs.filter((j) => !j.running && readControl(jobDirOf(repo, j.id)).pause).map((j) => j.id));
-  const plan = { ...planWave(jobs, { parallel: cfg.parallel, restartStranded: o.restartStranded, paused, target: (j) => targetOf(cfg, j) }), prs, proposals };
+  const plan = {
+    ...planWave(jobs, { parallel: cfg.parallel, restartStranded: o.restartStranded, paused, target: (j) => targetOf(cfg, j) }),
+    prs,
+    proposals,
+    refiled,
+    merges: waited,
+  };
   fs.mkdirSync(kitchenDir(repo), { recursive: true });
   writeAtomic(heartbeatFile(repo), JSON.stringify({ at: new Date().toISOString(), pid: process.ppid, drained: plan.drained }));
   // ADR 0029 §5: a drained queue leaves no app running.
   if (plan.drained) await (await import("../qa/app.ts")).sweepApps(repo).catch(() => []);
   return plan;
+}
+
+/**
+ * ADR 0033: each job held at Ready because its merge check found the app's fixed port in use. While the port still
+ * answers it keeps waiting (nothing runs); once it is free, the merge gate runs again. The lines to say.
+ */
+async function retryMergeWaits(repo: string, cfg: Config): Promise<string[]> {
+  const waiting = listJobs(repo).filter((j) => j.stage === "ready" && j.mergeWait && !j.archived && !j.running);
+  if (!waiting.length) return [];
+  const { fixedPortBusy } = await import("../qa/app.ts");
+  if (await fixedPortBusy(cfg.app)) return [];
+  const said: string[] = [];
+  for (const w of waiting) {
+    const job = await updateJob(repo, w.id, (j) => {
+      delete j.mergeWait;
+      delete j.held;
+      return j;
+    });
+    const head = job.reviewed?.head ?? (await revParse(repo, job.branch));
+    if (!head) continue;
+    const r = await gateMerge(repo, cfg, job, head);
+    said.push("refused" in r ? `${job.id}  ${r.refused}` : r.line);
+  }
+  return said;
+}
+
+/**
+ * ADR 0033 §4: each done check waiting for tooling whose every tooling proposal was run and whose job merged into the
+ * check's target is filed again (same text, same target, a check), linked both ways, and the old check's Report is
+ * written again. One check's failure is recorded on it (its card and Report say it) and never stops the others. A
+ * check already filed again (a job with its `refiledFrom`, written with that job) is only linked, never filed twice.
+ * The lines to say.
+ */
+export async function refileChecks(repo: string): Promise<string[]> {
+  const jobs = listJobs(repo);
+  const waiting = jobs.filter((j) => j.stage === "done" && j.check?.tooling?.length && !j.check.refiled && !j.archived);
+  if (!waiting.length) return [];
+  const cfg = loadConfig(repo);
+  const { listProposals } = await import("../inbox/store.ts");
+  const ps = listProposals(repo);
+  const merged = (pid: string, into: string) => {
+    const p = ps.find((x) => x.id === pid);
+    const built = p?.state === "run" && p.job ? jobs.find((j) => j.id === p.job) : undefined;
+    return !!built && built.stage === "done" && built.merged?.into === into;
+  };
+  const said: string[] = [];
+  for (const old of waiting) {
+    const target = targetOf(cfg, old);
+    if (!(old.check?.tooling ?? []).every((p) => merged(p, target))) continue;
+    try {
+      const done = await updateJob(repo, old.id, async (j) => {
+        if (!j.check || j.check.refiled) return j;
+        const had = listJobs(repo).find((x) => x.check?.refiledFrom === j.id);
+        const fresh =
+          had ??
+          (await fileTicket(
+            repo,
+            fs
+              .readFileSync(path.join(jobDirOf(repo, j.id), "ticket.md"), "utf8")
+              .replace(/^# .*\n+/, "")
+              .trim(),
+            { title: j.title, target: j.target, check: true, refiledFrom: j.id },
+          ));
+        appendLedger(repo, {
+          job: fresh.id,
+          stage: "intake",
+          round: 1,
+          event: "refiled",
+          key: `${j.id}/refiled`,
+          detail: { from: j.id, tooling: j.check.tooling },
+        });
+        const tooling = (j.check.tooling ?? []).join(", ");
+        j.check = { ...j.check, refiled: fresh.id, result: `Tooling merged (${tooling}): filed again as ${numOf(fresh.id)}` };
+        delete j.check.refileError;
+        said.push(`${j.id}  tooling merged (${tooling}) → filed again as ${fresh.id}`);
+        return j;
+      });
+      writeReport(repo, done);
+    } catch (e) {
+      const error = (e as Error).message.split("\n")[0];
+      said.push(`${old.id}  filing it again failed: ${error} (tried again on the next wave)`);
+      await updateJob(repo, old.id, (j) => {
+        if (j.check) j.check.refileError = error;
+        return j;
+      }).catch(() => {});
+    }
+  }
+  return said;
 }
 
 export type Started = { id: string; lane: Lane; brief: string; cwd: string; model: string; prompt: string };
@@ -289,6 +391,16 @@ function mergeOnly(cfg: Config, job: Job): string {
   return `; on the trial merge into ${targetOf(cfg, job)} only: ${m.map((c) => `\`${c.run}\`${c.needsApp ? " (with the app running, its URL in $BASE_URL)" : ""}`).join(", ")}`;
 }
 
+/** ADR 0033 §1-§2: the scenarios and whoami QA can use, or "" when kitchen.yaml has neither. Pure. */
+export function setupLine(cfg: Pick<Config, "app">): string {
+  const names = Object.keys(cfg.app.scenarios);
+  const parts = [
+    names.length ? `scenarios (\`kitchen qa scenario <id> <name>\`, prefer them over hand-seeding): ${names.map((n) => `\`${n}\``).join(", ")}` : "",
+    cfg.app.whoami ? `who you are: \`kitchen qa whoami <id> [--header 'K: v']… [--as <who>]\` (app.whoami \`${cfg.app.whoami}\`)` : "",
+  ].filter(Boolean);
+  return parts.length ? `- Setup: ${parts.join("; ")}` : "";
+}
+
 function brief(
   repo: string,
   cfg: Config,
@@ -352,6 +464,7 @@ function brief(
         .join(", ") || "none"
     }${mergeOnly(cfg, job)}`,
     `- The app: ${app}`,
+    lane === "qa" || lane === "regress" ? setupLine(cfg) : "",
     `- Your output: ${out[lane]}`,
     "",
     "Guard hooks refuse reading secret files, writing key literals, pushing to the base branch or main, deleting outside the project and writing outside your worktree and the job folder. Don't run `kitchen job` verbs: the orchestrator does.",
@@ -469,6 +582,8 @@ function checkNote(cfg: Config, job: Job, qd: string): string {
       : "Check each criterion against the app started from the checkout above, as your role says.",
     "",
     `Every failure and every problem you see becomes a finding in \`${qd}/verdict.json\` (your role's "A check ticket" section): each is proposed to the person as a bug. A criterion you couldn't test (the seed, its given doesn't hold, a service down) is NOT_RUN with why, and an app that won't start is the verdict BLOCKED: neither is a problem found, and Kitchen runs the check again on them.`,
+    "",
+    'If the project lacks the tooling to verify a criterion (no test runner, no fixture loader), that row is NOT_RUN with a finding of `"kind": "tooling"` naming the tooling in its title and the row in `criterion` (never on a FAIL or PASS row): Kitchen proposes a ticket to add it, and files this check again once that ticket merges (ADR 0033 §4).',
     "",
   ].join("\n");
 }
@@ -1057,14 +1172,48 @@ function carryPasses(was: string, now: string, from: number, rows: QaRow[]): { r
   return { rows: out, lost };
 }
 
-/** Pure: a check's result words (ADR 0028 §4), as its card and Report say them. */
-export function checkWords(o: { pass: number; total: number; findings: number; explore?: number; unconfirmed?: number }): string {
-  // ADR 0031 §5: findings the second look didn't confirm are said, never counted as problems.
+/**
+ * Pure: a check's result words (ADR 0028 §4), as its card and Report say them. ADR 0031 §5: findings the second look
+ * didn't confirm are said, never counted as problems. ADR 0033 §4: the tooling it waits for.
+ */
+export function checkWords(o: { pass: number; total: number; findings: number; explore?: number; unconfirmed?: number; tooling?: string[] }): string {
   const u = o.unconfirmed ? ` · ${o.unconfirmed} not confirmed` : "";
-  if (o.findings) return `Found ${o.findings} problem${o.findings === 1 ? "" : "s"}${u}`;
-  if (o.unconfirmed) return `No confirmed problem${u}`;
+  const wait = o.tooling?.length ? ` · Waiting for tooling: ${o.tooling.join(", ")}` : "";
+  if (o.findings) return `Found ${o.findings} problem${o.findings === 1 ? "" : "s"}${u}${wait}`;
+  if (o.unconfirmed) return `No confirmed problem${u}${wait}`;
+  if (wait) return wait.slice(3);
   if (!o.total) return `Checked on staging · explored ${o.explore ?? 0} min, no problems`;
   return `Checked on staging · ${o.pass} of ${o.total} pass`;
+}
+
+/** ADR 0033 §4: for a check filed again after its tooling merged, the earlier attempt, said in a repeat proposal. */
+function earlierTooling(repo: string, job: Job): string | undefined {
+  const from = job.check?.refiledFrom;
+  if (!from) return undefined;
+  try {
+    const old = findJob(repo, from);
+    return `Tried before: check ${numOf(old.id)} proposed ${(old.check?.tooling ?? []).join(", ") || "its tooling"}, which merged, and this check (${numOf(job.id)}) still couldn't run. Look at what that change added before adding it again.`;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * ADR 0033 §4: the tooling proposals that hold the check until they merge, found by each tooling finding's inbox item
+ * (ADR 0031 §5's key, so a chore several findings share is one id), and the problems: the other findings, less the
+ * `unconfirmed` the second look set aside (never a tooling one). `words` names the tooling for the result: "not
+ * proposed yet" while the proposals haven't saved (ADR 0029 §6).
+ */
+function toolingOf(
+  repo: string,
+  job: string,
+  round: number,
+  findings: QaFinding[],
+  unconfirmed: number,
+): { tooling: string[]; problems: number; words: string[] } {
+  const at = findings.flatMap((f, i) => (f.kind === "tooling" ? [i + 1] : []));
+  const tooling = [...new Set(at.map((n) => findingProposal(repo, job, round, n)).filter((x): x is string => !!x))];
+  return { tooling, problems: findings.length - at.length - unconfirmed, words: at.length && !tooling.length ? ["not proposed yet"] : tooling };
 }
 
 /**
@@ -1154,6 +1303,8 @@ async function closeCheck(repo: string, cfg: Config, job: Job, qa: QaVerdict, un
   let failed: string | null = null;
   const proposals = await proposeCheckFindings(repo, {
     job: job.id,
+    title: job.title,
+    earlier: earlierTooling(repo, job),
     round: job.round,
     onto,
     target,
@@ -1164,24 +1315,32 @@ async function closeCheck(repo: string, cfg: Config, job: Job, qa: QaVerdict, un
     failed = e.message.split("\n")[0];
     return [] as string[];
   });
+  const { tooling, problems, words } = toolingOf(repo, job.id, job.round, qa.findings, unconfirmed.length);
   const map = await keepRecipes(repo, cfg, job, qd).catch((e: Error) => skippedLine(e.message.split("\n")[0]));
   await dropCheckCheckout(repo, job.id);
   const ids = new Set(criteria.map((c) => c.id));
   const pass = qa.criteria.filter((r) => ids.has(r.id) && r.result === "PASS").length;
-  const found = qa.findings.length - unconfirmed.length;
-  const result = checkWords({ pass, total: criteria.length, findings: found, explore: job.check?.explore, unconfirmed: unconfirmed.length });
+  const result = checkWords({
+    pass,
+    total: criteria.length,
+    findings: problems,
+    explore: job.check?.explore,
+    unconfirmed: unconfirmed.length,
+    tooling: words,
+  });
   const outcome: JobCheck = {
     result,
     pass,
     total: criteria.length,
-    findings: found,
+    findings: problems,
     proposals,
     ...(unconfirmed.length ? { unconfirmed: unconfirmed.length } : {}),
     ...(map ? { map } : {}),
+    ...(tooling.length ? { tooling } : {}),
     ...(failed ? { proposalsFailed: { error: failed, round: job.round, ...(unconfirmed.length ? { skip: unconfirmed } : {}) } } : {}),
   };
   const tail = [
-    proposals.length ? `proposed ${proposals.join(", ")} in the inbox` : "",
+    proposals.length ? `proposed ${[...new Set(proposals)].join(", ")} in the inbox` : "",
     failed ? `proposals failed: ${failed} (retried on the next wave)` : "",
     map,
   ].filter(Boolean);
@@ -1214,6 +1373,8 @@ async function proposeAgain(repo: string): Promise<string[]> {
     const cfg = loadConfig(repo);
     const r = await proposeCheckFindings(repo, {
       job: j.id,
+      title: j.title,
+      earlier: earlierTooling(repo, j),
       round: pf.round,
       onto: j.check?.onto ?? "",
       target: targetOf(cfg, j),
@@ -1229,11 +1390,25 @@ async function proposeAgain(repo: string): Promise<string[]> {
       if ("ids" in r) {
         x.check.proposals = r.ids;
         delete x.check.proposalsFailed;
+        // ADR 0033 §4: the tooling proposals now exist: the check waits for them by id (`job next` files it again).
+        const { tooling, problems } = toolingOf(repo, j.id, pf.round, qa.findings, (pf.skip ?? []).length);
+        if (tooling.length) {
+          x.check.tooling = tooling;
+          const c = x.check;
+          x.check.result = checkWords({
+            pass: c.pass ?? 0,
+            total: c.total ?? 0,
+            findings: problems,
+            explore: c.explore,
+            unconfirmed: c.unconfirmed,
+            tooling,
+          });
+        }
       } else x.check.proposalsFailed = { ...pf, error: r.error };
       return x;
     });
     if ("ids" in r) writeReport(repo, moved);
-    said.push("ids" in r ? `${j.id}  proposed ${r.ids.join(", ")} in the inbox (retried)` : `${j.id}  proposals failed again: ${r.error}`);
+    said.push("ids" in r ? `${j.id}  proposed ${[...new Set(r.ids)].join(", ")} in the inbox (retried)` : `${j.id}  proposals failed again: ${r.error}`);
   }
   return said;
 }
@@ -1444,10 +1619,28 @@ function greenAlone(dir: string, round: number): boolean {
 async function mergeFailed(
   repo: string,
   job: Job,
-  m: { why: string; back: boolean; cause?: "conflict" | "checks"; onto?: string; tail?: string; mergeOnly?: boolean; who?: Who },
+  m: { why: string; back: boolean; cause?: "conflict" | "checks"; onto?: string; tail?: string; mergeOnly?: boolean; who?: Who; wait?: string },
   head?: string,
 ): Promise<Finished> {
   const who = m.who ?? "orchestrator";
+  // ADR 0033: the merge check's app found its fixed port in use (another job's app, or the person's): not the
+  // change. Held at Ready, tried again by `job next` once the port is free; no round, no catch-up spent.
+  if (m.wait) {
+    const wait = { why: m.wait, at: new Date().toISOString() };
+    const line = `${job.id}  ${m.why} → ready (tried again on the next wave once the port is free; no round spent)`;
+    if (job.stage === "ready") {
+      await updateJob(repo, job.id, (j) => Object.assign(j, { held: m.why, mergeWait: wait }));
+      return { id: job.id, from: "review", to: "ready", line };
+    }
+    return moveOn(repo, job, "ready", line, {
+      who,
+      patch: (j) => {
+        j.held = m.why;
+        j.mergeWait = wait;
+        delete j.drive;
+      },
+    });
+  }
   const dir = jobDirOf(repo, job.id);
   const cfg = loadConfig(repo);
   const target = targetOf(cfg, job);

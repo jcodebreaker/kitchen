@@ -110,7 +110,7 @@ export class TargetRefused extends Error {}
 export async function fileTicket(
   repo: string,
   text: string,
-  o: { title?: string; from?: JobFrom; target?: string; check?: boolean; schedule?: string } = {},
+  o: { title?: string; from?: JobFrom; target?: string; check?: boolean; schedule?: string; refiledFrom?: string } = {},
 ): Promise<Job> {
   const cfg = loadConfig(repo);
   const target = o.target?.trim() && o.target.trim() !== cfg.staging.branch ? o.target.trim() : undefined;
@@ -129,6 +129,7 @@ export async function fileTicket(
     target,
     check: o.check,
     schedule: o.schedule,
+    refiledFrom: o.refiledFrom,
   });
   appendLedger(repo, { job: job.id, stage: "intake", round: 1, event: "ticket", key: `${job.id}/ticket` });
   return job;

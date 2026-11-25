@@ -42,6 +42,8 @@ const DEFAULT_MODELS: Record<Tool, Record<ModelTier, string>> = {
   codex: { strong: "gpt-5.6-terra", medium: "gpt-5.6-terra", cheap: "gpt-5.6-luna" },
 };
 
+export const SCENARIO = /^[A-Za-z0-9][A-Za-z0-9._-]{0,60}$/;
+
 /** How QA starts the app (kitchen init detects it; ADR 0016 §3). `{port}` in start, url and health is the port. */
 const App = z
   .object({
@@ -58,6 +60,13 @@ const App = z
     stop: z.string().optional(),
     /** Seconds to wait for the health check. */
     ready_timeout_sec: z.number().int().positive().default(60),
+    /**
+     * ADR 0033 §1: named commands that each prepare one state just before a tested action, on the running app, and
+     * print JSON of what they made (`kitchen qa scenario <job> <name>`).
+     */
+    scenarios: z.record(z.string(), z.string().min(1)).default({}),
+    /** ADR 0033 §2: a command, or a path or URL on the app, that returns the effective identity (`kitchen qa whoami`). */
+    whoami: z.string().min(1).optional(),
   })
   .strict();
 export type AppConfig = z.infer<typeof App>;
@@ -97,6 +106,8 @@ export const ConfigSchema = z
     /** A frozen install from the lockfile, written by `kitchen init`: the package manager. Runs before `checks_prepare`. */
     checks_install: z.enum(["npm", "pnpm", "yarn", "yarn-classic", "bun"]).optional(),
     app: App.prefault({}),
+    /** ADR 0033 §3: what the project needs on this machine; `kitchen doctor` and `kitchen run`'s preflight run each check. */
+    requires: z.array(z.object({ name: z.string().min(1), check: z.string().min(1), fix: z.string().default("") }).strict()).default([]),
     /** Auto-merge (ADR 0016 §5): passing jobs merge into `branch`, never into `base` or main. */
     staging: z
       .object({
@@ -281,6 +292,10 @@ export function parseConfig(text: string): Config {
     throw new ConfigError(
       `kitchen.yaml: checks: ${early.name} has needs_app: true, which only a when: merge check can have (the app starts from the trial merge)`,
     );
+  // ADR 0033 §1: a scenario's name becomes a file name (scenario-<name>.json).
+  const badName = Object.keys(r.data.app.scenarios).find((n) => !SCENARIO.test(n));
+  if (badName !== undefined)
+    throw new ConfigError(`kitchen.yaml: app.scenarios: ${JSON.stringify(badName)}: a scenario's name is letters, digits, . _ - (it names a file)`);
   const noApp = checkList.find((c) => c.needsApp) && !r.data.app.start;
   if (noApp) throw new ConfigError("kitchen.yaml: a check has needs_app: true but app.start is empty: say how to start the app, or set needs_app: false");
   return { ...r.data, checkList, checksOff, dropped: u.dropped };
