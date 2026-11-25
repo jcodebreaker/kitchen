@@ -51,7 +51,12 @@ export async function refuseTarget(repo: string, cfg: Config, branch: string): P
   if (cfg.forge.kind === "github") {
     const r = await git(repo, ["ls-remote", "--exit-code", "--heads", "origin", `refs/heads/${branch}`], { allowFail: true });
     if (r.code) return `there is no branch ${branch} on origin: Kitchen never creates a target, push it first`;
-  } else if (!(await branchExists(repo, branch))) return `there is no branch ${branch}: Kitchen never creates a target, make it first`;
+  } else if (!(await branchExists(repo, branch))) {
+    // A branch that exists only on origin: take a local copy of it (Kitchen still never creates a target).
+    if ((await revParse(repo, `refs/remotes/origin/${branch}`)) === null) return `there is no branch ${branch}: Kitchen never creates a target, make it first`;
+    const r = await git(repo, ["branch", "--track", branch, `origin/${branch}`], { allowFail: true });
+    if (r.code) return `couldn't copy origin/${branch} locally: ${(r.stderr || r.stdout).trim()}`;
+  }
   return null;
 }
 

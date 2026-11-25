@@ -387,7 +387,9 @@ test("(g) the schedule that files a check: launchd and systemd files written to 
   assert.match(service, /Description=Kitchen check/);
   assert.match(
     service,
-    new RegExp(`ExecStart=\\S+ /k/cli\\.js ticket --check --repo ${path.resolve(repo).replace(/[.]/g, "\\.")} --into release --from-schedule hour "check checkout still works"`),
+    new RegExp(
+      `ExecStart=\\S+ /k/cli\\.js ticket --check --repo ${path.resolve(repo).replace(/[.]/g, "\\.")} --into release --from-schedule hour "check checkout still works"`,
+    ),
   );
   assert.match(fs.readFileSync(path.join(d, `${id}.timer`), "utf8"), /OnCalendar=\*-\*-\* \*:00:00\nPersistent=true/);
   assert.equal(listKept(repo).length, 1, "the same text replaces its schedule");
