@@ -9,7 +9,7 @@ import { readControl } from "../engine/control.ts";
 import { type FailKind, failureOf } from "../engine/diagnose.ts";
 import { diffSize } from "../engine/git.ts";
 import { heartbeatFile, syncPrs } from "../engine/jobs.ts";
-import { criteriaOf, leftOutOf, readIntake, readQa, readReview } from "../engine/lanes.ts";
+import { claimOf, criteriaOf, leftOutOf, readIntake, readQa, readReview } from "../engine/lanes.ts";
 import { BY_YOU_STOPPED, isActive, isCheck, type Job, PR_OPEN_WORDS, pausedByYou, prOpen, promotable, type Stage } from "../engine/machine.ts";
 import { type Plan, planWave } from "../engine/plan.ts";
 import { JOB_ID, jobDirOf, scanJobs } from "../engine/store.ts";
@@ -26,6 +26,7 @@ export const STAGE_NAMES: Record<Stage, string> = {
   qa: "QA",
   review: "Review",
   regress: "Merge check",
+  "second-look": "Second look",
   ready: "Ready",
   done: "Merged",
   "needs-human": "Needs you",
@@ -36,7 +37,7 @@ export const STAGE_NAMES: Record<Stage, string> = {
 export const PHASES = [
   { k: "intake", nm: "Intake", stages: ["intake", "needs-info"] },
   { k: "build", nm: "Build", stages: ["build"] },
-  { k: "qa", nm: "QA", stages: ["qa"] },
+  { k: "qa", nm: "QA", stages: ["qa", "second-look"] },
   { k: "review", nm: "Review", stages: ["review", "regress"] },
   { k: "merge", nm: "Merge", stages: ["ready", "done"] },
 ] as const satisfies readonly { k: string; nm: string; stages: readonly Stage[] }[];
@@ -47,6 +48,7 @@ const AGENT: Partial<Record<Stage, string>> = {
   qa: "QA agent",
   review: "Review agent",
   regress: "Merge-check agent",
+  "second-look": "Second-look agent",
 };
 
 /** The stage a job's track and agent are read from: where it paused or escalated from, else where it is. */
@@ -85,7 +87,7 @@ export function laneOf(j: Pick<Job, "stage" | "pausedFrom" | "escalatedFrom" | "
   if (stateOf(j) === "you") return "you";
   if (j.stage === "rejected" || j.stage === "done" || (pausedByYou(j) && j.pausedReason === BY_YOU_STOPPED)) return "done";
   const s = workStage(j);
-  return s === "build" || s === "qa" || s === "review" ? s : s === "regress" ? "review" : "intake";
+  return s === "build" || s === "qa" || s === "review" ? s : s === "regress" ? "review" : s === "second-look" ? "qa" : "intake";
 }
 const LANE_SHORT = { intake: "intake", builder: "build", qa: "QA", reviewer: "review" } as const;
 /** Who works in each lane, as its header says. */
@@ -135,7 +137,7 @@ export function liveStreams(dir: string, moves: number): { role: string; file: s
 export type Waits = { for: "refine"; reason: string; items: string[] } | { for: "confirm"; items: string[]; leftOut: string };
 export function waitsOf(j: Job, dir: string): Waits | null {
   if (j.stage !== "needs-info" || !j.waits) return null;
-  if (j.waits.for === "confirm") return { for: "confirm", items: criteriaOf(dir).map((c) => `${c.id} (${c.check}): ${c.text}`), leftOut: leftOutOf(dir) };
+  if (j.waits.for === "confirm") return { for: "confirm", items: criteriaOf(dir).map((c) => `${c.id} (${c.check}): ${claimOf(c)}`), leftOut: leftOutOf(dir) };
   const i = readIntake(dir);
   return { for: "refine", reason: j.waits.reason, items: i?.decision === "REFINE" ? i.items : [] };
 }
@@ -143,7 +145,7 @@ export function waitsOf(j: Job, dir: string): Waits | null {
 /** `skip`: ADR 0029 §2, QA couldn't test it ("not tested", with why): muted, never a fail. */
 export type Crit = { id: string; text: string; st: "ok" | "bad" | "wait" | "skip"; e: string };
 /** The job's criteria (intake's) with QA's latest results. */
-export function critOf(dir: string, round: number, o: { check?: boolean } = {}): Crit[] {
+export function critOf(dir: string, round: number, o: { check?: boolean; job?: Pick<Job, "carried" | "qaRetry"> } = {}): Crit[] {
   const crit = criteriaOf(dir);
   let rows: { id: string; result: string; note: string; evidence: string[]; why?: string }[] = [];
   for (let r = round; r >= 1 && !rows.length; r--) {
@@ -154,7 +156,7 @@ export function critOf(dir: string, round: number, o: { check?: boolean } = {}):
     const r = rows.find((x) => x.id === c.id);
     return {
       id: c.id,
-      text: `${c.text} (${c.check})`,
+      text: `${claimOf(c)} (${c.check})`,
       st: !r ? "wait" : r.result === "PASS" ? "ok" : r.result === "NOT_RUN" ? "skip" : "bad",
       e: !r
         ? ""
@@ -438,8 +440,8 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
     }
     const dir = jobDirOf(repo, j.id);
     const chk = isCheck(j);
-    const crit = critOf(dir, j.round, { check: chk });
-    const qaNow = readQa(dir, j.round, criteriaOf(dir), { check: chk });
+    const crit = critOf(dir, j.round, { check: chk, job: j });
+    const qaNow = readQa(dir, j.round, criteriaOf(dir), { check: chk, job: j });
     const rv = readReview(dir, j.round);
     const review =
       "findings" in rv

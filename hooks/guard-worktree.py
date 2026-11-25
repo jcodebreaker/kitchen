@@ -4,7 +4,8 @@
 1. `git worktree add|move` may only target <repo>/.worktrees/ (Kitchen's job worktrees), <repo>/.kitchen/merge/
    (staging's scratch merges) or <repo>/.claude/worktrees/ (Claude Code's own). Honours `cd X &&` and `git -C X`.
 2. A lane agent (a subagent bound to a Kitchen job, see kitchen_jobs.py) may write files only inside its job's
-   worktree, its job folder and the temp folders. The intake lane has no worktree: only its job folder.
+   worktree, its job folder and the temp folders. The intake lane has no worktree: only its job folder. In the job
+   folder, the files Kitchen owns (job.json, briefs, stamps, ...) are never its to write (ADR 0031; Edit/Write only).
 3. A lane agent whose job the person removed (`kitchen remove`, job.json `archived`), or whose job ended while it
    worked (done or rejected with no lane open: its PR merged or closed on GitHub), is refused every call: it stops.
 
@@ -185,6 +186,33 @@ def under(p, root):
     return p == root or p.startswith(root.rstrip(os.sep) + os.sep)
 
 
+# ADR 0031: the job folder's files Kitchen owns (its state, the brief it wrote, the stamps it took). Edit/Write only:
+# Bash is not covered, so readQa's own checks (carried rows, stamps, the verdict's hash) are the real protection.
+KITCHEN_FILES = {"job.json": "the job's state", "job.lock": "the job's lock", "control.json": "the steering file",
+                 "messages.jsonl": "the person's messages", "clarifications.json": "the clarifications",
+                 "ticket.md": "the ticket", "report.html": "the Report", "refused.txt": "Kitchen's refusal",
+                 "app.json": "the running app's state"}
+
+
+def kitchen_owned(rel, lane):
+    """What Kitchen-owned file `rel` (relative to the job folder) is, or None when a lane agent may write it."""
+    parts = rel.split(os.sep)
+    name = parts[-1]
+    if len(parts) == 1 and (name in KITCHEN_FILES or name.startswith("job.json")):
+        return KITCHEN_FILES.get(name, "the job's state")
+    if name.endswith(".meta.json"):
+        return "a capture's stamp (kitchen qa writes it)"
+    if parts[0] == "rounds" and len(parts) >= 3:
+        if name.startswith("brief-") or name == "checks.json":
+            return "the lane's brief" if name.startswith("brief-") else "the checks Kitchen ran"
+        if len(parts) == 4 and parts[2] == "qa" and name == "criteria.json":
+            return "the criteria QA was given"
+        # ADR 0031 §5: the second look reads QA's folder; it never writes there.
+        if lane == "second-look" and parts[2] == "qa":
+            return "QA's folder (the second look only reads it)"
+    return None
+
+
 def write_check(payload):
     """None when a lane agent's file write is inside its job's places, else the deny reason."""
     path = (payload.get("tool_input") or {}).get("file_path") or (payload.get("tool_input") or {}).get("notebook_path")
@@ -201,6 +229,13 @@ def write_check(payload):
         places.append(job.get("worktree") or os.path.join(repo, ".worktrees", job_id))
     temps = TEMP_ROOTS + ([os.path.normpath(os.environ["TMPDIR"])] if os.environ.get("TMPDIR") else [])
     real = os.path.join(os.path.realpath(os.path.dirname(target)), os.path.basename(target))
+    job_dir = places[0]
+    for t in (target, real):
+        for d in (job_dir, os.path.realpath(job_dir)):
+            if under(t, d) and t != d:
+                why = kitchen_owned(os.path.relpath(t, d), lane)
+                if why:
+                    return "Blocked by Kitchen: %s is %s: Kitchen writes it, never a lane agent." % (target, why)
     if any(under(t, p) for t in (target, real) for p in places):
         return None
     # A temp folder is fine, unless the repo itself lives in one (a scratch clone): its main checkout stays off limits.

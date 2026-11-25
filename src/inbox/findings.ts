@@ -5,7 +5,7 @@
 // again adds nothing twice. Best effort: a finding that can't be added never stops the job.
 import fs from "node:fs";
 import path from "node:path";
-import type { QaFinding } from "../engine/lanes.ts";
+import { causeLabel, checkFindingKey, type QaFinding } from "../engine/lanes.ts";
 import { readState, writeState } from "../sources/config.ts";
 import { addItems, listProposals, type NewItem, type Proposal, propose } from "./store.ts";
 
@@ -74,22 +74,33 @@ export function runFindings(kind: "sweep" | "maintain", run: string, rows: { id:
 }
 
 /**
+ * Pure, ADR 0031 §1: a finding as the proposal says it: Seen, Expected, and the cause as suspected or confirmed, each
+ * on its own line. An older finding (no expected, no cause) is its `seen` alone.
+ */
+export function findingText(f: Pick<QaFinding, "seen" | "expected" | "cause">): string {
+  if (!f.expected && !f.cause) return f.seen;
+  return [`Seen: ${f.seen}`, f.expected ? `Expected: ${f.expected}` : "", f.cause ? `${causeLabel(f)}: ${f.cause.text}` : ""].filter(Boolean).join("\n");
+}
+
+/**
  * ADR 0028 §4: a check's problems, each an inbox item of Kitchen findings (keyed `kitchen:<job>:check:<round>.<n>`,
  * linked to the check job) and a proposal the person may Run (a bug, P2) with the check's repro and evidence. A
  * finish run again adds nothing twice: an item already proposed keeps its proposal. The proposal ids, in order.
  */
 export async function proposeCheckFindings(
   repo: string,
-  c: { job: string; round: number; onto: string; target: string; qaFolder: string; findings: QaFinding[] },
+  c: { job: string; round: number; onto: string; target: string; qaFolder: string; findings: QaFinding[]; skip?: number[] },
   now = new Date(),
 ): Promise<string[]> {
-  if (!c.findings.length) return [];
+  // ADR 0031 §5: a finding the second look didn't confirm (1-based in `skip`) is never proposed; keys stay QA's numbering.
+  const kept = c.findings.map((f, i) => ({ f, n: i + 1 })).filter((x) => !c.skip?.includes(x.n));
+  if (!kept.length) return [];
   const label = `Check ${num(c.job)}`;
   const added = await addItems(
     repo,
-    c.findings.map((f, i) => ({
-      key: `kitchen:${c.job}:check:${c.round}.${i + 1}`,
-      text: `${f.title}\n\n${f.seen}`,
+    kept.map(({ f, n }) => ({
+      key: checkFindingKey(c.job, c.round, n),
+      text: `${f.title}\n\n${findingText(f)}`,
       src: { source: "kitchen", kind: "kitchen", label, ref: c.job, job: c.job },
     })),
     now,
@@ -103,19 +114,19 @@ export async function proposeCheckFindings(
       ids.push(had.id);
       continue;
     }
-    const f = c.findings[i];
+    const f = kept[i].f;
     const p = await propose(
       repo,
       {
         title: f.title,
-        text: `${f.seen}${f.criterion ? `\n\nCheck ${num(c.job)}'s ${f.criterion} failed on ${c.target} (${c.onto.slice(0, 12)}).` : `\n\nFound by check ${num(c.job)} on ${c.target} (${c.onto.slice(0, 12)}).`}`,
+        text: `${findingText(f)}${f.criterion ? `\n\nCheck ${num(c.job)}'s ${f.criterion} failed on ${c.target} (${c.onto.slice(0, 12)}).` : `\n\nFound by check ${num(c.job)} on ${c.target} (${c.onto.slice(0, 12)}).`}`,
         items: [a.item.id],
         kind: "bug",
         prio: "P2",
         why: `check ${num(c.job)} saw it on ${c.target}`,
         line: `Found by check ${num(c.job)} on ${c.target}`,
         steps: f.repro,
-        evidence: f.evidence.map((e) => path.join(c.qaFolder, e)),
+        evidence: [...new Set([...f.evidence, ...(f.cause?.evidence ?? [])])].map((e) => path.join(c.qaFolder, e)),
         sha: c.onto,
       },
       now,

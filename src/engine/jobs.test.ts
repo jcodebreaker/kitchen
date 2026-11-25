@@ -665,9 +665,10 @@ test("ADR 0029 §2: a round with C2 NOT_RUN: QA drives only C2 on fresh seed dat
     assert.match(lines.join("\n"), /resumed → qa/);
     // QA again in the same round folder starts clean: no old verdict, no carried passes (it drives everything).
     const qd = qaDir(dirOf(r, id2), findJob(r, id2).round);
-    assert.ok(fs.existsSync(path.join(qd, "verdict.json")) && fs.existsSync(path.join(qd, "carried.json")));
+    const round = findJob(r, id2).round;
+    assert.ok(fs.existsSync(path.join(qd, "verdict.json")) && findJob(r, id2).carried?.some((c) => c.round === round));
     await open(r, id2, "qa");
-    assert.ok(!fs.existsSync(path.join(qd, "verdict.json")) && !fs.existsSync(path.join(qd, "carried.json")));
+    assert.ok(!fs.existsSync(path.join(qd, "verdict.json")) && !findJob(r, id2).carried?.some((c) => c.round === round));
   } finally {
     await appDown(r, id2).catch(() => {});
   }

@@ -27,12 +27,17 @@ import { CONFIRM_KEY, clarificationsSection, questionsAsked, readRounds, recordQ
 import { clearControl, fileSlices, moveJob, readControl } from "./control.ts";
 import { branchExists, diffSize, git, gitOut, revParse } from "./git.ts";
 import {
-  carriedFile,
+  causeLabel,
   changesOf,
+  claimOf,
+  consequential,
   criteriaOf,
+  goodEvidence,
   intakeFile,
   leftOutOf,
+  legacyCarried,
   matchPath,
+  metaFile,
   parseIntake,
   type QaRow,
   type QaVerdict,
@@ -41,8 +46,11 @@ import {
   readFeatureVerdict,
   readQa,
   readReview,
+  readSecondLook,
   regressDir,
   reviewFile,
+  secondLookFile,
+  verdictHash,
 } from "./lanes.ts";
 import {
   BY_YOU,
@@ -72,9 +80,19 @@ import { checksFile, findJob, intakeCheckoutOf, jobDirOf, kitchenDir, listJobs, 
 
 export type Out = (line: string) => void;
 const ROLES = path.resolve(import.meta.dirname, "..", "..", "roles");
-/** The model each lane runs on (a regress lane is a short QA pass) and the role file its brief quotes. */
-const ROLE_OF: Record<Lane, LaneRole> = { intake: "intake", build: "builder", qa: "qa", review: "reviewer", regress: "qa" };
-const ROLE_FILE: Record<Lane, string> = { intake: "intake", build: "builder", qa: "qa", review: "reviewer", regress: "regress" };
+/**
+ * The model each lane runs on (a regress lane is a short QA pass; a second look, ADR 0031 §5, is a review) and the
+ * role file its brief quotes.
+ */
+const ROLE_OF: Record<Lane, LaneRole> = { intake: "intake", build: "builder", qa: "qa", review: "reviewer", regress: "qa", "second-look": "reviewer" };
+const ROLE_FILE: Record<Lane, string> = {
+  intake: "intake",
+  build: "builder",
+  qa: "qa",
+  review: "reviewer",
+  regress: "regress",
+  "second-look": "second-look",
+};
 /** Keeps a trial merge waiting for its regress lane alive (the worktree can be made again from it). */
 const driveRef = (id: string) => `refs/kitchen/drive/${id}`;
 /** Refused lane results in one stage before a person is asked. */
@@ -180,7 +198,7 @@ function earlier(cfg: Config, dir: string, job: Job): string {
   const parts: string[] = [];
   for (let r = job.round - 1; r >= Math.max(1, job.round - 2); r--) {
     const rd = roundDir(dir, r);
-    const qa = readQa(dir, r, criteriaOf(dir));
+    const qa = readQa(dir, r, criteriaOf(dir), { job });
     if ("criteria" in qa && qa.verdict === "FAIL")
       parts.push(
         `Round ${r}: QA FAILED (evidence in ${path.relative(dir, qaDir(dir, r))}/):\n${qa.criteria
@@ -242,7 +260,7 @@ const criteriaSnapshot = (dir: string, round: number) => path.join(qaDir(dir, ro
 function redriveNote(dir: string, job: Job): string {
   for (let r = job.round - 1; r >= 1; r--) {
     if (!fs.existsSync(path.join(qaDir(dir, r), "verdict.json"))) continue;
-    const qa = readQa(dir, r, criteriaOf(dir));
+    const qa = readQa(dir, r, criteriaOf(dir), { job });
     // ADR 0029 §2: a round QA couldn't test says nothing about the code: look further back.
     if ("criteria" in qa && qa.verdict === "INCOMPLETE") continue;
     if (!("criteria" in qa) || qa.verdict !== "PASS") return "";
@@ -297,6 +315,7 @@ function brief(
     qa: `Write evidence files and verdict.json in ${qd}/ (create it).`,
     review: `Write ${reviewFile(dir, job.round)}.`,
     regress: `Write evidence files and verdict.json in ${regressDir(dir, job.round)}/ (one row per feature).`,
+    "second-look": `Write ${secondLookFile(dir, job.round)}.`,
   };
   const app = cfg.app.start
     ? `app.start \`${cfg.app.start}\`${cfg.app.reset ? `, app.reset \`${cfg.app.reset}\`` : ""}, health ${cfg.app.health}`
@@ -319,11 +338,13 @@ function brief(
         ? `- The merged result (drive it, change nothing): ${o.wt}: ${targetOf(cfg, job)} at ${job.drive.onto.slice(0, 12)} with ${job.branch} (${job.drive.head.slice(0, 12)}) merged as ${job.drive.sha.slice(0, 12)}`
         : lane === "qa" && isCheck(job)
           ? `- The checkout to drive (change nothing): ${o.wt}, ${targetOf(cfg, job)} at ${o.base.slice(0, 12)}, detached: a check has no branch and changes no code`
-          : `- Worktree (work only here): ${o.wt} on branch ${job.branch}, from ${o.base.slice(0, 12)}`,
+          : lane === "second-look"
+            ? `- The checkout QA drove (read it, change nothing): ${o.wt}`
+            : `- Worktree (work only here): ${o.wt} on branch ${job.branch}, from ${o.base.slice(0, 12)}`,
     `- Job folder: ${dir}`,
     job.target ? `- Target: ${job.target} (the ticket named it): the work starts from it and merges into it, not ${cfg.staging.branch}` : "",
     lane === "review" && o.head ? `- Review this commit: ${o.head} (diff: \`git diff ${o.base}...${o.head}\`)` : "",
-    lane === "qa" || lane === "review" ? `- QA folder: ${qd}/` : "",
+    lane === "qa" || lane === "review" || lane === "second-look" ? `- QA folder: ${qd}/` : "",
     lane === "regress" ? `- Evidence folder: ${regressDir(dir, job.round)}/ (\`kitchen qa\` saves there while the job is in regress)` : "",
     `- Checks (kitchen.yaml): ${
       checksFor(cfg, "build")
@@ -341,7 +362,9 @@ function brief(
     t.trim(),
     fence(t),
     "",
-    crit.length && lane !== "intake" && lane !== "regress" ? `## Criteria (fixed)\n\n${crit.map((c) => `- ${c.id} (${c.check}): ${c.text}`).join("\n")}\n` : "",
+    crit.length && lane !== "intake" && lane !== "regress"
+      ? `## Criteria (fixed)\n\n${crit.map((c) => `- ${c.id} (${c.check}): ${claimOf(c)}`).join("\n")}\n`
+      : "",
     o.others ?? "",
     o.notes,
     lane === "build" && o.caught ? targetMoved(targetOf(cfg, job), o.caught) : "",
@@ -350,10 +373,11 @@ function brief(
       : "",
     lane === "build" || lane === "review" ? catchUpNote(cfg, dir, job, lane, o.head) : "",
     lane === "build" || lane === "intake" ? earlier(cfg, dir, job) : "",
-    lane === "qa" || lane === "regress" ? refusedNote(dir) : "",
+    lane === "qa" || lane === "regress" || lane === "second-look" ? refusedNote(dir) : "",
     lane === "qa" && !isCheck(job) && !job.qaRetry ? redriveNote(dir, job) : "",
-    lane === "qa" && job.qaRetry ? retryNote(dir, job.qaRetry) : "",
+    lane === "qa" && job.qaRetry ? retryNote(dir, job, job.qaRetry) : "",
     lane === "qa" && isCheck(job) ? checkNote(cfg, job, qd) : "",
+    lane === "second-look" ? secondLookNote(dir, job, qd) : "",
     o.map ?? "",
     lane === "review" ? qaSummary(dir, job) : "",
     o.skills,
@@ -364,8 +388,8 @@ function brief(
 }
 
 /** ADR 0029 §2: the QA brief when it runs again on what it couldn't test: those criteria only; the passes stand. */
-function retryNote(dir: string, r: { from: number; ids: string[] }): string {
-  const was = readQa(dir, r.from, criteriaOf(dir));
+function retryNote(dir: string, job: Job, r: { from: number; ids: string[] }): string {
+  const was = readQa(dir, r.from, criteriaOf(dir), { job });
   const rows = "criteria" in was ? was.criteria : [];
   const fresh = "Your first `kitchen qa up` starts the app on fresh seed data; this is not a new Build round.";
   const tail =
@@ -380,16 +404,16 @@ function retryNote(dir: string, r: { from: number; ids: string[] }): string {
       tail,
       "",
     ].join("\n");
-  const passed = rows.filter((x) => x.result === "PASS").map((x) => x.id);
+  const passed = rows.filter((x) => x.result === "PASS" && !r.ids.includes(x.id)).map((x) => x.id);
   const which = r.ids.join(", ");
   return [
     `## QA again on ${which} only`,
     "",
     `Round ${r.from}'s QA couldn't test ${rows
       .filter((x) => r.ids.includes(x.id))
-      .map((x) => `${x.id} (${x.why ?? ""})`)
+      .map((x) => `${x.id} (${x.result === "PASS" ? "its evidence couldn't be carried" : (x.why ?? "")})`)
       .join(", ")}. ${fresh}`,
-    `Drive only ${which}, and write rows only for ${r.ids.length === 1 ? "it" : "them"}.${passed.length ? ` ${passed.join(", ")} passed in round ${r.from} and stand${passed.length === 1 ? "s" : ""}: Kitchen carried ${passed.length === 1 ? "its row" : "their rows"} and evidence into your QA folder (carried.json, from-round-${r.from}/).` : ""}`,
+    `Drive only ${which}, and write rows only for ${r.ids.length === 1 ? "it" : "them"}.${passed.length ? ` ${passed.join(", ")} passed in round ${r.from} and stand${passed.length === 1 ? "s" : ""}: Kitchen carried ${passed.length === 1 ? "its row" : "their rows"} (Kitchen keeps ${passed.length === 1 ? "it" : "them"}) and evidence into your QA folder (from-round-${r.from}/).` : ""}`,
     tail,
     "",
   ].join("\n");
@@ -444,13 +468,47 @@ function checkNote(cfg: Config, job: Job, qd: string): string {
       ? `This check explores: drive the app freely for at most ${explore} minutes (start a timer; stop when it rings), the way the ticket says, and report what is broken. Check the criteria below too, when the brief lists any.`
       : "Check each criterion against the app started from the checkout above, as your role says.",
     "",
-    `Every failure and every problem you see becomes a finding in \`${qd}/verdict.json\` (your role's "A check ticket" section): each is proposed to the person as a bug. A criterion you couldn't test (the seed, a service down) is NOT_RUN with why, and an app that won't start is the verdict BLOCKED: neither is a problem found, and Kitchen runs the check again on them.`,
+    `Every failure and every problem you see becomes a finding in \`${qd}/verdict.json\` (your role's "A check ticket" section): each is proposed to the person as a bug. A criterion you couldn't test (the seed, its given doesn't hold, a service down) is NOT_RUN with why, and an app that won't start is the verdict BLOCKED: neither is a problem found, and Kitchen runs the check again on them.`,
     "",
   ].join("\n");
 }
 
+/** ADR 0031 §5: the findings the second look reads, each with what QA said and the evidence it cites. */
+function secondLookNote(dir: string, job: Job, qd: string): string {
+  const qa = readQa(dir, job.round, criteriaOf(dir), { check: true, job });
+  if (!("findings" in qa)) return "";
+  const look = consequential(qa.findings, job.risk);
+  return [
+    "## The findings to look at again",
+    "",
+    `QA's verdict is ${qaVerdictFile(dir, job.round)}. ${job.risk === "high" ? "This check is high risk: every finding gets a second look." : "QA marked these severity high."}`,
+    "",
+    ...look.flatMap((n) => {
+      const f = qa.findings[n - 1];
+      return [
+        `### Finding ${n}: ${f.title}${f.criterion ? ` (${f.criterion})` : ""}`,
+        "",
+        `- Seen: ${f.seen}`,
+        `- Expected: ${f.expected ?? "(QA didn't say)"}`,
+        f.cause
+          ? `- ${causeLabel(f)}: ${f.cause.text}${f.cause.evidence?.length ? ` (${f.cause.evidence.map((e) => path.join(qd, e)).join(", ")})` : ""}`
+          : "- Cause: (QA didn't say)",
+        `- Repro: ${f.repro.map((s, i) => `${i + 1}. ${s}`).join(" ")}`,
+        `- Evidence: ${f.evidence.map((e) => path.join(qd, e)).join(", ")}`,
+        "",
+      ];
+    }),
+  ].join("\n");
+}
+
+/** ADR 0031 §2: the head QA drove (a check's tip; the job branch's), which every stamped capture must name. */
+async function qaHead(repo: string, job: Job): Promise<string | undefined> {
+  if (isCheck(job)) return job.check?.onto || undefined;
+  return (await revParse(repo, job.branch)) ?? undefined;
+}
+
 function qaSummary(dir: string, job: Job): string {
-  const qa = readQa(dir, job.round, criteriaOf(dir));
+  const qa = readQa(dir, job.round, criteriaOf(dir), { job });
   if (!("criteria" in qa)) return "";
   return `## QA's verdict: ${qa.verdict}\n\n${qa.criteria.map((c) => `- ${c.id} ${c.result}: ${c.note} (${c.evidence.join(", ")})`).join("\n")}\n`;
 }
@@ -468,7 +526,7 @@ export async function start(
   lane: string,
   o: { restart?: boolean } = {},
 ): Promise<Started | { parked: string } | { refused: string }> {
-  if (!isLane(lane)) return { refused: `no lane ${lane} (intake, build, qa, review)` };
+  if (!isLane(lane)) return { refused: `no lane ${lane} (intake, build, qa, review, regress, second-look)` };
   const cfg = loadConfig(repo);
   let job = findJob(repo, id);
   const dir = jobDirOf(repo, job.id);
@@ -508,7 +566,27 @@ export async function start(
       await git(repo, ["worktree", "add", "-q", "--detach", wt, d.sha]);
     }
   } else if (lane === "intake") ({ wt, base } = await intakeCheckout(repo, cfg, job));
-  else {
+  // ADR 0031 §5: the second look reads the checkout QA drove (a check's, kept until the check is done; made again at
+  // the tip QA checked when it is gone), and only a check with a consequential finding gets one.
+  else if (lane === "second-look") {
+    const no = secondLookRefusal(dir, job);
+    if (no) {
+      // From QA, not the second look: Answer (feedback with no --to) runs QA again, never this refusal again.
+      await moveJob(repo, job.id, "needs-human", {
+        reason: no,
+        who: "orchestrator",
+        patch: (j) => {
+          j.escalatedFrom = "qa";
+        },
+      });
+      return { refused: `${job.id} → needs-human: ${no}` };
+    }
+    wt = runWorktree(repo, checkRunId(job.id));
+    if (!fs.existsSync(path.join(wt, ".git"))) {
+      await dropTrial(repo, wt);
+      await git(repo, ["worktree", "add", "-q", "--detach", wt, job.check?.onto as string]);
+    }
+  } else {
     wt = worktreeOf(repo, job.id);
     if (!fs.existsSync(path.join(wt, ".git"))) {
       if (!(await branchExists(repo, job.branch))) return { refused: `${job.id} has no branch ${job.branch} to ${lane}` };
@@ -525,12 +603,13 @@ export async function start(
   const stream = path.join("activity", `m${job.moves}-${lane}-${t0}.jsonl`);
   fs.mkdirSync(path.join(dir, "activity"), { recursive: true });
   fs.writeFileSync(path.join(dir, stream), "");
+  // ADR 0031 §5: a second look's answers belong to the QA they read: a new QA or second look starts without them.
+  if (lane === "qa" || lane === "second-look") fs.rmSync(secondLookFile(dir, job.round), { force: true });
   if (lane === "qa") {
     fs.mkdirSync(qaDir(dir, job.round), { recursive: true });
     // ADR 0029 §2: QA again in a round folder it used before (Resume from Needs you) starts clean: no old verdict, and
     // no carried passes unless this is the retry they were carried for.
     fs.rmSync(qaVerdictFile(dir, job.round), { force: true });
-    if (!job.qaRetry) fs.rmSync(carriedFile(qaDir(dir, job.round)), { force: true });
     writeAtomic(criteriaSnapshot(dir, job.round), JSON.stringify(criteriaOf(dir)));
   }
   if (lane === "regress") fs.mkdirSync(regressDir(dir, job.round), { recursive: true });
@@ -558,6 +637,8 @@ export async function start(
   const model = modelFor(cfg, ROLE_OF[lane]);
   job = await updateJob(repo, job.id, (j) => {
     if (lane === "build") j.base = base;
+    // ADR 0029 §2 / 0031: QA again in a round folder it used (Resume) drives everything: no carried passes there.
+    if (lane === "qa" && !j.qaRetry && j.carried?.some((c) => c.round === j.round)) j.carried = j.carried.filter((c) => c.round !== j.round);
     if (lane !== "intake") j.worktree = wt;
     if (checkRun) j.check = { ...j.check, run: checkRun, onto: base };
     j.running = { lane, at: new Date(t0).toISOString(), key, stream, ...(head ? { head } : {}) };
@@ -688,7 +769,8 @@ export async function finish(repo: string, id: string): Promise<Finished | { ref
 
 async function finishLane(repo: string, id: string): Promise<Finished | { refused: string }> {
   const cfg = loadConfig(repo);
-  const job = findJob(repo, id);
+  // ADR 0031: a retry carried under ADR 0029 (carried.json) is adopted into job state, once.
+  const job = await adoptCarried(repo, findJob(repo, id));
   const dir = jobDirOf(repo, job.id);
   if (job.archived) return { refused: `${job.id} was removed by the person: this lane's result is dropped` };
   if (!job.running) {
@@ -813,7 +895,7 @@ async function finishLane(repo: string, id: string): Promise<Finished | { refuse
   if (lane === "qa" && isCheck(job)) return finishCheck(repo, cfg, job);
   if (lane === "qa") {
     await (await import("../qa/app.ts")).appDown(repo, job.id).catch(() => {});
-    const qa = readQa(dir, job.round, criteriaOf(dir));
+    const qa = readQa(dir, job.round, criteriaOf(dir), { sha: await qaHead(repo, job), job, strict: true });
     if ("refused" in qa) return refuseLane(repo, job, `QA: ${qa.refused}`);
     if (qa.verdict === "INCOMPLETE") return qaIncomplete(repo, job, qa);
     // ADR 0022: what QA saw beyond the criteria goes to the outer loop's inbox (Kitchen findings).
@@ -866,6 +948,7 @@ async function finishLane(repo: string, id: string): Promise<Finished | { refuse
     return moveOn(repo, job, "build", `${job.id}  QA FAIL ${bad.join(", ")} → build (round ${job.round + 1})`);
   }
   if (lane === "regress") return finishRegress(repo, cfg, job);
+  if (lane === "second-look") return finishSecondLook(repo, cfg, job);
   // review
   const head = await revParse(repo, job.branch);
   if (job.running.head && head !== job.running.head)
@@ -897,7 +980,7 @@ function notRunOf(qa: QaVerdict): { ids: string[]; why: string } {
 /**
  * ADR 0029 §2: QA's round is INCOMPLETE: rows NOT_RUN (the seed, a service down, the app won't start: not the
  * change), none FAILED. The first time, `kitchen qa reset` (fresh seed) and QA again on those rows only, the passes
- * carried into the new round (`carried.json`, their evidence copied), with no Build round counted; still not run
+ * carried into the new round (kept in job state, their evidence copied), with no Build round counted; still not run
  * then, a person fixes the environment and resumes QA. A check (ADR 0028) runs again the same way, on its own
  * checkout, and its round limit applies.
  */
@@ -911,44 +994,75 @@ async function qaIncomplete(repo: string, job: Job, qa: QaVerdict): Promise<Fini
   if (job.qaRetry || (check && outOfRounds(job)))
     return moveOn(repo, job, "needs-human", `${job.id}  QA still couldn't ${what} (${why}) → needs-human`, { reason: `QA couldn't ${what}: ${why}` });
   const from = job.round;
+  // ADR 0031: the passes are copied before the move, and kept in job state; a pass whose files can't be carried is
+  // tested again.
+  const dir = jobDirOf(repo, job.id);
+  const c = ids.length ? carryPasses(qaDir(dir, from), qaDir(dir, from + 1), from, qa.criteria) : { rows: [], lost: [] };
+  const retry = [...ids, ...c.lost];
   // The app is down (finish stopped it); the next lane's first `kitchen qa up` starts it on fresh seed data. Kitchen
   // starts nothing here: `job finish` returns at once.
-  const moved = await moveOn(
+  return moveOn(
     repo,
     job,
     "qa",
-    `${job.id}  QA couldn't ${what} (${why}) → ${again} on fresh seed data (round ${from + 1}${check ? "" : ", no Build round"})`,
+    `${job.id}  QA couldn't ${what} (${why}) → ${again}${c.lost.length ? ` and ${c.lost.join(", ")} (its evidence couldn't be carried)` : ""} on fresh seed data (round ${from + 1}${check ? "" : ", no Build round"})`,
     {
       patch: (j) => {
-        j.qaRetry = { from, ids, reset: true };
+        j.qaRetry = { from, ids: retry, reset: true };
+        j.carried = [...(j.carried ?? []).filter((x) => x.round !== from + 1), { round: from + 1, from, ids: retry, rows: c.rows }];
       },
     },
   );
-  if (moved.to === "qa" || moved.to === "paused") carryPasses(qaDir(jobDirOf(repo, job.id), from), qaDir(jobDirOf(repo, job.id), from + 1), from, qa.criteria);
-  return moved;
 }
 
-/** ADR 0029 §2: a round's PASS rows into the next round's QA folder (`carried.json`), their evidence under `from-round-<n>/`. */
-function carryPasses(was: string, now: string, from: number, rows: QaRow[]): void {
+/**
+ * ADR 0031, upgrading from ADR 0029: a job in a retry whose passes were carried in `carried.json` gets them in job state
+ * (legacyCarried reads them only as a retry's, and readQa checks them as any carry). Once: a round with state is left.
+ */
+export async function adoptCarried(repo: string, job: Job): Promise<Job> {
+  if (!job.qaRetry || job.carried?.some((c) => c.round === job.round)) return job;
+  const c = legacyCarried(jobDirOf(repo, job.id), job.round, job);
+  if (!c) return job;
+  return updateJob(repo, job.id, (j) => ({ ...j, carried: [...(j.carried ?? []), c] }));
+}
+
+/**
+ * ADR 0029 §2: a round's PASS rows into the next round (job state, ADR 0031: never a file QA could write), their evidence under
+ * `from-round-<n>/`. ADR 0031: their precondition's evidence too, and each capture's stamp with it, unchanged: it says
+ * the round it was taken in (readQa exempts carried rows from the this-round rule).
+ */
+function carryPasses(was: string, now: string, from: number, rows: QaRow[]): { rows: QaRow[]; lost: string[] } {
   const sub = `from-round-${from}`;
-  fs.mkdirSync(path.join(now, sub), { recursive: true });
-  const carried = rows
-    .filter((r) => r.result === "PASS")
-    .map((r) => ({
-      ...r,
-      evidence: r.evidence.map((f) => {
-        const to = path.join(sub, f);
-        fs.mkdirSync(path.dirname(path.join(now, to)), { recursive: true });
-        fs.copyFileSync(path.join(was, f), path.join(now, to));
-        return to;
-      }),
-    }));
-  writeAtomic(carriedFile(now), `${JSON.stringify(carried, null, 2)}\n`);
+  const carry = (f: string) => {
+    const to = path.join(sub, f);
+    fs.mkdirSync(path.dirname(path.join(now, to)), { recursive: true });
+    fs.copyFileSync(path.join(was, f), path.join(now, to));
+    if (fs.existsSync(metaFile(path.join(was, f)))) fs.copyFileSync(metaFile(path.join(was, f)), metaFile(path.join(now, to)));
+    return to;
+  };
+  const out: QaRow[] = [];
+  const lost: string[] = [];
+  for (const r of rows.filter((x) => x.result === "PASS")) {
+    // Only files in round `from`'s QA folder are copied (goodEvidence); a row with any other is tested again.
+    if (![...r.evidence, ...(r.given?.evidence ?? [])].every((f) => goodEvidence(was, f))) {
+      lost.push(r.id);
+      continue;
+    }
+    try {
+      out.push({ ...r, evidence: r.evidence.map(carry), ...(r.given ? { given: { ...r.given, evidence: r.given.evidence.map(carry) } } : {}) });
+    } catch {
+      lost.push(r.id);
+    }
+  }
+  return { rows: out, lost };
 }
 
 /** Pure: a check's result words (ADR 0028 §4), as its card and Report say them. */
-export function checkWords(o: { pass: number; total: number; findings: number; explore?: number }): string {
-  if (o.findings) return `Found ${o.findings} problem${o.findings === 1 ? "" : "s"}`;
+export function checkWords(o: { pass: number; total: number; findings: number; explore?: number; unconfirmed?: number }): string {
+  // ADR 0031 §5: findings the second look didn't confirm are said, never counted as problems.
+  const u = o.unconfirmed ? ` · ${o.unconfirmed} not confirmed` : "";
+  if (o.findings) return `Found ${o.findings} problem${o.findings === 1 ? "" : "s"}${u}`;
+  if (o.unconfirmed) return `No confirmed problem${u}`;
   if (!o.total) return `Checked on staging · explored ${o.explore ?? 0} min, no problems`;
   return `Checked on staging · ${o.pass} of ${o.total} pass`;
 }
@@ -961,18 +1075,92 @@ export function checkWords(o: { pass: number; total: number; findings: number; e
  */
 async function finishCheck(repo: string, cfg: Config, job: Job): Promise<Finished> {
   const dir = jobDirOf(repo, job.id);
-  const qd = qaDir(dir, job.round);
   await (await import("../qa/app.ts")).appDown(repo, job.id).catch(() => {});
   const criteria = criteriaOf(dir);
-  const qa = readQa(dir, job.round, criteria, { check: true });
+  const qa = readQa(dir, job.round, criteria, { check: true, sha: await qaHead(repo, job), job, strict: true });
   if ("refused" in qa) return refuseLane(repo, job, `QA: ${qa.refused}`);
+  if (qa.verdict === "INCOMPLETE") return qaIncomplete(repo, job, qa);
+  // ADR 0031 §5: a consequential finding is read again before anything is proposed; the checkout stays for it.
+  const look = consequential(qa.findings, job.risk);
+  if (look.length)
+    return moveOn(
+      repo,
+      job,
+      "second-look",
+      `${job.id}  check found ${qa.findings.length} problem${qa.findings.length === 1 ? "" : "s"}; finding${look.length === 1 ? "" : "s"} ${look.join(", ")} ${look.length === 1 ? "gets" : "get"} a second look → second-look`,
+      {
+        patch: (j) => {
+          j.check = { ...j.check, verdict: verdictHash(dir, job.round) ?? "" };
+        },
+      },
+    );
+  return closeCheck(repo, cfg, job, qa, []);
+}
+
+/**
+ * ADR 0031 §5: the second look answered on each consequential finding. Those it didn't confirm stay in the Report,
+ * marked, and aren't proposed; the check is done.
+ */
+async function finishSecondLook(repo: string, cfg: Config, job: Job): Promise<Finished> {
+  const dir = jobDirOf(repo, job.id);
+  // Nothing the agent can fix: a person sends it back to QA.
+  const no = secondLookRefusal(dir, job);
+  if (no)
+    return moveOn(repo, job, "needs-human", `${job.id}  second look: ${no} → needs-human`, {
+      reason: no,
+      patch: (j) => {
+        j.escalatedFrom = "qa";
+      },
+    });
+  const qa = readQa(dir, job.round, criteriaOf(dir), { check: true, job }) as QaVerdict;
+  const looks = readSecondLook(dir, job.round, consequential(qa.findings, job.risk));
+  if ("refused" in looks) return refuseLane(repo, job, `second look: ${looks.refused}`);
+  return closeCheck(
+    repo,
+    cfg,
+    job,
+    qa,
+    looks.filter((l) => !l.confirmed).map((l) => l.finding),
+  );
+}
+
+/**
+ * ADR 0031 §5: why this job can't have a second look (not a check, QA's verdict unreadable or incomplete, no finding
+ * that needs one), with what the person does; null when it can.
+ */
+function secondLookRefusal(dir: string, job: Job): string | null {
+  const again = `kitchen feedback ${job.id} --to qa runs QA again`;
+  if (!isCheck(job)) return `only a check's findings get a second look; ${job.id} isn't a check (${again})`;
+  if (!job.check?.onto) return `the check has no tip QA drove to read (${again})`;
+  // The second look may write in the job folder: QA's verdict must be the one Kitchen accepted.
+  if (job.check.verdict && verdictHash(dir, job.round) !== job.check.verdict)
+    return `QA's verdict for round ${job.round} changed after Kitchen accepted it (${again})`;
+  const qa = readQa(dir, job.round, criteriaOf(dir), { check: true, job });
+  if (!("findings" in qa)) return `QA's verdict for round ${job.round} can't be read: ${qa.refused} (${again})`;
+  if (qa.verdict === "INCOMPLETE") return `round ${job.round}'s QA is incomplete: nothing to look at again (${again})`;
+  if (!consequential(qa.findings, job.risk).length) return `round ${job.round} has no finding that needs a second look (${again})`;
+  return null;
+}
+
+/** ADR 0028 §4: a check is done: its findings proposed (all but `unconfirmed`, 1-based), its recipes kept. */
+async function closeCheck(repo: string, cfg: Config, job: Job, qa: QaVerdict, unconfirmed: number[]): Promise<Finished> {
+  const dir = jobDirOf(repo, job.id);
+  const qd = qaDir(dir, job.round);
+  const criteria = criteriaOf(dir);
   const onto = job.check?.onto ?? "";
   const target = targetOf(cfg, job);
-  if (qa.verdict === "INCOMPLETE") return qaIncomplete(repo, job, qa);
   await addFindings(repo, qaFindings(job.id, job.round, qd));
   // ADR 0029 §6: a proposal that fails to save is recorded and retried, never dropped.
   let failed: string | null = null;
-  const proposals = await proposeCheckFindings(repo, { job: job.id, round: job.round, onto, target, qaFolder: qd, findings: qa.findings }).catch((e: Error) => {
+  const proposals = await proposeCheckFindings(repo, {
+    job: job.id,
+    round: job.round,
+    onto,
+    target,
+    qaFolder: qd,
+    findings: qa.findings,
+    skip: unconfirmed,
+  }).catch((e: Error) => {
     failed = e.message.split("\n")[0];
     return [] as string[];
   });
@@ -980,15 +1168,17 @@ async function finishCheck(repo: string, cfg: Config, job: Job): Promise<Finishe
   await dropCheckCheckout(repo, job.id);
   const ids = new Set(criteria.map((c) => c.id));
   const pass = qa.criteria.filter((r) => ids.has(r.id) && r.result === "PASS").length;
-  const result = checkWords({ pass, total: criteria.length, findings: qa.findings.length, explore: job.check?.explore });
+  const found = qa.findings.length - unconfirmed.length;
+  const result = checkWords({ pass, total: criteria.length, findings: found, explore: job.check?.explore, unconfirmed: unconfirmed.length });
   const outcome: JobCheck = {
     result,
     pass,
     total: criteria.length,
-    findings: qa.findings.length,
+    findings: found,
     proposals,
+    ...(unconfirmed.length ? { unconfirmed: unconfirmed.length } : {}),
     ...(map ? { map } : {}),
-    ...(failed ? { proposalsFailed: { error: failed, round: job.round } } : {}),
+    ...(failed ? { proposalsFailed: { error: failed, round: job.round, ...(unconfirmed.length ? { skip: unconfirmed } : {}) } } : {}),
   };
   const tail = [
     proposals.length ? `proposed ${proposals.join(", ")} in the inbox` : "",
@@ -1017,9 +1207,9 @@ export async function retryProposals(repo: string): Promise<string[]> {
 async function proposeAgain(repo: string): Promise<string[]> {
   const said: string[] = [];
   for (const j of listJobs(repo).filter((x) => x.check?.proposalsFailed && !x.archived)) {
-    const pf = j.check?.proposalsFailed as { error: string; round: number };
+    const pf = j.check?.proposalsFailed as { error: string; round: number; skip?: number[] };
     const dir = jobDirOf(repo, j.id);
-    const qa = readQa(dir, pf.round, criteriaOf(dir), { check: true });
+    const qa = readQa(dir, pf.round, criteriaOf(dir), { check: true, job: j });
     if (!("criteria" in qa)) continue;
     const cfg = loadConfig(repo);
     const r = await proposeCheckFindings(repo, {
@@ -1029,6 +1219,7 @@ async function proposeAgain(repo: string): Promise<string[]> {
       target: targetOf(cfg, j),
       qaFolder: qaDir(dir, pf.round),
       findings: qa.findings,
+      skip: pf.skip,
     }).then(
       (ids) => ({ ids }),
       (e: Error) => ({ error: e.message.split("\n")[0] }),
@@ -1038,7 +1229,7 @@ async function proposeAgain(repo: string): Promise<string[]> {
       if ("ids" in r) {
         x.check.proposals = r.ids;
         delete x.check.proposalsFailed;
-      } else x.check.proposalsFailed = { error: r.error, round: pf.round };
+      } else x.check.proposalsFailed = { ...pf, error: r.error };
       return x;
     });
     if ("ids" in r) writeReport(repo, moved);

@@ -96,6 +96,21 @@ test("guard-worktree: worktrees only under .worktrees/; a bound lane agent write
   assert.equal(fs.readFileSync(path.join(repo, ".kitchen", "agents", "agent-1"), "utf8"), id);
   assert.match(String(hook("guard-worktree.py", write(path.join(repo, "server.js"), "agent-1"), env)), /outside job 001-add-x's places/);
   assert.equal(hook("guard-worktree.py", write(path.join(job, "intake.md"), "agent-1"), env), null);
+  // ADR 0031: the job folder's files Kitchen owns are not the agent's (Edit/Write only; Bash isn't covered).
+  for (const [f, why] of [
+    ["job.json", /the job's state/],
+    ["control.json", /the steering file/],
+    ["rounds/1/brief-build-m1.md", /the lane's brief/],
+    ["rounds/1/qa/criteria.json", /the criteria QA was given/],
+    ["rounds/1/qa/c1.png.meta.json", /a capture's stamp/],
+  ] as const)
+    assert.match(String(hook("guard-worktree.py", write(path.join(job, f), "agent-1"), env)), why, f);
+  assert.equal(hook("guard-worktree.py", write(path.join(job, "rounds/1/qa/verdict.json"), "agent-1"), env), null, "QA writes its verdict");
+  // The second look writes its answers, never QA's folder.
+  fs.writeFileSync(path.join(job, "job.json"), JSON.stringify({ id, running: { lane: "second-look", at: "t", key: "k" }, worktree: wt }));
+  assert.match(String(hook("guard-worktree.py", write(path.join(job, "rounds/1/qa/verdict.json"), "agent-1"), env)), /QA's folder/);
+  assert.equal(hook("guard-worktree.py", write(path.join(job, "rounds/1/second-look.json"), "agent-1"), env), null);
+  fs.writeFileSync(path.join(job, "job.json"), JSON.stringify({ id, running: { lane: "build", at: "t", key: "k" }, worktree: wt }));
   // kitchen remove: the job is archived, so the bound agent is refused every call (it stops); the session isn't.
   fs.writeFileSync(path.join(job, "job.json"), JSON.stringify({ id, running: null, worktree: wt, archived: { at: "t", by: "person" } }));
   assert.match(String(hook("guard-worktree.py", write(path.join(wt, "server.js"), "agent-1"), env)), /the person removed job 001-add-x\. Stop now/);

@@ -7,7 +7,8 @@
 // - page: a real browser (Playwright's Chromium, pinned in Kitchen's package.json) opens a page, optionally runs a
 //   small script, and saves a screenshot plus a text file (final URL, title, visible text, console errors).
 // - http: one request, saved as a plain transcript.
-// Every file lands in the job's QA folder for this round, where the verdict cites it.
+// Every file lands in the job's QA folder for this round, where the verdict cites it. ADR 0031 §2: each page and http
+// capture gets a `<file>.meta.json` stamp (job, round, commit, URL, app instance) that readQa checks.
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import { createRequire } from "node:module";
@@ -16,7 +17,8 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { prepareOf, runShell } from "../checks/run-checks.ts";
 import { type AppConfig, type Config, loadConfig } from "../config.ts";
-import { criteriaOf, qaDir, regressDir } from "../engine/lanes.ts";
+import { git } from "../engine/git.ts";
+import { type CaptureMeta, criteriaOf, metaFile, qaDir, regressDir } from "../engine/lanes.ts";
 import type { Job } from "../engine/machine.ts";
 import { findJob, jobDirOf, listJobs, updateJob, worktreeOf, writeAtomic } from "../engine/store.ts";
 import { isRunId, runDir, runEvidence, runWorktree } from "../verify/paths.ts";
@@ -81,6 +83,29 @@ function jobPaths(repo: string, ref: string): { id: string; wt: string; out: str
   const out = job.stage === "regress" ? regressDir(dir, job.round) : qaDir(dir, job.round);
   fs.mkdirSync(out, { recursive: true });
   return { id: job.id, wt: fs.existsSync(wt) ? wt : repo, out };
+}
+
+/**
+ * ADR 0031 §2: stamp each capture `kitchen qa page|http` saved with where it came from: the job and round (or the
+ * verify run), the lane, the checkout's commit and whether it was dirty, the URL, the app instance, when. Never throws:
+ * a capture without a stamp is still evidence.
+ */
+export async function stampCaptures(repo: string, ref: string, wt: string, url: string, files: string[]): Promise<void> {
+  try {
+    const sha = (await git(wt, ["rev-parse", "--verify", "-q", "HEAD"], { allowFail: true })).stdout.trim();
+    const dirty = !!(await git(wt, ["status", "--porcelain", "--untracked-files=no"], { allowFail: true })).stdout.trim();
+    const job = isRunId(ref) ? null : findJob(repo, ref);
+    const st = readState(repo, job?.id ?? ref);
+    const meta: CaptureMeta = {
+      ...(job ? { job: job.id, round: job.round, lane: job.stage } : { run: ref }),
+      sha,
+      dirty,
+      url,
+      app: st ? { ...(st.pid ? { pid: st.pid } : {}), at: st.at } : null,
+      at: new Date().toISOString(),
+    };
+    for (const f of files) if (fs.existsSync(f)) writeAtomic(metaFile(f), `${JSON.stringify(meta, null, 2)}\n`);
+  } catch {}
 }
 
 const legacyDev = (wt: string, repo: string) => [wt, repo].map((d) => path.join(d, ".kitchen", "toolkit", "bin", "dev")).find((f) => fs.existsSync(f));
@@ -453,7 +478,7 @@ type Browser = { newContext(o: object): Promise<{ newPage(): Promise<Page> }>; c
 
 export async function page(repo: string, ref: string, target: string, o: { name: string; script?: string }, out: (l: string) => void): Promise<number> {
   if (!NAME.test(o.name)) throw new Error("--name: letters, digits, . _ - (a file name without a folder)");
-  const { id: jid, out: dir } = jobPaths(repo, ref);
+  const { id: jid, wt, out: dir } = jobPaths(repo, ref);
   const base = baseUrl(repo, jid);
   if (!base && !/^https?:/.test(target)) {
     out(`page: the app is not up: kitchen qa up ${jid} first`);
@@ -514,6 +539,7 @@ export async function page(repo: string, ref: string, target: string, o: { name:
   } finally {
     await browser.close();
   }
+  await stampCaptures(repo, jid, wt, url, [path.join(dir, `${o.name}.png`), path.join(dir, `${o.name}.txt`)]);
   out(
     ok
       ? `page: ${o.name}.png and ${o.name}.txt in ${path.relative(repo, dir)}${errors.length ? ` (${errors.length} console errors)` : ""}`
@@ -531,7 +557,7 @@ export async function http(
   out: (l: string) => void,
 ): Promise<number> {
   if (!NAME.test(o.name)) throw new Error("--name: letters, digits, . _ - (a file name without a folder)");
-  const { id: jid, out: dir } = jobPaths(repo, ref);
+  const { id: jid, wt, out: dir } = jobPaths(repo, ref);
   const base = baseUrl(repo, jid);
   if (!base && !/^https?:/.test(target)) {
     out(`http: the app is not up: kitchen qa up ${jid} first`);
@@ -563,6 +589,7 @@ export async function http(
     resText = `request failed: ${(e as Error).message}`;
   }
   writeAtomic(path.join(dir, `${o.name}.http.txt`), `# request\n${req}\n\n# response\n${resText}\n`);
+  await stampCaptures(repo, jid, wt, url, [path.join(dir, `${o.name}.http.txt`)]);
   out(`http: ${method.toUpperCase()} ${target} → ${status || "no response"} (${o.name}.http.txt)`);
   return status ? 0 : 1;
 }

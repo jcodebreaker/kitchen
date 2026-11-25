@@ -3,7 +3,26 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, test } from "vitest";
-import { carriedFile, criteriaOf, leftOutOf, matchPath, parseIntake, type QaVerdict, qaDir, readQa, readReview, reviewFile } from "./lanes.ts";
+import { findingText } from "../inbox/findings.ts";
+import {
+  consequential,
+  criteriaOf,
+  givenOf,
+  leftOutOf,
+  legacyCarried,
+  matchPath,
+  parseIntake,
+  type QaFinding,
+  type QaRow,
+  type QaVerdict,
+  qaDir,
+  qaVerdictFile,
+  readQa,
+  readReview,
+  readSecondLook,
+  reviewFile,
+  secondLookFile,
+} from "./lanes.ts";
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kitchen-lanes-"));
 afterAll(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -181,15 +200,37 @@ test("the QA verdict (ADR 0029 §2): a row may be NOT_RUN with why; no FAIL make
   );
   write({ verdict: "BLOCKED", evidence: ["app.log"] });
   assert.match(String((readQa(job, 1, crit) as { refused: string }).refused), /says why in blocked/);
-  // The retry round: C1's pass carried (Kitchen's carried.json), QA writes C2 only.
+  // The retry round: C1's pass carried (in job state, ADR 0031), QA writes C2 only.
   const qa2 = qaDir(job, 2);
   fs.mkdirSync(path.join(qa2, "from-round-1"), { recursive: true });
   fs.copyFileSync(path.join(qa, "c1.http.txt"), path.join(qa2, "from-round-1", "c1.http.txt"));
-  fs.writeFileSync(carriedFile(qa2), JSON.stringify([{ ...c1, evidence: ["from-round-1/c1.http.txt"] }]));
+  const row1 = { ...c1, result: "PASS" as const, evidence: ["from-round-1/c1.http.txt"] };
+  const state = (rows: QaRow[], ids = ["C2"]) => ({ carried: [{ round: 2, from: 1, ids, rows }] });
   fs.writeFileSync(path.join(qa2, "c2.png"), "png");
   write({ verdict: "PASS", criteria: [{ id: "C2", result: "PASS", evidence: ["c2.png"] }] }, qa2);
-  const r2 = readQa(job, 2, crit) as QaVerdict;
+  const r2 = readQa(job, 2, crit, { job: state([row1]) }) as QaVerdict;
   assert.deepEqual([r2.verdict, r2.criteria.map((r) => `${r.id} ${r.result}`)], ["PASS", ["C2 PASS", "C1 PASS"]]);
+  // ADR 0031: a carried.json counts only as an ADR 0029 retry's (upgrade): never after a round that FAILED (Build came
+  // between) or for a criterion that round didn't pass.
+  fs.writeFileSync(path.join(qa2, "carried.json"), JSON.stringify([row1]));
+  write({ verdict: "FAIL", criteria: [c1, { id: "C2", result: "FAIL", evidence: ["c2-seed.txt"] }] });
+  assert.equal(legacyCarried(job, 2), undefined);
+  assert.equal((readQa(job, 2, crit) as { refused: string }).refused, "no row for C1");
+  write({ verdict: "FAIL", criteria: [{ ...c1, result: "NOT_RUN", why: "down" }, c2] });
+  assert.equal((readQa(job, 2, crit) as { refused: string }).refused, "no row for C1", "round 1 didn't pass C1");
+  write({ verdict: "FAIL", criteria: [c1, c2] });
+  assert.deepEqual(legacyCarried(job, 2, { qaRetry: { from: 1, ids: ["C2"] } }), { round: 2, from: 1, ids: ["C2"], rows: [row1] });
+  assert.equal((readQa(job, 2, crit) as QaVerdict).verdict, "PASS", "a 0029 retry's carry, read as one");
+  fs.rmSync(path.join(qa2, "carried.json"));
+  // Job state is checked too: never a retried id, every file round 1's copy.
+  assert.match(
+    String((readQa(job, 2, crit, { job: state([row1], ["C1", "C2"]) }) as { refused: string }).refused),
+    /C1 is carried from round 1, but this round tests it again/,
+  );
+  assert.match(
+    String((readQa(job, 2, crit, { job: state([{ ...row1, evidence: ["c2.png"] }]) }) as { refused: string }).refused),
+    /C1's carried evidence c2.png isn't round 1's copy \(from-round-1\/\)/,
+  );
 });
 
 test("the review: it blocks exactly when a finding does; a blocking finding needs its why", () => {
@@ -245,4 +286,186 @@ test("the QA verdict: a broken map recipe gets its own R-<feature>/<sub-feature>
   assert.equal((readQa(job, 1, crit) as { verdict: string }).verdict, "PASS");
   write({ verdict: "FAIL", criteria: rows({ id: "X9", result: "FAIL", evidence: ["search.png"] }) });
   assert.match(String((readQa(job, 1, crit) as { refused: string }).refused), /C<n>, or R-<feature>/);
+});
+
+test("ADR 0031 §4: a criterion may name its precondition (· given: <state>); an empty one is refused", () => {
+  const i = parseIntake(
+    "DECISION: ACCEPT\nKIND: feature\nRISK: low\n\n## Criteria\n- C1 (http): renewing is refused with 409 · given: ana has an overdue loan\n- C2 (page): /todos lists nothing\n",
+  );
+  assert.ok("decision" in i && i.decision === "ACCEPT");
+  assert.deepEqual(i.criteria, [
+    { id: "C1", text: "renewing is refused with 409", check: "http", given: "ana has an overdue loan" },
+    { id: "C2", text: "/todos lists nothing", check: "page" },
+  ]);
+  // Only ` · given: `, exactly, at its last occurrence: a claim's own `;`, `|` or "Given:" stays in the claim.
+  assert.deepEqual(givenOf("the note reads a; given: b"), { text: "the note reads a; given: b" });
+  assert.deepEqual(givenOf("GET /x returns a|given: header"), { text: "GET /x returns a|given: header" });
+  assert.deepEqual(givenOf("the label says · Given: x"), { text: "the label says · Given: x" });
+  assert.deepEqual(givenOf("shows `· given: a` · given: two todos"), { text: "shows `· given: a`", given: "two todos" });
+  const bare = "DECISION: ACCEPT\nKIND: feature\nRISK: low\n\n- C1 (page): the badge shows · given: a loan is overdue\n";
+  for (const strict of [true, false]) {
+    const p = parseIntake(bare, { strict });
+    assert.ok("criteria" in p, `strict ${strict}`);
+    assert.deepEqual(p.criteria, [{ id: "C1", text: "the badge shows", check: "page", given: "a loan is overdue" }], `strict ${strict}`);
+  }
+  const empty = "DECISION: ACCEPT\nKIND: feature\nRISK: low\n\n- C1 (http): refused · given:\n- C2 (http): · given: a loan\n- C3 (http): allowed\n";
+  const r = parseIntake(empty, { strict: true }) as { refused: string };
+  assert.match(r.refused, /C1: given: names the state the claim needs/);
+  assert.match(r.refused, /C2 \(http\) needs what must be true before given/);
+  // Lenient (an intake accepted earlier): the lines that parse, as for any malformed criterion (ADR 0029 §1).
+  const lenient = parseIntake(empty);
+  assert.ok("criteria" in lenient);
+  assert.deepEqual(
+    lenient.criteria.map((c) => c.id),
+    ["C3"],
+  );
+});
+
+test("ADR 0031: readQa refuses an unshown precondition, a confirmed cause without its evidence, and a capture from another round, job or commit", () => {
+  const job = path.join(root, "031-honest");
+  const qa = qaDir(job, 2);
+  fs.mkdirSync(qa, { recursive: true });
+  const crit = [{ id: "C1", text: "renewing is refused", check: "http" as const, given: "ana has an overdue loan" }];
+  const write = (v: unknown) => fs.writeFileSync(path.join(qa, "verdict.json"), JSON.stringify(v));
+  const refused = (o: { check?: boolean; sha?: string } = {}) => String((readQa(job, 2, crit, { ...o, strict: true }) as { refused?: string }).refused);
+  const stamp = (f: string, m: Record<string, unknown>) =>
+    fs.writeFileSync(
+      path.join(qa, `${f}.meta.json`),
+      JSON.stringify({ job: "031-honest", round: 2, sha: "a".repeat(40), dirty: false, url: "", app: null, at: "", ...m }),
+    );
+  for (const f of ["c1.http.txt", "c1-given.http.txt", "seed.txt", "app.log"]) fs.writeFileSync(path.join(qa, f), "x");
+  const row = (given?: unknown) => ({ id: "C1", result: "FAIL", evidence: ["c1.http.txt"], note: "200, expected 409", ...(given ? { given } : {}) });
+  // §4: a PASS or FAIL row shows the precondition held, through a kitchen qa capture.
+  write({ verdict: "FAIL", criteria: [row()] });
+  assert.match(refused(), /C1 needs given: .*"ana has an overdue loan" held, read back through the app/);
+  write({ verdict: "FAIL", criteria: [row({ evidence: ["seed.txt"], note: "the seed adds one" })] });
+  assert.match(refused(), /C1: given cites no kitchen qa capture: .*seed or reset output alone/);
+  stamp("c1-given.http.txt", {});
+  write({ verdict: "FAIL", criteria: [row({ evidence: ["c1-given.http.txt"], note: "loan 4 due 2026-11-01" })] });
+  const ok = readQa(job, 2, crit) as { verdict: string; criteria: { given?: unknown }[] };
+  assert.equal(ok.verdict, "FAIL");
+  assert.deepEqual(ok.criteria[0].given, { evidence: ["c1-given.http.txt"], note: "loan 4 due 2026-11-01" });
+  write({ verdict: "FAIL", criteria: [row(["c1-given.http.txt"])] });
+  assert.equal((readQa(job, 2, crit) as { verdict: string }).verdict, "FAIL", "given as a plain list");
+  // Any row's given evidence is a file in the QA folder, even a criterion's with no given (the Report inlines it).
+  write({ verdict: "FAIL", criteria: [row(["c1-given.http.txt"]), { id: "C2", result: "PASS", evidence: ["seed.txt"], given: ["../../../etc/hosts"] }] });
+  assert.equal(refused(), "C2: given evidence ../../../etc/hosts is missing, empty or outside the QA folder");
+  write({ verdict: "FAIL", criteria: [row(["c1-given.http.txt"])] });
+  // §2: a stamp names this job, this round and the head QA drove; a file with no stamp (made by hand) is allowed.
+  assert.equal((readQa(job, 2, crit, { sha: "a".repeat(40) }) as { verdict: string }).verdict, "FAIL");
+  assert.equal(refused({ sha: "b".repeat(40) }), "C1 cites a capture from another commit: c1-given.http.txt was taken on aaaaaaa, QA's checkout is at bbbbbbb");
+  stamp("c1.http.txt", { round: 1 });
+  assert.equal(refused(), "C1 cites a capture from another round: c1.http.txt was taken in round 1, this is round 2");
+  stamp("c1.http.txt", { job: "007-other" });
+  assert.equal(refused(), "C1 cites a capture from another job: c1.http.txt was taken for 007-other, this is 031-honest");
+  fs.rmSync(path.join(qa, "c1.http.txt.meta.json"));
+  // §1: a finding's expected, cause and severity; a confirmed cause cites evidence beyond the symptom's.
+  const finding = (x: Record<string, unknown>) =>
+    write({
+      verdict: "FAIL",
+      criteria: [row(["c1-given.http.txt"])],
+      findings: [{ title: "Renew ignores overdue", seen: "200 on an overdue loan", repro: ["renew loan 4"], evidence: ["c1.http.txt"], criterion: "C1", ...x }],
+    });
+  finding({ expected: "409", cause: { text: "the overdue check runs after the save", confidence: "confirmed", evidence: ["c1.http.txt"] } });
+  assert.match(refused({ check: true }), /finding 1 \(Renew ignores overdue\): a confirmed cause cites evidence that shows the cause .*or say suspected/);
+  finding({ cause: { text: "x", confidence: "sure" } });
+  assert.match(refused({ check: true }), /cause.confidence is suspected or confirmed/);
+  finding({ severity: "urgent" });
+  assert.match(refused({ check: true }), /severity is low, medium or high/);
+  stamp("app.log", { round: 1 });
+  finding({ cause: { text: "x", confidence: "confirmed", evidence: ["app.log"] } });
+  assert.match(refused({ check: true }), /^finding 1 \(Renew ignores overdue\) cites a capture from another round: app.log/);
+  fs.rmSync(path.join(qa, "app.log.meta.json"));
+  assert.deepEqual((readQa(job, 2, crit, { check: true }) as { findings: QaFinding[] }).findings[0], {
+    title: "Renew ignores overdue",
+    seen: "200 on an overdue loan",
+    repro: ["renew loan 4"],
+    evidence: ["c1.http.txt"],
+    criterion: "C1",
+    cause: { text: "x", confidence: "confirmed", evidence: ["app.log"] },
+  });
+  // Lenient (the Report, proposing again): what can't be read is left out; an unproven confirmed cause is suspected.
+  finding({ severity: "urgent", cause: { text: "late", confidence: "confirmed", evidence: ["c1.http.txt"] } });
+  const lenient = (readQa(job, 2, crit, { check: true }) as { findings: QaFinding[] }).findings[0];
+  assert.deepEqual([lenient.severity, lenient.cause], [undefined, { text: "late", confidence: "suspected", evidence: ["c1.http.txt"] }]);
+  finding({ expected: 409 });
+  assert.match(refused({ check: true }), /expected is a sentence \(a string\)/);
+  finding({ cause: ["the check runs late"] });
+  assert.match(refused({ check: true }), /cause is a sentence or \{ text, confidence, evidence \}/);
+  assert.equal((readQa(job, 2, crit, { check: true }) as { findings: QaFinding[] }).findings[0].cause, undefined, "leniently: left out");
+  finding({ cause: { confidence: "confirmed" } });
+  assert.match(refused({ check: true }), /cause needs text/);
+  assert.equal((readQa(job, 2, crit, { check: true }) as { findings: QaFinding[] }).findings[0].cause, undefined);
+  finding({ expected: "409", cause: "the check runs late", severity: "HIGH" });
+  const s = (readQa(job, 2, crit, { check: true }) as { findings: QaFinding[] }).findings[0];
+  assert.deepEqual([s.expected, s.cause, s.severity], ["409", { text: "the check runs late", confidence: "suspected" }, "high"]);
+  assert.equal(findingText(s), "Seen: 200 on an overdue loan\nExpected: 409\nSuspected cause: the check runs late");
+  finding({});
+  const old = (readQa(job, 2, crit, { check: true }) as { findings: QaFinding[] }).findings[0];
+  assert.equal(findingText(old), "200 on an overdue loan", "an older finding is its seen alone");
+});
+
+test("ADR 0031 with ADR 0029's retry: a mixed round (C1 PASS, C2 NOT_RUN) retried; C1's carried capture and its stamp stand", () => {
+  const job = path.join(root, "031-carry");
+  const sha = "a".repeat(40);
+  const crit = [
+    { id: "C1", text: "the list shows", check: "page" as const, given: "two todos exist" },
+    { id: "C2", text: "renewing is refused", check: "http" as const, given: "a loan is overdue" },
+  ];
+  const capture = (dir: string, f: string, round: number) => {
+    fs.writeFileSync(path.join(dir, f), "x");
+    fs.writeFileSync(path.join(dir, `${f}.meta.json`), JSON.stringify({ job: "031-carry", round, sha, dirty: false, url: "", app: null, at: "" }));
+  };
+  const qa1 = qaDir(job, 1);
+  fs.mkdirSync(qa1, { recursive: true });
+  for (const f of ["c1.png", "c1-given.txt", "c2-given.http.txt"]) capture(qa1, f, 1);
+  const c1 = { id: "C1", result: "PASS", evidence: ["c1.png"], note: "two rows", given: { evidence: ["c1-given.txt"], note: "two todos" } };
+  // A given that doesn't hold is NOT_RUN with why: the given rule skips it, and it is never a FAIL.
+  const c2 = { id: "C2", result: "NOT_RUN", why: "no overdue loan in the seed", evidence: ["c2-given.http.txt"] };
+  fs.writeFileSync(qaVerdictFile(job, 1), JSON.stringify({ verdict: "FAIL", criteria: [c1, c2] }));
+  assert.equal((readQa(job, 1, crit, { sha }) as QaVerdict).verdict, "INCOMPLETE");
+  // Round 2: Kitchen carried C1 (its captures and their round-1 stamps under from-round-1/); QA writes C2 only.
+  const qa2 = qaDir(job, 2);
+  fs.mkdirSync(path.join(qa2, "from-round-1"), { recursive: true });
+  for (const f of ["c1.png", "c1-given.txt"]) {
+    fs.copyFileSync(path.join(qa1, f), path.join(qa2, "from-round-1", f));
+    fs.copyFileSync(path.join(qa1, `${f}.meta.json`), path.join(qa2, "from-round-1", `${f}.meta.json`));
+  }
+  const carried = { ...c1, result: "PASS" as const, evidence: ["from-round-1/c1.png"], given: { evidence: ["from-round-1/c1-given.txt"], note: "two todos" } };
+  const state = { carried: [{ round: 2, from: 1, ids: ["C2"], rows: [carried] }] };
+  for (const f of ["c2.http.txt", "c2-given.http.txt"]) capture(qa2, f, 2);
+  const c2pass = { id: "C2", result: "PASS", evidence: ["c2.http.txt"], note: "409", given: { evidence: ["c2-given.http.txt"], note: "loan 4 overdue" } };
+  fs.writeFileSync(qaVerdictFile(job, 2), JSON.stringify({ verdict: "PASS", criteria: [c2pass] }));
+  const v2 = readQa(job, 2, crit, { sha, job: state }) as QaVerdict;
+  assert.deepEqual(
+    [v2.verdict, v2.criteria.map((r) => `${r.id} ${r.result} ${r.evidence.join(",")}`)],
+    ["PASS", ["C2 PASS c2.http.txt", "C1 PASS from-round-1/c1.png"]],
+  );
+  // Only a carried row is exempt: QA citing the round-1 capture in a row of its own is refused.
+  fs.writeFileSync(qaVerdictFile(job, 2), JSON.stringify({ verdict: "PASS", criteria: [c2pass, carried] }));
+  assert.equal(
+    (readQa(job, 2, crit, { sha, job: state }) as { refused: string }).refused,
+    "C1 cites a capture from another round: from-round-1/c1.png was taken in round 1, this is round 2",
+  );
+  // A carried capture whose stamp isn't round 1's is refused.
+  fs.writeFileSync(qaVerdictFile(job, 2), JSON.stringify({ verdict: "PASS", criteria: [c2pass] }));
+  capture(path.join(qa2, "from-round-1"), "c1.png", 2);
+  assert.equal((readQa(job, 2, crit, { sha, job: state }) as { refused: string }).refused, "C1's carried capture from-round-1/c1.png wasn't taken in round 1");
+});
+
+test("ADR 0031 §5: which findings get a second look, and its answers", () => {
+  assert.deepEqual(consequential([{ severity: "high" }, {}, { severity: "low" }], "low"), [1]);
+  assert.deepEqual(consequential([{ severity: "high" }, {}], "high"), [1, 2], "a high-risk check: every finding");
+  const job = path.join(root, "031-look");
+  fs.mkdirSync(path.dirname(secondLookFile(job, 1)), { recursive: true });
+  const write = (v: unknown) => fs.writeFileSync(secondLookFile(job, 1), JSON.stringify(v));
+  assert.match(String((readSecondLook(job, 1, [1]) as { refused: string }).refused), /no readable/);
+  write({ findings: [{ finding: 1, confirmed: true, note: "holds" }] });
+  assert.match(String((readSecondLook(job, 1, [1, 2]) as { refused: string }).refused), /no answer for finding 2/);
+  write({ findings: [{ finding: 1, confirmed: "yes", note: "holds" }] });
+  assert.match(String((readSecondLook(job, 1, [1]) as { refused: string }).refused), /confirmed is true or false/);
+  write({ findings: [{ finding: 1, confirmed: false }] });
+  assert.match(String((readSecondLook(job, 1, [1]) as { refused: string }).refused), /a note says why/);
+  write({ findings: [{ finding: 2, confirmed: false, note: "the page hadn't loaded" }] });
+  assert.deepEqual(readSecondLook(job, 1, [2]), [{ finding: 2, confirmed: false, note: "the page hadn't loaded" }]);
 });

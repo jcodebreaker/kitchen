@@ -10,7 +10,7 @@
 // Both are capped: a long queue never crowds out the brief.
 import fs from "node:fs";
 import path from "node:path";
-import { criteriaOf, leftOutOf } from "./lanes.ts";
+import { claimOf, criteriaOf, leftOutOf } from "./lanes.ts";
 import type { Job } from "./machine.ts";
 import { jobDirOf } from "./store.ts";
 
@@ -51,7 +51,7 @@ function entry(repo: string, j: Job): string {
   const merged = j.stage === "done" && j.merged ? ` (merged into ${j.merged.into}, ${j.merged.sha.slice(0, 7)})` : "";
   const out = [`- ${j.id.split("-")[0]} "${j.title}" · ${j.stage}${merged}`];
   if (crit.length) {
-    for (const c of crit) out.push(`  - ${c.id} (${c.check}): ${cut(c.text, LINE_MAX)}`);
+    for (const c of crit) out.push(`  - ${c.id} (${c.check}): ${cut(claimOf(c), LINE_MAX)}`);
     if (j.files?.length) out.push(`  - FILES: ${cut(j.files.join(", "), LINE_MAX)}`);
     if (j.after?.length) out.push(`  - AFTER: ${j.after.join(", ")}`);
     const left = leftOutOf(dir);

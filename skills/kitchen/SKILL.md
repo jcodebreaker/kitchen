@@ -85,7 +85,8 @@ only through `kitchen job` verbs, which refuse any illegal move. The Agent tool 
 1. `kitchen job next --json` (the **first** call of a run: add `--restart-stranded`, which hands back lanes an
    earlier session left open). It returns `start` (lanes to open now: every job in intake, then downstream first;
    a lane is intake, build, qa, review or **regress**, the short pass that drives the features a job touches on
-   the job's target with the job merged, before Kitchen merges it), `running`, `held` (each
+   the job's target with the job merged, before Kitchen merges it, or **second-look**, a read-only look at a
+   check's consequential findings before they are proposed), `running`, `held` (each
    with why: a job it names on its `AFTER:` line, or no room; jobs touching the same files run side by side) and
    `you` (jobs waiting on the person, a PR waiting for review on GitHub among them), and `prs`: what became of open
    PRs since the last look (merged, closed, the merge check re-run because the target moved). Tell the user the wave
