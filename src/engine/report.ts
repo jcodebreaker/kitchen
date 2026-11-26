@@ -9,7 +9,7 @@ import { findingProposal } from "../inbox/findings.ts";
 import { readMapChanges } from "../verify/admit.ts";
 import { checkLines, type FeatureLines, featureLines, testedLine, versionsLine } from "./checked.ts";
 import { failureOf } from "./diagnose.ts";
-import { causeLabel, consequential, criteriaOf, leftOutOf, qaDir, readQa, readReview, readSecondLook, regressDir, type SecondLook } from "./lanes.ts";
+import { criteriaOf, leftOutOf, qaDir, readMeta, readQa, readReview, regressDir } from "./lanes.ts";
 import { isCheck, type Job, prOpen } from "./machine.ts";
 import { readMessages } from "./messages.ts";
 import { findJob, JOB_ID, jobDirOf, writeAtomic } from "./store.ts";
@@ -18,18 +18,34 @@ const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&
 const MAX_TEXT = 6000;
 const MAX_IMAGE = 3 * 1024 * 1024;
 
+/** ADR 0031 §2, ADR 0036: where a `kitchen qa` capture was taken (its stamp), as information; "" for one made by hand. */
+function stampOf(dir: string, f: string): string {
+  const m = readMeta(dir, f);
+  if (!m) return "";
+  const who = m.job ? `${m.job}${m.round ? ` round ${m.round}` : ""}` : (m.run ?? "");
+  const parts = [
+    who,
+    m.sha ? `${String(m.sha).slice(0, 7)}${m.dirty ? " (dirty)" : ""}` : "",
+    m.browser ? `${m.browser.name} ${m.browser.version}` : "",
+    m.url ?? "",
+    m.at ? m.at.slice(0, 19).replace("T", " ") : "",
+  ].filter(Boolean);
+  return parts.length ? `<small>taken: ${esc(parts.join(" · "))}</small>` : "";
+}
+
 /** `named`: images by name only (a PR body: GitHub drops data: images and caps the body's size). */
 function evidenceHtml(dir: string, f: string, named = false): string {
   const p = path.join(dir, f);
   if (!fs.existsSync(p)) return `<p class="miss">${esc(f)}: missing</p>`;
+  const stamp = stampOf(dir, f);
   if (/\.(png|jpe?g)$/i.test(f)) {
-    if (named) return `<p>Screenshot <code>${esc(f)}</code> (in the job's evidence folder)</p>`;
+    if (named) return `<p>Screenshot <code>${esc(f)}</code> (in the job's evidence folder)${stamp ? `<br>${stamp}` : ""}</p>`;
     const b = fs.readFileSync(p);
-    if (b.length > MAX_IMAGE) return `<p>${esc(f)} (${Math.round(b.length / 1024)} KB, too large to inline)</p>`;
-    return `<figure><img alt="${esc(f)}" src="data:image/${/png$/i.test(f) ? "png" : "jpeg"};base64,${b.toString("base64")}"><figcaption>${esc(f)}</figcaption></figure>`;
+    if (b.length > MAX_IMAGE) return `<p>${esc(f)} (${Math.round(b.length / 1024)} KB, too large to inline)${stamp ? `<br>${stamp}` : ""}</p>`;
+    return `<figure><img alt="${esc(f)}" src="data:image/${/png$/i.test(f) ? "png" : "jpeg"};base64,${b.toString("base64")}"><figcaption>${esc(f)}${stamp ? `<br>${stamp}` : ""}</figcaption></figure>`;
   }
   const t = fs.readFileSync(p, "utf8");
-  return `<details><summary>${esc(f)}</summary><pre>${esc(t.length > MAX_TEXT ? `${t.slice(0, MAX_TEXT)}\n…` : t)}</pre></details>`;
+  return `<details><summary>${esc(f)}${stamp ? ` ${stamp}` : ""}</summary><pre>${esc(t.length > MAX_TEXT ? `${t.slice(0, MAX_TEXT)}\n…` : t)}</pre></details>`;
 }
 
 /** ADR 0032 §3: a lane's file that isn't there yet is no error to show: the lane hasn't run on this round. */
@@ -40,7 +56,7 @@ export function renderReport(repo: string, job: Job, o: { diff?: { p: string; a:
   const dir = jobDirOf(repo, job.id);
   const crit = criteriaOf(dir);
   const check = isCheck(job);
-  const qa = readQa(dir, job.round, crit, { check, job });
+  const qa = readQa(dir, job.round, crit, { check });
   const review = readReview(dir, job.round);
   const qd = qaDir(dir, job.round);
   let cfg: Config | null = null;
@@ -103,16 +119,14 @@ export function renderReport(repo: string, job: Job, o: { diff?: { p: string; a:
   if (job.mapSkipped)
     checks.push(`map update skipped: ${esc(job.mapSkipped)}. QA's map files are still in <code>rounds/*/qa/map/</code> of this job's folder.`);
   if (job.risk === "high" && !check) checks.push("High risk: read the diff yourself before you merge it anywhere else.");
-  // ADR 0028: what a check found, each proposed in the Inbox for the person to Run, Hold or set aside. ADR 0031 §5:
-  // a finding the second look didn't confirm is said apart and isn't proposed. ADR 0033 §4: missing tooling is no
-  // problem found; it is said apart, with the proposals it waits for (each finding's by its inbox item).
-  const looks = check && "findings" in qa ? secondLooks(dir, job, qa.findings) : [];
-  const unconfirmed = (n: number) => looks.some((l) => l.finding === n && !l.confirmed);
+  // ADR 0028: what a check found, each proposed in the Inbox for the person to Run, Hold or set aside. ADR 0033 §4:
+  // missing tooling is no problem found; it is said apart, with the proposals it waits for (each finding's by its
+  // inbox item).
   const all = "findings" in qa ? qa.findings.map((f, i) => ({ f, n: i + 1, p: findingProposal(repo, job.id, job.round, i + 1) })) : [];
   const line = (xs: typeof all) =>
     xs.map(({ f }) => `<b>${esc(f.title)}</b>${f.criterion ? ` (${esc((f.criteria ?? [f.criterion]).join(", "))})` : ""}: ${esc(f.seen)}`).join("; ");
   const ids = (xs: typeof all) => [...new Set(xs.flatMap(({ p }) => (p ? [p] : [])))];
-  const found = all.filter(({ f, n }) => f.kind !== "tooling" && !unconfirmed(n));
+  const found = all.filter(({ f }) => f.kind !== "tooling");
   const tooling = all.filter(({ f }) => f.kind === "tooling");
   if (found.length)
     checks.push(
@@ -121,11 +135,6 @@ export function renderReport(repo: string, job: Job, o: { diff?: { p: string; a:
   if (tooling.length)
     checks.push(
       `Missing tooling${ids(tooling).length ? `, proposed in the Inbox as ${esc(ids(tooling).join(", "))}` : ""} (the check is filed again once it merges): ${line(tooling)}`,
-    );
-  const notConfirmed = all.filter(({ n }) => unconfirmed(n)).map(({ f }) => f);
-  if (notConfirmed.length)
-    checks.push(
-      `Not confirmed on a second look, so not proposed: ${notConfirmed.map((f) => `<b>${esc(f.title)}</b>`).join("; ")}. Read why under Problems found.`,
     );
   if (job.check?.refiled) checks.push(`Filed again as ${esc(job.check.refiled)} after its tooling merged.`);
   if (job.check?.refileError)
@@ -193,7 +202,7 @@ ${!check ? blockedHtml(qa, qd, o.named, fail?.kind === "app") : ""}
 ${drives(dir, job.round, o.named, fl?.none.filter((x) => fl.looked.includes(x)) ?? [])}
 ${
   check
-    ? findingsHtml(qa, qd, o.named, looks)
+    ? findingsHtml(qa, qd, o.named)
     : `<h2>Review</h2>${"summary" in review && review.summary ? `<p>${esc(review.summary)}</p>` : ""}${findings}
 <h2>What changed</h2>${diff}`
 }
@@ -215,33 +224,21 @@ function blockedHtml(qa: ReturnType<typeof readQa>, qd: string, named = false, s
 
 /**
  * ADR 0028: a check's problems, each as the proposed bug (what was seen, the repro, the evidence). ADR 0031: Seen,
- * Expected and the cause (suspected or confirmed) apart, and the second look's answer; an older finding is its seen.
+ * Expected and the cause apart; an older finding is its seen.
  */
-function findingsHtml(qa: ReturnType<typeof readQa>, qd: string, named = false, looks: SecondLook[] = []): string {
+function findingsHtml(qa: ReturnType<typeof readQa>, qd: string, named = false): string {
   if (!("findings" in qa)) return "";
   if (qa.blocked) return `<h2>The check couldn't run</h2><p class="st">${esc(qa.blocked)}</p>`;
   if (!qa.findings.length) return "<h2>Problems found</h2><p>None.</p>";
   return `<h2>Problems found</h2>${qa.findings
-    .map((f, i) => {
-      const look = looks.find((l) => l.finding === i + 1);
+    .map((f) => {
       const said = f.expected || f.cause;
       const body = said
-        ? `<p><b>Seen</b>: ${esc(f.seen)}</p>${f.expected ? `<p><b>Expected</b>: ${esc(f.expected)}</p>` : ""}${f.cause ? `<p><b>${causeLabel(f)}</b>: ${esc(f.cause.text)}</p>${(f.cause.evidence ?? []).map((e) => evidenceHtml(qd, e, named)).join("")}` : ""}`
+        ? `<p><b>Seen</b>: ${esc(f.seen)}</p>${f.expected ? `<p><b>Expected</b>: ${esc(f.expected)}</p>` : ""}${f.cause ? `<p><b>Cause</b>: ${esc(f.cause)}</p>` : ""}`
         : `<p>${esc(f.seen)}</p>`;
-      const tag = look
-        ? `<p class="${look.confirmed ? "ok" : "st"}"><b>${look.confirmed ? "Confirmed on a second look" : "Not confirmed on a second look (not proposed)"}</b>: ${esc(look.note)}</p>`
-        : "";
-      return `<h3>${esc(f.title)}${f.criterion ? ` <small>(${esc(f.criterion)})</small>` : ""}${f.severity ? ` <small>· severity ${esc(f.severity)}</small>` : ""}</h3>${tag}${body}<ol>${f.repro.map((s) => `<li>${esc(s)}</li>`).join("")}</ol>${f.evidence.map((e) => evidenceHtml(qd, e, named)).join("")}`;
+      return `<h3>${esc(f.title)}${f.criterion ? ` <small>(${esc(f.criterion)})</small>` : ""}${f.severity ? ` <small>· severity ${esc(f.severity)}</small>` : ""}</h3>${body}<ol>${f.repro.map((s) => `<li>${esc(s)}</li>`).join("")}</ol>${f.evidence.map((e) => evidenceHtml(qd, e, named)).join("")}`;
     })
     .join("")}`;
-}
-
-/** ADR 0031 §5: the second look's answers for this round, or none (no second look, or it isn't written yet). */
-function secondLooks(dir: string, job: Job, findings: Parameters<typeof consequential>[0]): SecondLook[] {
-  const want = consequential(findings, job.risk);
-  if (!want.length) return [];
-  const l = readSecondLook(dir, job.round, want);
-  return Array.isArray(l) ? l : [];
 }
 
 function titleOf(repo: string, id: string): string | null {

@@ -106,10 +106,6 @@ test("guard-worktree: worktrees only under .worktrees/; a bound lane agent write
   ] as const)
     assert.match(String(hook("guard-worktree.py", write(path.join(job, f), "agent-1"), env)), why, f);
   assert.equal(hook("guard-worktree.py", write(path.join(job, "rounds/1/qa/verdict.json"), "agent-1"), env), null, "QA writes its verdict");
-  // The second look writes its answers, never QA's folder.
-  fs.writeFileSync(path.join(job, "job.json"), JSON.stringify({ id, running: { lane: "second-look", at: "t", key: "k" }, worktree: wt }));
-  assert.match(String(hook("guard-worktree.py", write(path.join(job, "rounds/1/qa/verdict.json"), "agent-1"), env)), /QA's folder/);
-  assert.equal(hook("guard-worktree.py", write(path.join(job, "rounds/1/second-look.json"), "agent-1"), env), null);
   fs.writeFileSync(path.join(job, "job.json"), JSON.stringify({ id, running: { lane: "build", at: "t", key: "k" }, worktree: wt }));
   // ADR 0030: a lane session `kitchen run` started has no agent_id; KITCHEN_JOB binds it the same way.
   const lane = { ...env, KITCHEN_JOB: id };

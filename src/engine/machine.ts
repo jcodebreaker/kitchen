@@ -3,29 +3,13 @@
 // One table, as data: each stage lists the stages it may move to. `kitchen job` verbs are the only writers of
 // job state and they move a job only through `move()`, which refuses any move the table doesn't list.
 // Lanes (where an agent works): intake, build, qa, review, regress (ADR 0017: the touched features driven on the
-// trial merge before it lands), second-look (ADR 0031 §5: a check's consequential findings, read again before they
-// are proposed). Ready waits for a person; done is merged into staging.
+// trial merge before it lands). Ready waits for a person; done is merged into staging.
 
-import type { Carried } from "./lanes.ts";
-
-export const STAGES = [
-  "intake",
-  "needs-info",
-  "build",
-  "qa",
-  "review",
-  "regress",
-  "second-look",
-  "ready",
-  "done",
-  "needs-human",
-  "paused",
-  "rejected",
-] as const;
+export const STAGES = ["intake", "needs-info", "build", "qa", "review", "regress", "ready", "done", "needs-human", "paused", "rejected"] as const;
 export type Stage = (typeof STAGES)[number];
 
 /** The stages an agent works in, in order. */
-export const LANES = ["intake", "build", "qa", "review", "regress", "second-look"] as const;
+export const LANES = ["intake", "build", "qa", "review", "regress"] as const;
 export type Lane = (typeof LANES)[number];
 /** ADR 0030 §3: a lane session `kitchen run` started: its pid and process start, and when it ended (finish not yet run). */
 export type LaneSession = { pid: number; start: string | null; ended?: string; pending?: true };
@@ -83,16 +67,9 @@ export type JobCheck = {
   pass?: number;
   total?: number;
   findings?: number;
-  /** ADR 0031 §5: QA's verdict.json (sha256) when the check went to its second look: it may not change after. */
-  verdict?: string;
-  /** ADR 0031 §5: findings the second look didn't confirm (kept in the Report, not proposed). */
-  unconfirmed?: number;
   proposals?: string[];
-  /**
-   * ADR 0029 §6: proposing its findings failed (the error, the round they are in): retried on each finish and wave.
-   * `skip`: the findings the second look didn't confirm (ADR 0031 §5, 1-based), never proposed on a retry either.
-   */
-  proposalsFailed?: { error: string; round: number; skip?: number[] };
+  /** ADR 0029 §6: proposing its findings failed (the error, the round they are in): retried on each finish and wave. */
+  proposalsFailed?: { error: string; round: number };
   map?: string;
   /** ADR 0033 §4: the proposals to add the tooling this check lacked; it is filed again once all of them merged. */
   tooling?: string[];
@@ -195,12 +172,11 @@ export type Job = {
   /** Every move so far. Activity streams and the ledger are keyed by it. */
   moves: number;
   /**
-   * ADR 0029 §2: QA's last round was INCOMPLETE (rows NOT_RUN, none FAILED): Kitchen reset the app and QA runs again on
-   * `ids` only, round `from`'s passes standing. Still not run then goes to a person. Cleared by any other move.
+   * ADR 0029 §2, ADR 0036: QA's last round was INCOMPLETE (rows NOT_RUN, none FAILED; `ids`, or none when it couldn't
+   * run at all): QA runs all of it again once, and its first `kitchen qa up` resets the app (`reset`). Still not run
+   * then goes to a person. Cleared by any other move.
    */
   qaRetry?: { from: number; ids: string[]; reset?: true };
-  /** ADR 0031: the passes carried into each retry round (readQa honours only these, never a file in the QA folder). */
-  carried?: Carried[];
   /**
    * ADR 0025 §4: the check command running now (Build's checks, the trial merge's) and its log; absent between them.
    * ADR 0029 §4: `setup`: the step `kitchen qa up` is on instead ("Resetting data"), `of`: the health wait's limit (s).
@@ -278,17 +254,15 @@ export const MOVES: Record<Stage, readonly Stage[]> = {
   intake: ["build", "qa", "needs-info", "needs-human", "rejected", "paused"],
   "needs-info": ["intake", "build", "qa", "rejected"],
   build: ["qa", "needs-human", "rejected", "paused"],
-  // ADR 0031 §5: a check's consequential findings get a second look before it is done.
-  qa: ["review", "build", "qa", "second-look", "done", "needs-human", "rejected", "paused"],
+  qa: ["review", "build", "qa", "done", "needs-human", "rejected", "paused"],
   review: ["build", "regress", "ready", "done", "needs-human", "rejected", "paused"],
   regress: ["build", "ready", "done", "needs-human", "rejected", "paused"],
-  "second-look": ["done", "needs-human", "rejected", "paused"],
   // kitchen merge: the person's yes runs the merge gate, which may need the merge check lane or another round.
   ready: ["build", "regress", "done", "needs-human", "rejected"],
   // ADR 0028 amendment: a job verified and not merged (KEEP: no) is promoted to Review.
   done: ["build", "qa", "review"],
-  "needs-human": ["intake", "build", "qa", "review", "regress", "second-look", "rejected"],
-  paused: ["intake", "build", "qa", "review", "regress", "second-look", "rejected"],
+  "needs-human": ["intake", "build", "qa", "review", "regress", "rejected"],
+  paused: ["intake", "build", "qa", "review", "regress", "rejected"],
   rejected: [],
 };
 
@@ -320,9 +294,6 @@ export class MoveRefused extends Error {}
 export function refuse(j: Pick<Job, "stage" | "pausedFrom"> & Partial<Pick<Job, "escalatedFrom">>, to: Stage): string | null {
   if (!(STAGES as readonly string[]).includes(to)) return `no stage ${to}`;
   if (!MOVES[j.stage].includes(to)) return `${j.stage} → ${to} is not a move Kitchen makes (from ${j.stage}: ${MOVES[j.stage].join(", ") || "none"})`;
-  // ADR 0031 §5: a person sends a job back to the second look only when it was there: it closes a check.
-  if (j.stage === "needs-human" && to === "second-look" && j.escalatedFrom !== "second-look")
-    return `only a check that was in its second look goes back to it (this one came from ${j.escalatedFrom ?? "nowhere"})`;
   if (j.stage === "paused" && to !== "rejected" && j.pausedFrom && to !== j.pausedFrom) return `a paused job resumes in ${j.pausedFrom}, not ${to}`;
   return null;
 }

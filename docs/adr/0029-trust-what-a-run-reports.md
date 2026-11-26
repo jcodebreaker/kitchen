@@ -1,6 +1,6 @@
 # Trust what a run reports
 
-**Status.** Accepted, 2026-11-24, by the user ("yes go ahead"). Each gap was confirmed in the code. Builds on ADR 0016 (QA evidence), 0025 (checks show progress), 0028 (check tickets, BLOCKED).
+**Status.** Accepted, 2026-11-24, by the user ("yes go ahead"). Each gap was confirmed in the code. Builds on ADR 0016 (QA evidence), 0025 (checks show progress), 0028 (check tickets, BLOCKED). Superseded in part by ADR 0036 (an incomplete round reruns all of QA; nothing is carried).
 
 ## Why
 

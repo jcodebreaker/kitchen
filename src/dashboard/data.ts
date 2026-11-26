@@ -27,7 +27,6 @@ export const STAGE_NAMES: Record<Stage, string> = {
   qa: "QA",
   review: "Review",
   regress: "Merge check",
-  "second-look": "Second look",
   ready: "Ready",
   done: "Merged",
   "needs-human": "Needs you",
@@ -38,7 +37,7 @@ export const STAGE_NAMES: Record<Stage, string> = {
 export const PHASES = [
   { k: "intake", nm: "Intake", stages: ["intake", "needs-info"] },
   { k: "build", nm: "Build", stages: ["build"] },
-  { k: "qa", nm: "QA", stages: ["qa", "second-look"] },
+  { k: "qa", nm: "QA", stages: ["qa"] },
   { k: "review", nm: "Review", stages: ["review", "regress"] },
   { k: "merge", nm: "Merge", stages: ["ready", "done"] },
 ] as const satisfies readonly { k: string; nm: string; stages: readonly Stage[] }[];
@@ -49,7 +48,6 @@ const AGENT: Partial<Record<Stage, string>> = {
   qa: "QA agent",
   review: "Review agent",
   regress: "Merge-check agent",
-  "second-look": "Second-look agent",
 };
 
 /** The stage a job's track and agent are read from: where it paused or escalated from, else where it is. */
@@ -88,7 +86,7 @@ export function laneOf(j: Pick<Job, "stage" | "pausedFrom" | "escalatedFrom" | "
   if (stateOf(j) === "you") return "you";
   if (j.stage === "rejected" || j.stage === "done" || (pausedByYou(j) && j.pausedReason === BY_YOU_STOPPED)) return "done";
   const s = workStage(j);
-  return s === "build" || s === "qa" || s === "review" ? s : s === "regress" ? "review" : s === "second-look" ? "qa" : "intake";
+  return s === "build" || s === "qa" || s === "review" ? s : s === "regress" ? "review" : "intake";
 }
 const LANE_SHORT = { intake: "intake", builder: "build", qa: "QA", reviewer: "review" } as const;
 /** Who works in each lane, as its header says. */
@@ -146,7 +144,7 @@ export function waitsOf(j: Job, dir: string): Waits | null {
 /** `skip`: ADR 0029 §2, QA couldn't test it ("not tested", with why): muted, never a fail. */
 export type Crit = { id: string; text: string; st: "ok" | "bad" | "wait" | "skip"; e: string };
 /** The job's criteria (intake's) with QA's latest results. */
-export function critOf(dir: string, round: number, o: { check?: boolean; job?: Pick<Job, "carried" | "qaRetry"> } = {}): Crit[] {
+export function critOf(dir: string, round: number, o: { check?: boolean } = {}): Crit[] {
   const crit = criteriaOf(dir);
   let rows: { id: string; result: string; note: string; evidence: string[]; why?: string }[] = [];
   for (let r = round; r >= 1 && !rows.length; r--) {
@@ -454,8 +452,8 @@ export async function snapshot(repo: string, now = Date.now()): Promise<Snapshot
     }
     const dir = jobDirOf(repo, j.id);
     const chk = isCheck(j);
-    const crit = critOf(dir, j.round, { check: chk, job: j });
-    const qaNow = readQa(dir, j.round, criteriaOf(dir), { check: chk, job: j });
+    const crit = critOf(dir, j.round, { check: chk });
+    const qaNow = readQa(dir, j.round, criteriaOf(dir), { check: chk });
     const rv = readReview(dir, j.round);
     const review =
       "findings" in rv

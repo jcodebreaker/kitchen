@@ -109,7 +109,7 @@ export async function whoami(
     );
     return 1;
   }
-  // Always whoami-…: a name never lands on verdict.json or carried.json.
+  // Always whoami-…: a name never lands on verdict.json.
   // `ana@example.com` → whoami-ana_example.com.json: any other character becomes _.
   const suffix = (o.name ?? o.as ?? "")
     .replace(/[^A-Za-z0-9._-]/g, "_")

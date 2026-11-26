@@ -188,14 +188,14 @@ def under(p, root):
 
 
 # ADR 0031: the job folder's files Kitchen owns (its state, the brief it wrote, the stamps it took). Edit/Write only:
-# Bash is not covered, so readQa's own checks (carried rows, stamps, the verdict's hash) are the real protection.
+# Bash is not covered.
 KITCHEN_FILES = {"job.json": "the job's state", "job.lock": "the job's lock", "control.json": "the steering file",
                  "messages.jsonl": "the person's messages", "clarifications.json": "the clarifications",
                  "ticket.md": "the ticket", "report.html": "the Report", "refused.txt": "Kitchen's refusal",
                  "app.json": "the running app's state"}
 
 
-def kitchen_owned(rel, lane):
+def kitchen_owned(rel):
     """What Kitchen-owned file `rel` (relative to the job folder) is, or None when a lane agent may write it."""
     parts = rel.split(os.sep)
     name = parts[-1]
@@ -208,9 +208,6 @@ def kitchen_owned(rel, lane):
             return "the lane's brief" if name.startswith("brief-") else "the checks Kitchen ran"
         if len(parts) == 4 and parts[2] == "qa" and name == "criteria.json":
             return "the criteria QA was given"
-        # ADR 0031 §5: the second look reads QA's folder; it never writes there.
-        if lane == "second-look" and parts[2] == "qa":
-            return "QA's folder (the second look only reads it)"
     return None
 
 
@@ -234,7 +231,7 @@ def write_check(payload):
     for t in (target, real):
         for d in (job_dir, os.path.realpath(job_dir)):
             if under(t, d) and t != d:
-                why = kitchen_owned(os.path.relpath(t, d), lane)
+                why = kitchen_owned(os.path.relpath(t, d))
                 if why:
                     return "Blocked by Kitchen: %s is %s: Kitchen writes it, never a lane agent." % (target, why)
     if any(under(t, p) for t in (target, real) for p in places):
