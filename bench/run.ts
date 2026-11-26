@@ -363,7 +363,7 @@ async function main() {
     },
     tickets: perTicket,
     lanes,
-    run,
+    run: path.basename(run),
   };
 
   // 6. The results: one JSON per run, one row per run in SUMMARY.md.
