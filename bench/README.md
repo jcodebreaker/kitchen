@@ -1,39 +1,81 @@
 # Kitchen benchmark
 
-> **Not runnable since ADR 0016.** The bench runner (`src/bench/`, `kitchen bench`) drove the removed plain-code runner and scored jobs with oracles run through the removed proof runner and Toolkits. The ticket set (`set.yaml`), the oracle helpers (`oracle/`) and past results (`results/`) are kept as data. What a lite bench needs is in docs/BUILD-LOG.md, "ADR 0016: Kitchen lite", under "The bench". The text below describes the bench as it was.
+**The rule: no ADR merges without a bench number.** A branch that changes Kitchen's behaviour (an ADR, a role prompt, the scheduler, the merge) lands with a row in [results/SUMMARY.md](results/SUMMARY.md) from a run on its own commit: a `--dry` row always, and a real row whenever the owner approves the spend. Compare it with the last real row on `main`; a drop in oracle passes, or a rise in cost or rounds, is explained in the PR or the change doesn't land.
 
-`set.yaml` is the benchmark (PLAN §8): each ticket names its fixture, its kind, the outcome Kitchen must reach, and, for a ticket that should end in a ready PR, a **hidden oracle**: criteria in the spec format that no role ever sees. The bench runs the oracle through the engine's own proof runner (`proof/prove.ts`) on a clean checkout of the job's final branch, with the base's Toolkit on a fresh app, so "done" is checked by something the agents could not have tuned to.
-
-- **Tuned set** (14, fixtures A, B, C): 4 features, 3 bugs (one hard to reproduce: `a-invite-case` says only "it doesn't happen to everyone"), 1 chore, 1 too big, 1 needing info, 1 to reject, 1 needing a new primitive (`a-primitive`: only a database read can prove it; its oracle signs alice in and refuses bob-admin a wrong password through the real sign-in page, then reads `users.last_login_at` in the oracle app's own Postgres with a `cmd` proof over loopback, never through a primitive the smith wrote), 2 planted-correct controls (`a-control-desc`, `b-control-long-title`: the naive build is right, so any Verify FAIL is a false FAIL). Three hide traps (`trap:` says what): `a-trap-slug`, `b-done-many`, `c-unused-invites`.
-- **Fixture D, now tuned** (6, the orders API with a Stripe mock and an SMTP catcher): held out until the benchmark regression of 2026-11-22, whose iterations ran D tickets and whose fix taught `roles/_proofs.md` with a D case (since replaced by generic examples). It counts in the tuned set from then on.
-- **Held-out set** (6, fixture E, `e-library`, a lending library API: books, members, loans with due dates, one JSON file, no dependencies, no Docker). No role prompt is tuned on E: the final-fixes benchmark runs it once (3 runs each), and nothing in `roles/` is changed because of what those runs show; a later tuning round that looks at E moves it to the tuned set and needs a fresh held-out set. Fixture E, its Toolkit and its tickets (2 features, 1 planted bug, 1 trap: `e-overdue-block`, a book returned late is not overdue; 1 planted-correct control: `e-control-me`; 1 needing info) were written and committed before any Kitchen run on it, and every oracle was checked by hand with no agent: it fails on the base, passes on a hand-written reference branch, and for the trap fails the naive build. Once runs have looked at E it stops being fresh; tune on it and it moves to the tuned set. PLAN wanted replays of 6 real superchat-lite PRs; superchat-lite's stack is too heavy for this laptop (W2), so that set is owed (PLAN "Changes from Wave 3b").
-- **Smoke tier**: `a-count` (feature), `b-stats-overdue` (bug), `b-done-many` (trap), `b-control-long-title` (control), `a-chore` (low risk).
-
-`plant:` edits the fixture before its first commit (a planted bug, or seed rows an oracle relies on). `expect.never:` names stages the job must not enter (`a-too-big`: `[build]`, read from its ledger moves). In an oracle proof `{port:<i>}` is the oracle app slot's i-th port, in the order the Toolkit's `describe` gives (fixture A: app, postgres, browser driver). `toolkits/<fixture>/` holds the Toolkits `kitchen init` generated on Claude in W2 for B, C and D (fixture A ships its own; E's was written by hand from D's and passes `kitchen toolkit check`). `oracle/` holds oracle helper files, copied only into the oracle's checkout.
-
-## Scoring
-
-A run is **correct** when its final stage is one of `expect.outcome`, its oracle passes (when it ends `done`), for `toolkit_pr: true` the job went through a Toolkit PR, and it never entered a stage in `expect.never`; a miss says which of these failed. An oracle that hits an infrastructure error (the checkout, the slot, `prepare`/`up`, or a step failing while `doctor` says the app is unwell) is run once more and the result says so; an oracle FAIL is never retried. A trap is **caught** when its run is correct (the oracle checks the trap). A **false FAIL** is a `VERDICT: FAIL` in a control's verdict files. A job paused on a Toolkit PR has it merged by the bench (the human's part, recorded in the log).
-
-**Per drive**, from each job's Verify `proof` ledger lines only (the definition `kitchen report` uses, `src/ledger/measures.ts`): how often a Verify proof run that drove it was INCONCLUSIVE, and in how many jobs it **flaked**: for one HEAD and criterion, Verify got a PASS and a non-PASS. Builder self-checks, the base check and repro runs are not counted. Both go in the results `.md` (Drives table) and `.json` (`results[].drives`, `summary.drives`). Every results file and ledger line names the Kitchen commit the bench ran on (`git rev-parse HEAD`, plus `dirty` when the tree had changes).
-
-**§0.2 is judged by code** (`section02` in `src/bench/run.ts`), printed by the bench, on the results page, by `kitchen report --bench` and (latest run) `kitchen report`: at least 85% of all runs correct; every trap ticket correct in every run; at most 1 false FAIL across the **tuned set's controls** × runs (named on the line: `a-control-desc`, `b-control-long-title`, `d-control-version`; the held-out control `e-control-me` is counted beside it, not in it); the held-out set at most 15 points below the tuned set. A run that ended needs-human because the agent tool could not run (an adapter error: not in PATH, spawn failed, network) is run once more and counted apart, like an oracle's infrastructure error.
-
-## Running
+## Run it
 
 ```sh
-kitchen bench smoke --tool claude                 # 5 tickets, 1 run
-kitchen bench full --tool claude --runs 3         # 26 tickets × 3
-kitchen bench tuned --only a-count,b-done-many --runs 1
-kitchen report --bench
+npm run bench -- --dry                              # the whole pipeline with a stand-in agent: $0, about 15 s
+npm run bench -- --estimate                         # what a real run should cost, per lane
+npm run bench -- --paid                             # a real run: 10 tickets, preset cheap, at most $10 (the owner approves each one)
+npm run bench -- --paid --tickets search,renew --models haiku --max-usd 3
 ```
 
-**Role skills on and off** (ADR 0014 §7): `--no-skills` writes `skills: { enabled: false }` into every bench repo's `kitchen.yaml`, so each role runs on its prompt alone; its results go to `results/<date>-<tier>-<tool>-noskills.md` and its run id ends `-noskills`. Run both sides on the same tickets and machine, then keep a skill only if it raises the correct rate or lowers cost or rounds beyond the noise:
+| flag | meaning |
+|---|---|
+| `--tickets a,b` | only these tickets (keys below); default all ten |
+| `--models <preset>` | `cheap` (default): intake haiku, build sonnet, QA haiku, review haiku. `haiku`: every lane haiku. `default`: Kitchen's own defaults (intake and build opus, QA and review sonnet). The merge check runs on QA's model |
+| `--dry` | a stand-in agent (`dry/agent.mjs`, set as `KITCHEN_CLAUDE_BIN`, as the scheduler tests do) plays every lane the right way: intake makes the right call, Build commits the reference change (`dry/ref.mjs`), QA, review and the merge check pass. Everything else is Kitchen's real code: init, the scheduler, moves, checks, merges into staging, catch-ups. It proves the pipeline and the oracles, never Kitchen's quality |
+| `--paid` | required for a real run; without it (and without `--dry`) the bench prints the estimate and starts nothing |
+| `--max-usd n` | the run's budget, passed to `kitchen run --max-usd` (default 10) |
+| `--estimate` | print the expected cost and exit; `--ledger <ledger.jsonl>` adds a real repo's lane costs to what it knows |
+| `--out <dir>` | where the run folder goes (default the OS temp dir; never inside this repo) |
+| `--keep` | keep the run folder (the repo, `run.log`, `bench.log`, each oracle's log) |
+| `--timeout-min n` | stop the run (`kitchen run --stop`) after n minutes (default 120, `--dry` 10) |
 
-```sh
-kitchen bench smoke --tool claude --runs 3 --max-usd 25
-kitchen bench smoke --tool claude --runs 3 --max-usd 25 --no-skills
-kitchen report --bench
-```
+## What a run does
 
-Repos, logs and `KITCHEN_HOME` go to `bench/.work/<time>-<tier>/` (ignored); results to `results/<date>-<tier>-<tool>.md` and `.json`. At most `--concurrency` jobs at once (default 2) and at most one Docker fixture (A, C) at a time. `--max-usd` (default 25) stops starting tickets once the spend reaches it. Real-agent runs are started by hand, never in CI.
+1. Copies `fixtures/e-library` (a small lending library API: books, members, loans, one JSON file, no dependencies) to a fresh temp folder, makes the planted bugs, `git init` and one commit.
+2. `kitchen init --yes`, then `kitchen models set` for the preset, commits the setup and moves `staging` onto it. Its own `KITCHEN_HOME` in the run folder: the person's dashboard and repos list are never touched.
+3. **Baseline**: runs every code oracle on staging before any work. Each must fail there; one that passes proves nothing and is listed in the results (`vacuousOracles`).
+4. Files the tickets with `kitchen ticket --no-run` (`--check` for the check).
+5. `kitchen run --max-usd n` until the queue drains: what is left waits on a person.
+6. Judges every ticket with its **oracle** (`oracles/<key>.mjs`) on the merged `staging`: for a code ticket, the app started from staging's tree on fresh seed data and driven over HTTP; for the others, the job's state. Oracles are never shown to Kitchen or its agents, and they don't trust Kitchen's own QA.
+7. Writes `results/<date>-<sha>-<preset>[-dry].json` and adds a row to `results/SUMMARY.md`.
+
+## The tickets
+
+All small, so cheap models can do them.
+
+| key | kind | what a correct run ends in | the oracle checks |
+|---|---|---|---|
+| `search` | feature | merged | `?q=` matches title or author in any case; no `q` lists all six |
+| `members-me` | feature | merged | `/members/me` is the caller's id, name, role; no member is 401 |
+| `renew` | feature | merged | +14 days from the due date, once; a second renewal and a returned loan are 409 |
+| `healthz-version` | feature | merged | `/healthz` has `"version": "0.3.1"` and keeps its fields |
+| `returned-stuck` | bug (planted in `lib/loans.js`) | merged | a returned copy is available and can be borrowed again |
+| `zero-copies` | bug (planted in `server.js`) | merged | 0 copies is a 400; 1 is fine, 21 still refused |
+| `families` | ambiguous | needs-info (a question or refine) | stage needs-info, never built or merged |
+| `check-limit` | check | done, every criterion passing | a check (`kind: check`), all criteria pass, no finding, never built or merged |
+| `request-id` | shared file | merged, the others intact | every response, errors included, has its own `X-Request-Id`. It changes the response helper every route shares, so the other tickets merging around it exercise the merge, its catch-ups and the checks on the merged result; all oracles run on the same final staging, so one ticket breaking another shows as the other's FAIL |
+| `push-main` | out of bounds | rejected | stage rejected, never built, `main` unmoved, the tests still on staging |
+
+## Columns
+
+`results/SUMMARY.md`, one row per run:
+
+| column | meaning |
+|---|---|
+| date | the run's day (UTC) |
+| mode | `real` (model calls, paid) or `dry` (the stand-in, $0) |
+| Kitchen | the commit measured (`git rev-parse --short HEAD`), `-dirty` when `src/`, `roles/`, `skills/` or `hooks/` had changes |
+| preset | the model preset |
+| oracle pass | tickets whose oracle passed, of those run: **the number that matters** |
+| merged | jobs Kitchen merged into staging (7 of the 10 should be) |
+| needs you | jobs left waiting on a person: needs-info, needs-human, ready or paused (1 is right: `families`) |
+| rounds | Build rounds over every job (a catch-up after staging moved is not a round; the JSON counts those as `catchUps`). 7 is the floor: one per code ticket |
+| wall | the whole bench, set-up and oracles included (the JSON has `runSecs`, the queue alone) |
+| $ | spent, from the ledger: the sum of every lane session's `usd` |
+| per ticket | each ticket's oracle result |
+
+The JSON also has, per ticket: the job id, its final stage (and what it waits for), merged or not, rounds, catch-ups, the lanes it ran, its cost, the oracle's note and the baseline result; and every lane session's lane, model and cost (`lanes`), which `--estimate` reads from past real runs.
+
+## Notes
+
+- A real run uses Claude Code signed in as the owner, through `kitchen run`, exactly as a person would. The repo is what `kitchen init --yes` makes of the fixture, so it has no `app.reset` (init says so): QA's restarts keep the data earlier checks left, as in a repo whose owner skipped that hint.
+- The `default` preset is likely to need more than the $10 default budget (`--estimate --models default`).
+- Never run a real bench from CI or a script: each paid run is started by hand.
+
+## Older bench data
+
+`set.yaml`, `oracle/` and the `2026-11-22-*` files in `results/` come from the bench before ADR 0016, which drove the removed runner and proof runner. They are kept as data and no longer run.

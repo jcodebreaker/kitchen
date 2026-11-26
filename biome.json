@@ -6,7 +6,17 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["src/**/*.ts", "fixtures/**/*.mjs", "fixtures/**/*.js", "*.ts", "*.json", "!**/package-lock.json"]
+    "includes": [
+      "src/**/*.ts",
+      "bench/**/*.ts",
+      "bench/oracles/*.mjs",
+      "bench/dry/*.mjs",
+      "fixtures/**/*.mjs",
+      "fixtures/**/*.js",
+      "*.ts",
+      "*.json",
+      "!**/package-lock.json"
+    ]
   },
   "formatter": {
     "enabled": true,

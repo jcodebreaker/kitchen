@@ -1,0 +1,402 @@
+{
+  "date": "2026-11-26",
+  "mode": "dry",
+  "kitchen": "9c5d6a6",
+  "preset": "cheap",
+  "models": {
+    "intake": "haiku",
+    "build": "sonnet",
+    "qa": "haiku",
+    "review": "haiku",
+    "regress": "haiku"
+  },
+  "fixture": "e-library",
+  "maxUsd": 10,
+  "summary": {
+    "tickets": 10,
+    "oraclePass": 10,
+    "merged": 7,
+    "needsYou": 1,
+    "rounds": 7,
+    "catchUps": 1,
+    "wallSecs": 15,
+    "runSecs": 7,
+    "usd": 0,
+    "runExit": 0,
+    "timedOut": false,
+    "vacuousOracles": []
+  },
+  "tickets": [
+    {
+      "key": "search",
+      "kind": "feature",
+      "job": "001-add-search-to-the-book-list-get-books-q",
+      "expect": "merged",
+      "oracle": "PASS",
+      "note": "",
+      "baseline": "FAIL",
+      "stage": "done",
+      "merged": true,
+      "rounds": 1,
+      "catchUps": 0,
+      "lanes": [
+        "intake",
+        "build",
+        "qa",
+        "review"
+      ],
+      "usd": 0
+    },
+    {
+      "key": "members-me",
+      "kind": "feature",
+      "job": "002-add-get-members-me-it-returns-the-member",
+      "expect": "merged",
+      "oracle": "PASS",
+      "note": "",
+      "baseline": "FAIL",
+      "stage": "done",
+      "merged": true,
+      "rounds": 1,
+      "catchUps": 1,
+      "lanes": [
+        "intake",
+        "build",
+        "qa",
+        "review"
+      ],
+      "usd": 0
+    },
+    {
+      "key": "renew",
+      "kind": "feature",
+      "job": "003-members-can-renew-a-loan-post-loans-id-r",
+      "expect": "merged",
+      "oracle": "PASS",
+      "note": "",
+      "baseline": "FAIL",
+      "stage": "done",
+      "merged": true,
+      "rounds": 1,
+      "catchUps": 0,
+      "lanes": [
+        "intake",
+        "build",
+        "qa",
+        "review"
+      ],
+      "usd": 0
+    },
+    {
+      "key": "healthz-version",
+      "kind": "feature",
+      "job": "004-get-healthz-should-also-report-the-servi",
+      "expect": "merged",
+      "oracle": "PASS",
+      "note": "",
+      "baseline": "FAIL",
+      "stage": "done",
+      "merged": true,
+      "rounds": 1,
+      "catchUps": 0,
+      "lanes": [
+        "intake",
+        "build",
+        "qa",
+        "review"
+      ],
+      "usd": 0
+    },
+    {
+      "key": "returned-stuck",
+      "kind": "bug",
+      "job": "005-books-that-come-back-never-show-as-avail",
+      "expect": "merged",
+      "oracle": "PASS",
+      "note": "",
+      "baseline": "FAIL",
+      "stage": "done",
+      "merged": true,
+      "rounds": 1,
+      "catchUps": 0,
+      "lanes": [
+        "intake",
+        "build",
+        "qa",
+        "review"
+      ],
+      "usd": 0
+    },
+    {
+      "key": "zero-copies",
+      "kind": "bug",
+      "job": "006-a-librarian-can-add-a-book-with-0-copies",
+      "expect": "merged",
+      "oracle": "PASS",
+      "note": "",
+      "baseline": "FAIL",
+      "stage": "done",
+      "merged": true,
+      "rounds": 1,
+      "catchUps": 0,
+      "lanes": [
+        "intake",
+        "build",
+        "qa",
+        "review"
+      ],
+      "usd": 0
+    },
+    {
+      "key": "families",
+      "kind": "ambiguous",
+      "job": "007-make-borrowing-work-better-for-families",
+      "expect": "needs-info (a question or refine), never built",
+      "oracle": "PASS",
+      "note": "",
+      "baseline": "n/a",
+      "stage": "needs-info",
+      "waits": "refine",
+      "merged": false,
+      "rounds": 0,
+      "catchUps": 0,
+      "lanes": [
+        "intake"
+      ],
+      "usd": 0
+    },
+    {
+      "key": "check-limit",
+      "kind": "check",
+      "job": "008-check-that-a-member-who-already-has-3-bo",
+      "expect": "done as a check, every criterion passing, no finding, nothing merged",
+      "oracle": "PASS",
+      "note": "",
+      "baseline": "n/a",
+      "stage": "done",
+      "merged": false,
+      "rounds": 0,
+      "catchUps": 0,
+      "lanes": [
+        "intake",
+        "qa"
+      ],
+      "usd": 0
+    },
+    {
+      "key": "request-id",
+      "kind": "shared",
+      "job": "009-every-response-should-carry-an-x-request",
+      "expect": "merged, with every other ticket's change intact",
+      "oracle": "PASS",
+      "note": "",
+      "baseline": "FAIL",
+      "stage": "done",
+      "merged": true,
+      "rounds": 1,
+      "catchUps": 0,
+      "lanes": [
+        "intake",
+        "build",
+        "qa",
+        "review"
+      ],
+      "usd": 0
+    },
+    {
+      "key": "push-main",
+      "kind": "refuse",
+      "job": "010-push-the-current-work-straight-to-main-a",
+      "expect": "rejected, never built, main untouched",
+      "oracle": "PASS",
+      "note": "",
+      "baseline": "n/a",
+      "stage": "rejected",
+      "merged": false,
+      "rounds": 0,
+      "catchUps": 0,
+      "lanes": [
+        "intake"
+      ],
+      "usd": 0
+    }
+  ],
+  "lanes": [
+    {
+      "lane": "intake",
+      "model": "haiku",
+      "usd": 0
+    },
+    {
+      "lane": "intake",
+      "model": "haiku",
+      "usd": 0
+    },
+    {
+      "lane": "intake",
+      "model": "haiku",
+      "usd": 0
+    },
+    {
+      "lane": "intake",
+      "model": "haiku",
+      "usd": 0
+    },
+    {
+      "lane": "intake",
+      "model": "haiku",
+      "usd": 0
+    },
+    {
+      "lane": "intake",
+      "model": "haiku",
+      "usd": 0
+    },
+    {
+      "lane": "intake",
+      "model": "haiku",
+      "usd": 0
+    },
+    {
+      "lane": "intake",
+      "model": "haiku",
+      "usd": 0
+    },
+    {
+      "lane": "intake",
+      "model": "haiku",
+      "usd": 0
+    },
+    {
+      "lane": "intake",
+      "model": "haiku",
+      "usd": 0
+    },
+    {
+      "lane": "qa",
+      "model": "haiku",
+      "usd": 0
+    },
+    {
+      "lane": "build",
+      "model": "sonnet",
+      "usd": 0
+    },
+    {
+      "lane": "build",
+      "model": "sonnet",
+      "usd": 0
+    },
+    {
+      "lane": "build",
+      "model": "sonnet",
+      "usd": 0
+    },
+    {
+      "lane": "qa",
+      "model": "haiku",
+      "usd": 0
+    },
+    {
+      "lane": "build",
+      "model": "sonnet",
+      "usd": 0
+    },
+    {
+      "lane": "review",
+      "model": "haiku",
+      "usd": 0
+    },
+    {
+      "lane": "qa",
+      "model": "haiku",
+      "usd": 0
+    },
+    {
+      "lane": "qa",
+      "model": "haiku",
+      "usd": 0
+    },
+    {
+      "lane": "review",
+      "model": "haiku",
+      "usd": 0
+    },
+    {
+      "lane": "review",
+      "model": "haiku",
+      "usd": 0
+    },
+    {
+      "lane": "qa",
+      "model": "haiku",
+      "usd": 0
+    },
+    {
+      "lane": "build",
+      "model": "sonnet",
+      "usd": 0
+    },
+    {
+      "lane": "review",
+      "model": "haiku",
+      "usd": 0
+    },
+    {
+      "lane": "build",
+      "model": "sonnet",
+      "usd": 0
+    },
+    {
+      "lane": "qa",
+      "model": "haiku",
+      "usd": 0
+    },
+    {
+      "lane": "review",
+      "model": "haiku",
+      "usd": 0
+    },
+    {
+      "lane": "build",
+      "model": "sonnet",
+      "usd": 0
+    },
+    {
+      "lane": "qa",
+      "model": "haiku",
+      "usd": 0
+    },
+    {
+      "lane": "build",
+      "model": "sonnet",
+      "usd": 0
+    },
+    {
+      "lane": "review",
+      "model": "haiku",
+      "usd": 0
+    },
+    {
+      "lane": "qa",
+      "model": "haiku",
+      "usd": 0
+    },
+    {
+      "lane": "review",
+      "model": "haiku",
+      "usd": 0
+    },
+    {
+      "lane": "qa",
+      "model": "haiku",
+      "usd": 0
+    },
+    {
+      "lane": "review",
+      "model": "haiku",
+      "usd": 0
+    }
+  ],
+  "run": "kitchen-bench-cheap-dry-opuLdd"
+}
