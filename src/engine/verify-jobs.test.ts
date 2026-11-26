@@ -11,7 +11,8 @@ import { afterAll, test } from "vitest";
 import { loadConfig } from "../config.ts";
 import { writeVerifySkill } from "../verify/skill.ts";
 import * as control from "./control.ts";
-import { finish, start } from "./jobs.ts";
+import { failureOf } from "./diagnose.ts";
+import { finish, mergeHeld, start } from "./jobs.ts";
 import { intakeFile, parseIntake, qaDir, regressDir, reviewFile } from "./lanes.ts";
 import { ensureStaging } from "./staging.ts";
 import { findJob, jobDirOf } from "./store.ts";
@@ -99,12 +100,15 @@ async function build(r: string, id: string, files: Record<string, string>) {
   g(s.cwd, "commit", "-qm", "build");
   return fin(r, id);
 }
-async function qa(r: string, id: string, map: Record<string, string> = {}, result: "PASS" | "FAIL" = "PASS") {
+async function qa(r: string, id: string, map: Record<string, string> = {}, result: "PASS" | "FAIL" = "PASS", extra: object[] = []) {
   const s = await open(r, id, "qa");
   const j = findJob(r, id);
   const d = qaDir(jobDirOf(r, j.id), j.round);
   fs.writeFileSync(path.join(d, "c1.txt"), "ok\n");
-  fs.writeFileSync(path.join(d, "verdict.json"), JSON.stringify({ verdict: result, criteria: [{ id: "C1", result, evidence: ["c1.txt"], note: "x" }] }));
+  fs.writeFileSync(
+    path.join(d, "verdict.json"),
+    JSON.stringify({ verdict: result, criteria: [{ id: "C1", result, evidence: ["c1.txt"], note: "x" }, ...extra] }),
+  );
   if (Object.keys(map).length) fs.mkdirSync(path.join(d, "map"), { recursive: true });
   for (const [f, t] of Object.entries(map)) fs.writeFileSync(path.join(d, "map", f), t);
   return { brief: fs.readFileSync(s.brief, "utf8"), f: await finish(r, id) };
@@ -236,7 +240,31 @@ test("a map update that weakens an earlier check is refused unless intake's CHAN
   );
 });
 
-test("a red drive on the merged result sends the job back to Build with the evidence; round 2's QA re-drives instead of exploring", async () => {
+test("ADR 0035: a recipe that fails in QA, with every criterion passing, goes on to Review; the Report lists it; a criterion's FAIL is Build", async () => {
+  const r = await repo();
+  await withSearch(r);
+  const id = await toBuild(r, "sort the lines");
+  await build(r, id, { "app.txt": "four\none\nthree\ntwo\n" });
+  const d = qaDir(dirOf(r, id), 1);
+  fs.mkdirSync(d, { recursive: true });
+  fs.writeFileSync(path.join(d, "search.txt"), "grep two printed nothing\n");
+  const q = await qa(r, id, {}, "PASS", [{ id: "R-search/search-match", result: "FAIL", evidence: ["search.txt"], note: "Match: grep two printed nothing" }]);
+  assert.ok("line" in q.f);
+  assert.match(q.f.line, /QA PASS .*→ review/);
+  await review(r, id);
+  await regress(r, id, [{ id: "search", result: "PASS" }]);
+  assert.equal(findJob(r, id).stage, "done");
+  const rep = fs.readFileSync(path.join(dirOf(r, id), "report.html"), "utf8");
+  assert.match(rep, /Recipes that didn't hold \(not this ticket's\)[\s\S]*R-SEARCH\/SEARCH-MATCH[\s\S]*Match: grep two printed nothing[\s\S]*search\.txt/);
+
+  const red = await toBuild(r, "add six");
+  await build(r, red, { "app.txt": "one\ntwo\nthree\nfour\nsix\n" });
+  const f = await qa(r, red, {}, "FAIL");
+  assert.ok("line" in f.f);
+  assert.match(f.f.line, /QA FAIL C1 → build \(round 2\)/);
+});
+
+test("ADR 0035: a red drive on the merged result holds the job at Ready; Ask for changes sends it to Build, Merge merges it", async () => {
   const r = await repo();
   await withSearch(r);
   const id = await toBuild(r, "sort the lines");
@@ -248,9 +276,14 @@ test("a red drive on the merged result sends the job back to Build with the evid
   assert.equal((await review(r, id)).to, "regress");
   const red = await regress(r, id, [{ id: "search", result: "FAIL", note: "Match: grep two printed nothing" }]);
   assert.ok("line" in red.f);
-  assert.match(red.f.line, /regress FAIL search: merging it breaks them → build \(round 2\)/);
-  assert.equal(findJob(r, id).drive, undefined);
+  assert.match(red.f.line, /regress FAIL: the merge check saw search fail: Match: grep two printed nothing → ready/);
+  const held = findJob(r, id);
+  assert.deepEqual([held.stage, held.held], ["ready", "the merge check saw search fail: Match: grep two printed nothing"]);
+  assert.equal(failureOf(dirOf(r, id), held)?.next, "Merge it, or Ask for changes");
+  assert.equal(held.drive, undefined);
   assert.equal(g(r, "for-each-ref", "refs/kitchen/"), "");
+  assert.equal(await control.feedback(r, id, "make search find two again", quiet), 0);
+  assert.equal(findJob(r, id).stage, "build");
   const b = await open(r, id, "build");
   assert.match(
     fs.readFileSync(b.brief, "utf8"),
@@ -261,6 +294,13 @@ test("a red drive on the merged result sends the job back to Build with the evid
   await fin(r, id);
   const q2 = await qa(r, id);
   assert.match(q2.brief, /## Re-drive, don't re-explore\n\nRound 1's QA passed these same criteria/);
+  await review(r, id);
+  await regress(r, id, [{ id: "search", result: "FAIL", note: "Match: still nothing" }]);
+  assert.equal(findJob(r, id).stage, "ready");
+  const m = await mergeHeld(r, id);
+  assert.ok("line" in m, JSON.stringify(m));
+  assert.match(m.line, /you said merge → merged into staging/);
+  assert.deepEqual([findJob(r, id).stage, findJob(r, id).mergedBy], ["done", "person"]);
 });
 
 test("staging moves while the features are driven: Kitchen merges again and the lane drives the new merge", async () => {

@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { type Config, targetOf } from "../config.ts";
-import { type Job, QA_BLOCKED } from "./machine.ts";
+import { type Job, MERGE_CHECK_SAW, QA_BLOCKED } from "./machine.ts";
 import { JOB_ID, roundDir } from "./store.ts";
 
 export type FailKind = "checks" | "app" | "lane" | "merge" | "proposals";
@@ -126,6 +126,9 @@ export function failureOf(dir: string, j: Job, cfg?: Pick<Config, "staging">): F
   // ADR 0029 §6: a finished check whose findings couldn't be proposed.
   const pf = j.check?.proposalsFailed;
   if (pf && j.stage === "done") return { ...diagnose("proposals", "", { why: pf.error }), kind: "proposals", log: null, raw: `proposals failed: ${pf.error}` };
+  // ADR 0035: a feature the merge check saw fail holds the job; the person decides.
+  if (j.stage === "ready" && j.held?.startsWith(MERGE_CHECK_SAW))
+    return { what: "The merge check saw a feature fail", line: j.held, next: "Merge it, or Ask for changes", kind: "merge", log: null, raw: j.held };
   const ready = j.stage === "ready" && !!j.held?.startsWith("not merged: ");
   if (j.stage !== "needs-human" && !ready) return null;
   const why = (ready ? j.held?.replace(/^not merged: /, "") : j.pausedReason) ?? "";

@@ -65,6 +65,7 @@ import {
   type JobCheck,
   type JobPr,
   type Lane,
+  MERGE_CHECK_SAW,
   outOfCatchUps,
   outOfRounds,
   PR_OPEN_WORDS,
@@ -358,7 +359,7 @@ function earlier(cfg: Config, dir: string, job: Job): string {
     if ("criteria" in qa && qa.verdict === "FAIL")
       parts.push(
         `Round ${r}: QA FAILED (evidence in ${path.relative(dir, qaDir(dir, r))}/):\n${qa.criteria
-          .filter((c) => c.result === "FAIL")
+          .filter((c) => c.result === "FAIL" && !c.id.startsWith("R-"))
           .map((c) => `- ${c.id}: ${c.note} (${c.evidence.join(", ")})`)
           .join("\n")}`,
       );
@@ -1234,7 +1235,7 @@ async function finishLane(repo: string, id: string, key?: string): Promise<Finis
         },
       });
     }
-    const bad = qa.criteria.filter((c) => c.result === "FAIL").map((c) => c.id);
+    const bad = qa.criteria.filter((c) => c.result === "FAIL" && !c.id.startsWith("R-")).map((c) => c.id);
     if (outOfRounds(job))
       return moveOn(repo, job, "needs-human", `${job.id}  QA FAIL ${bad.join(", ")}, out of rounds → needs-human`, {
         reason: `QA failed ${bad.join(", ")} after ${job.roundLimit} rounds`,
@@ -1708,7 +1709,8 @@ async function gateMerge(repo: string, cfg: Config, job: Job, head: string, who:
   const diff = (await diffSize(repo, job.base, head).catch(() => null))?.files;
   const m = await mergeToTarget(repo, cfg, job, head, {
     log,
-    gate: (t) => touchedBy(repo, cfg, t),
+    // ADR 0035: the person saw the merge check's failure and said merge: no drive again.
+    gate: who === "person" && job.held?.startsWith(MERGE_CHECK_SAW) ? undefined : (t) => touchedBy(repo, cfg, t),
     onCheck: checking(repo, job.id, log),
     prBody: (c) => prBodyOf(repo, cfg, job, c, diff),
   });
@@ -1856,9 +1858,9 @@ async function mergeFailed(
 }
 
 /**
- * ADR 0017 §3: the regress lane drove the touched features on the trial merge. Red goes back to Build with the
- * evidence; green lands that exact merge if the target hasn't moved, else Kitchen merges again and, when the new merge
- * touches features too, the lane drives them again. With `staging.merge: pr`, green opens the PR instead.
+ * ADR 0017 §3: the regress lane drove the touched features on the trial merge. Red holds the job at Ready for a
+ * person (ADR 0035); green lands that exact merge if the target hasn't moved, else Kitchen merges again and, when the
+ * new merge touches features too, the lane drives them again. With `staging.merge: pr`, the PR opens instead.
  */
 async function finishRegress(repo: string, cfg: Config, job: Job): Promise<Finished> {
   const dir = jobDirOf(repo, job.id);
@@ -1867,16 +1869,22 @@ async function finishRegress(repo: string, cfg: Config, job: Job): Promise<Finis
   if (!d) return refuseLane(repo, job, "no trial merge recorded for this job (it passes review first)");
   const v = readFeatureVerdict(regressDir(dir, job.round), d.features);
   if ("refused" in v) return refuseLane(repo, job, `regress: ${v.refused}`);
-  if (v.verdict === "FAIL") {
-    const bad = v.features.filter((f) => f.result === "FAIL").map((f) => f.id);
+  // ADR 0035: a feature that fails on the trial merge is reported, never Build work: the job holds at Ready (with
+  // staging.merge: pr, its PR opens and says so) and the person merges it or asks for changes.
+  const saw =
+    v.verdict === "FAIL"
+      ? `${MERGE_CHECK_SAW}${v.features
+          .filter((f) => f.result === "FAIL")
+          .map((f) => `${f.id} fail${f.note ? `: ${f.note}` : ""}`)
+          .join("; ")}`
+      : null;
+  if (saw && cfg.staging.merge !== "pr") {
     await dropDrive(repo, job);
-    if (outOfRounds(job))
-      return moveOn(repo, job, "needs-human", `${job.id}  regress FAIL ${bad.join(", ")}, out of rounds → needs-human`, {
-        reason: `merging it breaks ${bad.join(", ")} (see rounds/${job.round}/regress/) after ${job.roundLimit} rounds`,
-        patch: (j) => delete j.drive,
-      });
-    return moveOn(repo, job, "build", `${job.id}  regress FAIL ${bad.join(", ")}: merging it breaks them → build (round ${job.round + 1})`, {
-      patch: (j) => delete j.drive,
+    return moveOn(repo, job, "ready", `${job.id}  regress FAIL: ${saw} → ready (Merge it, or Ask for changes)`, {
+      patch: (j) => {
+        j.held = saw;
+        delete j.drive;
+      },
     });
   }
   const log = path.join(roundDir(dir, job.round), "merge.log");
@@ -1886,11 +1894,11 @@ async function finishRegress(repo: string, cfg: Config, job: Job): Promise<Finis
     gate: (t) => touchedBy(repo, cfg, t),
     drove: { onto: d.onto, sha: d.sha },
     onCheck: checking(repo, job.id, log),
-    prBody: (c) => prBodyOf(repo, cfg, job, c, diff),
+    prBody: (c) => `${saw ? `**${saw[0].toUpperCase()}${saw.slice(1)}.** Merge it, or ask for changes.\n\n` : ""}${prBodyOf(repo, cfg, job, c, diff)}`,
   });
   if (m.ok) {
     await dropDrive(repo, job);
-    const said = `regress PASS (${d.features.join(", ")}) → `;
+    const said = saw ? `regress FAIL: ${saw} → ` : `regress PASS (${d.features.join(", ")}) → `;
     return m.via === "pr" ? prOpened(repo, cfg, job, m, d.head, said) : merged(repo, cfg, job, m, said);
   }
   if (m.drive) {

@@ -327,7 +327,7 @@ export function readQa(
   for (const r of v.criteria as Record<string, unknown>[]) {
     const id = String(r?.id ?? "").toUpperCase();
     const result = String(r?.result ?? "").toUpperCase();
-    // C<n>: a criterion. R-<feature>[/<sub-feature>]: a map recipe this job broke (a regression the criteria don't cover).
+    // C<n>: a criterion. R-<feature>[/<sub-feature>]: a map recipe that didn't hold (ADR 0035: reported, never the verdict).
     if (!/^C\d+$/.test(id) && !/^R-[A-Z0-9][A-Z0-9-]*(\/[A-Z0-9][A-Z0-9-]*)?$/.test(id))
       return { refused: `a row's id is C<n>, or R-<feature>[/<sub-feature>] for a broken recipe (got ${JSON.stringify(r?.id)})` };
     const res = result.replace(/[ -]/g, "_");
@@ -423,7 +423,8 @@ export function readQa(
         refused: `${unexplained.join(", ")} FAILED with no finding: give each failure a finding (title, seen, repro, evidence, criterion: "${unexplained[0]}")`,
       };
   }
-  const counted = rows.filter((r) => criteria.some((c) => c.id === r.id) || r.id.startsWith("R-") || o.check);
+  // ADR 0035: only the ticket's criteria decide a job's verdict; a check's every row does (a FAIL is a finding).
+  const counted = rows.filter((r) => criteria.some((c) => c.id === r.id) || o.check);
   // ADR 0033 §4: a NOT_RUN row a tooling finding covers waits for that tooling; any other NOT_RUN row is retried first.
   const covered = new Set(findings.flatMap((f) => (f.kind === "tooling" ? (f.criteria ?? []) : [])));
   const failed = counted.some((r) => r.result === "FAIL") || findings.some((f) => f.kind !== "tooling");

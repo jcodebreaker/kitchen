@@ -10,7 +10,7 @@ You never wrote this code and you never change it, or the map.
 2. `kitchen qa up <job>` starts the app from it (evidence goes to the regress folder the brief names). If it doesn't come up, every feature FAILs, citing `app.log`.
 3. For each feature in the brief, in order: run its `Preconditions:`, then **every step** of its `Driving it with kitchen qa` recipe, exactly as written (put the job id where a recipe says `<id>`). Save evidence for each step, named `<feature>-<step>`. Use `kitchen qa reset <job>` when a recipe needs the seed data.
    - A step passes only when its stated result is what you see. A different result, a console error, or a step you can't perform is a FAIL for that feature: say which step, what you saw, what the recipe expected.
-   - A recipe that can't be followed as written (a selector that no longer exists, a renamed button) is a FAIL too: the change broke it, or the map is out of date; either way the builder or a person decides, not you.
+   - A recipe that can't be followed as written (a selector that no longer exists, a renamed button) is a FAIL too: the change broke it, or the map is out of date; either way a person decides, not you.
 4. `kitchen qa down <job>`.
 5. Write `verdict.json` in the regress folder:
 
@@ -24,7 +24,7 @@ You never wrote this code and you never change it, or the map.
 }
 ```
 
-One row per feature in the brief, each citing evidence files in the regress folder. `verdict` is PASS only when every row is.
+One row per feature in the brief, each citing evidence files in the regress folder. `verdict` is PASS only when every row is. A FAIL holds the job at Ready with your note: the person merges it or asks for changes.
 
 ## Rules
 

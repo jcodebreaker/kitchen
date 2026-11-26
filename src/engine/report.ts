@@ -151,6 +151,11 @@ export function renderReport(repo: string, job: Job, o: { diff?: { p: string; a:
       return `<tr><td>${esc(c.id)}</td><td>${esc(c.text)}${given}<br><small>${esc(c.check)}</small></td><td class="${r?.result === "PASS" ? "ok" : not || (!r && unrun) ? "st" : "bad"}">${esc(not ? "not tested" : (r?.result ?? (unrun ? "" : "not checked")))}</td><td>${esc(not ? (r?.why ?? "") : (r?.note ?? ""))}${held}${(r?.evidence ?? []).map((f) => evidenceHtml(qd, f, o.named)).join("")}</td></tr>`;
     })
     .join("\n");
+  // ADR 0035: a recipe that failed in QA is reported, never this job's work.
+  const broke = !check && "criteria" in qa ? qa.criteria.filter((r) => r.id.startsWith("R-") && r.result === "FAIL") : [];
+  const recipes = broke.length
+    ? `<h2>Recipes that didn't hold (not this ticket's)</h2><table>${broke.map((r) => `<tr><td>${esc(r.id)}</td><td class="bad">FAIL</td><td>${esc(r.note)}${r.evidence.map((f) => evidenceHtml(qd, f, o.named)).join("")}</td></tr>`).join("")}</table>`
+    : "";
   const findings =
     "findings" in review
       ? review.findings.length
@@ -182,6 +187,7 @@ pre{background:var(--card);padding:8px;border-radius:6px;overflow:auto;font-size
 <div class="box">${checks.length ? `<ul>${checks.map((c) => `<li>${c}</li>`).join("")}</ul>` : "<p>Nothing beyond the proof below.</p>"}</div>
 <h2>Criteria, checked against the running app</h2>
 <table>${rows || "<tr><td>No criteria.</td></tr>"}</table>
+${recipes}
 ${"refused" in qa ? (notYet(qa.refused) ? `<p class="st">QA hasn't run on round ${job.round} yet.</p>` : `<p class="bad">QA: ${esc(qa.refused)}</p>`) : ""}
 ${!check ? blockedHtml(qa, qd, o.named, fail?.kind === "app") : ""}
 ${drives(dir, job.round, o.named, fl?.none.filter((x) => fl.looked.includes(x)) ?? [])}
