@@ -51,10 +51,10 @@ export type Detail = {
  * inbox proposal it became (the engine proposes them in order, so the i-th finding is the i-th proposal).
  */
 function checkTab(repo: string, dir: string, j: Job): Pick<Detail, "crit" | "found"> {
-  const crit = critOf(dir, j.round, { check: true, job: j });
+  const crit = critOf(dir, j.round, { check: true });
   const criteria = criteriaOf(dir);
   for (let r = j.round; r >= 1; r--) {
-    const qa = readQa(dir, r, criteria, { check: true, job: j });
+    const qa = readQa(dir, r, criteria, { check: true });
     if (!("criteria" in qa) || (!qa.criteria.length && !qa.findings.length)) continue;
     const at = (f: string) => `jobs/${encodeURIComponent(j.id)}/qa/${r}/${f.split("/").map(encodeURIComponent).join("/")}`;
     const ps = j.check?.proposals ?? [];
@@ -68,8 +68,7 @@ function checkTab(repo: string, dir: string, j: Job): Pick<Detail, "crit" | "fou
         const e = row.result === "NOT_RUN" ? c.e : [row.note, ...row.evidence.filter((f) => f !== shot)].filter(Boolean).join(" · ");
         return { ...c, e, ...(shot ? { shot: at(shot) } : {}) };
       }),
-      // ADR 0031 §5: by the finding's inbox item (its key keeps QA's numbering), never by position: a finding the
-      // second look didn't confirm has no proposal, and the ones after it keep theirs. ADR 0033 §4: missing tooling
+      // By the finding's inbox item (its key keeps QA's numbering), never by position. ADR 0033 §4: missing tooling
       // says so; tooling findings that share a chore all link to it.
       found: qa.findings.flatMap((f, i) => {
         const pid = proposalOf(repo, ps, checkFindingKey(j.id, r, i + 1));
@@ -245,7 +244,7 @@ export async function detail(repo: string, ref: string): Promise<Detail> {
   return {
     id: j.id,
     tl,
-    ...(isCheck(j) ? checkTab(repo, dir, j) : { crit: critOf(dir, j.round, { job: j }) }),
+    ...(isCheck(j) ? checkTab(repo, dir, j) : { crit: critOf(dir, j.round) }),
     ticket: ticketText(dir),
     // The lanes' models are on the Activity segments; the foot says Kitchen's and the tool's versions only.
     tested: tested ? { line: tested, versions: versionsLine(j, { models: false }) } : null,

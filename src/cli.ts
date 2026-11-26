@@ -81,7 +81,7 @@ The outer loop (ADR 0022): sources read by code, triaged into proposals you choo
 
 The orchestrator's verbs (the only way a job moves)
   kitchen job next [--json] [--restart-stranded]   the next wave: lanes to start, what waits and why
-  kitchen job start <id> <lane> [--json] [--restart]   open a lane (intake, build, qa, review, regress, second-look): worktree, brief, the agent's prompt and model
+  kitchen job start <id> <lane> [--json] [--restart]   open a lane (intake, build, qa, review, regress): worktree, brief, the agent's prompt and model
   kitchen job finish <id> [--json] [--key k]   read the lane's files, run the checks / the merge, move the job (or refuse); --key: only the lane run that start returned
   kitchen job show <id> [--json]
 
@@ -123,7 +123,7 @@ const COMMAND_HELP: Record<string, string> = {
   pause: "kitchen pause <id>\n\nParks the job (paused, by-you) once its current lane finishes, or now when none works on it.",
   stop: "kitchen stop <id>\n\nParks the job now. A lane agent still working on it finds its result dropped.",
   feedback:
-    'kitchen feedback <id> ["<text>"] [--to <stage>]\n\nAnswers a job that needs you, or sends a ready or done job back to Build with your text.\n  --to <stage>   for a needs-human job: intake, build, qa, review, regress, or second-look (a check that was in its second look)',
+    'kitchen feedback <id> ["<text>"] [--to <stage>]\n\nAnswers a job that needs you, or sends a ready or done job back to Build with your text.\n  --to <stage>   for a needs-human job: intake, build, qa, review or regress',
   reject: "kitchen reject <id>\n\nCloses a job without merging it.",
   remove:
     "kitchen remove <id>\n\nTakes a job off the dashboard, kitchen status and the queue, whatever its stage. A lane working on it is stopped (its agent is refused from its next tool call, its result dropped); a job not merged is rejected and its worktree removed (the branch and the job folder stay); a merged job is only hidden, staging untouched. kitchen status --all lists it; kitchen restore <id> shows it again.",

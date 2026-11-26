@@ -29,8 +29,6 @@ export const envOf = (repo: string, config: Config): Env => ({
 export function rolesFor(lane: string, job: Pick<Job, "risk" | "surfaces">): string[] {
   if (lane === "build") return ["builder"];
   if (lane === "regress") return ["qa"];
-  // ADR 0031 §5: the second look reads QA's findings; no role skills.
-  if (lane === "second-look") return [];
   if (lane === "review") {
     const r = ["reviewer-code"];
     if (job.risk === "high" || job.surfaces.includes("security")) r.push("reviewer-security");

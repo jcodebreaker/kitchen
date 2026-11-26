@@ -41,9 +41,8 @@ now and what doesn't.
   Build and again on the target before a merge, refuses a criteria list it can't parse, refuses a QA verdict whose
   evidence files are missing, and refuses a review of a branch that moved while it was reviewed.
 - **Evidence carries where it came from.** `kitchen qa page|http` stamp each capture with the job, round, commit,
-  URL, app instance and browser (`<file>.meta.json`); Kitchen refuses a verdict that cites a capture from another
-  job, round or commit. When a check goes to its second look, Kitchen keeps the hash of QA's verdict; if the verdict
-  changed since, the job goes to a person (ADR 0031).
+  URL, app instance and browser (`<file>.meta.json`), and the Report shows the stamp beside the capture. It is
+  information for the person reading the Report, never a reason Kitchen refuses a verdict (ADR 0036).
 - **Nothing left running.** Each agent session Kitchen starts runs in its own process group: when it ends, or when
   `kitchen run --stop`, `kitchen stop` or `kitchen remove` ends it, the whole group goes, with anything the agent
   started by hand. A job's app is stopped on every way out of a lane, and when the queue drains (ADR 0029).
@@ -87,10 +86,8 @@ now and what doesn't.
   any branch you use as a target.
 - **Merges into staging happen without a person** (with `staging.merge: kitchen`). Read the Reports before you merge
   staging onward.
-- **Evidence is plain files.** The stamps catch a capture reused from another round or commit, but a capture with no
-  `.meta.json` is still accepted (a file the agent made by hand), so deleting the stamp gets around it. A check's
-  second look can write QA's verdict too; Kitchen only notices that the hash changed and hands the job to a person.
-  A lane agent can write files with Bash; the evidence's integrity rests on QA running in its own lane and on Kitchen's checks
+- **Evidence is plain files.** The stamps say where a capture came from, but Kitchen doesn't check them, and a
+  capture with no `.meta.json` (a file the agent made by hand) reads the same. A lane agent can write files with Bash; the evidence's integrity rests on QA running in its own lane and on Kitchen's checks
   when it reads it. An agent that wanted to fake a screenshot could.
 - **An in-session agent can't be killed.** Under `kitchen run`, `kitchen stop <id>` ends the lane's session at once.
   Under `/kitchen run` in your own Claude Code session, it parks the job and drops the agent's result; the subagent

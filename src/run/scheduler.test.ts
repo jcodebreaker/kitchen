@@ -30,7 +30,7 @@ const g = (dir: string, ...args: string[]) =>
 /**
  * The stand-in agent: reads its lane, job, checkout and brief from the prompt Kitchen gives every lane, does the lane's
  * work, and ends with a result line. A job whose title says "slow" builds for $SLOW s; "linger" takes 1 s a lane; "freeze" never ends; "crash"
- * exits 3 having written nothing; "overbudget" stops at its budget cap; "inspect" is a check whose QA finds a high-severity problem (a second look confirms it); "nologin" fails as a signed-out tool does, before any work. $SEEN, when set, gets
+ * exits 3 having written nothing; "overbudget" stops at its budget cap; "inspect" is a check whose QA finds a high-severity problem; "nologin" fails as a signed-out tool does, before any work. $SEEN, when set, gets
  * each session's working dir and argv (one file per lane).
  */
 const FAKE_AGENT = `#!/bin/sh
@@ -51,8 +51,7 @@ case "$P" in *overbudget*) echo '{"type":"result","subtype":"error_max_budget_us
 case "$P" in *inspect*)
   case "$lane" in
     intake) printf 'DECISION: ACCEPT\\nTITLE: %s\\nKIND: check\\nLEFT OUT: nothing\\nREASON: asks to check\\n\\n## Criteria\\n- C1 (cmd): renewing a loan works\\n' "$id" > "$jd/intake.md" ;;
-    qa) mkdir -p "$rd/qa" && echo 500 > "$rd/qa/c1.txt" && echo '{"verdict":"FAIL","criteria":[{"id":"C1","result":"FAIL","evidence":["c1.txt"],"note":"500"}],"findings":[{"title":"Renew returns 500","seen":"POST /loans/4/renew gives 500","expected":"200","cause":{"text":"the handler reads an empty due date","confidence":"suspected"},"severity":"high","repro":["renew loan 4"],"evidence":["c1.txt"],"criterion":"C1"}]}' > "$rd/qa/verdict.json" ;;
-    second-look) echo '{"findings":[{"finding":1,"confirmed":true,"note":"renewing loan 4 again gives 500"}]}' > "$rd/second-look.json" ;;
+    qa) mkdir -p "$rd/qa" && echo 500 > "$rd/qa/c1.txt" && echo '{"verdict":"FAIL","criteria":[{"id":"C1","result":"FAIL","evidence":["c1.txt"],"note":"500"}],"findings":[{"title":"Renew returns 500","seen":"POST /loans/4/renew gives 500","expected":"200","cause":"the handler reads an empty due date","severity":"high","repro":["renew loan 4"],"evidence":["c1.txt"],"criterion":"C1"}]}' > "$rd/qa/verdict.json" ;;
   esac
   echo '{"type":"result","total_cost_usd":0.01,"result":"'"$lane"' done for '"$id"'"}'
   exit 0 ;;
@@ -576,18 +575,17 @@ test("two `kitchen run --detach` together: one child takes the lock, the other p
   execFileSync(process.execPath, [CLI, "run", "--stop", "--repo", r], { env: env(), encoding: "utf8" });
 });
 
-test("a check with a high-severity finding: qa, then a second look, then done, each lane started and finished by the run", { timeout: 60_000 }, async () => {
+test("a check with a high-severity finding: qa, then done with it proposed (ADR 0036), each lane run by the run", { timeout: 60_000 }, async () => {
   const r = await repo(["inspect renewing loans"]);
   const [id] = listJobs(r).map((j) => j.id);
   const run = kitchenRun(r);
   assert.equal(await run.done, 0, run.lines.join("\n"));
   const l = run.lines;
-  assert.ok(at(l, /qa agent started/) < at(l, /finding 1 gets a second look → second-look/), l.join("\n"));
-  assert.ok(at(l, /second-look agent started \(/) < at(l, /second-look agent: second-look done/));
+  assert.ok(at(l, /qa agent started/) < at(l, /Found 1 problem · proposed p1 in the inbox → done/), l.join("\n"));
   const j = findJob(r, id);
   assert.equal(j.stage, "done", l.join("\n"));
   assert.deepEqual(
     j.agentRuns.map((x) => x.stage),
-    ["intake", "qa", "second-look"],
+    ["intake", "qa"],
   );
 });

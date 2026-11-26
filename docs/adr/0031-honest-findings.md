@@ -1,6 +1,6 @@
 # Honest findings: what was seen, what caused it, and whose evidence it is
 
-**Status.** Accepted, 2026-11-24, by the user (order agreed on a call). Builds on ADR 0016 (QA evidence), 0022 (the inbox), 0028 (check tickets and their findings), 0029 (trust what a run reports).
+**Status.** Accepted, 2026-11-24, by the user (order agreed on a call). Builds on ADR 0016 (QA evidence), 0022 (the inbox), 0028 (check tickets and their findings), 0029 (trust what a run reports). Superseded in part by ADR 0036 (no cause confidence, no stamp refusals, no carried rows, no second look, no verdict hash; a missing `given` read-back is no refusal).
 
 ## Why
 

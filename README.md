@@ -113,7 +113,7 @@ A job whose QA and review pass is merged into `staging`, after Kitchen runs your
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/report-dark.webp">
-  <img alt="A check's Report: what you must check, each criterion with QA's result and its evidence, the problem found with what was seen, what was expected and the suspected cause, and what was checked: the commit, the browser and the models" src="docs/img/report-light.webp">
+  <img alt="A check's Report: what you must check, each criterion with QA's result and its evidence, the problem found with what was seen, what was expected and the cause, and what was checked: the commit, the browser and the models" src="docs/img/report-light.webp">
 </picture>
 
 ## How it works

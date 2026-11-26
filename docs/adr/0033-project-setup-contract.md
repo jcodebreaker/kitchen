@@ -1,6 +1,6 @@
 # The project setup contract: scenarios, whoami, doctor, tooling
 
-**Status.** Accepted, 2026-11-24, by the user (order agreed on a call). Builds on ADR 0016 (`app:`, QA evidence), 0025 (a run checks its tools first), 0028 (check tickets and their findings), 0029 (BLOCKED, the run preflight).
+**Status.** Accepted, 2026-11-24, by the user (order agreed on a call). Builds on ADR 0016 (`app:`, QA evidence), 0025 (a run checks its tools first), 0028 (check tickets and their findings), 0029 (BLOCKED, the run preflight). Superseded in part by ADR 0036 (no second look, so §4's "never gets a second look" no longer applies).
 
 ## Why
 

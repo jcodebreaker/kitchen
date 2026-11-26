@@ -5,7 +5,7 @@
 // again adds nothing twice. Best effort: a finding that can't be added never stops the job.
 import fs from "node:fs";
 import path from "node:path";
-import { causeLabel, checkFindingKey, type QaFinding } from "../engine/lanes.ts";
+import { checkFindingKey, type QaFinding } from "../engine/lanes.ts";
 import { readState, writeState } from "../sources/config.ts";
 import { addItems, listItems, listProposals, type NewItem, type Proposal, propose } from "./store.ts";
 
@@ -74,12 +74,12 @@ export function runFindings(kind: "sweep" | "maintain", run: string, rows: { id:
 }
 
 /**
- * Pure, ADR 0031 §1: a finding as the proposal says it: Seen, Expected, and the cause as suspected or confirmed, each
- * on its own line. An older finding (no expected, no cause) is its `seen` alone.
+ * Pure, ADR 0031 §1: a finding as the proposal says it: Seen, Expected and Cause, each on its own line. An older
+ * finding (no expected, no cause) is its `seen` alone.
  */
 export function findingText(f: Pick<QaFinding, "seen" | "expected" | "cause">): string {
   if (!f.expected && !f.cause) return f.seen;
-  return [`Seen: ${f.seen}`, f.expected ? `Expected: ${f.expected}` : "", f.cause ? `${causeLabel(f)}: ${f.cause.text}` : ""].filter(Boolean).join("\n");
+  return [`Seen: ${f.seen}`, f.expected ? `Expected: ${f.expected}` : "", f.cause ? `Cause: ${f.cause}` : ""].filter(Boolean).join("\n");
 }
 
 /**
@@ -97,13 +97,12 @@ export async function proposeCheckFindings(
     target: string;
     qaFolder: string;
     findings: QaFinding[];
-    skip?: number[];
     earlier?: string;
   },
   now = new Date(),
 ): Promise<string[]> {
-  // ADR 0031 §5: a finding the second look didn't confirm (1-based in `skip`) is never proposed; keys stay QA's numbering.
-  const kept = c.findings.map((f, i) => ({ f, n: i + 1 })).filter((x) => !c.skip?.includes(x.n));
+  // Keys are QA's numbering (1-based).
+  const kept = c.findings.map((f, i) => ({ f, n: i + 1 }));
   if (!kept.length) return [];
   const label = `Check ${num(c.job)}`;
   const added = await addItems(
@@ -144,7 +143,7 @@ export async function proposeCheckFindings(
         why: `check ${num(c.job)} saw it on ${c.target}`,
         line: `Found by check ${num(c.job)} on ${c.target}`,
         steps: f.repro,
-        evidence: [...new Set([...f.evidence, ...(f.cause?.evidence ?? [])])].map((e) => path.join(c.qaFolder, e)),
+        evidence: f.evidence.map((e) => path.join(c.qaFolder, e)),
         sha: c.onto,
       },
       now,

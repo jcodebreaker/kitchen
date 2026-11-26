@@ -165,14 +165,28 @@ export const JobSchema = z.looseObject({
 /** A job.json that can't be read or doesn't match the schema. The plan skips it; `status` lists it. */
 export class CorruptJob extends Error {}
 
-/** Stages an older Kitchen used, folded into today's: a job from before ADR 0016 keeps reading. */
-const OLD_STAGE: Record<string, string> = { spec: "intake", repro: "build", gate: "build", drives: "qa", verify: "qa", toolkit: "qa", report: "ready" };
+/**
+ * Stages an older Kitchen used, folded into today's: a job from before ADR 0016 keeps reading. ADR 0036: a check in
+ * its second look (or escalated or paused from it) goes back to QA, which checks again and proposes what it finds.
+ */
+const OLD_STAGE: Record<string, string> = {
+  spec: "intake",
+  repro: "build",
+  gate: "build",
+  drives: "qa",
+  verify: "qa",
+  toolkit: "qa",
+  report: "ready",
+  "second-look": "qa",
+};
 
 /** Pure: a job.json from before ADR 0016 brought to today's shape (its stages folded, the Toolkit fields dropped). */
 export function upgradeJob(raw: Record<string, unknown>): Record<string, unknown> {
   const j = { ...raw };
   for (const k of ["stage", "pausedFrom", "escalatedFrom"]) if (typeof j[k] === "string" && OLD_STAGE[j[k] as string]) j[k] = OLD_STAGE[j[k] as string];
-  if (j.running && typeof j.running === "object" && !("lane" in (j.running as object))) j.running = null;
+  // A lane from before ADR 0016 (no lane), or a second look (ADR 0036), is no lane open now.
+  const lane = j.running && typeof j.running === "object" ? (j.running as { lane?: unknown }).lane : null;
+  if (j.running && (lane === undefined || lane === "second-look")) j.running = null;
   // ADR 0026: `pr` was the PR's number; it is { number, url } now.
   if (typeof j.pr === "number") j.pr = { number: j.pr, url: "" };
   if (Array.isArray(j.agentRuns))
