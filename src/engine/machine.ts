@@ -115,6 +115,8 @@ export type JobPr = { number: number; url: string; state?: "open" | "merged" | "
 /** ADR 0026 §4: Ready because its PR waits for a person on GitHub (staging.merge: pr). */
 export const prOpen = (j: Pick<Job, "stage" | "pr">) => j.stage === "ready" && j.pr?.state === "open";
 export const PR_OPEN_WORDS = "PR open · waiting for review";
+/** ADR 0035: a job held at Ready because the merge check saw a feature fail; the person merges it or asks for changes. */
+export const MERGE_CHECK_SAW = "the merge check saw ";
 
 /** One lane agent's run, as `kitchen job start` opened it and `kitchen job finish` closed it. */
 export type AgentRunRef = {

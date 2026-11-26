@@ -298,7 +298,7 @@ test("intake's LEFT OUT: line is read for the Report; nothing/none means nothing
   assert.equal(leftOutOf(path.join(root, "no-such-job")), "");
 });
 
-test("the QA verdict: a broken map recipe gets its own R-<feature>/<sub-feature> row, and its FAIL fails the verdict", () => {
+test("the QA verdict: a broken map recipe gets its own R-<feature>/<sub-feature> row; ADR 0035: its FAIL never fails the verdict", () => {
   const job = path.join(root, "job-r");
   const qa = qaDir(job, 1);
   fs.mkdirSync(qa, { recursive: true });
@@ -307,12 +307,17 @@ test("the QA verdict: a broken map recipe gets its own R-<feature>/<sub-feature>
   fs.writeFileSync(path.join(qa, "search.png"), "png");
   const write = (v: unknown) => fs.writeFileSync(path.join(qa, "verdict.json"), JSON.stringify(v));
   const rows = (r: unknown) => [{ id: "C1", result: "PASS", evidence: ["c1.png"] }, r];
-  // The real run's row (job 006): every criterion passed, the search recipe didn't.
+  // Every criterion passed, the search recipe didn't: an old verdict that said FAIL still reads, as PASS.
   write({ verdict: "FAIL", criteria: rows({ id: "R-search-page", result: "FAIL", evidence: ["search.png"], note: "all 6 rows" }) });
-  assert.equal((readQa(job, 1, crit) as { verdict: string }).verdict, "FAIL");
-  write({ verdict: "FAIL", criteria: rows({ id: "R-search-books/search-page", result: "FAIL", evidence: ["search.png"] }) });
-  assert.equal((readQa(job, 1, crit) as { verdict: string }).verdict, "FAIL");
+  assert.equal((readQa(job, 1, crit) as { verdict: string }).verdict, "PASS");
   write({ verdict: "PASS", criteria: rows({ id: "R-search-books/search-page", result: "FAIL", evidence: ["search.png"] }) });
+  const v = readQa(job, 1, crit) as { verdict: string; criteria: { id: string; result: string }[] };
+  assert.equal(v.verdict, "PASS");
+  assert.ok(v.criteria.some((r) => r.id === "R-SEARCH-BOOKS/SEARCH-PAGE" && r.result === "FAIL"));
+  // A criterion's FAIL still fails it.
+  write({ verdict: "FAIL", criteria: [{ id: "C1", result: "FAIL", evidence: ["c1.png"] }] });
+  assert.equal((readQa(job, 1, crit) as { verdict: string }).verdict, "FAIL");
+  write({ verdict: "PASS", criteria: [{ id: "C1", result: "FAIL", evidence: ["c1.png"] }] });
   assert.match(String((readQa(job, 1, crit) as { refused: string }).refused), /verdict PASS, but/);
   write({ verdict: "FAIL", criteria: rows({ id: "R-search-books", result: "FAIL", evidence: [] }) });
   assert.match(String((readQa(job, 1, crit) as { refused: string }).refused), /R-SEARCH-BOOKS cites no evidence/);
